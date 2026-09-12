@@ -56,7 +56,8 @@ Always review the complete `git diff` before proposing or creating a commit. Rep
 
 ## Change limits and commits
 
-- A slice may change at most 500 lines, counted as additions plus deletions across code, tests, schema, and documentation; new files count in full. Operational documentation creation is exempt from this line limit.
+- A slice may change at most 500 lines, counted as additions plus deletions across code, tests, schema, and documentation; new files count in full.
+- The 500-line limit and its pre-approval requirement do not apply to operational documentation, including standalone architecture or execution plans, runbooks, rollout procedures, and recovery procedures, when extra length is necessary to keep the document complete and self-contained. This exception applies only to documentation and does not waive focused scope, proportional validation, or complete-diff review.
 - Before work estimated above 500 changed lines, report affected files, total estimate, planned slices, and validation, then wait for approval. Each approval authorizes one slice unless the user explicitly authorizes more or permits exceeding the limit.
 - Perform only one slice per response or automatic continuation unless the user explicitly requests multiple slices. Never exceed 500 changed lines in a slice without explicit authorization.
 - Stop and request direction if the estimate grows by more than 20%, schema or migration work unexpectedly appears, another subsystem becomes involved, or a new responsibility emerges.
