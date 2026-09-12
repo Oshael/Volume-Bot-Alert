@@ -2071,19 +2071,6 @@ function renderRadarRowGlyphs(
   `;
 }
 
-function _renderDormantRadarRemoveManualGlyph(
-  mode: 'manual' | 'recent' | 'old-week',
-  chain: TokenChain,
-  safeAddress: string,
-  busy: boolean,
-) {
-  if (mode !== 'manual') {
-    return '';
-  }
-
-  return `<button type="button" class="action-glyph danger-glyph radar-remove-manual" data-action="remove-manual" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Remove from manual tokens">X</button>`;
-}
-
 function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
   const holders = resolveTokenHolderDisplay(item);
   const holderHover = holders.available

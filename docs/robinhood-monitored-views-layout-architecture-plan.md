@@ -427,8 +427,10 @@ This product slice is split into bounded implementation cuts:
   toggle `user_tokens` membership. New frontend code calls only canonical Watchlist routes and preference keys.
 - **4C1 — flat surface:** render Watchlist as a flat list, remove folder, direct-add and starred-only controls, make the star
   the only membership control and update the primary component/copy.
-- **4C2 — dead presentation removal:** delete the now-unreachable folder/modal/quick-add helpers and their dedicated CSS
-  while preserving folder data and neutral backend routes.
+- **4C2a — dead folder presentation:** delete the unreachable Watchlist folder/modal bindings and detached row-action
+  builders while preserving folder data and neutral backend routes.
+- **4C2b — dead add-control styling:** delete the remaining unreachable direct-add/quick-add helpers and their dedicated
+  CSS after verifying that no live surface still emits their selectors.
 - **4C3 — canonical cleanup:** rename remaining user-added-token domain symbols, logs and tests, then confirm that unrelated
   meanings of `manual` and the dormant neutral folder contracts were not changed.
 

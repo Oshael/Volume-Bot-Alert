@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -1933,27 +1933,6 @@ function buildGlyphButton(
   button.disabled = disabled;
   button.textContent = label;
   return button;
-}
-
-function _buildDormantManualQuickAddElement(
-  address: string,
-  chain: TokenChain,
-  busy: boolean,
-  folders: AppState['data']['manualTokenFolders'],
-) {
-  const template = document.createElement('template');
-  template.innerHTML = renderManualQuickAddAction(escapeHtml(address), busy, folders, chain).trim();
-  const element = template.content.firstElementChild;
-  if (element instanceof HTMLElement) {
-    return element;
-  }
-
-  const fallback = buildGlyphButton(
-    '+', 'action-glyph manual-quick-add-button', 'manual-quick-add', address, null, busy,
-    'Add to manual tokens',
-  );
-  fallback.dataset.chain = chain;
-  return fallback;
 }
 
 function buildStarButton(address: string, chain: TokenChain, isStarred: boolean, disabled: boolean) {
