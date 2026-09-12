@@ -106,4 +106,23 @@ describe('frontend Robinhood holder realtime events', () => {
     }));
     assert.equal(holderEvents.patchRobinhoodHolderSeries(patched, nextHour), null);
   });
+
+  it('patches a tracked holder count without accepting an older REST observation', () => {
+    const current = {
+      holderCount: 279,
+      holderObservedAt: '2026-08-10T12:20:00.000Z',
+      holderFreshness: 'stale',
+    };
+    const event = holderEvents.normalizeRobinhoodHolderEvent(realtime({ holderCount: 304 }));
+
+    assert.deepEqual(holderEvents.patchRobinhoodHolderCount(current, event), {
+      holderCount: 304,
+      holderObservedAt: event.observedAt,
+      holderFreshness: 'fresh',
+    });
+    assert.equal(holderEvents.patchRobinhoodHolderCount({
+      ...current,
+      holderObservedAt: '2026-08-10T12:31:00.000Z',
+    }, event), null);
+  });
 });

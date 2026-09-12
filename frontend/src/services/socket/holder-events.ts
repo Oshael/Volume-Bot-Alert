@@ -33,6 +33,22 @@ export interface RobinhoodHolderInvalidateEvent extends RobinhoodHolderEventBase
 
 export type RobinhoodHolderRealtimeEvent = RobinhoodHolderCountEvent | RobinhoodHolderInvalidateEvent;
 
+export function patchRobinhoodHolderCount<T extends {
+  holderCount?: number | null;
+  holderObservedAt?: string | null;
+  holderFreshness?: string | null;
+}>(current: T, event: RobinhoodHolderCountEvent): T | null {
+  const currentObservedMs = Date.parse(String(current.holderObservedAt || ''));
+  const eventObservedMs = Date.parse(event.observedAt);
+  if (Number.isFinite(currentObservedMs) && currentObservedMs > eventObservedMs) return null;
+  return {
+    ...current,
+    holderCount: event.holderCount,
+    holderObservedAt: event.observedAt,
+    holderFreshness: 'fresh',
+  };
+}
+
 function decimal(value: unknown) {
   const normalized = String(value ?? '').trim();
   if (!/^\d+$/.test(normalized)) return null;

@@ -6,7 +6,6 @@ import {
   type RobinhoodHoldersPage,
 } from '../services/api/robinhood-holders';
 import { subscribeRobinhoodHolderUpdates } from '../services/socket/client';
-import { recordHolderApplied } from '../services/socket/realtime-latency';
 import type { RobinhoodHolderCountEvent } from '../services/socket/holder-events';
 import { formatUsd } from './robinhood-trades-format';
 import { escapeHtml } from './sections/html-safety';
@@ -402,7 +401,6 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
     if (holderCount) holderCount.textContent = count(event.holderCount);
     const panelCount = panel.querySelector<HTMLElement>('[data-holder-panel-count]');
     if (panelCount) panelCount.textContent = count(event.holderCount);
-    recordHolderApplied(event);
   };
   const recoverPage = () => {
     if (disposed) return;

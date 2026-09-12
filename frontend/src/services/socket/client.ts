@@ -118,11 +118,16 @@ function dispatchMarketTradeEvent(payload: unknown, lifecycle = false) {
   for (const listener of marketTradeListeners.get(identity.key)?.listeners || []) listener(event);
 }
 
-function dispatchHolderEvent(payload: unknown) {
+function dispatchHolderEvent(payload: unknown, lifecycle?: {
+  onCount?: (event: RobinhoodHolderCountEvent) => void;
+  onInvalidate?: (event: RobinhoodHolderInvalidateEvent) => void;
+}) {
   const normalized = normalizeRobinhoodHolderEvent(payload);
   const event = normalized ? markRobinhoodHolderReceived(normalized) : null;
   const identity = event && normalizeMarketSubscription(event.address, event.chain);
   if (!event || !identity || !holderEventOrder.accept(event)) return;
+  if (event.type === 'holder:count') lifecycle?.onCount?.(event);
+  else lifecycle?.onInvalidate?.(event);
   for (const listener of holderListeners.get(identity.key)?.listeners || []) {
     if (event.type === 'holder:count') listener.onCount(event);
     else listener.onInvalidate(event);
@@ -138,6 +143,8 @@ export function bindSocketLifecycle(options: {
   onMarketLiquidityRecover?: () => void;
   onWorkspaceReadiness?: (payload: WorkspaceReadinessSignal) => void;
   onWorkspaceReadinessRecover?: () => void;
+  onHolderCount?: (payload: RobinhoodHolderCountEvent) => void;
+  onHolderInvalidate?: (payload: RobinhoodHolderInvalidateEvent) => void;
 }) {
   const current = connectSocket();
 
@@ -225,8 +232,12 @@ export function bindSocketLifecycle(options: {
     'market:trade:observed', 'market:trade:finalized', 'market:trade:invalidate',
   ]) current.on(eventName, (payload: unknown) => dispatchMarketTradeEvent(payload, true));
 
-  current.on('holder:count', dispatchHolderEvent);
-  current.on('holder:invalidate', dispatchHolderEvent);
+  const dispatchLifecycleHolderEvent = (payload: unknown) => dispatchHolderEvent(payload, {
+    onCount: options.onHolderCount,
+    onInvalidate: options.onHolderInvalidate,
+  });
+  current.on('holder:count', dispatchLifecycleHolderEvent);
+  current.on('holder:invalidate', dispatchLifecycleHolderEvent);
 
   return current;
 }

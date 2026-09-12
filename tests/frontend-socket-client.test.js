@@ -222,7 +222,14 @@ describe('frontend socket market subscriptions', () => {
   it('dispatches ordered holder events and requests REST recovery after reconnect', () => {
     const counts = [];
     const invalidations = [];
+    const lifecycleCounts = [];
+    const lifecycleInvalidations = [];
     let recoveries = 0;
+    client.bindSocketLifecycle({
+      onRevoked() {},
+      onHolderCount: (event) => lifecycleCounts.push(event.holderCount),
+      onHolderInvalidate: (event) => lifecycleInvalidations.push(event.reason),
+    });
     const unsubscribe = client.subscribeRobinhoodHolderUpdates(ROBINHOOD, {
       onCount: (event) => counts.push(event),
       onInvalidate: (event) => invalidations.push(event.reason),
@@ -254,6 +261,8 @@ describe('frontend socket market subscriptions', () => {
     assert.equal(counts[0].holderCount, 4424);
     assert.ok(Number.isFinite(Date.parse(counts[0].latency.clientReceivedAt)));
     assert.deepEqual(invalidations, ['reorg_resync']);
+    assert.deepEqual(lifecycleCounts, [4424]);
+    assert.deepEqual(lifecycleInvalidations, ['reorg_resync']);
     assert.equal(recoveries, 1);
     unsubscribe();
   });

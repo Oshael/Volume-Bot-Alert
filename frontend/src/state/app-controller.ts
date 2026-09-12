@@ -109,14 +109,16 @@ import {
   saveDismissedOldWeek,
   saveDismissedRecent,
 } from '../utils/bar-storage';
-import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent, type MarketLiquidityUpdateEvent } from '../services/socket/client';
+import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent, type MarketLiquidityUpdateEvent, type RobinhoodHolderCountEvent, type RobinhoodHolderInvalidateEvent } from '../services/socket/client';
 import {
   recordAlertApplied,
+  recordHolderApplied,
   recordLiquidityApplied,
   recordLiquidityEventApplied,
   recordMarketBucketApplied,
   recordReadinessApplied,
 } from '../services/socket/realtime-latency';
+import { patchRobinhoodHolderCount } from '../services/socket/holder-events';
 import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, upsertOrderedMarketCandle, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { applyLiquidityProjection, newestLiquidityProjection, type LiquidityProjectionTarget } from '../services/socket/liquidity-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
@@ -9003,6 +9005,31 @@ export function createAppController(): AppController {
     return true;
   }
 
+  function applyLiveHolderCountUpdate(payload: RobinhoodHolderCountEvent) {
+    const existing = getTrackedToken(state, payload.address, payload.chain);
+    if (!existing) return false;
+    const next = patchRobinhoodHolderCount(existing, payload) as ManualTokenEntry | null;
+    if (!next) return false;
+    setTrackedToken(next);
+    state.runtime.monitoredRevision += 1;
+    const dirtyRegions = new Set<AppRenderRegion>();
+    addLiveMarketRenderRegions(payload, dirtyRegions);
+    if (dirtyRegions.size > 0) emit(...dirtyRegions);
+    recordHolderApplied(payload);
+    return true;
+  }
+
+  function invalidateLiveHolderCount(payload: RobinhoodHolderInvalidateEvent) {
+    const existing = getTrackedToken(state, payload.address, payload.chain);
+    if (existing) {
+      setTrackedToken({ ...existing, holderFreshness: 'stale' });
+      const dirtyRegions = new Set<AppRenderRegion>();
+      addLiveMarketRenderRegions(payload, dirtyRegions);
+      if (dirtyRegions.size > 0) emit(...dirtyRegions);
+    }
+    refreshWorkspaceSnapshot();
+  }
+
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
     if (!entry || entry.loading || !hasRenderableSparklineSeries(entry)) {
       return false;
@@ -10578,6 +10605,16 @@ export function createAppController(): AppController {
       },
       onMarketLiquidityRecover() {
         refreshWorkspaceSnapshot();
+      },
+      onHolderCount(payload) {
+        if (state.runtime.mode === 'active' && state.session.status === 'authenticated') {
+          applyLiveHolderCountUpdate(payload);
+        }
+      },
+      onHolderInvalidate(payload) {
+        if (state.runtime.mode === 'active' && state.session.status === 'authenticated') {
+          invalidateLiveHolderCount(payload);
+        }
       },
       onWorkspaceReadiness() {
         void refreshWorkspaceChainReadiness();
