@@ -39,6 +39,17 @@ export function shouldRunFullMonitoredHydration(
   return !hasSnapshot || now >= nextFullHydrationAt;
 }
 
+export function deferCanonicalMonitoredHydration(
+  currentNextPollAt: number,
+  now: number,
+  pollIntervalMs: number,
+) {
+  return {
+    nextPollAt: Math.max(currentNextPollAt, now + pollIntervalMs),
+    nextFullHydrationAt: 0,
+  };
+}
+
 export function shouldApplyDashboardValuation(
   liveObservedAt: string | null | undefined,
   incoming: DashboardMarketSnapshot | null | undefined,

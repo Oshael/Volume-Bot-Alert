@@ -35,6 +35,17 @@ describe('frontend monitored refresh policy', () => {
     assert.equal(policy.shouldRunFullMonitoredHydration(true, 60_000, 60_000), true);
   });
 
+  it('defers canonical hydration after the priority page without marking it complete', () => {
+    assert.deepEqual(policy.deferCanonicalMonitoredHydration(10_000, 1_000, 15_000), {
+      nextPollAt: 16_000,
+      nextFullHydrationAt: 0,
+    });
+    assert.deepEqual(policy.deferCanonicalMonitoredHydration(30_000, 1_000, 15_000), {
+      nextPollAt: 30_000,
+      nextFullHydrationAt: 0,
+    });
+  });
+
   it('keeps realtime valuation authoritative over an older REST snapshot', () => {
     const liveObservedAt = '2026-07-18T23:00:45.000Z';
     assert.equal(policy.shouldApplyDashboardValuation(liveObservedAt, {

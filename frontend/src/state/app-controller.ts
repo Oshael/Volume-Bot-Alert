@@ -90,6 +90,7 @@ import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
 import {
   addUnincludedLiveActivity,
+  deferCanonicalMonitoredHydration,
   mergeMonitoredFirstPage,
   shouldApplyDashboardValuation,
   shouldRunFullMonitoredHydration,
@@ -12173,44 +12174,57 @@ export function createAppController(): AppController {
     manualTokens: AddressItem[],
     chains: TokenChain[],
   ) {
-    if (getCurrentMonitoredDashboardSnapshot().length > 0) return true;
+    if (getCurrentMonitoredDashboardSnapshot().length > 0) return 'existing-snapshot';
+    const requestKey = buildChainRequestKey(chains);
+    if (monitoredRefreshKeysInFlight.has(requestKey)) return null;
     const requestRevision = monitoredBootstrapHydrationRevision + 1;
     monitoredBootstrapHydrationRevision = requestRevision;
-    const requestKey = buildChainRequestKey(chains);
+    const schedule = deferCanonicalMonitoredHydration(
+      nextMonitoredDashboardPollAt,
+      Date.now(),
+      MONITORED_DASHBOARD_POLL_INTERVAL_MS,
+    );
+    nextMonitoredDashboardPollAt = schedule.nextPollAt;
+    nextMonitoredFullHydrationAt = schedule.nextFullHydrationAt;
+    monitoredRefreshKeysInFlight.add(requestKey);
     const perPage = Math.min(
       MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE,
       normalizeUiPerPage(state.ui.monitoredPerPage, 30),
     );
-    const firstPage = await fetchMonitoredHydrationPage({
-      token,
-      chains,
-      page: 0,
-      perPage,
-      sorts: getMonitoredBootstrapSorts(),
-      priority: true,
-    });
-    if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) return false;
+    try {
+      const firstPage = await fetchMonitoredHydrationPage({
+        token,
+        chains,
+        page: 0,
+        perPage,
+        sorts: getMonitoredBootstrapSorts(),
+        priority: true,
+      });
+      if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) return null;
 
-    const tokens = [...(firstPage.tokens || [])];
-    const snapshotComplete = tokens.length >= firstPage.total || !firstPage.hasMore;
-    applyPagedMonitoredHydrationSnapshot({
-      token,
-      manualTokens,
-      tokens,
-      pinnedTokens: firstPage.pinnedTokens || [],
-      snapshotComplete,
-      preserveExistingUntilComplete: false,
-      generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
-    });
-    void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-    recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.priority-page', {
-      generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
-      returned: tokens.length,
-      total: firstPage.total,
-      hasMore: firstPage.hasMore,
-      payloadHead: summarizeDashboardDebugTokens(tokens),
-    });
-    return true;
+      const tokens = [...(firstPage.tokens || [])];
+      const snapshotComplete = tokens.length >= firstPage.total || !firstPage.hasMore;
+      applyPagedMonitoredHydrationSnapshot({
+        token,
+        manualTokens,
+        tokens,
+        pinnedTokens: firstPage.pinnedTokens || [],
+        snapshotComplete,
+        preserveExistingUntilComplete: false,
+        generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
+      });
+      void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
+      recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.priority-page', {
+        generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
+        returned: tokens.length,
+        total: firstPage.total,
+        hasMore: firstPage.hasMore,
+        payloadHead: summarizeDashboardDebugTokens(tokens),
+      });
+      return 'priority-applied';
+    } finally {
+      monitoredRefreshKeysInFlight.delete(requestKey);
+    }
   }
 
   async function hydrateRemainingMonitoredPages(input: {
@@ -12437,13 +12451,23 @@ export function createAppController(): AppController {
         return;
       }
 
-      const priorityCurrent = await hydratePriorityMonitoredPage(token, manualTokens, getReadySelectedChains('monitored'));
-      if (!priorityCurrent) return;
-      await hydratePagedDashboardMonitored(token, manualTokens);
-      void refreshHistoryWorkspaceSparklines({
+      const priorityResult = await hydratePriorityMonitoredPage(
         token,
-        caller: 'monitored-bootstrap-complete',
-      });
+        manualTokens,
+        getReadySelectedChains('monitored'),
+      );
+      if (!priorityResult) return;
+      if (priorityResult === 'priority-applied') {
+        recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.canonical-deferred', {
+          pollInMs: Math.max(0, nextMonitoredDashboardPollAt - Date.now()),
+        });
+      } else {
+        await hydratePagedDashboardMonitored(token, manualTokens);
+        void refreshHistoryWorkspaceSparklines({
+          token,
+          caller: 'monitored-bootstrap-complete',
+        });
+      }
       state.ui.monitoredLoadError = null;
       emitMonitoredWorkspaceRegions();
       void refreshDashboardTopPerformers(token);
