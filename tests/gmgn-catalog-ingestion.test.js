@@ -817,7 +817,7 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(dexEvaluation.eligibleForMonitoring, true);
   });
 
-  it('preserves manual catalog source while still treating the bucket source as GMGN', () => {
+  it('canonicalizes a legacy Watchlist source while keeping the bucket source as GMGN', () => {
     const payload = gmgnCatalogIngestion.__private.buildCatalogPayload(
       createSnapshot(),
       { source: 'user-manual' }
@@ -827,7 +827,7 @@ describe('gmgn catalog ingestion', () => {
       new Date('2026-05-03T07:00:00.000Z')
     );
 
-    assert.equal(payload.source, 'user-manual');
+    assert.equal(payload.source, 'user-watchlist');
     assert.equal(bucketPayload.chain, 'solana');
     assert.equal(bucketPayload.source, 'gmgn');
   });
@@ -1071,7 +1071,7 @@ describe('gmgn catalog ingestion', () => {
     const upsertPayload = catalog.calls.find((call) => call[0] === 'upsertToken')[1];
     const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
 
-    assert.equal(upsertPayload.source, 'user-manual');
+    assert.equal(upsertPayload.source, 'user-watchlist');
     assert.equal(upsertPayload.vol5m, 4300);
     assert.equal(evaluationPayload.vol5m, 4300);
     assert.equal(bucketWrites[0].vol5m, 4300);
@@ -1318,7 +1318,7 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 84550.6);
   });
 
-  it('does not auto-block user manual addresses even when the catalog source is still GMGN', async () => {
+  it('does not auto-block Watchlist addresses even when the catalog source is still GMGN', async () => {
     let blockCalls = 0;
     let upsertPayload = null;
     let marketBucketWrites = 0;
@@ -1383,7 +1383,7 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.skipped, undefined);
     assert.equal(result.summary.gmgnBadLiquidityStatusAutoBlocked, 0);
     assert.equal(blockCalls, 0);
-    assert.equal(upsertPayload.source, 'user-manual');
+    assert.equal(upsertPayload.source, 'user-watchlist');
     assert.equal(marketBucketWrites, 1);
     assert.equal(volumeBucketWrites, 1);
   });

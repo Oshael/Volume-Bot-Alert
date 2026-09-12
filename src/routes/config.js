@@ -11,7 +11,8 @@ const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
 const userAlertProfileCache = require('../services/user-alert-profile-cache');
 const userConfigSync = require('../services/user-config-sync');
-const manualTokenBootstrap = require('../services/manual-token-bootstrap');
+const watchlistTokenBootstrap = require('../services/watchlist-token-bootstrap');
+const { WATCHLIST_SOURCE, isWatchlistSource } = require('../utils/watchlist-token-source');
 const alertTickerPeers = require('../services/alert-ticker-peers');
 const { normalizeText } = require('../utils/url-safety');
 const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
@@ -43,7 +44,7 @@ async function attachTickerPeerSummaries(tokens = []) {
       tickerPeers: tickerPeersByAddress.get(item.address) || null,
     }));
   } catch (error) {
-    console.warn('[Config] Failed to load manual-token ticker peers:', error.message);
+    console.warn('[Config] Failed to load Watchlist token ticker peers:', error.message);
     return tokens;
   }
 }
@@ -119,8 +120,8 @@ async function upsertCatalogItemsAndSchedule(items, source) {
 
   for (const item of items) {
     try {
-      if (source === 'user-manual') {
-        await manualTokenBootstrap.upsertManualCatalogToken(item.address);
+      if (isWatchlistSource(source)) {
+        await watchlistTokenBootstrap.upsertWatchlistCatalogToken(item.address);
       } else {
         await tokenCatalog.upsertToken({
           address: item.address,
@@ -263,7 +264,7 @@ router.put('/', async (req, res) => {
     let normalizedTokens = null;
     let normalizedBlocklist = null;
     let normalizedStarred = null;
-    let removedManualTokenCandidates = [];
+    let removedWatchlistTokenCandidates = [];
 
     // Validate everything first so the request is all-or-nothing.
     if (configs && typeof configs === 'object') {
@@ -280,7 +281,7 @@ router.put('/', async (req, res) => {
     if (Array.isArray(tokens)) {
       if (tokens.length > MAX_TOKENS) {
         return res.status(400).json({
-          error: `Maximum ${MAX_TOKENS} manual tokens allowed`,
+          error: `Maximum ${MAX_TOKENS} Watchlist tokens allowed`,
         });
       }
 
@@ -346,7 +347,7 @@ router.put('/', async (req, res) => {
           [req.user.id]
         );
         const nextTokenAddresses = new Set(normalizedTokens.map((item) => item.address));
-        removedManualTokenCandidates = previousTokens.rows
+        removedWatchlistTokenCandidates = previousTokens.rows
           .map((row) => String(row.address || '').trim())
           .filter((address) => address && !nextTokenAddresses.has(address));
 
@@ -393,10 +394,10 @@ router.put('/', async (req, res) => {
       client.release();
     }
     await Promise.all([
-      upsertCatalogItemsAndSchedule(normalizedTokens, 'user-manual'),
+      upsertCatalogItemsAndSchedule(normalizedTokens, WATCHLIST_SOURCE),
       upsertCatalogItems(normalizedBlocklist, 'blocklist'),
       upsertCatalogItems(normalizedStarred, 'starred'),
-      ...removedManualTokenCandidates.map((address) => tokenCatalog.demoteFormerManualAddress(address)),
+      ...removedWatchlistTokenCandidates.map((address) => tokenCatalog.demoteFormerWatchlistAddress(address)),
     ]);
     userAlertProfileCache.invalidateUserProfile(req.user.id);
     await notifyUserConfigChangedIfNeeded(req.user.id, validatedConfigs !== null);
@@ -496,12 +497,12 @@ router.patch('/ui-prefs', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════
-//  MANUAL TOKENS
+//  WATCHLIST TOKENS
 // ══════════════════════════════════════════════════════════════════
 
 /**
  * POST /api/config/tokens
- * Add a manual token.
+ * Add a Watchlist token.
  * Body: { address, label? }
  */
 router.post('/tokens', async (req, res) => {
@@ -519,7 +520,7 @@ router.post('/tokens', async (req, res) => {
     const currentCount = await userToken.count(req.user.id, identity.chain);
     if (currentCount >= MAX_TOKENS) {
       return res.status(400).json({
-        error: `Maximum ${MAX_TOKENS} manual tokens reached`,
+        error: `Maximum ${MAX_TOKENS} Watchlist tokens reached`,
       });
     }
 
@@ -529,9 +530,9 @@ router.post('/tokens', async (req, res) => {
     }
 
     try {
-      await manualTokenBootstrap.upsertManualCatalogToken(identity.address, { chain: identity.chain });
+      await watchlistTokenBootstrap.upsertWatchlistCatalogToken(identity.address, { chain: identity.chain });
     } catch (catalogErr) {
-      console.error(`[TokenCatalog] Failed to catalog manual token ${identity.chain}:${identity.address}:`, catalogErr.message);
+      console.error(`[TokenCatalog] Failed to catalog Watchlist token ${identity.chain}:${identity.address}:`, catalogErr.message);
     }
 
     res.status(201).json({ message: 'Token added', token: result });
@@ -543,7 +544,7 @@ router.post('/tokens', async (req, res) => {
 
 /**
  * DELETE /api/config/tokens/:address
- * Remove a manual token.
+ * Remove a Watchlist token.
  */
 router.delete('/tokens/:address', async (req, res) => {
   try {
@@ -554,7 +555,7 @@ router.delete('/tokens/:address', async (req, res) => {
       return res.status(404).json({ error: 'Token not found' });
     }
 
-    await tokenCatalog.demoteFormerManualAddress(identity.address, identity.chain);
+    await tokenCatalog.demoteFormerWatchlistAddress(identity.address, identity.chain);
 
     res.json({ message: 'Token removed' });
   } catch (err) {
@@ -628,7 +629,7 @@ router.delete('/token-folders/:folderId', async (req, res) => {
     }
 
     await Promise.all(result.removedIdentities.map((identity) => (
-      tokenCatalog.demoteFormerManualAddress(identity.address, identity.chain)
+      tokenCatalog.demoteFormerWatchlistAddress(identity.address, identity.chain)
     )));
 
     res.json({
@@ -651,21 +652,21 @@ router.post('/token-folders/:folderId/tokens', async (req, res) => {
       return res.status(404).json({ error: 'Folder not found' });
     }
 
-    const alreadyManual = await userToken.exists(req.user.id, identity.address, identity.chain);
-    if (!alreadyManual) {
+    const alreadyWatchlisted = await userToken.exists(req.user.id, identity.address, identity.chain);
+    if (!alreadyWatchlisted) {
       const currentCount = await userToken.count(req.user.id, identity.chain);
       if (currentCount >= MAX_TOKENS) {
         return res.status(400).json({
-          error: `Maximum ${MAX_TOKENS} manual tokens reached`,
+          error: `Maximum ${MAX_TOKENS} Watchlist tokens reached`,
         });
       }
 
       const addedToken = await userToken.add(req.user.id, identity.address, null, identity.chain);
       if (addedToken) {
         try {
-          await manualTokenBootstrap.upsertManualCatalogToken(identity.address, { chain: identity.chain });
+          await watchlistTokenBootstrap.upsertWatchlistCatalogToken(identity.address, { chain: identity.chain });
         } catch (catalogErr) {
-          console.error(`[TokenCatalog] Failed to catalog manual token ${identity.chain}:${identity.address}:`, catalogErr.message);
+          console.error(`[TokenCatalog] Failed to catalog Watchlist token ${identity.chain}:${identity.address}:`, catalogErr.message);
         }
       }
     }
@@ -679,7 +680,7 @@ router.post('/token-folders/:folderId/tokens', async (req, res) => {
       return res.status(404).json({ error: 'Folder token not found' });
     }
 
-    res.status(201).json({ message: 'Token added to folder', item, tokenCreated: !alreadyManual });
+    res.status(201).json({ message: 'Token added to folder', item, tokenCreated: !alreadyWatchlisted });
   } catch (err) {
     console.error('POST /config/token-folders/:folderId/tokens error:', err.message);
     sendRouteError(res, err, 'Failed to add token to folder');
@@ -699,7 +700,7 @@ router.delete('/token-folders/:folderId/tokens/:address', async (req, res) => {
       return res.status(404).json({ error: 'Folder token not found' });
     }
 
-    await tokenCatalog.demoteFormerManualAddress(result.removedAddress, result.removedChain);
+    await tokenCatalog.demoteFormerWatchlistAddress(result.removedAddress, result.removedChain);
     res.json({ message: 'Token removed', removed: {
       chain: result.removedChain, address: result.removedAddress,
     } });

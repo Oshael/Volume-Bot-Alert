@@ -85,25 +85,25 @@ describe('Robinhood dashboard catalog projection', () => {
     }, runner), null);
   });
 
-  it('creates a durable manual identity without making it monitoring-eligible', async () => {
+  it('creates a durable Watchlist identity without making it monitoring-eligible', async () => {
     const calls = [];
-    const row = await catalog.ensureManualToken(TOKEN.toUpperCase(), {
+    const row = await catalog.ensureWatchlistToken(TOKEN.toUpperCase(), {
       async query(sql, params) {
         calls.push({ sql, params });
-        return { rows: [{ chain: 'robinhood', address: params[0], source: 'user-manual' }] };
+        return { rows: [{ chain: 'robinhood', address: params[0], source: 'user-watchlist' }] };
       },
     });
 
     assert.equal(row.address, TOKEN);
-    assert.match(calls[0].sql, /'user-manual', FALSE/);
-    assert.match(calls[0].sql, /FALSE, 'robinhood-manual'/);
+    assert.match(calls[0].sql, /'user-watchlist', FALSE/);
+    assert.match(calls[0].sql, /FALSE, 'robinhood-watchlist'/);
     assert.match(calls[0].sql, /token_catalog\.source = 'robinhood-onchain'/);
     assert.deepEqual(calls[0].params, [TOKEN]);
   });
 
-  it('selects manual Robinhood identities for asynchronous metadata enrichment', async () => {
+  it('selects Watchlist Robinhood identities for asynchronous metadata enrichment', async () => {
     const calls = [];
-    const rows = await catalog.listManualMetadataCandidates({ limit: 75 }, {
+    const rows = await catalog.listWatchlistMetadataCandidates({ limit: 75 }, {
       async query(sql, params) {
         calls.push({ sql, params });
         return { rows: [{ tokenAddress: TOKEN, volumeUsd: '0' }] };
@@ -112,7 +112,7 @@ describe('Robinhood dashboard catalog projection', () => {
 
     assert.equal(rows[0].tokenAddress, TOKEN);
     assert.match(calls[0].sql, /EXISTS \(/);
-    assert.match(calls[0].sql, /manual\.chain = catalog\.chain/);
+    assert.match(calls[0].sql, /watchlist\.chain = catalog\.chain/);
     assert.deepEqual(calls[0].params, [75]);
   });
 

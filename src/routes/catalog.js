@@ -21,7 +21,7 @@ const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
-const manualTokenBootstrap = require('../services/manual-token-bootstrap');
+const watchlistTokenBootstrap = require('../services/watchlist-token-bootstrap');
 const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
 const catalogMarketHistory = require('../services/catalog-market-history');
@@ -313,7 +313,7 @@ router.get('/eligible', catalogReadLimiter, async (req, res) => {
   }
 });
 
-router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
+async function trackWatchlistToken(req, res) {
   try {
     const address = String(req.body?.address || '').trim();
     if (!isValidAddress(address)) {
@@ -324,20 +324,23 @@ router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Token is permanently blocked by admin' });
     }
 
-    const bootstrap = await manualTokenBootstrap.upsertManualCatalogToken(address, {
+    const bootstrap = await watchlistTokenBootstrap.upsertWatchlistCatalogToken(address, {
       eagerEvaluate: true,
     });
 
     res.status(201).json({
-      message: 'Manual token scheduled for catalog tracking',
+      message: 'Watchlist token scheduled for catalog tracking',
       tracked: { address },
       bootstrapState: bootstrap.bootstrapState,
     });
   } catch (err) {
-    console.error('POST /catalog/manual-track error:', err.message);
-    res.status(500).json({ error: 'Failed to schedule manual token tracking' });
+    console.error(`POST ${req.baseUrl}${req.path} error:`, err.message);
+    res.status(500).json({ error: 'Failed to schedule Watchlist token tracking' });
   }
-});
+}
+
+router.post('/watchlist-track', catalogWriteLimiter, trackWatchlistToken);
+router.post('/manual-track', catalogWriteLimiter, trackWatchlistToken);
 
 router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) => {
   const parsed = parseMeteoraBatchAddresses(req.body?.addresses);
@@ -1180,9 +1183,9 @@ async function buildValidatedPromotion(user, body = {}) {
     return { status: 400, error: 'Unsupported promotion source' };
   }
 
-  const manualTokens = new Set((await userToken.getAll(user.id)).map((item) => item.address));
-  if (manualTokens.has(address)) {
-    return { status: 409, error: 'Manual tokens are persisted via the user config flow' };
+  const watchlistTokens = new Set((await userToken.getAll(user.id)).map((item) => item.address));
+  if (watchlistTokens.has(address)) {
+    return { status: 409, error: 'Watchlist tokens are persisted via the user config flow' };
   }
 
   const cooldown = getTransientRetry(user.id, address, source);

@@ -417,7 +417,7 @@ async function applyMetadata(input = {}, runner = db) {
   return rows[0] || null;
 }
 
-async function ensureManualToken(tokenAddress, runner = db) {
+async function ensureWatchlistToken(tokenAddress, runner = db) {
   const address = normalizeTokenAddress(CHAIN, tokenAddress);
   const { rows } = await runner.query(
     `INSERT INTO token_catalog (
@@ -425,17 +425,17 @@ async function ensureManualToken(tokenAddress, runner = db) {
        eligible_for_monitoring, eligibility_state, suppressed_reason,
        monitor_priority
      ) VALUES (
-       'robinhood', $1, 'user-manual', FALSE,
-       FALSE, 'robinhood-manual', 'robinhood-manual-metadata-pending',
+       'robinhood', $1, 'user-watchlist', FALSE,
+       FALSE, 'robinhood-watchlist', 'robinhood-watchlist-metadata-pending',
        'dormant'
      )
      ON CONFLICT (chain, address) DO UPDATE SET
        source = CASE WHEN token_catalog.source = 'robinhood-onchain'
-         THEN token_catalog.source ELSE 'user-manual' END,
+         THEN token_catalog.source ELSE 'user-watchlist' END,
        eligibility_state = CASE WHEN token_catalog.source = 'robinhood-onchain'
-         THEN token_catalog.eligibility_state ELSE 'robinhood-manual' END,
+         THEN token_catalog.eligibility_state ELSE 'robinhood-watchlist' END,
        suppressed_reason = CASE WHEN token_catalog.source = 'robinhood-onchain'
-         THEN token_catalog.suppressed_reason ELSE 'robinhood-manual-metadata-pending' END,
+         THEN token_catalog.suppressed_reason ELSE 'robinhood-watchlist-metadata-pending' END,
        metadata_updated_at = NOW()
      RETURNING *`,
     [address]
@@ -443,15 +443,15 @@ async function ensureManualToken(tokenAddress, runner = db) {
   return rows[0] || null;
 }
 
-async function listManualMetadataCandidates(input = {}, runner = db) {
+async function listWatchlistMetadataCandidates(input = {}, runner = db) {
   const limit = Math.max(1, Math.min(Number(input.limit) || 1000, 5000));
   const { rows } = await runner.query(
     `SELECT catalog.address AS "tokenAddress", 0::numeric AS "volumeUsd"
      FROM token_catalog catalog
      WHERE catalog.chain = 'robinhood'
        AND EXISTS (
-         SELECT 1 FROM user_tokens manual
-         WHERE manual.chain = catalog.chain AND manual.address = catalog.address
+         SELECT 1 FROM user_tokens watchlist
+         WHERE watchlist.chain = catalog.chain AND watchlist.address = catalog.address
        )
      ORDER BY catalog.metadata_updated_at ASC, catalog.address ASC
      LIMIT $1`,
@@ -511,10 +511,10 @@ async function listAutomaticMetadataCandidates(input = {}, runner = db) {
 module.exports = {
   applyLiveSnapshots,
   applyMetadata,
-  ensureManualToken,
+  ensureWatchlistToken,
   listAutomaticMetadataCandidates,
   listMetadata,
-  listManualMetadataCandidates,
+  listWatchlistMetadataCandidates,
   projectDashboardSnapshot,
   recordBlockscoutMetadata,
   recordDexscreenerMetadata,

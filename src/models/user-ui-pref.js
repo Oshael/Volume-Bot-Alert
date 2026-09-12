@@ -6,12 +6,10 @@ const {
 } = require('../utils/token-chain-availability');
 const config = require('../../config');
 
-const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'bidZone', 'pumpfun'];
+const COLLAPSIBLE_SECTIONS = ['watchlist', 'recent', 'oldWeek', 'monitored', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
 const MONITORED_SORT_MODES = ['vol', 'mcap', 'age'];
 const BOOLEAN_PREF_KEYS = [
-  'manualStarredOnly',
-  'manualFolderDeleteWarningDismissed',
   'recentStarredOnly',
   'oldWeekStarredOnly',
 ];
@@ -72,22 +70,20 @@ function getConfiguredAvailableTokenChains() {
 
 const DEFAULT_UI_PREFS = {
   collapsed: {
-    manual: false,
+    watchlist: false,
     recent: false,
     oldWeek: false,
     monitored: false,
     bidZone: false,
     pumpfun: false,
   },
-  manualStarredOnly: false,
-  manualFolderDeleteWarningDismissed: false,
   recentStarredOnly: false,
   oldWeekStarredOnly: false,
   chainFilters: DEFAULT_CHAIN_FILTERS,
   monitoredPerPage: 30,
   recentPerPage: 30,
   oldWeekPerPage: 30,
-  manualSorts: [{ mode: 'mcap', window: 'highest' }],
+  watchlistSorts: [{ mode: 'mcap', window: 'highest' }],
   recentSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
@@ -622,8 +618,27 @@ function normalizeStoredSorts(key, value, options, fallback) {
   return normalizedStoredValue(validateSorts(key, value, options), fallback);
 }
 
-function normalizePrefs(raw) {
+function canonicalizeWatchlistPrefs(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const canonical = { ...source };
+  if (source.collapsed && typeof source.collapsed === 'object' && !Array.isArray(source.collapsed)) {
+    canonical.collapsed = { ...source.collapsed };
+    if (canonical.collapsed.watchlist == null && canonical.collapsed.manual != null) {
+      canonical.collapsed.watchlist = canonical.collapsed.manual;
+    }
+    delete canonical.collapsed.manual;
+  }
+  if (canonical.watchlistSorts == null && source.manualSorts != null) {
+    canonical.watchlistSorts = source.manualSorts;
+  }
+  delete canonical.manualSorts;
+  delete canonical.manualStarredOnly;
+  delete canonical.manualFolderDeleteWarningDismissed;
+  return canonical;
+}
+
+function normalizePrefs(raw) {
+  const source = canonicalizeWatchlistPrefs(raw);
   const defaults = cloneDefaultPrefs();
   const collapsed = source.collapsed && typeof source.collapsed === 'object' && !Array.isArray(source.collapsed)
     ? source.collapsed
@@ -631,25 +646,23 @@ function normalizePrefs(raw) {
 
   defaults.collapsed = {
     ...defaults.collapsed,
-    manual: Boolean(collapsed.manual),
+    watchlist: Boolean(collapsed.watchlist),
     recent: Boolean(collapsed.recent),
     oldWeek: Boolean(collapsed.oldWeek),
     monitored: Boolean(collapsed.monitored),
     bidZone: Boolean(collapsed.bidZone),
     pumpfun: Boolean(collapsed.pumpfun),
   };
-  defaults.manualStarredOnly = Boolean(source.manualStarredOnly);
-  defaults.manualFolderDeleteWarningDismissed = Boolean(source.manualFolderDeleteWarningDismissed);
   defaults.recentStarredOnly = Boolean(source.recentStarredOnly);
   defaults.oldWeekStarredOnly = Boolean(source.oldWeekStarredOnly);
   defaults.chainFilters = normalizeChainFilters(source.chainFilters);
   defaults.monitoredPerPage = normalizeStoredPerPage(source.monitoredPerPage, defaults.monitoredPerPage);
   defaults.recentPerPage = normalizeStoredPerPage(source.recentPerPage, defaults.recentPerPage);
   defaults.oldWeekPerPage = normalizeStoredPerPage(source.oldWeekPerPage, defaults.oldWeekPerPage);
-  defaults.manualSorts = normalizeStoredSorts('manualSorts', source.manualSorts, {
+  defaults.watchlistSorts = normalizeStoredSorts('watchlistSorts', source.watchlistSorts, {
     allowedModes: BUCKET_SORT_MODES,
     isAllowedWindow: isAllowedBucketWindow,
-  }, defaults.manualSorts);
+  }, defaults.watchlistSorts);
   defaults.recentSorts = normalizeStoredSorts('recentSorts', source.recentSorts, {
     allowedModes: BUCKET_SORT_MODES,
     isAllowedWindow: isAllowedBucketWindow,
@@ -702,7 +715,7 @@ const UI_PREF_VALIDATORS = new Map([
   ['expandedSparklineGranularityMinutes', validateExpandedSparklineGranularity],
   ['expandedSparklineTimeZone', validateExpandedChartTimeZone],
   ['sparklineRange', validateSparklineRange],
-  ['manualSorts', (key, value) => validateSorts(key, value, {
+  ['watchlistSorts', (key, value) => validateSorts(key, value, {
     allowedModes: BUCKET_SORT_MODES,
     isAllowedWindow: isAllowedBucketWindow,
   })],
@@ -737,9 +750,10 @@ function validatePatch(input) {
     return { valid: false, prefs: {}, errors: ['uiPrefs must be an object'] };
   }
 
+  const canonicalInput = canonicalizeWatchlistPrefs(input);
   const prefs = {};
   const errors = [];
-  for (const [key, value] of Object.entries(input)) {
+  for (const [key, value] of Object.entries(canonicalInput)) {
     const validator = UI_PREF_VALIDATORS.get(key);
     if (!validator) {
       errors.push(`Unknown uiPrefs key: ${key}`);
@@ -799,6 +813,7 @@ async function patch(userId, partialPrefs) {
 module.exports = {
   DEFAULT_UI_PREFS,
   cloneDefaultPrefs,
+  canonicalizeWatchlistPrefs,
   normalizePrefs,
   validatePatch,
   getAll,

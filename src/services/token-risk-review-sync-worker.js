@@ -1,6 +1,7 @@
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenRiskReview = require('../models/token-risk-review');
+const { isWatchlistSource } = require('../utils/watchlist-token-source');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenJunkEvidenceCapture = require('./token-junk-evidence-capture');
 const adminTokenReviewAlertService = require('./admin-token-review-alert-service');
@@ -214,7 +215,7 @@ function isGmgnSource(row) {
 
 function isDexGmgnHolderAnomalySourceEligible(row = {}) {
   const source = String(row?.source || '').trim().toLowerCase();
-  if (isGmgnSource(row) || source === 'user-manual') {
+  if (isGmgnSource(row) || isWatchlistSource(source)) {
     return false;
   }
   return String(row?.risk_review_source || '').trim().toLowerCase() !== 'manual';

@@ -132,7 +132,7 @@ describe('token catalog chain identity', () => {
       assert.match(sql, /SELECT chain, address FROM user_tokens/);
       assert.match(sql, /SELECT chain, address FROM user_starred_tokens/);
       assert.match(sql, /SELECT chain, address FROM user_blocklist/);
-      assert.match(sql, /SELECT chain, address FROM token_catalog WHERE source = 'user-manual'/);
+      assert.match(sql, /SELECT chain, address FROM token_catalog\s+WHERE source IN \('user-watchlist', 'user-manual'\)/);
       assert.match(sql, /WHERE tc\.chain = 'solana'/);
       assert.match(sql, /protected\.chain = tc\.chain\s+AND protected\.address = tc\.address/);
     }

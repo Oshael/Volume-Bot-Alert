@@ -13,14 +13,14 @@ const TOKEN_A = 'So11111111111111111111111111111111111111112';
 const TOKEN_B = 'So11111111111111111111111111111111111111113';
 
 function stubLiveManualAddress(value = true) {
-  const originalHasUserManualAddress = tokenCatalog.hasUserManualAddress;
-  const originalDemoteFormerManualAddress = tokenCatalog.demoteFormerManualAddress;
-  tokenCatalog.hasUserManualAddress = async () => value;
-  tokenCatalog.demoteFormerManualAddress = async () => null;
+  const originalHasUserWatchlistAddress = tokenCatalog.hasUserWatchlistAddress;
+  const originalDemoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress;
+  tokenCatalog.hasUserWatchlistAddress = async () => value;
+  tokenCatalog.demoteFormerWatchlistAddress = async () => null;
   catalogWorker.__private.clearManualGmgnCachesForTest();
   return () => {
-    tokenCatalog.hasUserManualAddress = originalHasUserManualAddress;
-    tokenCatalog.demoteFormerManualAddress = originalDemoteFormerManualAddress;
+    tokenCatalog.hasUserWatchlistAddress = originalHasUserWatchlistAddress;
+    tokenCatalog.demoteFormerWatchlistAddress = originalDemoteFormerWatchlistAddress;
     catalogWorker.__private.clearManualGmgnCachesForTest();
   };
 }
@@ -942,8 +942,8 @@ describe('catalog worker drift compensation', () => {
 
   it('does not use GMGN for catalog rows that are no longer live manual tokens', async () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
-    const originalHasUserManualAddress = tokenCatalog.hasUserManualAddress;
-    const originalDemoteFormerManualAddress = tokenCatalog.demoteFormerManualAddress;
+    const originalHasUserWatchlistAddress = tokenCatalog.hasUserWatchlistAddress;
+    const originalDemoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress;
     let demotedAddress = null;
     const tokenBefore = {
       address: TOKEN_B,
@@ -960,8 +960,8 @@ describe('catalog worker drift compensation', () => {
     };
 
     catalogWorker.__private.clearManualGmgnCachesForTest();
-    tokenCatalog.hasUserManualAddress = async () => false;
-    tokenCatalog.demoteFormerManualAddress = async (address) => {
+    tokenCatalog.hasUserWatchlistAddress = async () => false;
+    tokenCatalog.demoteFormerWatchlistAddress = async (address) => {
       demotedAddress = address;
       return { ...tokenBefore, source: 'dexscreener-discovery' };
     };
@@ -982,8 +982,8 @@ describe('catalog worker drift compensation', () => {
       assert.equal(demotedAddress, TOKEN_B);
     } finally {
       tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
-      tokenCatalog.hasUserManualAddress = originalHasUserManualAddress;
-      tokenCatalog.demoteFormerManualAddress = originalDemoteFormerManualAddress;
+      tokenCatalog.hasUserWatchlistAddress = originalHasUserWatchlistAddress;
+      tokenCatalog.demoteFormerWatchlistAddress = originalDemoteFormerWatchlistAddress;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
       catalogWorker.__private.clearManualGmgnCachesForTest();
     }

@@ -3,20 +3,21 @@ const dexscreener = require('./dexscreener');
 const catalogWorker = require('./catalog-worker');
 const robinhoodCatalog = require('../models/robinhood-catalog');
 const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+const { WATCHLIST_SOURCE } = require('../utils/watchlist-token-source');
 
 function isSoftArchivedToken(token) {
   return String(token?.suppressed_reason || '').trim().toLowerCase() === 'cleanup_soft_archive';
 }
 
-async function upsertManualCatalogToken(address, options = {}) {
+async function upsertWatchlistCatalogToken(address, options = {}) {
   const chain = normalizeTokenChain(options.chain || 'solana');
   const addr = normalizeTokenAddress(chain, address);
   if (chain === 'robinhood') {
-    const token = await robinhoodCatalog.ensureManualToken(addr);
+    const token = await robinhoodCatalog.ensureWatchlistToken(addr);
     return { token, bootstrapState: 'scheduled' };
   }
   if (chain !== 'solana') {
-    throw new Error(`Manual token bootstrap does not support ${chain}`);
+    throw new Error(`Watchlist token bootstrap does not support ${chain}`);
   }
   const eagerEvaluate = options.eagerEvaluate === true;
 
@@ -25,16 +26,16 @@ async function upsertManualCatalogToken(address, options = {}) {
 
   if (isSoftArchivedToken(existing)) {
     catalogToken = await tokenCatalog.reactivateSoftArchivedToken(addr, {
-      source: 'user-manual',
+      source: WATCHLIST_SOURCE,
     });
     if (!catalogToken) {
-      throw new Error('Failed to reactivate archived manual token');
+      throw new Error('Failed to reactivate archived Watchlist token');
     }
   } else {
     const upserted = await tokenCatalog.upsertToken({
       address: addr,
       chain: 'solana',
-      source: 'user-manual',
+      source: WATCHLIST_SOURCE,
     });
     catalogToken = await tokenCatalog.scheduleImmediateEvaluation(addr) || upserted;
   }
@@ -47,7 +48,7 @@ async function upsertManualCatalogToken(address, options = {}) {
       await catalogWorker.__private.evaluateTokenWithData(catalogToken, dexData);
       bootstrapState = 'evaluated';
     } catch (error) {
-      console.error(`[ManualTokenBootstrap] Immediate evaluation failed for ${addr}:`, error.message);
+      console.error(`[WatchlistTokenBootstrap] Immediate evaluation failed for ${addr}:`, error.message);
     }
   }
 
@@ -58,7 +59,7 @@ async function upsertManualCatalogToken(address, options = {}) {
 }
 
 module.exports = {
-  upsertManualCatalogToken,
+  upsertWatchlistCatalogToken,
   __private: {
     isSoftArchivedToken,
   },

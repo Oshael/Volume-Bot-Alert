@@ -38,8 +38,8 @@ This document is the standalone implementation source of truth. Implementation m
    percentile and 5% bounded price change 6h percentile.
 8. Only names meaning “tokens explicitly added by a user” change from Manual Tokens to Watchlist. Unrelated meanings such
    as manual access, manual review and manual refresh do not change.
-9. The standalone Manual Tokens surface is removed. Its management, folders, search and starred behavior move into the
-   Watchlist view.
+9. The standalone Manual Tokens surface is removed. The initial Watchlist is a flat list: clicking a token star adds or
+   removes that token, and no folder controls or starred-only filter render in this release.
 10. Page, Per page and Filters controls are removed from Monitored. Search remains available.
 11. Removing pagination controls does not authorize unbounded reads, DOM rendering or sparkline subscriptions.
 12. Two simultaneous Monitored panes may not display the same view.
@@ -74,9 +74,10 @@ launchpad label.
 
 ### Existing Watchlist domain
 
-Manual Tokens uses generic `user_tokens`, `user_token_folders` and `user_token_folder_items` tables. Those names are
-already neutral and do not need schema renames. Manual-specific names remain in TypeScript, services, source values, UI
-copy, logs, tests and a catalog tracking route.
+Manual Tokens uses generic `user_tokens`, `user_token_folders` and `user_token_folder_items` tables. `user_tokens` remains
+the canonical Watchlist membership source. The folder tables are preserved with their data and neutral routes for a later
+folder design, but the initial Watchlist does not read or render them. Manual-specific names remain in TypeScript,
+services, source values, UI copy, logs, tests and a catalog tracking route.
 
 ### Existing layout and sparkline behavior
 
@@ -272,8 +273,6 @@ Rename only the domain meaning user-added tokens. Examples:
 
 - `ManualTokenEntry` -> `WatchlistTokenEntry`;
 - `manualTokenIdentities` -> `watchlistTokenIdentities`;
-- `manualTokenFolders` -> `watchlistFolders`;
-- `manualStarredOnly` -> `watchlistStarredOnly`;
 - `manual-token-bootstrap` -> `watchlist-token-bootstrap`;
 - catalog source `user-manual` -> `user-watchlist`;
 - `/api/catalog/manual-track` -> `/api/catalog/watchlist-track`;
@@ -281,12 +280,15 @@ Rename only the domain meaning user-added tokens. Examples:
 
 Keep neutral `/api/config/tokens`, `/api/config/token-folders` and database table names.
 
-Preference compatibility reads the new key first, falls back to an old Manual Tokens key only when absent, and emits and
-persists only the new key. Remove the reader only after deployed preferences are observed migrated. The old catalog route
-may remain as a temporary server alias for one deployment window; new frontend code calls only the Watchlist route. Tests
-must distinguish legacy input parsing from canonical output.
+Preference compatibility reads `collapsed.watchlist` and `watchlistSorts` first, falls back to their old Manual Tokens
+keys only when absent, and emits and persists only the new keys. Obsolete folder and starred-only preferences are accepted
+temporarily from an old client but are not emitted. Remove legacy readers only after deployed preferences are observed
+migrated. The old catalog route may remain as a temporary server alias for one deployment window; new frontend code calls
+only the Watchlist route. Tests must distinguish legacy input parsing from canonical output.
 
-Deleting a Watchlist folder preserves the current confirmed destructive behavior for linked user-added tokens.
+The star is the Watchlist membership control in every token surface. It writes `user_tokens`; it is not a second favorite
+flag layered on top of Watchlist membership. Existing folder records and routes remain untouched and dormant until a
+separate product decision defines how folders return.
 
 ## Monitored UI
 
@@ -300,9 +302,9 @@ Controls may wrap responsively but logical order remains stable. Filters, Page, 
 System-generated views render at most 40 rows per pane. Watchlist retains up to 200 tokens per user and chain and uses
 bounded rendering/incremental scroll rather than visible pagination.
 
-Watchlist owns add/remove, folders and deletion warning, folder selection, starred-only selection, search, token actions
-and expanded charts. Other views own search and token actions without the removed valuation filter panel. Adding a token
-from Trending, Migrated or Pre-bonded targets Watchlist.
+Watchlist owns star-driven add/remove, search, token actions and expanded charts. Other views own search and token actions
+without the removed valuation filter panel. The star in Trending, Migrated or Pre-bonded directly toggles Watchlist
+membership. Folders, folder deletion warnings, folder selection and starred-only selection are deferred.
 
 One-pane presets persist the primary selection. Two-pane presets persist primary and secondary selections. A view active
 in one pane is disabled in the other; corrupted duplicates normalize to `Trending + Watchlist`; returning to one pane
@@ -416,8 +418,17 @@ independent from this read gate; enabling it changes only readiness and API visi
 
 ### Slice 4: Watchlist rename
 
-Rename domain-specific symbols/copy/logs/tests, add the new tracking route plus temporary alias, migrate `user-manual` source
-values and add preference compatibility. Preserve neutral tables and config routes.
+This product slice is split into bounded implementation cuts:
+
+- **4A — backend contract and compatibility:** add the new tracking route plus temporary alias, make `user-watchlist` the
+  canonical writer value, migrate `user-manual`, recognize both values during rollout and add canonical preference output
+  with legacy input fallback.
+- **4B — frontend state and actions:** rename Watchlist state/API/controller symbols and make the existing star action
+  toggle `user_tokens` membership. New frontend code calls only canonical Watchlist routes and preference keys.
+- **4C — surface and cleanup:** rename remaining domain copy/components/logs/tests, render the flat Watchlist without folder
+  or starred-only controls, and confirm no unrelated meaning of `manual` changed.
+
+Preserve neutral tables and config/folder routes. Folder data stays dormant and is not migrated or deleted.
 
 ### Slice 5: Monitored multi-view UI
 
@@ -454,7 +465,7 @@ only after telemetry confirms migration, and consolidate `docs/bot-reference.md`
 - lifecycle persistence, idempotency and reorg rollback;
 - Pre-bonded to Migrated transition;
 - endpoint ready/unsupported/syncing states;
-- Watchlist CRUD and folder deletion;
+- flat Watchlist star-driven add/remove;
 - UI preference migration;
 - shared sparkline identity and duplicate-alert deduplication.
 
@@ -466,7 +477,7 @@ only after telemetry confirms migration, and consolidate `docs/bot-reference.md`
 - fixed presets at supported viewport widths;
 - no horizontal resize, with vertical resize and drag exchange retained;
 - Alerts Focus sparkline advances after a live bucket;
-- Watchlist add/remove/folder/search behavior remains intact.
+- Watchlist star-driven add/remove and search behavior remains intact; dormant folder data remains unchanged.
 
 ### Commands by affected slice
 

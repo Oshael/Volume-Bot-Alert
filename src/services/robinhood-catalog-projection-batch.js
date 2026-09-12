@@ -134,15 +134,15 @@ async function loadCandidates(repository, query) {
 }
 
 async function loadDurableMetadataCandidates(catalog, query, ttlMs) {
-  const [automatic, manual] = await Promise.all([
+  const [automatic, watchlist] = await Promise.all([
     catalog.listAutomaticMetadataCandidates
       ? catalog.listAutomaticMetadataCandidates({ limit: query.maxTokens, asOf: query.asOf, ttlMs })
       : [],
-    catalog.listManualMetadataCandidates
-      ? catalog.listManualMetadataCandidates({ limit: query.maxTokens })
+    catalog.listWatchlistMetadataCandidates
+      ? catalog.listWatchlistMetadataCandidates({ limit: query.maxTokens })
       : [],
   ]);
-  return { automatic, manual };
+  return { automatic, watchlist };
 }
 
 function projectionSnapshot(candidate) {
@@ -193,10 +193,10 @@ function createRobinhoodCatalogProjectionBatch(options = {}) {
     const projectionErrors = projections.length - projected;
     const {
       automatic: automaticMetadataCandidates,
-      manual: manualMetadataCandidates,
+      watchlist: watchlistMetadataCandidates,
     } = await loadDurableMetadataCandidates(catalog, query, blockscoutTtlMs);
     const metadataCandidates = [...new Map(
-      [...candidates.rows, ...automaticMetadataCandidates, ...manualMetadataCandidates]
+      [...candidates.rows, ...automaticMetadataCandidates, ...watchlistMetadataCandidates]
         .map((candidate) => [candidate.tokenAddress, candidate])
     ).values()];
     const metadataRows = await catalog.listMetadata(
@@ -265,7 +265,7 @@ function createRobinhoodCatalogProjectionBatch(options = {}) {
       generatedAt: asOf.toISOString(),
       candidates: candidates.rows.length,
       automaticMetadataCandidates: automaticMetadataCandidates.length,
-      manualMetadataCandidates: manualMetadataCandidates.length,
+      watchlistMetadataCandidates: watchlistMetadataCandidates.length,
       metadataCandidates: metadataCandidates.length,
       excludedBlocked: candidates.excludedBlocked,
       excludedFdvCap: candidates.excludedFdvCap,

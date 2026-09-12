@@ -830,6 +830,8 @@ describe('Config routes', () => {
       .set('Authorization', `Bearer ${userToken}`)
       .send({
         uiPrefs: {
+          collapsed: { manual: true },
+          manualSorts: [{ mode: 'vol', window: '24h' }],
           manualStarredOnly: true,
           manualFolderDeleteWarningDismissed: true,
           chainFilters: {
@@ -873,8 +875,12 @@ describe('Config routes', () => {
       });
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.uiPrefs.manualStarredOnly, true);
-    assert.equal(response.body.uiPrefs.manualFolderDeleteWarningDismissed, true);
+    assert.equal(response.body.uiPrefs.collapsed.watchlist, true);
+    assert.deepEqual(response.body.uiPrefs.watchlistSorts, [{ mode: 'vol', window: '24h' }]);
+    assert.equal('manual' in response.body.uiPrefs.collapsed, false);
+    assert.equal('manualSorts' in response.body.uiPrefs, false);
+    assert.equal('manualStarredOnly' in response.body.uiPrefs, false);
+    assert.equal('manualFolderDeleteWarningDismissed' in response.body.uiPrefs, false);
     assert.deepEqual(response.body.uiPrefs.chainFilters.enabledChains, ['solana']);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 60);

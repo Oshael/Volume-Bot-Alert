@@ -440,7 +440,7 @@ async function listDueForEvaluation(limit = 25) {
        AND is_active_monitor_candidate = TRUE
        AND next_evaluation_at <= NOW()
      ORDER BY CASE
-                WHEN source = 'user-manual'
+                WHEN source IN ('user-watchlist', 'user-manual')
                   OR EXISTS (
                     SELECT 1
                     FROM user_tokens ut
@@ -491,7 +491,7 @@ async function claimDueForEvaluation(limit = 25, options = {}, runner = db) {
          AND is_active_monitor_candidate = TRUE
          AND next_evaluation_at <= NOW()
        ORDER BY CASE
-                  WHEN source = 'user-manual'
+                  WHEN source IN ('user-watchlist', 'user-manual')
                     OR EXISTS (
                       SELECT 1
                       FROM user_tokens ut
@@ -1850,7 +1850,7 @@ async function reactivateAdminBlockedToken(address) {
   const { rows } = await db.query(
     `UPDATE token_catalog
      SET source = CASE
-           WHEN EXISTS (SELECT 1 FROM user_tokens ut WHERE ut.address = $1) THEN 'user-manual'
+           WHEN EXISTS (SELECT 1 FROM user_tokens ut WHERE ut.address = $1) THEN 'user-watchlist'
            WHEN source = 'admin-blocked' THEN 'dexscreener-discovery'
            ELSE source
          END,
@@ -2051,7 +2051,8 @@ async function applyQuarantineCleanup(options = {}) {
       UNION
       SELECT chain, address FROM user_blocklist
       UNION
-      SELECT chain, address FROM token_catalog WHERE source = 'user-manual'
+      SELECT chain, address FROM token_catalog
+      WHERE source IN ('user-watchlist', 'user-manual')
     )
     UPDATE token_catalog tc
     SET eligible_for_monitoring = FALSE,
@@ -2103,7 +2104,8 @@ async function applySoftArchiveCleanup(options = {}) {
       UNION
       SELECT chain, address FROM user_blocklist
       UNION
-      SELECT chain, address FROM token_catalog WHERE source = 'user-manual'
+      SELECT chain, address FROM token_catalog
+      WHERE source IN ('user-watchlist', 'user-manual')
     ),
     candidate_identities AS (
       SELECT tc.chain, tc.address
@@ -2173,7 +2175,7 @@ async function applyAutomatedCleanup(options = {}) {
   };
 }
 
-async function hasUserManualAddress(address, chainValue = 'solana') {
+async function hasUserWatchlistAddress(address, chainValue = 'solana') {
   const chain = normalizeTokenChain(chainValue);
   let addr;
   try { addr = normalizeTokenAddress(chain, address); } catch (_) { return false; }
@@ -2188,7 +2190,7 @@ async function hasUserManualAddress(address, chainValue = 'solana') {
   return rows.length > 0;
 }
 
-async function demoteFormerManualAddress(address, chainValue = 'solana') {
+async function demoteFormerWatchlistAddress(address, chainValue = 'solana') {
   const chain = normalizeTokenChain(chainValue);
   let addr;
   try { addr = normalizeTokenAddress(chain, address); } catch (_) { return null; }
@@ -2199,7 +2201,7 @@ async function demoteFormerManualAddress(address, chainValue = 'solana') {
            THEN 'dexscreener-discovery' ELSE 'unknown' END,
          metadata_updated_at = NOW()
      WHERE tc.chain = $1 AND tc.address = $2
-       AND tc.source = 'user-manual'
+       AND tc.source IN ('user-watchlist', 'user-manual')
        AND NOT EXISTS (
          SELECT 1
          FROM user_tokens ut
@@ -2214,8 +2216,8 @@ async function demoteFormerManualAddress(address, chainValue = 'solana') {
 module.exports = {
   upsertToken,
   getByAddress,
-  hasUserManualAddress,
-  demoteFormerManualAddress,
+  hasUserWatchlistAddress,
+  demoteFormerWatchlistAddress,
   listRecent,
   listDueForEvaluation,
   claimDueForEvaluation,

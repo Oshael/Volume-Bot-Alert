@@ -70,6 +70,7 @@
     "db:init": "node src/utils/db-init.js",
     "db:schema-check": "node src/utils/check-runtime-schema.js",
     "db:schema-check:test": "NODE_ENV=test node src/utils/check-runtime-schema.js --test-profile",
+    "watchlist:source-migrate": "node src/utils/migrate-watchlist-token-source.js",
     "quicknode:smoke": "node src/utils/quicknode-rpc-smoke.js",
     "quicknode:probe": "node src/utils/quicknode-transaction-probe.js",
     "quicknode:probe:raydium": "QUICKNODE_PROBE_PROGRAMS=raydium-cpmm,raydium-amm-v4,raydium-clmm node src/utils/quicknode-transaction-probe.js",

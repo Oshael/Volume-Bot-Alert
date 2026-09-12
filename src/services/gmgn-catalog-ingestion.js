@@ -20,6 +20,7 @@ const {
   buildCommaSuffixAutoBlockLabel,
   buildPrefixedAutoBlockLabel,
 } = require('./auto-block-rule-labels');
+const { WATCHLIST_SOURCE, isWatchlistSource } = require('../utils/watchlist-token-source');
 
 const DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS = 3000;
 const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
@@ -473,7 +474,8 @@ const defaultEvaluationState = new Map();
 
 function resolveCatalogSource(tokenBefore, options = {}) {
   const previousSource = String(tokenBefore?.source || '').trim().toLowerCase();
-  return previousSource === 'user-manual' || options.manualProtected === true ? 'user-manual' : 'gmgn';
+  return isWatchlistSource(previousSource) || options.manualProtected === true
+    ? WATCHLIST_SOURCE : 'gmgn';
 }
 
 function buildCatalogPayload(snapshot, tokenBefore = null, options = {}) {
@@ -596,9 +598,9 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = nu
     new Date(now.getTime() + options.activeDexRecheckMs),
     { preserveEarlier: true, now }
   );
-  const isManual = String(tokenBefore?.source || '').trim().toLowerCase() === 'user-manual';
+  const isWatchlist = isWatchlistSource(tokenBefore?.source);
 
-  if (!isManual && securityGuard?.topHolderAssessment?.quarantine) {
+  if (!isWatchlist && securityGuard?.topHolderAssessment?.quarantine) {
     return buildEvaluationPayload(snapshot, {
       eligibilityState: 'gmgn-needs-risk-enrichment',
       eligibleForMonitoring: false,
@@ -628,7 +630,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = nu
     });
   }
 
-  if (!isManual && vol24h != null && vol24h >= 0 && vol24h < LOW_ACTIVITY_24H_MAX_VOL) {
+  if (!isWatchlist && vol24h != null && vol24h >= 0 && vol24h < LOW_ACTIVITY_24H_MAX_VOL) {
     if (!isCumulativeVolumeWindowCoherent(snapshot)) {
       const preserved = buildPreservedGmgnEvaluation(snapshot, tokenBefore, marketCap, nextEvaluationAt);
       if (preserved) {
@@ -649,7 +651,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = nu
     }
   }
 
-  if (!isManual && shouldSuppressGmgnForRiskEnrichment(snapshot, now)) {
+  if (!isWatchlist && shouldSuppressGmgnForRiskEnrichment(snapshot, now)) {
     return buildEvaluationPayload(snapshot, {
       eligibilityState: 'gmgn-needs-risk-enrichment',
       eligibleForMonitoring: false,
@@ -1011,7 +1013,7 @@ function isHighConfidenceJunkAssessment(assessment) {
 }
 
 function isManualToken(row) {
-  return normalizeLowerText(row?.source) === 'user-manual';
+  return isWatchlistSource(normalizeLowerText(row?.source));
 }
 
 async function isManualTokenProtected(address, tokenBefore, options) {
@@ -1019,12 +1021,14 @@ async function isManualTokenProtected(address, tokenBefore, options) {
     return true;
   }
 
-  if (typeof options.tokenCatalogModel?.hasUserManualAddress !== 'function') {
+  const hasWatchlistAddress = options.tokenCatalogModel?.hasUserWatchlistAddress
+    || options.tokenCatalogModel?.hasUserManualAddress;
+  if (typeof hasWatchlistAddress !== 'function') {
     return false;
   }
 
   try {
-    return await options.tokenCatalogModel.hasUserManualAddress(address);
+    return await hasWatchlistAddress.call(options.tokenCatalogModel, address);
   } catch (_) {
     return false;
   }

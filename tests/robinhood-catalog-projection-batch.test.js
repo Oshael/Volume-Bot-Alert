@@ -77,10 +77,10 @@ describe('Robinhood catalog projection batch', () => {
     assert.deepEqual(calls.enqueued, [TOKEN]);
   });
 
-  it('enriches durable manual tokens even when they have no active market candidate', async () => {
+  it('enriches durable Watchlist tokens even when they have no active market candidate', async () => {
     const applied = [];
     const catalog = {
-      async listManualMetadataCandidates() { return [{ tokenAddress: TOKEN, volumeUsd: '0' }]; },
+      async listWatchlistMetadataCandidates() { return [{ tokenAddress: TOKEN, volumeUsd: '0' }]; },
       async listMetadata() { return []; },
       async applyMetadata(value) { applied.push(value); },
     };
@@ -89,7 +89,7 @@ describe('Robinhood catalog projection batch', () => {
       catalog,
       metadataReader: {
         async getMetadata(address) {
-          return { address, name: 'Manual Token', symbol: 'MAN', usable: true };
+          return { address, name: 'Watchlist Token', symbol: 'WATCH', usable: true };
         },
       },
     });
@@ -97,10 +97,10 @@ describe('Robinhood catalog projection batch', () => {
     const result = await batch.runOnce();
 
     assert.equal(result.candidates, 0);
-    assert.equal(result.manualMetadataCandidates, 1);
+    assert.equal(result.watchlistMetadataCandidates, 1);
     assert.equal(result.projected, 0);
     assert.equal(result.onchainResolved, 1);
-    assert.deepEqual(applied, [{ address: TOKEN, name: 'Manual Token', symbol: 'MAN' }]);
+    assert.deepEqual(applied, [{ address: TOKEN, name: 'Watchlist Token', symbol: 'WATCH' }]);
   });
 
   it('enriches durable on-chain metadata candidates outside the active market page', async () => {

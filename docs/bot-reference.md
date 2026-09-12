@@ -1515,10 +1515,11 @@ publique o Node diretamente; o tráfego deve entrar pelo Nginx.
 ### 8.1 Token views
 
 `GET /api/dashboard/token-views/:view` é a fronteira autenticada e chain-aware das novas
-views de Monitored. As IDs reservadas são `trending`, `migrated`, `pre_bonded` e
-`watchlist`; neste estágio somente `trending` está implementada. As demais respondem
-`501`, em vez de simularem uma view pronta sem resultados. O contrato aceita apenas
-Robinhood, usa Robinhood como padrão e limita a resposta a 40 tokens.
+views de Monitored. As IDs são `trending`, `migrated`, `pre_bonded` e `watchlist`.
+Trending e as duas views lifecycle possuem adapters Robinhood; Watchlist continua em
+`user_tokens` e ainda não passa por esse endpoint. O contrato aceita apenas Robinhood,
+usa Robinhood como padrão e limita views de sistema a 40 tokens. Lifecycle permanece
+dark até `ROBINHOOD_LIFECYCLE_READ_ENABLED=true` após o replay histórico aprovado.
 
 Trending usa `scoreVersion=trending-v1`. O adapter lê um prefixo limitado aos 500 maiores
 volumes 24h e hidrata volume, price change, FDV, liquidez, cobertura e frescor pelos
@@ -1533,6 +1534,20 @@ limitado a `300%` com peso `5%`. A aceleração usa teto `12x`. A resposta inclu
 os quatro componentes, posição, versão, `asOf`, readiness por chain e quantidade de
 candidatos considerados. Estados `syncing` e `unavailable` são explícitos e não consultam
 o adapter até a cobertura de Monitored estar pronta.
+
+### 8.2 Watchlist compatibility
+
+`user_tokens` é a fonte canônica de membership da Watchlist. Novos writers usam o
+source de catálogo `user-watchlist`; durante a janela de rollout, readers também
+reconhecem o legado `user-manual`. Depois de publicar os writers canônicos, execute
+`npm run watchlist:source-migrate` uma vez; o comando é idempotente e também renomeia
+os estados Robinhood de metadata associados. A rota canônica de bootstrap é
+`POST /api/catalog/watchlist-track`; `/api/catalog/manual-track` é somente um alias
+temporário. Preferências retornam `collapsed.watchlist` e `watchlistSorts`, aceitando
+as chaves antigas apenas como entrada de compatibilidade.
+
+A primeira UI é uma lista plana: a estrela adiciona/remove em `user_tokens`. Tabelas
+e rotas neutras de pastas são preservadas, porém não participam dessa interface.
 
 ## 9. Autenticação, sessão e acesso
 

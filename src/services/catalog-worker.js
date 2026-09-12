@@ -18,6 +18,7 @@ const {
 } = require('./auto-block-rule-labels');
 const config = require('../../config');
 const { isTraceDiscoveryEnabled, logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
+const { isWatchlistSource } = require('../utils/watchlist-token-source');
 
 const DEX_TOKENS_PER_REQUEST = 30;
 const LOOP_INTERVAL_MS = config.catalogWorker.loopIntervalMs;
@@ -227,7 +228,7 @@ function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) 
 }
 
 function isManualSource(token) {
-  return String(token?.source || '').trim().toLowerCase() === 'user-manual';
+  return isWatchlistSource(token?.source);
 }
 
 function isGmgnManualState(token) {
@@ -653,13 +654,17 @@ async function hasLiveManualAddressForGmgn(address) {
     return cached.value;
   }
 
-  const value = await tokenCatalog.hasUserManualAddress(normalized);
+  const hasWatchlistAddress = tokenCatalog.hasUserWatchlistAddress
+    || tokenCatalog.hasUserManualAddress;
+  const value = await hasWatchlistAddress(normalized);
   liveManualAddressCache.set(normalized, {
     value,
     expiresAt: Date.now() + 30 * 1000,
   });
-  if (!value && typeof tokenCatalog.demoteFormerManualAddress === 'function') {
-    await tokenCatalog.demoteFormerManualAddress(normalized);
+  const demoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress
+    || tokenCatalog.demoteFormerManualAddress;
+  if (!value && typeof demoteFormerWatchlistAddress === 'function') {
+    await demoteFormerWatchlistAddress(normalized);
   }
   return value;
 }
@@ -681,7 +686,7 @@ async function fetchManualGmgnTokenInfo(token) {
     try {
       return await inflight;
     } catch (error) {
-      console.warn(`[CatalogWorker] Failed to fetch GMGN info for manual token ${token.address}: ${error.message}`);
+      console.warn(`[CatalogWorker] Failed to fetch GMGN info for Watchlist token ${token.address}: ${error.message}`);
       return null;
     }
   }
@@ -698,7 +703,7 @@ async function fetchManualGmgnTokenInfo(token) {
   try {
     return await request;
   } catch (error) {
-    console.warn(`[CatalogWorker] Failed to fetch GMGN info for manual token ${token.address}: ${error.message}`);
+    console.warn(`[CatalogWorker] Failed to fetch GMGN info for Watchlist token ${token.address}: ${error.message}`);
     return null;
   }
 }
@@ -1534,7 +1539,7 @@ function getThrottleTokenBucket(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
-  if (source === 'user-manual') return 'manual';
+  if (isWatchlistSource(source)) return 'manual';
   if (isLowActivityAutoToken(token, token?.last_vol_24h)) return 'low-dust';
   if (priority === 'high' || marketCap >= 100000) return 'high';
   if (priority === 'normal' || marketCap >= 30000) return 'normal';

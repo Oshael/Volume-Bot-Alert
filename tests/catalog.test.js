@@ -171,7 +171,7 @@ describe('Catalog routes', () => {
     assert.equal(res.status, 401);
   });
 
-  it('reactivates soft-archived tokens for manual catalog tracking', async () => {
+  it('keeps the legacy tracking alias while writing the canonical Watchlist source', async () => {
     const originalGetByAddress = tokenCatalog.getByAddress;
     const originalReactivateSoftArchivedToken = tokenCatalog.reactivateSoftArchivedToken;
     const originalUpsertToken = tokenCatalog.upsertToken;
@@ -184,9 +184,9 @@ describe('Catalog routes', () => {
       address,
       suppressed_reason: 'cleanup_soft_archive',
     });
-    tokenCatalog.reactivateSoftArchivedToken = async (address) => {
+    tokenCatalog.reactivateSoftArchivedToken = async (address, options) => {
       reactivatedAddress = address;
-      return { address };
+      return { address, source: options.source };
     };
     tokenCatalog.upsertToken = async () => {
       upsertCalls += 1;
@@ -208,6 +208,7 @@ describe('Catalog routes', () => {
       assert.equal(upsertCalls, 0);
       assert.equal(scheduleCalls, 0);
       assert.equal(res.body.bootstrapState, 'evaluated');
+      assert.match(res.body.message, /Watchlist/);
     } finally {
       tokenCatalog.getByAddress = originalGetByAddress;
       tokenCatalog.reactivateSoftArchivedToken = originalReactivateSoftArchivedToken;
@@ -216,17 +217,21 @@ describe('Catalog routes', () => {
     }
   });
 
-  it('eagerly evaluates manual catalog tracking so new manual tokens do not wait for the worker loop', async () => {
+  it('eagerly evaluates canonical Watchlist tracking without waiting for the worker loop', async () => {
     const originalGetByAddress = tokenCatalog.getByAddress;
     const originalUpsertToken = tokenCatalog.upsertToken;
     const originalScheduleImmediateEvaluation = tokenCatalog.scheduleImmediateEvaluation;
     const originalEvaluateToken = catalogWorker.__private.evaluateTokenWithData;
     let evaluatedToken = null;
     let evaluatedPayload = null;
+    let upsertPayload = null;
 
     tokenCatalog.getByAddress = async () => null;
-    tokenCatalog.upsertToken = async () => ({ address: VALID_ADDR, source: 'user-manual', last_eligible_at: null });
-    tokenCatalog.scheduleImmediateEvaluation = async () => ({ address: VALID_ADDR, source: 'user-manual', last_eligible_at: null });
+    tokenCatalog.upsertToken = async (payload) => {
+      upsertPayload = payload;
+      return { address: VALID_ADDR, source: payload.source, last_eligible_at: null };
+    };
+    tokenCatalog.scheduleImmediateEvaluation = async () => null;
     catalogWorker.__private.evaluateTokenWithData = async (tokenRow, payload) => {
       evaluatedToken = tokenRow;
       evaluatedPayload = payload;
@@ -235,12 +240,13 @@ describe('Catalog routes', () => {
 
     try {
       const res = await request(app)
-        .post('/api/catalog/manual-track')
+        .post('/api/catalog/watchlist-track')
         .set('Authorization', `Bearer ${token}`)
         .send({ address: VALID_ADDR });
 
       assert.equal(res.status, 201);
-      assert.deepEqual(evaluatedToken, { address: VALID_ADDR, source: 'user-manual', last_eligible_at: null });
+      assert.equal(upsertPayload.source, 'user-watchlist');
+      assert.deepEqual(evaluatedToken, { address: VALID_ADDR, source: 'user-watchlist', last_eligible_at: null });
       assert.deepEqual(evaluatedPayload, { pairs: [mockPair] });
       assert.equal(res.body.bootstrapState, 'evaluated');
     } finally {
@@ -386,7 +392,7 @@ describe('Catalog routes', () => {
       await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
       const reactivated = await tokenCatalog.reactivateAdminBlockedToken(VALID_ADDR);
 
-      assert.equal(reactivated.source, 'user-manual');
+      assert.equal(reactivated.source, 'user-watchlist');
       assert.equal(reactivated.is_active_monitor_candidate, true);
       assert.equal(reactivated.eligible_for_monitoring, false);
       assert.equal(reactivated.eligibility_state, 'pending');

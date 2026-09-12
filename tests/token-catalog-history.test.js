@@ -24,9 +24,10 @@ describe('token-catalog history bucket queries', () => {
       const result = await tokenCatalog.listDueForEvaluation(25);
 
       assert.deepEqual(result, []);
-      assert.match(captured.sql, /ORDER BY CASE\s+WHEN source = 'user-manual'\s+OR EXISTS \(\s+SELECT 1\s+FROM user_tokens ut\s+WHERE ut\.chain = token_catalog\.chain\s+AND ut\.address = token_catalog\.address\s+\) THEN 0\s+ELSE 1\s+END ASC,/);
+      assert.match(captured.sql, /ORDER BY CASE\s+WHEN source IN \('user-watchlist', 'user-manual'\)\s+OR EXISTS \(\s+SELECT 1\s+FROM user_tokens ut\s+WHERE ut\.chain = token_catalog\.chain\s+AND ut\.address = token_catalog\.address\s+\) THEN 0\s+ELSE 1\s+END ASC,/);
       assert.ok(
-        captured.sql.indexOf("source = 'user-manual'") < captured.sql.indexOf("COALESCE(monitor_priority, 'dormant') = 'high'")
+        captured.sql.indexOf("source IN ('user-watchlist', 'user-manual')")
+          < captured.sql.indexOf("COALESCE(monitor_priority, 'dormant') = 'high'")
       );
       assert.deepEqual(captured.params, [25]);
     } finally {
