@@ -84,6 +84,7 @@ const stage208 = require('../src/utils/db-init-stage208');
 const stage209 = require('../src/utils/db-init-stage209');
 const stage210 = require('../src/utils/db-init-stage210');
 const stage211 = require('../src/utils/db-init-stage211');
+const stage212 = require('../src/utils/db-init-stage212');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -290,6 +291,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_first_buy_backfill_runs WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_signed_origins WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_signed_origin_cursors WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_liquidity_realtime_outbox WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_refresh_queue WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_snapshots WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain='robinhood'");
@@ -372,6 +374,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage209.init({ closePool: false });
     await stage210.init({ closePool: false });
     await stage211.init({ closePool: false });
+    await stage212.init({ closePool: false });
     await stage181.init({ closePool: false });
     await stage182.init({ closePool: false });
     await stage149.init({ closePool: false });
