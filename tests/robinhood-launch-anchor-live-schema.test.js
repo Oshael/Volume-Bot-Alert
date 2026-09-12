@@ -24,7 +24,9 @@ it('registers durable first-buy launch-anchor work without scanning history', ()
     /swap\.block_number BETWEEN target\.first_pool_block AND target\.upper_block/);
   assert.match(LOAD_CANDIDATE_SQL,
     /swap\.block_time BETWEEN target\.first_pool_time AND target\.upper_time/);
-  assert.match(COMMIT_CANDIDATE_SQL, /recovery_state = 'running' FOR SHARE/);
+  assert.match(COMMIT_CANDIDATE_SQL, /pg_advisory_xact_lock_shared/);
+  assert.match(COMMIT_CANDIDATE_SQL, /recovery_state = 'running'/);
+  assert.doesNotMatch(COMMIT_CANDIDATE_SQL, /FOR SHARE/);
   assert.match(COMMIT_CANDIDATE_SQL, /frontier\.canonical/);
   assert.match(COMMIT_CANDIDATE_SQL, /swap\.transaction_hash = \$6/);
   assert.equal(group.repair, 'node src/utils/db-init-stage171.js');

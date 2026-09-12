@@ -16,6 +16,10 @@ const {
   createRobinhoodChainCaptureJournal,
 } = require('../src/models/robinhood-chain-capture-journal');
 const {
+  lockRobinhoodCanonicalProjection,
+  lockRobinhoodCanonicalRecoveryExclusive,
+} = require('../src/models/robinhood-canonical-projection-fence');
+const {
   createRobinhoodChainRecoveryJournal,
 } = require('../src/models/robinhood-chain-recovery-journal');
 const {
@@ -658,7 +662,7 @@ describe('Robinhood canonical chain capture journal', () => {
     );
   });
 
-  it('materializes a bounded launch anchor and revalidates it under the cursor lock', async () => {
+  it('materializes a bounded launch anchor and revalidates it under the recovery fence', async () => {
     await createRobinhoodChainCaptureJournal().commitBlock(capture());
     await db.query(
       `INSERT INTO robinhood_pool_registry(
@@ -775,6 +779,46 @@ describe('Robinhood canonical chain capture journal', () => {
       (error) => error.code === 'capture_recovery_required' && error.fatal === true
     );
     assert.equal((await journal.getCursor()).next_block, '101');
+  });
+
+  it('separates ordinary capture cursor commits from the canonical recovery fence', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    const projection = await db.pool.connect();
+    const captureWriter = await db.pool.connect();
+    const recovery = await db.pool.connect();
+    try {
+      await projection.query('BEGIN');
+      await lockRobinhoodCanonicalProjection(projection, {
+        blockNumber: '100', blockHash: HASH,
+      }, 'concurrent projection');
+
+      await captureWriter.query('BEGIN');
+      await captureWriter.query("SET LOCAL lock_timeout = '250ms'");
+      const cursor = await captureWriter.query(
+        `SELECT checkpoint_block::text FROM robinhood_chain_capture_cursor
+          WHERE chain='robinhood' FOR UPDATE`
+      );
+      assert.equal(cursor.rows[0].checkpoint_block, '100');
+      await captureWriter.query('ROLLBACK');
+
+      await recovery.query('BEGIN');
+      await recovery.query("SET LOCAL lock_timeout = '100ms'");
+      await assert.rejects(
+        lockRobinhoodCanonicalRecoveryExclusive(recovery),
+        (error) => error.code === '55P03'
+      );
+      await recovery.query('ROLLBACK');
+
+      await projection.query('COMMIT');
+      await recovery.query('BEGIN');
+      await lockRobinhoodCanonicalRecoveryExclusive(recovery);
+      await recovery.query('ROLLBACK');
+    } finally {
+      await Promise.allSettled([
+        projection.query('ROLLBACK'), captureWriter.query('ROLLBACK'), recovery.query('ROLLBACK'),
+      ]);
+      projection.release(); captureWriter.release(); recovery.release();
+    }
   });
 
   it('loads only the bounded canonical header range used by recovery planning', async () => {

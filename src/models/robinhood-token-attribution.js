@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  lockRobinhoodCanonicalRecoveryShared,
+} = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const LIVE_SOURCES = new Set([
@@ -15,9 +18,10 @@ function blockHash(value, label) {
 }
 
 async function lockCanonicalWriter(client, anchors = [], requireExact = false) {
+  await lockRobinhoodCanonicalRecoveryShared(client);
   const cursor = await client.query(
     `SELECT recovery_state FROM robinhood_chain_capture_cursor
-      WHERE chain=$1 FOR SHARE`, [CHAIN]
+      WHERE chain=$1`, [CHAIN]
   );
   if (!cursor.rowCount || cursor.rows[0].recovery_state !== 'running') {
     throw Object.assign(new Error('creator write is fenced by canonical recovery'), {

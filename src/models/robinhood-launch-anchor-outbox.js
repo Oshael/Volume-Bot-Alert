@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  CANONICAL_RECOVERY_FENCE_LOCK_ID,
+} = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const TERMINAL_REASONS = new Set([
@@ -92,11 +95,14 @@ SELECT target.*, candidate.block_number AS launch_block,
        END AS readiness
   FROM target LEFT JOIN candidate ON TRUE`;
 
-// Revalidate exact evidence under a short cursor lock. Recovery either finishes before
-// this statement and removes stale evidence, or waits until this write has committed.
-const COMMIT_CANDIDATE_SQL = `WITH capture AS MATERIALIZED (
+// Revalidate exact evidence under the shared recovery barrier. Ordinary capture appends
+// do not contend with this statement; recovery waits until this write has committed.
+const COMMIT_CANDIDATE_SQL = `WITH recovery_fence AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock_shared(${CANONICAL_RECOVERY_FENCE_LOCK_ID}::bigint)
+), capture AS MATERIALIZED (
   SELECT checkpoint_block FROM robinhood_chain_capture_cursor
-   WHERE chain = $1 AND recovery_state = 'running' FOR SHARE
+   CROSS JOIN recovery_fence
+   WHERE chain = $1 AND recovery_state = 'running'
 ), target AS MATERIALIZED (
   SELECT state.token_address, state.live_through_block, origin.discovery_block
     FROM robinhood_holder_token_states state

@@ -5,6 +5,9 @@ const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('./robinhood-wallet-swap-outbox-producer');
 const { createProcessingPersistenceTiming } = require('../utils/robinhood-processing-persistence-timing');
+const {
+  lockRobinhoodCanonicalRecoveryShared,
+} = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const PROTOCOL_BY_DISCOVERY_KIND = Object.freeze({
@@ -576,9 +579,10 @@ async function insertProcessedLog(client, row) {
 }
 
 async function assertCanonicalDiscoveryBatch(client, entries) {
+  await lockRobinhoodCanonicalRecoveryShared(client);
   const cursor = await client.query(
     `SELECT recovery_state FROM robinhood_chain_capture_cursor
-      WHERE chain=$1 FOR SHARE`, [CHAIN]
+      WHERE chain=$1`, [CHAIN]
   );
   if (!cursor.rowCount || cursor.rows[0].recovery_state !== 'running') {
     const error = new Error('discovery commit is fenced by canonical recovery');

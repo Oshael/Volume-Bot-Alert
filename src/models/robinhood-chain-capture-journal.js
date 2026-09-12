@@ -4,6 +4,9 @@ const db = require('./db');
 const {
   createRobinhoodChainRecoveryJournal,
 } = require('./robinhood-chain-recovery-journal');
+const {
+  lockRobinhoodCanonicalRecoveryExclusive,
+} = require('./robinhood-canonical-projection-fence');
 const { routeCanonicalEvents } = require('../services/robinhood-chain-domain-router');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
 const CHAIN = 'robinhood';
@@ -257,6 +260,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await lockRobinhoodCanonicalRecoveryExclusive(client);
       const cursor = await client.query(
         'SELECT * FROM robinhood_chain_capture_cursor WHERE chain=$1 FOR UPDATE', [CHAIN]
       );

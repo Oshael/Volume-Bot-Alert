@@ -1,6 +1,27 @@
 'use strict';
 
 const CHAIN = 'robinhood';
+// Separate recovery exclusion from the hot capture cursor. Ordinary canonical appends
+// never take this lock; only recovery activation takes the exclusive counterpart.
+const CANONICAL_RECOVERY_FENCE_LOCK_ID = '8241992116082027';
+
+async function lockRobinhoodCanonicalRecovery(client, mode = 'shared') {
+  if (!['shared', 'exclusive'].includes(mode)) {
+    throw new Error('canonical recovery fence mode is invalid');
+  }
+  const suffix = mode === 'shared' ? '_shared' : '';
+  await client.query(
+    `SELECT pg_advisory_xact_lock${suffix}($1::bigint)`,
+    [CANONICAL_RECOVERY_FENCE_LOCK_ID]
+  );
+}
+
+const lockRobinhoodCanonicalRecoveryShared = (client) => (
+  lockRobinhoodCanonicalRecovery(client, 'shared')
+);
+const lockRobinhoodCanonicalRecoveryExclusive = (client) => (
+  lockRobinhoodCanonicalRecovery(client, 'exclusive')
+);
 
 function conflict(label, reason) {
   return Object.assign(new Error(`${label} write ${reason}`), {
@@ -26,9 +47,10 @@ function normalizeFrontiers(input) {
 }
 
 async function lockRobinhoodCanonicalProjection(client, frontiers, label = 'projection') {
+  await lockRobinhoodCanonicalRecoveryShared(client);
   const cursor = await client.query(
     `SELECT recovery_state FROM robinhood_chain_capture_cursor
-      WHERE chain=$1 FOR SHARE`, [CHAIN]
+      WHERE chain=$1`, [CHAIN]
   );
   if (!cursor.rowCount || cursor.rows[0].recovery_state !== 'running') {
     throw conflict(label, 'is fenced by canonical recovery');
@@ -51,4 +73,10 @@ async function lockRobinhoodCanonicalProjection(client, frontiers, label = 'proj
   }
 }
 
-module.exports = { lockRobinhoodCanonicalProjection, __private: { normalizeFrontiers } };
+module.exports = {
+  CANONICAL_RECOVERY_FENCE_LOCK_ID,
+  lockRobinhoodCanonicalProjection,
+  lockRobinhoodCanonicalRecoveryExclusive,
+  lockRobinhoodCanonicalRecoveryShared,
+  __private: { lockRobinhoodCanonicalRecovery, normalizeFrontiers },
+};

@@ -523,12 +523,14 @@ describe('Robinhood persistence repository', () => {
       updatedNoxaLaunches: 0,
     });
     assert.equal(fake.calls[0].sql, 'BEGIN');
-    assert.match(fake.calls[1].sql, /SELECT recovery_state/);
-    assert.match(fake.calls[2].sql, /robinhood_chain_blocks/);
-    assert.match(fake.calls[3].sql, /INSERT INTO robinhood_processed_logs/);
-    assert.match(fake.calls[4].sql, /INSERT INTO robinhood_pool_registry/);
-    assert.match(fake.calls[4].sql, /discovery_block = EXCLUDED\.discovery_block/);
-    assert.equal(fake.calls[5].sql, 'COMMIT');
+    assert.match(fake.calls[1].sql, /pg_advisory_xact_lock_shared/);
+    assert.match(fake.calls[2].sql, /SELECT recovery_state/);
+    assert.doesNotMatch(fake.calls[2].sql, /FOR SHARE/);
+    assert.match(fake.calls[3].sql, /robinhood_chain_blocks/);
+    assert.match(fake.calls[4].sql, /INSERT INTO robinhood_processed_logs/);
+    assert.match(fake.calls[5].sql, /INSERT INTO robinhood_pool_registry/);
+    assert.match(fake.calls[5].sql, /discovery_block = EXCLUDED\.discovery_block/);
+    assert.equal(fake.calls[6].sql, 'COMMIT');
     // The central isolation invariant: processing never touches either cursor.
     assert.equal(fake.calls.some((call) => /robinhood_ingestion_cursors/.test(call.sql)), false);
     assert.equal(fake.calls.some((call) => /robinhood_head_capture_cursors/.test(call.sql)), false);

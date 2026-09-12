@@ -2942,8 +2942,9 @@ commitados em `robinhood_wallet_token_first_buys` enfileiram o token em
 O worker usa lease, retry exponencial e polling bounded de reconciliação; recalcula
 o primeiro swap registrado somente para o token reclamado e mantém a escrita
 idempotente. A busca histórica usa o primeiro `first_buy` elegível como limite superior,
-sem segurar o lock do cursor global; depois uma transação curta adquire `FOR SHARE`,
-revalida frontier, primeiro pool e identidade exata do swap e só então grava. Tokens cujo
+sem segurar o lock do cursor global; depois uma transação curta adquire o advisory fence
+compartilhado de recuperação, revalida frontier, primeiro pool e identidade exata do swap
+e só então grava. Tokens cujo
 holder deixou de existir ou deixou o estado `live` são reconhecidos e removidos da fila,
 enquanto indisponibilidades transitórias continuam usando backoff. O rollback de reorg só
 reenfileira tokens que ainda possuem `first_buy` e holder `live`. A lease expõe o token e o
@@ -4315,9 +4316,11 @@ são descartados e voltam a ser criados pelo trigger durante a recaptura. Estado
 de classificação holder, métricas de distribuição, BUNDLED, FRESH e
 redistribution que apontam à faixa ficam `reorged`, preservando o último payload
 apenas como não confiável até a nova frontier convergir. Os respectivos writers
-travam o cursor canônico em modo compartilhado e recusam recovery ativo ou hash
-não canônico; o materializador de launch anchor também exige holder frontier e
-pool ativos/canônicos. Não há migration nem RPC adicional.
+usam o advisory fence canônico compartilhado e recusam recovery ativo ou hash não
+canônico; apenas a ativação do recovery toma o fence exclusivo. Commits normais da
+captura continuam serializados pelo cursor, mas não disputam esse fence com as
+projeções. O materializador de launch anchor também exige holder frontier e pool
+ativos/canônicos. Não há migration nem RPC adicional.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

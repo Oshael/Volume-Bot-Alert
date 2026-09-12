@@ -2,7 +2,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  CANONICAL_RECOVERY_FENCE_LOCK_ID,
   lockRobinhoodCanonicalProjection,
+  lockRobinhoodCanonicalRecoveryExclusive,
   __private: { normalizeFrontiers },
 } = require('../src/models/robinhood-canonical-projection-fence');
 
@@ -33,10 +35,21 @@ describe('Robinhood canonical projection fence', () => {
     await lockRobinhoodCanonicalProjection(database, {
       blockNumber: '10', blockHash: HASH,
     }, 'test projection');
-    assert.equal(database.calls.length, 2);
-    assert.deepEqual(JSON.parse(database.calls[1].params[0]), [
+    assert.equal(database.calls.length, 3);
+    assert.match(database.calls[0].sql, /pg_advisory_xact_lock_shared/);
+    assert.deepEqual(database.calls[0].params, [CANONICAL_RECOVERY_FENCE_LOCK_ID]);
+    assert.doesNotMatch(database.calls[1].sql, /FOR SHARE/);
+    assert.deepEqual(JSON.parse(database.calls[2].params[0]), [
       { block_number: '10', block_hash: HASH },
     ]);
+  });
+
+  it('uses the same advisory key for shared projections and exclusive recovery', async () => {
+    const database = client();
+    await lockRobinhoodCanonicalRecoveryExclusive(database);
+    assert.match(database.calls[0].sql, /pg_advisory_xact_lock\(/);
+    assert.doesNotMatch(database.calls[0].sql, /_shared/);
+    assert.deepEqual(database.calls[0].params, [CANONICAL_RECOVERY_FENCE_LOCK_ID]);
   });
 
   it('fails closed during recovery or when the frontier hash is not canonical', async () => {

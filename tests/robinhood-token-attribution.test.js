@@ -183,9 +183,10 @@ describe('Robinhood token creator attribution', () => {
     });
     assert.equal(result.attributed, 1);
     assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]),
-      ['BEGIN', 'SELECT', 'SELECT', 'INSERT', 'UPDATE', 'COMMIT']);
-    assert.match(calls[3], /attribution_factory_address/);
-    assert.match(calls[3], /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
+      ['BEGIN', 'SELECT', 'SELECT', 'SELECT', 'INSERT', 'UPDATE', 'COMMIT']);
+    assert.match(calls[1], /pg_advisory_xact_lock_shared/);
+    assert.match(calls[4], /attribution_factory_address/);
+    assert.match(calls[4], /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
   });
 
   it('rejects a creator LIVE commit while canonical recovery is active', async () => {
@@ -233,7 +234,8 @@ describe('Robinhood token creator attribution', () => {
       source: 'rpc_direct', factoryAddress: null,
     }]), { attributed: 1 });
     assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]),
-      ['BEGIN', 'SELECT', 'INSERT', 'COMMIT']);
+      ['BEGIN', 'SELECT', 'SELECT', 'INSERT', 'COMMIT']);
+    assert.match(calls[1], /pg_advisory_xact_lock_shared/);
     assert.doesNotMatch(calls.join('\n'), /UPDATE robinhood_direct_creator_cursors/);
   });
 
