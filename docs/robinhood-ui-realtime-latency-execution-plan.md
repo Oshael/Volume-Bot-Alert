@@ -634,11 +634,11 @@ visível.
 
 #### Slice 6B — outbox durável do holder (~400–500 linhas)
 
-- [ ] gravar a publicação na mesma transação que atualiza balances, journal,
+- [x] gravar a publicação na mesma transação que atualiza balances, journal,
   `holder_count`, versão e frontier;
-- [ ] usar identidade idempotente, claim, lease, retry/reclaim e dead-letter
+- [x] usar identidade idempotente, claim, lease, retry/reclaim e dead-letter
   observável;
-- [ ] manter snapshot HTTP como reconciliação quando entrega realtime for
+- [x] manter snapshot HTTP como reconciliação quando entrega realtime for
   perdida ou o cliente reconectar.
 
 #### Slice 6C — lifecycle e entrega até a UI (~400–500 linhas)

@@ -2456,6 +2456,16 @@ residuais. A promoção residual é limitada separadamente por
 `ROBINHOOD_HOLDER_LIVE_SHADOW_PROMOTION_BATCH_SIZE` (default 250, máximo 1.000),
 evitando que um budget alto de apply transforme milhares de promoções em uma única
 transação e esgote a tabela compartilhada de locks do PostgreSQL.
+Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
+`node src/utils/db-init-stage213.js` e execute `npm run db:schema-check`. A Stage
+213 cria `robinhood_holder_realtime_outbox`. Apply, promoção e recuperação de
+reorg gravam nela, na mesma transação de balances, journal, count, versão e
+frontier, uma linha idempotente por token/versão/tipo. A fila suporta claim com
+`SKIP LOCKED`, lease, reclaim, backoff, cinco tentativas e estado terminal
+`blocked`; `robinhood_holder_realtime_outbox` é emitido somente quando uma linha
+nova é commitada. Neste corte a publicação direta permanece ativa e a outbox é a
+base durável para o relay/lifecycle do corte seguinte. O snapshot HTTP continua
+sendo a reconciliação autoritativa em reconnect ou perda de entrega realtime.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
 Depois da Stage 180, cada INSERT commitado no journal de um token rastreado
 (`backfilling`, `shadow` ou `live`) também faz upsert de um ticket por token em

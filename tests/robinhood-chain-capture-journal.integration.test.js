@@ -85,6 +85,7 @@ const stage209 = require('../src/utils/db-init-stage209');
 const stage210 = require('../src/utils/db-init-stage210');
 const stage211 = require('../src/utils/db-init-stage211');
 const stage212 = require('../src/utils/db-init-stage212');
+const stage213 = require('../src/utils/db-init-stage213');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -274,6 +275,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_native_funding_edges WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_native_funding_events WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_classifications WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_holder_realtime_outbox WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_classification_states WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_distribution_metrics WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_launch_anchor_outbox WHERE chain='robinhood'");
@@ -375,6 +377,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage210.init({ closePool: false });
     await stage211.init({ closePool: false });
     await stage212.init({ closePool: false });
+    await stage213.init({ closePool: false });
     await stage181.init({ closePool: false });
     await stage182.init({ closePool: false });
     await stage149.init({ closePool: false });

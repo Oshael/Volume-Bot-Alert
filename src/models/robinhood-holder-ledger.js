@@ -1,5 +1,6 @@
 const db = require('./db');
 const { refreshExistingHotQueue } = require('./robinhood-holder-hot-queue');
+const { enqueuePublications } = require('./robinhood-holder-realtime-outbox');
 
 const CHAIN = 'robinhood';
 const STREAM = 'live';
@@ -837,6 +838,7 @@ async function commitAppliedPrefix(client, computed) {
         }) } : {}),
       })
     : null;
+  if (publication) await enqueuePublications(client, [publication]);
   return Object.freeze({
     status: 'applied', tokenAddress: computed.tokenAddress,
     holderCount: String(row.holder_count), holderDelta: latest.holderDelta,
@@ -1268,15 +1270,17 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
                     state.updated_at, state.live_through_block, state.live_through_hash`,
         [cursor.next_block, cursor.checkpoint_block, cursor.checkpoint_hash, limit, tokenAddress]
       );
+      const publications = result.rows.map((row) => Object.freeze({
+        tokenAddress: row.token_address, holderCount: String(row.holder_count),
+        ledgerVersion: String(row.version), observedAt: row.updated_at,
+        liveThroughBlock: String(row.live_through_block),
+        liveThroughHash: row.live_through_hash,
+      }));
+      await enqueuePublications(client, publications);
       return Object.freeze({
         status: result.rowCount ? 'promoted' : 'idle',
         promotedTokens: result.rowCount,
-        publications: Object.freeze(result.rows.map((row) => Object.freeze({
-          tokenAddress: row.token_address, holderCount: String(row.holder_count),
-          ledgerVersion: String(row.version), observedAt: row.updated_at,
-          liveThroughBlock: String(row.live_through_block),
-          liveThroughHash: row.live_through_hash,
-        }))),
+        publications: Object.freeze(publications),
       });
     });
   }
@@ -1452,6 +1456,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         liveThroughBlock: String(state.live_through_block),
         liveThroughHash: state.live_through_hash,
       }) : null;
+      if (publication) await enqueuePublications(client, [publication]);
       return Object.freeze({
         status: 'requeued', tokenAddress, priorStatus: state.ledger_status,
         backfillNextBlock, revertedEvents: applied.rowCount,
@@ -1544,6 +1549,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         liveThroughBlock: String(state.live_through_block),
         liveThroughHash: state.live_through_hash,
       }) : null;
+      if (publication) await enqueuePublications(client, [publication]);
       return Object.freeze({
         status: 'requeued', recovery: 'wide-shadow-tail', tokenAddress,
         backfillNextBlock, receiptBlocks: receiptBlocks.toString(),
@@ -1566,6 +1572,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const publications = await loadRewindPublications(
       client, affectedTokens, resyncingStates, rewind.checkpoint
     );
+    await enqueuePublications(client, publications);
     return Object.freeze({
       status: 'rewound', revertedEvents: applied.length,
       affectedTokens: affectedTokens.length, resyncingTokens: resyncingStates.length,

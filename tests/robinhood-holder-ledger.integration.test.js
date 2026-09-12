@@ -3,6 +3,10 @@ const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { HOT_QUEUE_REPAIR_STATEMENTS, STATEMENTS: HOT_QUEUE_DDL } = require('../src/utils/db-init-stage180');
+const stage213 = require('../src/utils/db-init-stage213');
+const {
+  createRobinhoodHolderRealtimeOutboxRepository,
+} = require('../src/models/robinhood-holder-realtime-outbox');
 const {
   createRobinhoodHolderLedgerRepository, __private,
 } = require('../src/models/robinhood-holder-ledger');
@@ -78,6 +82,10 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(stage213.STATEMENTS[0].replace(
+        'CREATE TABLE IF NOT EXISTS robinhood_holder_realtime_outbox',
+        'CREATE TEMP TABLE robinhood_holder_realtime_outbox'
+      ));
       await client.query(HOT_QUEUE_DDL[0].replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE'));
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
@@ -96,6 +104,7 @@ describe('Robinhood holder ledger persistence', () => {
         }),
       };
       const repository = createRobinhoodHolderLedgerRepository({ database });
+      const realtimeOutbox = createRobinhoodHolderRealtimeOutboxRepository({ database });
       const retention = createRobinhoodHolderJournalRetention({ database });
       assert.deepEqual(await observeReorgFenceMode(client, 'shared'), ['ShareLock']);
       assert.deepEqual(await observeReorgFenceMode(client, 'exclusive'), ['ExclusiveLock']);
@@ -197,6 +206,26 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual([...pendingShards[0], ...pendingShards[1]].sort(),
         [TOKEN, TOKEN_3].sort());
       assert.deepEqual(pendingShards[0].filter((token) => pendingShards[1].includes(token)), []);
+      await client.query(`CREATE FUNCTION pg_temp.reject_holder_outbox()
+        RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          RAISE EXCEPTION 'holder outbox rejected';
+        END $$`);
+      await client.query(`CREATE TRIGGER reject_holder_outbox
+        BEFORE INSERT ON robinhood_holder_realtime_outbox
+        FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_holder_outbox()`);
+      await assert.rejects(
+        repository.applyNextPendingEvent({ onlyTokenAddress: TOKEN_3 }),
+        /holder outbox rejected/
+      );
+      const atomicFailure = await client.query(
+        `SELECT state.holder_count, journal.applied
+           FROM robinhood_holder_token_states state
+           INNER JOIN robinhood_holder_transfer_journal journal
+             ON journal.chain=state.chain AND journal.token_address=state.token_address
+          WHERE state.token_address=$1`, [TOKEN_3]
+      );
+      assert.deepEqual(atomicFailure.rows, [{ holder_count: '0', applied: false }]);
+      await client.query('DROP TRIGGER reject_holder_outbox ON robinhood_holder_realtime_outbox');
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE transaction_hash = $1`, [HASH_8]
       );
@@ -341,6 +370,25 @@ describe('Robinhood holder ledger persistence', () => {
         liveThroughBlock: '100', liveThroughHash: HASH_A, observedAt: undefined,
       });
       assert.ok(partial.publication.observedAt instanceof Date);
+      const durablePublication = await client.query(
+        `SELECT token_address, ledger_version, event_kind, holder_count,
+                live_through_block, live_through_hash, status
+           FROM robinhood_holder_realtime_outbox WHERE token_address = $1`, [TOKEN_BATCH]
+      );
+      assert.deepEqual(durablePublication.rows, [{
+        token_address: TOKEN_BATCH, ledger_version: '2', event_kind: 'observed',
+        holder_count: '2', live_through_block: '100', live_through_hash: HASH_A,
+        status: 'pending',
+      }]);
+      const claimedPublication = await realtimeOutbox.claimOutbox({
+        owner: 'holder-ledger-test', limit: 100, leaseMs: 60_000,
+      });
+      const claimedToken = claimedPublication.find(({ payload }) => payload.address === TOKEN_BATCH);
+      assert.equal(claimedToken.payload.type, 'holder:count');
+      assert.equal(claimedToken.payload.holderCount, 2);
+      assert.deepEqual(await realtimeOutbox.settleOutbox({
+        owner: 'holder-ledger-test', delivered: claimedPublication.map(({ id }) => id),
+      }), { delivered: claimedPublication.length, retried: 0, blocked: 0 });
       const partialState = await client.query(
         `SELECT holder_count, version, live_through_block
            FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN_BATCH]
