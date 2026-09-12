@@ -2081,6 +2081,7 @@ Stages confirmados:
 | 206 | journal e outbox duráveis da recuperação canônica |
 | 207 | identidade do lifecycle de swaps isolada por `block_hash` |
 | 208 | preimages reversíveis dos agregados de transfers ainda não finalizados |
+| 215 | âncora canônica durável do mint no outbox de resolução de deployment |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -2871,18 +2872,22 @@ aplicar Stage 165 (`node src/utils/db-init-stage165.js`), o worker independente
 é ativado por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED=true`. `LISTEN/NOTIFY`
 acorda o consumidor imediatamente. A captura canônica enfileira no mesmo commit
 todo emitter de `Transfer(from=0)`, antes de o token precisar existir no catálogo
-ou ganhar pool. A Stage 183
+ou ganhar pool. A Stage 215 (`node src/utils/db-init-stage215.js`) deve ser aplicada
+antes de publicar este caminho: ela guarda no próprio outbox o bloco, o hash do
+bloco e a transação do primeiro mint canônico observado. Uma nova captura substitui
+uma âncora antiga somente quando o bloco anterior deixou de ser canônico. A Stage 183
 (`node src/utils/db-init-stage183.js`) adiciona apenas a provenance necessária,
-com `lock_timeout` curto. Tarefas admitidas nos últimos dez minutos precedem o
-backlog histórico. Depois das confirmações configuradas, o caminho primário lê o
-mint diretamente de `robinhood_chain_events`; o `RH_NODE_RPC_URL` pruned prova
+com `lock_timeout` curto. Tarefas com mint ancorado precedem tanto admissões recentes
+sem âncora quanto o backlog histórico. Depois das confirmações configuradas, o
+caminho primário consome a âncora fixa; o `RH_NODE_RPC_URL` pruned prova
 que o bytecode era vazio em `N-1`, existe em `N` e que bloco/receipt permanecem
 canônicos. O worker drena lotes concorrentes (`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_BATCH_SIZE`,
 default 64; `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONCURRENCY`, default 16) para concluir
 dentro da janela podada. `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONFIRMATIONS` vale 12
-por default. A busca usa o índice existente de tópico/bloco e fica limitada aos
-últimos 96 blocos (`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_STATE_LOOKBACK_BLOCKS`), abaixo
-dos 128 blocos de estado medidos no node pruned. O `discovery_tx_hash` do primeiro pool ativo continua como fallback
+por default. Somente tarefas legadas, criadas antes da Stage 215 e ainda sem âncora,
+procuram o mint pelo índice existente de tópico/bloco nos últimos 96 blocos
+(`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_STATE_LOOKBACK_BLOCKS`), abaixo dos 128 blocos de
+estado medidos no node pruned. O `discovery_tx_hash` do primeiro pool ativo continua como fallback
 para contratos sem mint observável, mas uma mera descoberta nunca é promovida.
 A prova `rpc_code_transition` é terminal para a outbox de deployment e habilita
 holders sem inventar creator. Se o mesmo bloco já contém creator canônico conhecido,
@@ -2892,6 +2897,13 @@ Blockscout nem o túnel do PC.
 Um `Transfer(from=0)` posterior, como depósitos no wrapped native, é descartado
 quando a prova mostra que o bytecode já existia em `N-1`; ele não cria attribution
 nem permanece ocupando a outbox.
+
+Falhas de RPC ao validar uma âncora durável preservam o erro específico na tarefa e
+usam retry de um segundo nas oito primeiras tentativas. A âncora não expira quando
+o cursor avança, mas sua prova ainda precisa ocorrer enquanto o estado `N-1` está
+disponível no node podado. Por isso captura e worker de deployment devem permanecer
+ativos e a fila de tarefas ancoradas deve ser monitorada; indisponibilidade maior
+que a retenção do node continua exigindo Archive para aquele intervalo perdido.
 
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com

@@ -21,6 +21,19 @@ function batchLimit(value) {
   return parsed;
 }
 
+function claimedTask(row) {
+  const mintHint = row.mint_block_number == null ? null : Object.freeze({
+    tokenAddress: normalizeTokenAddress(CHAIN, row.token_address),
+    blockNumber: String(row.mint_block_number),
+    blockHash: row.mint_block_hash,
+    transactionHash: row.mint_transaction_hash,
+  });
+  return Object.freeze({
+    tokenAddress: normalizeTokenAddress(CHAIN, row.token_address),
+    attemptCount: Number(row.attempt_count), createdAt: row.created_at, mintHint,
+  });
+}
+
 function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
   const database = options.database || db;
 
@@ -34,7 +47,9 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
           WHERE chain = '${CHAIN}' AND next_attempt_at <= NOW()
             AND (status = 'pending' OR lease_until <= NOW())
           ORDER BY
-            CASE WHEN created_at >= NOW() - INTERVAL '10 minutes' THEN 0 ELSE 1 END,
+            CASE WHEN mint_block_number IS NOT NULL THEN 0
+                 WHEN created_at >= NOW() - INTERVAL '10 minutes' THEN 1 ELSE 2 END,
+            mint_block_number DESC NULLS LAST,
             next_attempt_at, created_at
           LIMIT $3 FOR UPDATE SKIP LOCKED
        )
@@ -44,13 +59,12 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
               attempt_count = attempt_count + 1, updated_at = NOW()
          FROM candidate WHERE outbox.chain = '${CHAIN}'
           AND outbox.token_address = candidate.token_address
-       RETURNING outbox.token_address, outbox.attempt_count, outbox.created_at`,
+       RETURNING outbox.token_address, outbox.attempt_count, outbox.created_at,
+                 outbox.mint_block_number, outbox.mint_block_hash,
+                 outbox.mint_transaction_hash`,
       [owner, leaseMs, limit]
     );
-    return Object.freeze(rows.map((row) => Object.freeze({
-      tokenAddress: row.token_address, attemptCount: Number(row.attempt_count),
-      createdAt: row.created_at,
-    })));
+    return Object.freeze(rows.map(claimedTask));
   }
 
   async function claim(input = {}) {

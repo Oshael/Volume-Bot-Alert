@@ -6019,6 +6019,23 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage215-robinhood-token-deployment-mint-anchor',
+    name: 'Stage 215 Robinhood token deployment mint anchor',
+    repair: 'node src/utils/db-init-stage215.js',
+    tables: [{
+      table: 'robinhood_token_deployment_outbox',
+      columns: ['mint_block_number', 'mint_block_hash', 'mint_transaction_hash'],
+      constraints: [{
+        name: 'rh_token_deployment_outbox_mint_anchor_check',
+        includes: ['mint_block_number', 'mint_block_hash', 'mint_transaction_hash'],
+      }],
+      indexes: [{
+        name: 'idx_rh_token_deployment_outbox_mint_claim',
+        includes: ['status', 'next_attempt_at', 'mint_block_number'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -6062,6 +6079,7 @@ const PROFILE_GROUP_KEYS = {
     'stage212-robinhood-liquidity-realtime-outbox',
     'stage213-robinhood-holder-realtime-outbox',
     'stage214-robinhood-holder-realtime-lifecycle',
+    'stage215-robinhood-token-deployment-mint-anchor',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

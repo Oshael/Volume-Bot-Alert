@@ -14,6 +14,7 @@ const NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
 const ROBINHOOD_CHAIN_ID = 4663n;
 const LOCAL_EVIDENCE_GRACE_MS = 15_000;
 const LOCAL_EVIDENCE_RETRY_MS = 1000;
+const PINNED_EVIDENCE_FAST_RETRIES = 8;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -156,6 +157,29 @@ async function concurrentMap(values, concurrency, operation) {
   return results;
 }
 
+function canResolveLocally(current, task) {
+  const canLoadMint = task.mintHint || typeof current.outbox.findMintHint === 'function';
+  return Boolean(canLoadMint && typeof current.localResolver?.verify === 'function');
+}
+
+async function verifyLocalHint(localResolver, mintHint, localHint) {
+  try {
+    if (mintHint && typeof localResolver.inspect === 'function') {
+      const inspected = await localResolver.inspect(mintHint);
+      if (inspected?.status === 'preexisting-code') return Object.freeze({ ignoredMint: true });
+      return inspected?.status === 'transition' ? inspected.transition : null;
+    }
+    return await localResolver.verify(localHint);
+  } catch (error) {
+    if (error.code === 'configuration_error') throw error;
+    if (mintHint) {
+      error.stage ||= 'rpc_code_transition';
+      throw error;
+    }
+    return null;
+  }
+}
+
 function createRobinhoodTokenDeploymentWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancel = deps.cancelSchedule || clearTimeout;
@@ -185,11 +209,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     : Number.POSITIVE_INFINITY);
 
   async function resolveLocally(current, task) {
-    if (typeof current.outbox.findMintHint !== 'function'
-        || typeof current.localResolver?.verify !== 'function') return null;
-    const mintHint = await current.outbox.findMintHint(task.tokenAddress, {
-      confirmations: options.confirmations,
-      lookbackBlocks: options.stateLookbackBlocks,
+    if (!canResolveLocally(current, task)) return null;
+    const mintHint = task.mintHint || await current.outbox.findMintHint(task.tokenAddress, {
+      confirmations: options.confirmations, lookbackBlocks: options.stateLookbackBlocks,
     });
     const discoveryHint = !mintHint && typeof current.outbox.findDiscoveryHint === 'function'
       ? await current.outbox.findDiscoveryHint(task.tokenAddress) : null;
@@ -202,20 +224,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       }
       return null;
     }
-    try {
-      if (mintHint && typeof current.localResolver.inspect === 'function') {
-        const inspected = await current.localResolver.inspect(mintHint);
-        if (inspected?.status === 'preexisting-code') {
-          return Object.freeze({ ignoredMint: true });
-        }
-        return inspected?.status === 'transition' ? inspected.transition : null;
-      }
-      return await current.localResolver.verify(localHint);
-    }
-    catch (error) {
-      if (error.code === 'configuration_error') throw error;
-      return null;
-    }
+    return verifyLocalHint(current.localResolver, mintHint, localHint);
   }
 
   async function resolveCanonicalCreator(current, transition) {
@@ -233,6 +242,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
 
   function retryFor(task, error) {
     if (error.code === 'local_mint_pending') return LOCAL_EVIDENCE_RETRY_MS;
+    if (task.mintHint && task.attemptCount <= PINNED_EVIDENCE_FAST_RETRIES) {
+      return LOCAL_EVIDENCE_RETRY_MS;
+    }
     return retryDelay(task.attemptCount);
   }
 

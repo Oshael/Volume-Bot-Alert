@@ -7,6 +7,8 @@ const {
 const {
   createRobinhoodTokenDeploymentOutboxRepository,
 } = require('../src/models/robinhood-token-deployment-outbox');
+const stage215 = require('../src/utils/db-init-stage215');
+const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const TOKEN_B = `0x${'d'.repeat(40)}`;
@@ -57,6 +59,62 @@ it('materializes exact deployment evidence before completing the outbox task', a
   const result = await worker.runOnce();
   assert.equal(result.status, 'resolved');
   assert.deepEqual(fixture.calls, ['transition', 'attributed', 'complete']);
+});
+
+it('uses a durable mint anchor without searching the moving journal window', async () => {
+  const mintHint = {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  };
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({
+        tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date(), mintHint,
+      }),
+      isExact: async () => false,
+      complete: async () => { fixture.calls.push('complete'); },
+      retry: async () => { throw new Error('must not retry'); },
+    },
+    localResolver: { verify: async (input) => input },
+    creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+    attributions: {
+      recordCodeTransitions: async () => { fixture.calls.push('transition'); },
+    },
+  });
+  const result = await createRobinhoodTokenDeploymentWorker({
+    runtime: fixture.value, owner: 'test',
+  }).runOnce();
+  assert.equal(result.source, 'rpc_code_transition');
+  assert.deepEqual(fixture.calls, ['transition', 'complete']);
+});
+
+it('retries a durable mint anchor rapidly without hiding the RPC failure', async () => {
+  let retry;
+  const mintHint = {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  };
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({
+        tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date(), mintHint,
+      }),
+      isExact: async () => false,
+      retry: async (input) => { retry = input; },
+    },
+    localResolver: { verify: async () => {
+      throw Object.assign(new Error('state temporarily unavailable'), { code: 'rpc_unavailable' });
+    } },
+  });
+  const result = await createRobinhoodTokenDeploymentWorker({
+    runtime: fixture.value, owner: 'test',
+  }).runOnce();
+  assert.deepEqual(result, { status: 'error', tokenAddress: TOKEN, errors: 1 });
+  assert.equal(retry.retryMs, 1000);
+  assert.equal(
+    retry.error,
+    'rpc_code_transition:rpc_unavailable:state temporarily unavailable'
+  );
 });
 
 it('drains a bounded deployment batch concurrently', async () => {
@@ -264,20 +322,26 @@ it('defers a fresh task briefly while its mint reaches the journal', async () =>
   assert.equal(retries[0].retryMs, 1000);
 });
 
-it('prioritizes recent outbox tasks and loads a confirmed canonical mint', async () => {
+it('prioritizes anchored outbox tasks and loads a confirmed canonical mint', async () => {
   const calls = [];
   const repository = createRobinhoodTokenDeploymentOutboxRepository({
     database: { query: async (sql, params) => {
       calls.push({ sql, params });
       if (sql.includes('WITH candidate')) return { rows: [{
         token_address: TOKEN, attempt_count: 1, created_at: '2026-08-30T20:00:00Z',
+        mint_block_number: '100', mint_block_hash: BLOCK_HASH,
+        mint_transaction_hash: TRANSACTION_HASH,
       }] };
       return { rows: [{
         block_number: '100', block_hash: BLOCK_HASH, transaction_hash: TRANSACTION_HASH,
       }] };
     } },
   });
-  assert.equal((await repository.claim({ owner: 'test', leaseMs: 30_000 })).tokenAddress, TOKEN);
+  assert.deepEqual((await repository.claim({ owner: 'test', leaseMs: 30_000 })).mintHint, {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  });
+  assert.match(calls[0].sql, /mint_block_number IS NOT NULL THEN 0/);
   assert.match(calls[0].sql, /created_at >= NOW\(\) - INTERVAL '10 minutes'/);
   assert.deepEqual(await repository.findMintHint(TOKEN), {
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
@@ -291,6 +355,21 @@ it('prioritizes recent outbox tasks and loads a confirmed canonical mint', async
   assert.deepEqual(calls[1].params.slice(1), [12,
     '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
     `0x${'0'.repeat(64)}`, 96]);
+});
+
+it('registers the durable mint anchor migration in runtime schema', async () => {
+  const calls = [];
+  await stage215.init({
+    closePool: false,
+    database: { query: async (sql) => { calls.push(sql); }, pool: { end: async () => {} } },
+  });
+  assert.deepEqual(calls, [...stage215.STATEMENTS]);
+  const group = SCHEMA_GROUPS.find(({ key }) => (
+    key === 'stage215-robinhood-token-deployment-mint-anchor'
+  ));
+  assert.deepEqual(group.tables[0].columns, [
+    'mint_block_number', 'mint_block_hash', 'mint_transaction_hash',
+  ]);
 });
 
 it('loads the earliest active pool transaction as canonical discovery evidence', async () => {

@@ -90,6 +90,7 @@ const stage211 = require('../src/utils/db-init-stage211');
 const stage212 = require('../src/utils/db-init-stage212');
 const stage213 = require('../src/utils/db-init-stage213');
 const stage214 = require('../src/utils/db-init-stage214');
+const stage215 = require('../src/utils/db-init-stage215');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -345,6 +346,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage106.init({ closePool: false });
     await stage103.init({ closePool: false });
     await stage165.init({ closePool: false });
+    await stage215.init({ closePool: false });
     await stage110.init({ closePool: false });
     await stage113.init({ closePool: false });
     await stage114.init({ closePool: false });
@@ -630,11 +632,13 @@ describe('Robinhood canonical chain capture journal', () => {
     }];
     await createRobinhoodChainCaptureJournal().commitBlock(input);
     const result = await db.query(
-      `SELECT token_address, status, attempt_count
+      `SELECT token_address, status, attempt_count, mint_block_number::text,
+              mint_block_hash, mint_transaction_hash
          FROM robinhood_token_deployment_outbox WHERE chain='robinhood'`
     );
     assert.deepEqual(result.rows, [{
       token_address: TOKEN, status: 'pending', attempt_count: 0,
+      mint_block_number: '100', mint_block_hash: HASH, mint_transaction_hash: TX,
     }]);
   });
 

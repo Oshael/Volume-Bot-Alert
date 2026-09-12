@@ -186,7 +186,7 @@ function normalizeInput(input) {
 }
 function batchPayload(entries) {
   const blocks = []; const transactions = []; const events = [];
-  const v3Snapshots = []; const workItems = []; const deploymentTokens = new Set();
+  const v3Snapshots = []; const workItems = []; const deploymentHints = new Map();
   for (const entry of entries) {
     const { block } = entry;
     blocks.push({
@@ -204,8 +204,12 @@ function batchPayload(entries) {
       block_hash: block.hash, block_number: block.number.toString(), ...event,
     })));
     for (const event of entry.events) {
-      if (event.topic0 === TRANSFER_TOPIC && event.topics[1] === ZERO_TOPIC) {
-        deploymentTokens.add(event.address);
+      if (event.topic0 === TRANSFER_TOPIC && event.topics[1] === ZERO_TOPIC
+          && !deploymentHints.has(event.address)) {
+        deploymentHints.set(event.address, {
+          token_address: event.address, mint_block_number: block.number.toString(),
+          mint_block_hash: block.hash, mint_transaction_hash: event.transaction_hash,
+        });
       }
     }
     v3Snapshots.push(...entry.v3Snapshots.map((snapshot) => ({
@@ -219,7 +223,7 @@ function batchPayload(entries) {
     })));
   }
   return { blocks, transactions, events, v3Snapshots, workItems,
-    deploymentTokens: [...deploymentTokens] };
+    deploymentHints: [...deploymentHints.values()] };
 }
 function validateSequence(entries, current) {
   let expected = current ? BigInt(current.next_block) : entries[0].block.number;
@@ -424,13 +428,30 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                transaction_index INTEGER, log_index INTEGER
              )`, [CHAIN, JSON.stringify(payload.workItems)]
       );
-      if (payload.deploymentTokens.length > 0) {
+      if (payload.deploymentHints.length > 0) {
         await client.query(
-          `INSERT INTO robinhood_token_deployment_outbox(chain, token_address)
-           SELECT $1, token_address
-             FROM UNNEST($2::varchar[]) AS token(token_address)
-           ON CONFLICT (chain, token_address) DO NOTHING`,
-          [CHAIN, payload.deploymentTokens]
+          `INSERT INTO robinhood_token_deployment_outbox(
+             chain, token_address, mint_block_number, mint_block_hash, mint_transaction_hash
+           ) SELECT $1, item.token_address, item.mint_block_number,
+                    item.mint_block_hash, item.mint_transaction_hash
+               FROM jsonb_to_recordset($2::jsonb) AS item(
+                 token_address TEXT, mint_block_number BIGINT,
+                 mint_block_hash TEXT, mint_transaction_hash TEXT
+               )
+           ON CONFLICT (chain, token_address) DO UPDATE SET
+             mint_block_number=EXCLUDED.mint_block_number,
+             mint_block_hash=EXCLUDED.mint_block_hash,
+             mint_transaction_hash=EXCLUDED.mint_transaction_hash,
+             status='pending', attempt_count=0, next_attempt_at=NOW(),
+             lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=NOW()
+           WHERE robinhood_token_deployment_outbox.mint_block_number IS NULL
+              OR NOT EXISTS (
+                SELECT 1 FROM robinhood_chain_blocks anchored
+                 WHERE anchored.chain=robinhood_token_deployment_outbox.chain
+                   AND anchored.block_hash=robinhood_token_deployment_outbox.mint_block_hash
+                   AND anchored.canonical=TRUE
+              )`,
+          [CHAIN, JSON.stringify(payload.deploymentHints)]
         );
       }
       const last = entries.at(-1);
@@ -457,7 +478,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           'SELECT pg_notify($1, $2)', [DOMAIN_NOTIFY_CHANNEL, last.block.number.toString()]
         );
       }
-      if (payload.deploymentTokens.length > 0) {
+      if (payload.deploymentHints.length > 0) {
         await client.query(
           'SELECT pg_notify($1, $2)', [DEPLOYMENT_NOTIFY_CHANNEL, last.block.number.toString()]
         );
