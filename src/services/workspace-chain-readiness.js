@@ -91,7 +91,9 @@ function getRobinhoodMessage(status, marketWorkspaceReady) {
   return 'Robinhood workspace data is unavailable. Solana data is hidden.';
 }
 
-function buildRobinhoodReadiness(rollout, checkedAt, extraBlockers = [], pipelineHealth = null) {
+function buildRobinhoodReadiness(
+  rollout, checkedAt, extraBlockers = [], pipelineHealth = null, runtimeConfig = {}
+) {
   const status = resolveRobinhoodStatus(rollout, pipelineHealth);
   const marketWorkspaceReady = isRobinhoodMarketWorkspaceReady(rollout, pipelineHealth);
   const publicationReady = rollout.publishable === true && pipelineHealth?.ready !== false;
@@ -112,6 +114,8 @@ function buildRobinhoodReadiness(rollout, checkedAt, extraBlockers = [], pipelin
       alertFeed: publicationReady,
       radar: false,
       monitored: marketWorkspaceReady,
+      launchpadLifecycle: marketWorkspaceReady
+        && runtimeConfig.robinhoodTokenViews?.lifecycleEnabled === true,
       topPerformers: marketWorkspaceReady,
       manualTokens: true,
       starred: true,
@@ -148,6 +152,7 @@ function buildWorkspaceChainReadiness(input = {}) {
     checkedAt,
     input.telemetryAvailable === false ? ['readiness_telemetry_unavailable'] : [],
     input.pipelineHealth,
+    runtimeConfig,
   );
   return readiness;
 }

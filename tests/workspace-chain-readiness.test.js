@@ -71,6 +71,7 @@ function runtimeConfig(overrides = {}) {
   return {
     mockTrading: { enabled: true },
     robinhoodUserVisibility: { enabled: true },
+    robinhoodTokenViews: { lifecycleEnabled: true },
     robinhoodIngestionWorker: { enabled: true },
     robinhoodRollout: {
       transport: { enabled: true },
@@ -120,6 +121,7 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.publicationReady, false);
     assert.equal(readiness.workspaceReady, false);
     assert.equal(readiness.capabilities.monitored, false);
+    assert.equal(readiness.capabilities.launchpadLifecycle, false);
     assert.equal(readiness.capabilities.manualTokens, true);
     assert.equal(readiness.capabilities.starred, true);
     assert.equal(readiness.capabilities.blocklist, true);
@@ -143,6 +145,7 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.capabilities.history, true);
     assert.equal(readiness.capabilities.charts, true);
     assert.equal(readiness.capabilities.monitored, true);
+    assert.equal(readiness.capabilities.launchpadLifecycle, true);
     assert.equal(readiness.capabilities.topPerformers, true);
     assert.equal(readiness.capabilities.manualTokens, true);
     assert.equal(readiness.capabilities.starred, true);
@@ -169,6 +172,19 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.capabilities.alertFeed, false);
     assert.equal(readiness.capabilities.monitored, true);
     assert.equal(readiness.capabilities.topPerformers, true);
+  });
+
+  it('keeps lifecycle reads dark until historical coverage is approved', () => {
+    const readiness = buildWorkspaceChainReadiness({
+      config: runtimeConfig({ robinhoodTokenViews: { lifecycleEnabled: false } }),
+      ingestionStatus: {
+        running: true,
+        lastSnapshot: { coverage: { caughtUp: true, unexplainedGaps: 0 } },
+      },
+      nowMs: NOW_MS,
+    }).robinhood;
+    assert.equal(readiness.capabilities.monitored, true);
+    assert.equal(readiness.capabilities.launchpadLifecycle, false);
   });
 
   it('refreshes a cached syncing snapshot after the readiness TTL', async () => {

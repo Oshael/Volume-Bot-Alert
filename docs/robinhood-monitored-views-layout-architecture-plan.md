@@ -411,6 +411,9 @@ record the blocker here and do not add heuristics.
 Add Migrated/Pre-bonded queries, readiness states, deterministic aggregation and coverage for transition, duplicate, stale,
 unsupported and reorg cases.
 
+Keep reads dark behind `ROBINHOOD_LIFECYCLE_READ_ENABLED` until the bounded historical replay completes. The live writer is
+independent from this read gate; enabling it changes only readiness and API visibility.
+
 ### Slice 4: Watchlist rename
 
 Rename domain-specific symbols/copy/logs/tests, add the new tracking route plus temporary alias, migrate `user-manual` source

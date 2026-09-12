@@ -9,8 +9,15 @@ const {
 } = require('../src/services/trending-token-score');
 const {
   createDashboardTokenViewReader,
+  createRobinhoodLifecycleAdapter,
   createRobinhoodTrendingAdapter,
 } = require('../src/services/dashboard-token-view-reader');
+const {
+  rankLifecycleTokens,
+} = require('../src/services/lifecycle-token-ranking');
+const {
+  createTokenLaunchpadLifecycleRepository,
+} = require('../src/models/token-launchpad-lifecycle');
 
 const AS_OF = '2026-09-12T12:00:00.000Z';
 
@@ -32,6 +39,23 @@ function token(index, overrides = {}) {
     lastActivityAt: AS_OF,
     windowEnd: AS_OF,
     ...overrides,
+  };
+}
+
+function lifecycle(index, status, overrides = {}) {
+  const row = token(index);
+  return {
+    lifecycle: {
+      chain: 'robinhood', tokenAddress: row.identity.address, launchpadId: 'pons-v2', status,
+      bondProgressBps: status === 'pre_bonded' ? 5000 : null,
+      createdAt: '2026-09-10T00:00:00.000Z',
+      migratedAt: status === 'migrated' ? '2026-09-12T11:00:00.000Z' : null,
+      lastEventAt: '2026-09-12T11:00:00.000Z', evidenceSource: 'canonical_event',
+      evidenceBlockNumber: '100', evidenceBlockHash: `0x${'a'.repeat(64)}`,
+      evidenceTransactionHash: `0x${'b'.repeat(64)}`, evidenceLogIndex: 1, version: '2',
+      ...overrides.lifecycle,
+    },
+    row: { ...row, ...overrides.row },
   };
 }
 
@@ -129,7 +153,128 @@ describe('Robinhood Trending adapter and coordinator', () => {
     });
     assert.equal((await syncing.listTokenView({ view: 'trending', asOf: AS_OF })).status,
       'syncing');
-    await assert.rejects(ready.listTokenView({ view: 'migrated', asOf: AS_OF }),
-      (error) => error.status === 501);
+    assert.equal((await ready.listTokenView({ view: 'migrated', asOf: AS_OF })).status,
+      'unsupported');
+  });
+});
+
+describe('launchpad lifecycle views', () => {
+  it('normalizes the bounded chain-neutral lifecycle query', async () => {
+    const calls = [];
+    const repository = createTokenLaunchpadLifecycleRepository({ database: {
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rows: [{
+          chain: 'robinhood', token_address: token(1).identity.address,
+          launchpad_id: 'pons-v2', status: 'migrated', bond_progress_bps: null,
+          curve_address: token(2).identity.address, created_at: AS_OF, migrated_at: AS_OF,
+          last_event_at: AS_OF, evidence_source: 'canonical_event',
+          evidence_block_number: '10', evidence_block_hash: `0x${'a'.repeat(64)}`,
+          evidence_transaction_hash: `0x${'b'.repeat(64)}`,
+          evidence_log_index: 2, version: '3',
+        }] };
+      },
+    } });
+    const [row] = await repository.listCandidates({
+      chain: 'robinhood', status: 'migrated', limit: 40,
+    });
+    assert.equal(row.tokenAddress, token(1).identity.address);
+    assert.equal(row.evidenceBlockNumber, '10');
+    assert.deepEqual(calls[0].params, ['robinhood', 'migrated', 40]);
+    assert.match(calls[0].sql, /LIMIT \$3/);
+  });
+
+  it('deduplicates migrations and keeps migration time ahead of volume', () => {
+    const newest = lifecycle(1, 'migrated', { row: { volume5mUsd: 1 } });
+    const olderHighVolume = lifecycle(2, 'migrated', {
+      lifecycle: { migratedAt: '2026-09-12T10:00:00.000Z', lastEventAt: '2026-09-12T10:00:00.000Z' },
+      row: { volume5mUsd: 1_000_000 },
+    });
+    const duplicate = lifecycle(1, 'migrated', {
+      lifecycle: { evidenceBlockNumber: '99', version: '1' }, row: { volume5mUsd: 9_000_000 },
+    });
+    const ranked = rankLifecycleTokens([olderHighVolume, duplicate, newest], {
+      view: 'migrated', asOf: AS_OF, limit: 40,
+    });
+    assert.deepEqual(ranked.map((item) => item.identity.address), [
+      newest.row.identity.address, olderHighVolume.row.identity.address,
+    ]);
+    assert.equal(ranked[0].row.volume5mUsd, 1);
+  });
+
+  it('orders pre-bonded by progress then acceleration and rejects future evidence', () => {
+    const faster = lifecycle(1, 'pre_bonded', {
+      row: { volume5mUsd: 120, volume1hUsd: 120 },
+    });
+    const slower = lifecycle(2, 'pre_bonded', {
+      row: { volume5mUsd: 120, volume1hUsd: 1200 },
+    });
+    const ahead = lifecycle(3, 'pre_bonded', {
+      lifecycle: { bondProgressBps: 6000 }, row: { volume5mUsd: 1, volume1hUsd: 1 },
+    });
+    const future = lifecycle(4, 'pre_bonded', {
+      lifecycle: { lastEventAt: '2026-09-12T13:00:00.000Z' },
+    });
+    const ranked = rankLifecycleTokens([slower, future, faster, ahead], {
+      view: 'pre_bonded', asOf: AS_OF, limit: 40,
+    });
+    assert.deepEqual(ranked.map((item) => item.identity.address), [
+      ahead.row.identity.address, faster.row.identity.address, slower.row.identity.address,
+    ]);
+    assert.equal(rankLifecycleTokens(
+      Array.from({ length: 45 }, (_, index) => lifecycle(index + 1, 'pre_bonded')),
+      { view: 'pre_bonded', asOf: AS_OF, limit: 40 }
+    ).length, 40);
+  });
+
+  it('hydrates supported lifecycle identities and returns explicit ready-zero/syncing states', async () => {
+    const requested = [];
+    const adapter = createRobinhoodLifecycleAdapter({
+      lifecycleRepository: { async listCandidates() {
+        return [lifecycle(1, 'migrated').lifecycle, lifecycle(2, 'migrated').lifecycle];
+      } },
+      tokenReader: { async getTokensByAddresses(input) {
+        requested.push(...input.addresses); return [token(1)];
+      } },
+    });
+    const candidates = await adapter.listMigrated({ asOf: AS_OF, excludedIdentities: [
+      { chain: 'robinhood', address: token(2).identity.address },
+    ] });
+    assert.deepEqual(requested, [token(1).identity.address]);
+    assert.equal(candidates.length, 1);
+
+    const reader = createDashboardTokenViewReader({
+      adapters: { robinhood: adapter },
+      userBlocklist: { async getAllForChains() { return []; } },
+      workspaceChainReadiness: { async getWorkspaceChainReadiness() {
+        return { robinhood: { status: 'ready', capabilities: { launchpadLifecycle: true } } };
+      } },
+    });
+    const payload = await reader.listTokenView({ view: 'migrated', asOf: AS_OF });
+    assert.equal(payload.status, 'ready');
+    assert.equal(payload.count, 1);
+    assert.equal(payload.tokens[0].lifecycleRank, 1);
+
+    const empty = createDashboardTokenViewReader({
+      adapters: { robinhood: { async listPreBonded() { return []; } } },
+      userBlocklist: { async getAllForChains() { return []; } },
+      workspaceChainReadiness: { async getWorkspaceChainReadiness() {
+        return { robinhood: { status: 'ready', capabilities: { launchpadLifecycle: true } } };
+      } },
+    });
+    assert.deepEqual(
+      [(await empty.listTokenView({ view: 'pre_bonded', asOf: AS_OF })).status,
+        (await empty.listTokenView({ view: 'pre_bonded', asOf: AS_OF })).count],
+      ['ready', 0]
+    );
+
+    const syncing = createDashboardTokenViewReader({
+      adapters: { robinhood: { async listMigrated() { throw new Error('must not read'); } } },
+      workspaceChainReadiness: { async getWorkspaceChainReadiness() {
+        return { robinhood: { status: 'syncing', capabilities: { launchpadLifecycle: false } } };
+      } },
+    });
+    assert.equal((await syncing.listTokenView({ view: 'migrated', asOf: AS_OF })).status,
+      'syncing');
   });
 });

@@ -1239,6 +1239,10 @@ module.exports = {
     enabled: parseBoolean(process.env.ROBINHOOD_USER_VISIBILITY_ENABLED, false),
   },
 
+  robinhoodTokenViews: {
+    lifecycleEnabled: parseBoolean(process.env.ROBINHOOD_LIFECYCLE_READ_ENABLED, false),
+  },
+
   robinhoodCatalogProjectionWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_CATALOG_PROJECTION_ENABLED, true),
     intervalMs: parseIntegerInRange(

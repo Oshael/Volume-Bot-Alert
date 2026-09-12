@@ -1287,6 +1287,14 @@ bloco canônico. Progresso é a soma exata dos deltas líquidos de quote de
 A view ignora blocos com `canonical=false`, de modo que reorgs revertem o estado
 sem snapshot concorrente. `LaunchSwept` e rescue resultam em `unknown`; somente
 `PoolGraduated` habilita Migrated.
+Os adapters de leitura hidratam no máximo 500 candidatos e retornam no máximo 40
+tokens. Migrated ordena por data de migração, volume 5m e volume 1h; Pre-bonded,
+por progresso, aceleração 5m, volume 5m e último evento. Valores de mercado
+indisponíveis permanecem nulos. O endpoint reporta `ready`, `syncing`,
+`unavailable` ou `unsupported` por chain e diferencia `ready` com zero resultados.
+A leitura permanece dark por padrão com `ROBINHOOD_LIFECYCLE_READ_ENABLED=false`.
+Ative somente depois do replay histórico limitado e da validação de cobertura;
+o writer live continua gravando evidência independentemente desse flag.
 
 Nos cards do feed de alertas e nas listas `Monitored`, `Recent`, `Old` e `Manual`,
 Robinhood oferece o menu de terminais usado nas superfícies equivalentes de Solana.

@@ -42,6 +42,9 @@ const {
   createRobinhoodTokenTransferRepository,
 } = require('../src/models/robinhood-token-transfer-persistence');
 const {
+  createTokenLaunchpadLifecycleRepository,
+} = require('../src/models/token-launchpad-lifecycle');
+const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
 const {
@@ -655,20 +658,24 @@ describe('Robinhood canonical chain capture journal', () => {
       data: words(7, 600, 400),
     };
     await createRobinhoodChainCaptureJournal().commitBlock(migrated);
-    const readState = async () => (await db.query(
-      `SELECT status, bond_progress_bps, evidence_block_hash
-         FROM token_launchpad_lifecycle WHERE token_address=$1`, [TOKEN]
-    )).rows[0];
-    assert.deepEqual(await readState(), {
-      status: 'migrated', bond_progress_bps: null, evidence_block_hash: NEXT_HASH,
+    const lifecycle = createTokenLaunchpadLifecycleRepository();
+    const [migratedState] = await lifecycle.listCandidates({
+      chain: 'robinhood', status: 'migrated', limit: 40,
     });
+    assert.equal(migratedState.tokenAddress, TOKEN);
+    assert.equal(migratedState.evidenceBlockHash, NEXT_HASH);
 
     await db.query(
       'UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1', [NEXT_HASH]
     );
-    assert.deepEqual(await readState(), {
-      status: 'pre_bonded', bond_progress_bps: 0, evidence_block_hash: HASH,
+    assert.equal((await lifecycle.listCandidates({
+      chain: 'robinhood', status: 'migrated', limit: 40,
+    })).length, 0);
+    const [preBondedState] = await lifecycle.listCandidates({
+      chain: 'robinhood', status: 'pre_bonded', limit: 40,
     });
+    assert.equal(preBondedState.bondProgressBps, 0);
+    assert.equal(preBondedState.evidenceBlockHash, HASH);
   });
 
   it('durably enqueues a generic zero-address mint before catalog discovery', async () => {
