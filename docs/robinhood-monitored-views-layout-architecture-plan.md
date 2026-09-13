@@ -698,18 +698,25 @@ series is removed:
 ### Slice 8: global discovery header
 
 Split this cross-cutting surface into bounded cuts: first add the chain-adapter search contract and exact-address resolver;
-then add the centered compact header search and result navigation; then add the permission-safe clipboard token shortcut.
-Keep Alerts/Monitor controls immediately right of search and validate desktop centering plus narrow collision behavior.
-Token search ships for Robinhood first. Wallet results stay explicitly unavailable until their canonical read model and
-detail destination are implemented and tested.
+then add indexed text discovery together with its frontend request lifecycle; then expose that prepared flow through the
+centered compact header search and result navigation; finally add the permission-safe clipboard token shortcut. Keep
+Alerts/Monitor controls immediately right of search and validate desktop centering plus narrow collision behavior. Token
+search ships for Robinhood first. Wallet results stay explicitly unavailable until their canonical read model and detail
+destination are implemented and tested.
 
 - **8A — search contract and exact resolver:** add the authenticated chain-adapter coordinator, bounded query/kind/limit
   normalization, exact-address classification and canonical Robinhood token resolution. Ignore workspace chain filters and
   report explicit per-chain/kind `ready`, `syncing`, `unavailable` or `unsupported` state. Keep text and wallet adapters dark.
   **Completed:** `/api/search/global` now resolves exact Robinhood token contracts through the canonical catalog adapter,
   returns an expanded-chart destination and explicit wallet/query availability without accepting workspace chain scope.
-- **8B — compact header search:** add bounded Robinhood ticker/name search, the centered responsive header field, stale
-  request cancellation, duplicate-ticker choices and expanded-chart navigation.
+- **8B1 — indexed text search and request lifecycle:** add the Robinhood catalog indexes and bounded ticker/name adapter,
+  then connect the frontend API client and search state with text debounce, stale-request cancellation and deterministic
+  response ownership. Keep this cut UI-dark so the request lifecycle can be validated independently from header rendering.
+  Estimated change: 320–480 lines.
+- **8B2 — compact header surface and navigation:** render the centered responsive search field, expose duplicate-ticker
+  choices with chain/address identity, and open the selected token in its expanded chart. Keep Alerts/Monitor controls
+  immediately to the right, preserve keyboard and narrow-screen usability, and cover the assembled flow with focused smoke
+  validation. Estimated change: 220–320 lines.
 - **8C — clipboard token shortcut:** add gesture/permission-driven clipboard classification and exact-token resolution,
   with ephemeral resolved state, denial-safe behavior and no polling or unrelated clipboard retention.
 
