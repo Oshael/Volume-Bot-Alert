@@ -573,6 +573,21 @@ and add Command Center's responsive guard.
 Include the compact authored monitor SVG and accessible preset popover here. Its schematic SVG previews are pure layout
 diagrams and call the same preset resolver used by persisted preferences; they do not maintain a second layout state.
 
+- **6A — preset domain:** define and unit-test the five preset geometries, canonical preference normalization, legacy layout
+  migration, pane-order normalization, duplicate-view repair and Command Center's minimum-width availability rule.
+- **6B — state and preferences:** adopt primary/secondary pane state and the canonical persisted preset contract, preserving
+  both selections and scroll positions across one-pane and two-pane transitions.
+- **6C — pane renderer:** make the unified Monitored renderer pane-aware without duplicating view-fetching or token-action
+  logic.
+- **6D — shell composition:** add primary and secondary Monitored slots and compose visible regions exclusively from the
+  fixed preset resolver.
+- **6E — allowed manipulation:** remove horizontal resize state/zones, preserve independent bottom-edge resize and allow
+  drag exchange only among panels visible in the active preset.
+- **6F — preset picker:** add the compact authored monitor SVG and accessible popover whose schematic previews call the
+  canonical preset mutation.
+- **6G — responsive completion:** enforce Command Center's viewport guard, add compact responsive variants, consolidate
+  obsolete span styling and cover preset selection, duplicate prevention, vertical resize and drag exchange in smoke tests.
+
 ### Slice 7: Alerts sparkline convergence
 
 Move compact cache ownership to token identity, share fetch deduplication/live merges, prioritize visible Alerts Focus
