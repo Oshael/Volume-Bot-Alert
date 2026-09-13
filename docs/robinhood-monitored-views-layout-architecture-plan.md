@@ -703,6 +703,16 @@ Keep Alerts/Monitor controls immediately right of search and validate desktop ce
 Token search ships for Robinhood first. Wallet results stay explicitly unavailable until their canonical read model and
 detail destination are implemented and tested.
 
+- **8A — search contract and exact resolver:** add the authenticated chain-adapter coordinator, bounded query/kind/limit
+  normalization, exact-address classification and canonical Robinhood token resolution. Ignore workspace chain filters and
+  report explicit per-chain/kind `ready`, `syncing`, `unavailable` or `unsupported` state. Keep text and wallet adapters dark.
+  **Completed:** `/api/search/global` now resolves exact Robinhood token contracts through the canonical catalog adapter,
+  returns an expanded-chart destination and explicit wallet/query availability without accepting workspace chain scope.
+- **8B — compact header search:** add bounded Robinhood ticker/name search, the centered responsive header field, stale
+  request cancellation, duplicate-ticker choices and expanded-chart navigation.
+- **8C — clipboard token shortcut:** add gesture/permission-driven clipboard classification and exact-token resolution,
+  with ephemeral resolved state, denial-safe behavior and no polling or unrelated clipboard retention.
+
 ### Slice 9: rollout and cleanup
 
 Enable behind a reversible gate, run score/UI validation, remove old surfaces and dead resize code, remove compatibility

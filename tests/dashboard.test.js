@@ -24,6 +24,7 @@ const backendAlertFeed = require('../src/services/backend-alert-feed');
 const dashboardChainReader = require('../src/services/dashboard-chain-reader');
 const dashboardRadarReader = require('../src/services/dashboard-radar-reader');
 const dashboardTokenViewReader = require('../src/services/dashboard-token-view-reader');
+const globalSearchReader = require('../src/services/global-search-reader');
 const dashboardRoutes = require('../src/routes/dashboard');
 const uiMeteoraSummaryCache = require('../src/services/ui-meteora-summary-cache');
 const workspaceChainReadiness = require('../src/services/workspace-chain-readiness');
@@ -858,6 +859,32 @@ describe('Dashboard routes', () => {
       .set('Authorization', `Bearer ${token}`);
     assert.equal(invalid.status, 400);
     assert.equal(invalid.body.error, 'limit must be between 1 and 40');
+  });
+
+  it('exposes the authenticated global exact-address search contract', async () => {
+    const original = globalSearchReader.search;
+    const exactAddress = `0x${'c'.repeat(40)}`;
+    const unauthorized = await request(app).get(`/api/search/global?q=${exactAddress}`);
+    assert.equal(unauthorized.status, 401);
+    let captured;
+    globalSearchReader.search = async (input) => {
+      captured = input;
+      return { query: input.q, classification: 'evm_address', kinds: ['token'],
+        limit: 5, status: 'ready', count: 0, chainStates: {}, hits: [] };
+    };
+    try {
+      const response = await request(app)
+        .get(`/api/search/global?q=${exactAddress}&kinds=token&limit=5&chains=solana`)
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.body.status, 'ready');
+      assert.equal(captured.q, exactAddress);
+      assert.equal(captured.kinds, 'token');
+      assert.equal(captured.limit, '5');
+      assert.ok(captured.signal instanceof AbortSignal);
+    } finally {
+      globalSearchReader.search = original;
+    }
   });
 
   it('returns enriched backend alert events', async () => {

@@ -1506,6 +1506,15 @@ uma chain selecionada recupera as capacidades `monitored`
 ou `charts`, o controller força imediatamente a reidratação do dashboard e das
 sparklines; descoberta inicial de uma chain já pronta não conta como recuperação.
 
+A busca global autenticada começa em `GET /api/search/global`. Seu contrato não
+aceita o filtro de chains do workspace: ele consulta todos os adapters registrados
+que declaram capacidade para a classificação e o tipo pedidos. Nesta etapa apenas
+contratos exatos de token Robinhood são resolvidos, pela identidade canônica do
+`token_catalog`, com destino `expanded-chart`. Busca textual e resultados de wallet
+respondem como `unsupported`; readiness Robinhood pode ainda produzir `syncing` ou
+`unavailable`. A entrada é limitada a 120 caracteres, o limite de resultados é
+1–20 e cada resposta expõe disponibilidade por chain e tipo.
+
 No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket` e a aplicação no
 estado marca `clientAppliedAt`. O console administrativo
 `window.trendscopePerfDebug.realtimeLatency(flow)` expõe uma janela de até 512 amostras com
