@@ -24,6 +24,10 @@ export type WorkspaceIdentitySparklineBatch = {
   identities: WorkspaceSparklineIdentity[];
 };
 
+export type WorkspaceSparklineRequest = Omit<WorkspaceIdentitySparklineBatch, 'identities'> & {
+  identity: WorkspaceSparklineIdentity;
+};
+
 export type LegacyWorkspaceSparklineBatch = {
   hours: number;
   granularityMinutes: number;
@@ -378,6 +382,48 @@ export function splitWorkspaceSparklineBatchesByChain(
     }
     return [...identitiesByChain.values()].map((identities) => ({ ...batch, identities }));
   });
+}
+
+export function buildWorkspaceSparklineBatches(
+  requests: WorkspaceSparklineRequest[],
+) {
+  const grouped = new Map<string, WorkspaceIdentitySparklineBatch>();
+
+  for (const request of requests) {
+    const { identity, hours, granularityMinutes, allAvailable, queryAllAvailable } = request;
+    const shapeKey = `${allAvailable === true}:${queryAllAvailable === true}:${hours}:${granularityMinutes}`;
+    const batch = grouped.get(shapeKey);
+    if (batch?.identities.some((item) => item.key === identity.key)) continue;
+    if (batch) {
+      batch.identities.push(identity);
+      continue;
+    }
+    grouped.set(shapeKey, {
+      hours,
+      granularityMinutes,
+      allAvailable,
+      queryAllAvailable,
+      identities: [identity],
+    });
+  }
+
+  return splitWorkspaceSparklineBatchesByChain([...grouped.values()])
+    .sort((left, right) => left.hours - right.hours || left.granularityMinutes - right.granularityMinutes)
+    .filter((batch) => batch.identities.length > 0);
+}
+
+export function isWorkspaceSparklineSessionCurrent(input: {
+  requestToken: string;
+  currentToken?: string | null;
+  authenticated: boolean;
+  workspaceActive: boolean;
+}) {
+  return Boolean(
+    input.requestToken
+    && input.currentToken === input.requestToken
+    && input.authenticated
+    && input.workspaceActive,
+  );
 }
 
 export async function runWorkspaceSparklineRequestWithTimeout<T>(

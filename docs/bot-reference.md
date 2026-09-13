@@ -1485,10 +1485,16 @@ As sparklines compactas de Monitored e Alerts compartilham um único cache por
 `(chain,address)`; IDs de alerta não possuem séries próprias. O navegador persiste
 um subconjunto canônico limitado e, durante a transição, converte o antigo
 `alert_sparklines` por meio da identidade do alerta sem voltar a gravá-lo. O cache
-preserva a última série renderizável quando um refresh do mesmo range/resolução
-falha ou retorna temporariamente vazio. A entrada preservada recebe apenas o novo
-instante de refresh, evitando apagar o gráfico ou iniciar retries agressivos;
-mudanças reais de range/resolução não reutilizam a série anterior. Eventos
+é abastecido por um único scheduler chain-aware para Monitored e Alerts. Novos
+alertas acordam esse fluxo por evento com debounce de 150 ms; a reconciliação de
+60 s permanece limitada às identidades selecionadas, executa batches em série,
+deduplica a mesma identidade/formato de consulta e aplica timeout de 12 s. Uma
+resposta só entra no estado se sessão, token e workspace ainda forem os mesmos.
+Falhas preservam uma série renderizável do mesmo formato e deixam o scheduler
+retomar pelo ciclo de reconciliação após a janela de freshness. A entrada
+preservada recebe apenas o novo instante de refresh, evitando apagar o gráfico ou
+iniciar retries agressivos; mudanças reais de range/resolução não reutilizam a
+série anterior. Eventos
 `market:bucket` atualizam métricas e candles em realtime; se um snapshot HTTP
 iniciado antes terminar depois, os candles
 realtime posteriores ao corte do snapshot são mesclados novamente para impedir

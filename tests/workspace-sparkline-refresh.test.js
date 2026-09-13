@@ -2,7 +2,9 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
+let buildWorkspaceSparklineBatches;
 let hydrateCompactSparklineCache;
+let isWorkspaceSparklineSessionCurrent;
 let mergeWorkspaceSparklineRefreshEntry;
 let mergeWorkspaceSparklineSnapshotEntry;
 let migrateLegacyAlertSparklineCache;
@@ -16,8 +18,10 @@ let splitWorkspaceSparklineBatchesByChain;
 
 before(async () => {
   ({
+    buildWorkspaceSparklineBatches,
     getWorkspaceSparklineNextRefreshAt,
     hydrateCompactSparklineCache,
+    isWorkspaceSparklineSessionCurrent,
     mergeWorkspaceSparklineRefreshEntry,
     mergeWorkspaceSparklineSnapshotEntry,
     migrateLegacyAlertSparklineCache,
@@ -215,6 +219,36 @@ describe('workspace sparkline request shape', () => {
       { hours: 336, granularityMinutes: 30, identities: [solana] },
       { hours: 336, granularityMinutes: 30, identities: [robinhood] },
     ]);
+  });
+
+  it('deduplicates each identity and request shape while isolating chains', () => {
+    const solana = { chain: 'solana', address: 'sol', key: 'solana:sol' };
+    const robinhood = { chain: 'robinhood', address: '0x1', key: 'robinhood:0x1' };
+    const shape = { hours: 336, granularityMinutes: 30 };
+
+    assert.deepEqual(buildWorkspaceSparklineBatches([
+      { identity: solana, ...shape },
+      { identity: solana, ...shape },
+      { identity: robinhood, ...shape },
+      { identity: solana, hours: 24, granularityMinutes: 1 },
+    ]), [
+      { hours: 24, granularityMinutes: 1, allAvailable: undefined, queryAllAvailable: undefined, identities: [solana] },
+      { ...shape, allAvailable: undefined, queryAllAvailable: undefined, identities: [solana] },
+      { ...shape, allAvailable: undefined, queryAllAvailable: undefined, identities: [robinhood] },
+    ]);
+  });
+
+  it('rejects responses from a stale or inactive workspace session', () => {
+    const current = {
+      requestToken: 'request-token',
+      currentToken: 'request-token',
+      authenticated: true,
+      workspaceActive: true,
+    };
+    assert.equal(isWorkspaceSparklineSessionCurrent(current), true);
+    assert.equal(isWorkspaceSparklineSessionCurrent({ ...current, currentToken: 'new-token' }), false);
+    assert.equal(isWorkspaceSparklineSessionCurrent({ ...current, authenticated: false }), false);
+    assert.equal(isWorkspaceSparklineSessionCurrent({ ...current, workspaceActive: false }), false);
   });
 
   it('aborts a request that exceeds its time budget', async () => {

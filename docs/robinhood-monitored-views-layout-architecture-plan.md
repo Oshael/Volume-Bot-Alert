@@ -674,6 +674,9 @@ series is removed:
   freshness and retry rules. Keep `app-controller.ts` limited to collecting visible identities and applying results; put
   selection and priority rules in the focused sparkline owner. Validate one request per identity/request shape, cross-chain
   isolation, stale-session rejection and failure recovery. Estimated change: 350–500 lines.
+  **Completed:** Alerts now join Monitored in the bounded chain-aware workspace scheduler; the alert-ID queue and parallel
+  fetch/apply path are gone, request shapes are deduplicated in the focused sparkline owner, and stale-session, timeout,
+  serial execution, freshness and empty/failure recovery guards remain shared.
 - **7D — visibility and Alerts Focus priority:** report only the rendered Alerts page plus visible Monitored rows to the
   scheduler, lower hidden/off-screen work and put the visible Alerts identity set first when the active preset is Alerts
   Focus. Preserve bounded periodic reconciliation for missed events without creating a polling discovery path. Validate

@@ -1606,6 +1606,7 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
 });
 
 test('shares one compact sparkline identity across duplicate token alerts', async ({ page }) => {
+  const sparklineRequestPayloads = [];
   const duplicateEvents = [201, 202].map((id) => ({
     id,
     chain: 'solana',
@@ -1629,6 +1630,7 @@ test('shares one compact sparkline identity across duplicate token alerts', asyn
     },
     'POST /api/catalog/sparklines': (request) => {
       const payload = request.postDataJSON();
+      sparklineRequestPayloads.push(payload);
       const identities = Array.isArray(payload.identities) ? payload.identities : [];
       return {
         generatedAt: '2026-07-14T18:00:00.000Z',
@@ -1656,6 +1658,9 @@ test('shares one compact sparkline identity across duplicate token alerts', asyn
     const stored = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
     return Object.keys(stored);
   }, 'frontend_vite:smoke@example.test:compact_sparklines')).toEqual([identityKey]);
+  expect(sparklineRequestPayloads.flatMap((payload) => (
+    Array.isArray(payload.identities) ? payload.identities : []
+  )).filter((identity) => `${identity.chain}:${identity.address}` === identityKey)).toHaveLength(1);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

@@ -155,14 +155,16 @@ import {
 import { API_RESPONSE_DEBUG_EVENT, type ApiResponseMetadata } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
+  buildWorkspaceSparklineBatches,
   getWorkspaceSparklineNextRefreshAt,
+  isWorkspaceSparklineSessionCurrent,
   mergeWorkspaceSparklineRefreshEntry,
   mergeWorkspaceSparklineSnapshotEntry,
   resolveWorkspaceSparklineRequestShape as resolveAdaptiveWorkspaceSparklineRequestShape,
   runWorkspaceSparklineBatchesSerially,
   runWorkspaceSparklineRequestWithTimeout,
   selectWorkspaceSparklineRefreshBatches,
-  splitWorkspaceSparklineBatchesByChain,
+  type WorkspaceIdentitySparklineBatch,
 } from './workspace-sparkline-refresh';
 import { evaluateSparklineDebugEvent } from './sparkline-debug-policy';
 import {
@@ -332,9 +334,6 @@ const EXPANDED_CHART_DEFAULT_TIME_ZONE = 'browser';
 const EXPANDED_SPARKLINE_ONE_MINUTE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_CACHE_MAX_ENTRIES = 300;
-const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
-const SPARKLINE_AGE_5M_MAX_MS = 72 * 60 * 60 * 1000;
-const SPARKLINE_AGE_15M_MAX_MS = 11 * 24 * 60 * 60 * 1000;
 const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 30;
 const SPARKLINE_RANGE_MIN_DAYS = 1;
 const SPARKLINE_RANGE_MAX_DAYS = 14;
@@ -467,13 +466,7 @@ type HistoryPeerState = {
   seenAt: number;
 };
 
-type SparklineBatchRequest = {
-  hours: number;
-  granularityMinutes: number;
-  allAvailable?: boolean;
-  queryAllAvailable?: boolean;
-  identities: TokenIdentity[];
-};
+type SparklineBatchRequest = WorkspaceIdentitySparklineBatch;
 
 type WorkspaceSparklineRefreshOptions = {
   force?: boolean;
@@ -1448,8 +1441,7 @@ export function createAppController(): AppController {
   let uiPrefsPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let uiPrefsPersistRevision = 0;
   let alertsPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  let alertSparklineRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  let alertSparklineRefreshInFlight = false;
+  let sparklineRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let alertsPersistScope: string | null = null;
   let alertsPersistLifecycleBound = false;
   let emitScheduled = false;
@@ -1493,7 +1485,6 @@ export function createAppController(): AppController {
   let marketTickerLeaderTabId: string | null = null;
   const historySyncPeers = new Map<string, HistoryPeerState>();
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
-  const pendingAlertSparklineRequests = new Map<string, string>();
   const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
   const pendingPumpfunEmitRegions = new Set<AppRenderRegion>();
   const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
@@ -4998,14 +4989,6 @@ export function createAppController(): AppController {
     });
   }
 
-  function getActiveAlertIdSet() {
-    return new Set(
-      state.data.alerts
-        .map((item) => String(item.id || '').trim())
-        .filter(Boolean),
-    );
-  }
-
   function flushAlertsPersist() {
     if (alertsPersistTimer) {
       clearTimeout(alertsPersistTimer);
@@ -6496,7 +6479,7 @@ export function createAppController(): AppController {
     recordAlertMutationDebug('push.apply', beforeAlerts, {
       entry: summarizeAlertDebug([entry]),
     });
-    queueAlertSparklineRefresh(entry.id, entry.address);
+    queueAlertSparklineRefresh();
     emit('alerts', 'legacy');
     return true;
   }
@@ -6537,7 +6520,7 @@ export function createAppController(): AppController {
     recordAlertMutationDebug('backend.upsert.update-existing', beforeAlerts, {
       entry: summarizeAlertDebug([entry]),
     });
-    queueAlertSparklineRefresh(entry.id, entry.address);
+    queueAlertSparklineRefresh();
     return true;
   }
 
@@ -7626,7 +7609,8 @@ export function createAppController(): AppController {
       nextSparklineRefreshAt = 0;
     }
     if (hasEntries) {
-      emit('monitored', 'recent', 'old-week');
+      state.runtime.alertRevision += 1;
+      emit('alerts', 'monitored', 'recent', 'old-week');
     }
   }
 
@@ -7670,6 +7654,12 @@ export function createAppController(): AppController {
         : []
     ))
       .map((item) => getChartCapableIdentity(item.chain, item.address))
+      .filter((identity): identity is TokenIdentity => Boolean(identity));
+  }
+
+  function getAlertSparklineIdentities() {
+    return getAlertFeedAlerts(state)
+      .map((alert) => getChartCapableIdentity(alert.chain, alert.address))
       .filter((identity): identity is TokenIdentity => Boolean(identity));
   }
 
@@ -7762,7 +7752,12 @@ export function createAppController(): AppController {
     if (isLiveWorkspace()) {
       const selected: Array<{ identity: TokenIdentity; scope: SparklineRangeScope }> = [];
       const seen = new Set<string>();
-      for (const identity of getVisibleMonitoredSparklineIdentities()) {
+      const liveIdentities = [
+        ...getVisibleMonitoredSparklineIdentities(),
+        ...getAlertSparklineIdentities(),
+      ];
+      for (const identity of liveIdentities) {
+        if (selected.length >= SPARKLINE_VISIBLE_LIMIT_TOTAL) break;
         if (seen.has(identity.key)) {
           continue;
         }
@@ -7783,6 +7778,12 @@ export function createAppController(): AppController {
     referenceTs: number,
   ) {
     const trackedToken = getTrackedToken(state, identity.address, identity.chain);
+    const trackedCreatedAt = Number(trackedToken?.createdAt);
+    const alertCreatedAt = getAlertFeedAlerts(state)
+      .filter((alert) => createLegacyCompatibleTokenIdentity(alert.chain, alert.address).key === identity.key)
+      .map((alert) => Number(alert.tokenCreatedAt))
+      .filter((createdAt) => Number.isFinite(createdAt) && createdAt > 0)
+      .sort((left, right) => left - right)[0];
     const quickRangeHours = scope === 'monitored'
       ? getMonitoredQuickSparklineRangeHours(identity)
       : null;
@@ -7796,7 +7797,9 @@ export function createAppController(): AppController {
     const presetHours = preset ? SPARKLINE_RANGE_HOURS.get(preset) : null;
     const requestedHours = quickRangeHours ?? presetHours ?? (rangeDays * 24);
     return resolveAdaptiveWorkspaceSparklineRequestShape({
-      anchorAt: trackedToken?.createdAt ?? null,
+      anchorAt: Number.isFinite(trackedCreatedAt) && trackedCreatedAt > 0
+        ? trackedCreatedAt
+        : alertCreatedAt ?? null,
       requestedHours: requestedHours || (rangeDays * 24),
       allAvailable,
       referenceTs,
@@ -7804,121 +7807,10 @@ export function createAppController(): AppController {
   }
 
   function getVisibleWorkspaceSparklineBatches(referenceTs = Date.now()) {
-    const grouped = new Map<string, SparklineBatchRequest>();
-    const selectedIdentities = getVisibleWorkspaceSparklineIdentityScopes();
-
-    for (const { identity, scope } of selectedIdentities) {
-      const { hours, granularityMinutes, allAvailable, queryAllAvailable } = resolveWorkspaceSparklineRequestShape(
-        identity,
-        scope,
-        referenceTs,
-      );
-      const key = `${allAvailable ? 'all' : 'range'}:${queryAllAvailable ? 'history' : hours}:${granularityMinutes}`;
-      const batch = grouped.get(key);
-      if (batch?.identities.some((item) => item.key === identity.key)) {
-        continue;
-      }
-      if (batch) {
-        batch.identities.push(identity);
-        continue;
-      }
-
-      grouped.set(key, {
-        hours,
-        granularityMinutes,
-        allAvailable,
-        queryAllAvailable,
-        identities: [identity],
-      });
-    }
-
-    return splitWorkspaceSparklineBatchesByChain(Array.from(grouped.values()))
-      .sort((left, right) => left.hours - right.hours || left.granularityMinutes - right.granularityMinutes)
-      .filter((item) => item.identities.length > 0);
-  }
-
-  function resolveAlertSparklineCreatedAt(alertId: string, address: string) {
-    const trackedToken = getTrackedToken(state, address);
-    const catalogFirstSeenAt = Number(trackedToken?.catalogFirstSeenAt);
-    if (Number.isFinite(catalogFirstSeenAt) && catalogFirstSeenAt > 0) {
-      return catalogFirstSeenAt;
-    }
-
-    const matchingAlert = state.data.alerts.find((item) => item.id === alertId);
-    const alertCreatedAt = Number(matchingAlert?.tokenCreatedAt);
-    if (Number.isFinite(alertCreatedAt) && alertCreatedAt > 0) {
-      return alertCreatedAt;
-    }
-
-    const trackedCreatedAt = Number(trackedToken?.createdAt);
-    if (Number.isFinite(trackedCreatedAt) && trackedCreatedAt > 0) {
-      return trackedCreatedAt;
-    }
-
-    return null;
-  }
-
-  function resolveAlertSparklineGranularityMinutes(anchorAt?: number | null, referenceTs = Date.now()) {
-    const anchorAtMs = Number(anchorAt);
-    if (!Number.isFinite(anchorAtMs) || anchorAtMs <= 0 || anchorAtMs > referenceTs) {
-      return SPARKLINE_GRANULARITY_FALLBACK_MINUTES;
-    }
-
-    const ageMs = Math.max(0, referenceTs - anchorAtMs);
-    if (ageMs < SPARKLINE_AGE_1M_MAX_MS) {
-      return 1;
-    }
-    if (ageMs < SPARKLINE_AGE_5M_MAX_MS) {
-      return 5;
-    }
-    if (ageMs < SPARKLINE_AGE_15M_MAX_MS) {
-      return 15;
-    }
-    return 30;
-  }
-
-  function getPendingAlertSparklineBatches(referenceTs = Date.now()) {
-    const grouped = new Map<number, { addresses: string[]; alertIdsByAddress: Map<string, string[]> }>();
-    const activeAlertIds = getActiveAlertIdSet();
-    const pendingRequests = [...pendingAlertSparklineRequests.entries()]
-      .filter(([alertId, address]) => activeAlertIds.has(alertId) && Boolean(String(address || '').trim()));
-
-    for (const [alertId, address] of pendingRequests) {
-      const granularityMinutes = resolveAlertSparklineGranularityMinutes(
-        resolveAlertSparklineCreatedAt(alertId, address),
-        referenceTs,
-      );
-
-      let batch = grouped.get(granularityMinutes);
-      if (!batch) {
-        batch = {
-          addresses: [],
-          alertIdsByAddress: new Map<string, string[]>(),
-        };
-        grouped.set(granularityMinutes, batch);
-      }
-
-      const normalizedAddress = String(address || '').trim();
-      if (!normalizedAddress) {
-        continue;
-      }
-
-      const alertIds = batch.alertIdsByAddress.get(normalizedAddress) || [];
-      if (!alertIds.includes(alertId)) {
-        batch.alertIdsByAddress.set(normalizedAddress, [...alertIds, alertId]);
-      }
-      if (!batch.addresses.includes(normalizedAddress)) {
-        batch.addresses.push(normalizedAddress);
-      }
-    }
-
-    return [1, 5, 15, 30]
-      .map((granularityMinutes) => ({
-        granularityMinutes,
-        addresses: grouped.get(granularityMinutes)?.addresses || [],
-        alertIdsByAddress: grouped.get(granularityMinutes)?.alertIdsByAddress || new Map<string, string[]>(),
-      }))
-      .filter((item) => item.addresses.length > 0);
+    return buildWorkspaceSparklineBatches(getVisibleWorkspaceSparklineIdentityScopes().map(({ identity, scope }) => ({
+      identity,
+      ...resolveWorkspaceSparklineRequestShape(identity, scope, referenceTs),
+    })));
   }
 
   function buildSparklineBatchKey(batches: SparklineBatchRequest[]) {
@@ -8076,7 +7968,12 @@ export function createAppController(): AppController {
   }
 
   function isWorkspaceSparklineSessionValid(token: string) {
-    return state.session.token === token && isAuthenticatedSession() && (isHistoryWorkspace() || isLiveWorkspace());
+    return isWorkspaceSparklineSessionCurrent({
+      requestToken: token,
+      currentToken: state.session.token,
+      authenticated: isAuthenticatedSession(),
+      workspaceActive: isHistoryWorkspace() || isLiveWorkspace(),
+    });
   }
 
   function handleWorkspaceSparklineRefreshFailure(visibleIdentities: TokenIdentity[], error: unknown) {
@@ -8197,7 +8094,9 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
-    const historySparklineRegions: AppRenderRegion[] = ['monitored', 'recent', 'old-week'];
+    state.runtime.alertRevision += 1;
+    scheduleAlertsPersist();
+    const historySparklineRegions: AppRenderRegion[] = ['alerts', 'monitored', 'recent', 'old-week'];
     if (state.ui.expandedSparklineAddress) {
       for (const region of historySparklineRegions) {
         deferredExpandedSparklineRenderRegions.add(region);
@@ -9024,190 +8923,19 @@ export function createAppController(): AppController {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
-  function buildAlertSparklineCacheEntry(
-    item: TokenSparklinesPayload['items'][number] | null | undefined,
-    payload: TokenSparklinesPayload,
-  ) {
-    const address = String(item?.address || '').trim();
-    if (!address) {
-      return null;
-    }
-
-    const series = normalizeAlertSparklineSeries(item?.series);
-    if (series.length < 2) {
-      return null;
-    }
-
-    return {
-      chain: item?.chain || 'solana',
-      address,
-      pairAddress: toOptionalSparklineString(item?.pairAddress),
-      bucketCount: resolveSparklineCount(item?.bucketCount, 0),
-      coverageRatio: toOptionalSparklineNumber(item?.coverageRatio),
-      effectiveHours: toOptionalSparklineNumber(item?.effectiveHours),
-      granularityMinutes: resolveSparklineCount(
-        item?.granularityMinutes ?? payload.granularityMinutes,
-        SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
-      ),
-      firstBucketAt: toOptionalSparklineString(item?.firstBucketAt),
-      latestBucketAt: toOptionalSparklineString(item?.latestBucketAt),
-      generatedAt: toOptionalSparklineString(payload.generatedAt),
-      hours: resolveSparklineCount(payload.hours, SPARKLINE_WINDOW_HOURS),
-      points: resolveSparklineCount(payload.points, SPARKLINE_POINT_COUNT),
-      series,
-    } satisfies TokenSparklineEntry;
-  }
-
-  function didAlertSparklineEntryChange(previous: TokenSparklineEntry | undefined, nextEntry: TokenSparklineEntry) {
-    const previousSeries = Array.isArray(previous?.series) ? previous.series : [];
-    const nextSeries = nextEntry.series;
-    const previousLast = previousSeries[previousSeries.length - 1] ?? null;
-    const nextLast = nextSeries[nextSeries.length - 1] ?? null;
-
-    return !previous
-      || previous.generatedAt !== nextEntry.generatedAt
-      || previous.latestBucketAt !== nextEntry.latestBucketAt
-      || previous.granularityMinutes !== nextEntry.granularityMinutes
-      || previousSeries.length !== nextSeries.length
-      || previousLast !== nextLast;
-  }
-
-  function applyAlertSparklinePayloads(batchedPayloads: Array<{
-    batch: ReturnType<typeof getPendingAlertSparklineBatches>[number];
-    payload: TokenSparklinesPayload;
-  }>) {
-    const activeAlertsById = new Map(state.data.alerts.map((alert) => [alert.id, alert]));
-    const nextCache = { ...state.data.sparklineByAddress };
-    let changed = false;
-
-    for (const { batch, payload } of batchedPayloads) {
-      for (const item of payload.items || []) {
-        const normalized = buildAlertSparklineCacheEntry(item, payload);
-        if (!normalized) {
-          continue;
-        }
-
-        const alertIds = batch.alertIdsByAddress.get(normalized.address) || [];
-        for (const alertId of alertIds) {
-          const alert = activeAlertsById.get(alertId);
-          if (!alert) {
-            continue;
-          }
-
-          const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
-          if (identity.chain !== normalized.chain || identity.address !== normalized.address) {
-            continue;
-          }
-          const nextEntry = {
-            ...normalized,
-            chain: identity.chain,
-            address: identity.address,
-          } satisfies TokenSparklineEntry;
-          const previous = readWorkspaceSparklineCacheEntry(nextCache, identity);
-          if (!didAlertSparklineEntryChange(previous, nextEntry)) {
-            continue;
-          }
-          writeWorkspaceSparklineCacheEntry(nextCache, identity, nextEntry);
-          changed = true;
-        }
-      }
-    }
-
-    if (!changed) {
-      return;
-    }
-
-    state.data.sparklineByAddress = nextCache;
-    state.runtime.alertRevision += 1;
-    scheduleAlertsPersist();
-    emit('alerts');
-  }
-
-  async function flushAlertSparklineRefreshQueue(options?: { token?: string }) {
-    if (alertSparklineRefreshInFlight) {
-      return;
-    }
-
-    const token = options?.token ?? state.session.token;
-    if (!token || !isAuthenticatedSession()) {
-      pendingAlertSparklineRequests.clear();
-      return;
-    }
-
-    const batches = getPendingAlertSparklineBatches();
-    pendingAlertSparklineRequests.clear();
-    if (batches.length === 0) {
-      return;
-    }
-
-    alertSparklineRefreshInFlight = true;
-    try {
-      const payloads = await Promise.all(
-        batches.map(async (batch) => {
-          const startedAt = Date.now();
-          return {
-            batch,
-            payload: await fetchTokenSparklines(batch.addresses, {
-              hours: SPARKLINE_WINDOW_HOURS,
-              points: SPARKLINE_POINT_COUNT,
-              granularityMinutes: batch.granularityMinutes,
-              allowOneMinuteFallback: true,
-              onResponse: (response) => recordSparklineDebug('http.response', {
-                endpoint: 'sparklines',
-                source: 'alert',
-                durationMs: Date.now() - startedAt,
-                batch: summarizeSparklineDebugBatches([{
-                  hours: SPARKLINE_WINDOW_HOURS,
-                  granularityMinutes: batch.granularityMinutes,
-                  identities: batch.addresses.map((address) => (
-                    createLegacyCompatibleTokenIdentity('solana', address)
-                  )),
-                }]),
-                response,
-              }),
-            }, token),
-          };
-        }),
-      );
-
-      if (state.session.token !== token || !isAuthenticatedSession()) {
-        return;
-      }
-
-      applyAlertSparklinePayloads(payloads);
-    } catch (error) {
-      console.warn('[AppController] Failed to refresh alert sparklines:', error instanceof Error ? error.message : error);
-    } finally {
-      alertSparklineRefreshInFlight = false;
-      if (pendingAlertSparklineRequests.size > 0) {
-        const [nextAlertId, nextAddress] = pendingAlertSparklineRequests.entries().next().value || [];
-        if (nextAlertId && nextAddress) {
-          queueAlertSparklineRefresh(nextAlertId, nextAddress);
-        }
-      }
-    }
-  }
-
-  function queueAlertSparklineRefresh(alertId: string, address: string) {
-    const normalizedAlertId = String(alertId || '').trim();
-    const normalizedAddress = String(address || '').trim();
-    if (!normalizedAlertId || !normalizedAddress) {
-      return;
-    }
-
-    pendingAlertSparklineRequests.set(normalizedAlertId, normalizedAddress);
-    if (alertSparklineRefreshTimer) {
+  function queueAlertSparklineRefresh() {
+    if (sparklineRefreshDebounceTimer) {
       return;
     }
 
     if (typeof window === 'undefined') {
-      void flushAlertSparklineRefreshQueue();
+      void refreshHistoryWorkspaceSparklines({ caller: 'alert-queue' });
       return;
     }
 
-    alertSparklineRefreshTimer = window.setTimeout(() => {
-      alertSparklineRefreshTimer = null;
-      void flushAlertSparklineRefreshQueue();
+    sparklineRefreshDebounceTimer = window.setTimeout(() => {
+      sparklineRefreshDebounceTimer = null;
+      void refreshHistoryWorkspaceSparklines({ caller: 'alert-queue' });
     }, ALERT_SPARKLINE_BATCH_DELAY_MS);
   }
 
@@ -9219,7 +8947,8 @@ export function createAppController(): AppController {
       if (series.length >= 2) {
         continue;
       }
-      queueAlertSparklineRefresh(alert.id, alert.address);
+      queueAlertSparklineRefresh();
+      return;
     }
   }
 
@@ -10844,12 +10573,10 @@ export function createAppController(): AppController {
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
     state.ui.alertPage = 0;
-    pendingAlertSparklineRequests.clear();
-    if (alertSparklineRefreshTimer) {
-      clearTimeout(alertSparklineRefreshTimer);
-      alertSparklineRefreshTimer = null;
+    if (sparklineRefreshDebounceTimer) {
+      clearTimeout(sparklineRefreshDebounceTimer);
+      sparklineRefreshDebounceTimer = null;
     }
-    alertSparklineRefreshInFlight = false;
     state.ui.monitoredPage = 0;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
