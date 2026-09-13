@@ -1464,6 +1464,8 @@ test('composes the compare preset with two independent Monitored panes', async (
   await expect(compareOption).toHaveAttribute('aria-pressed', 'true');
   await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toBeDisabled();
   await compareOption.focus();
+  await compareOption.hover();
+  await pickerButton.evaluate((button) => { button.dataset.renderIdentity = 'stable-layout-picker'; });
   await page.getByRole('searchbox', { name: 'Search tokens across all blockchains' }).evaluate((input) => {
     input.value = 'hood';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1473,6 +1475,8 @@ test('composes the compare preset with two independent Monitored panes', async (
   )).length).toBe(1);
   await expect(presetDialog).toBeVisible();
   await expect(compareOption).toBeFocused();
+  await expect(pickerButton).toHaveAttribute('data-render-identity', 'stable-layout-picker');
+  await expect.poll(() => compareOption.evaluate((option) => option.matches(':hover'))).toBe(true);
   expect(diagnostics.apiRequests.filter((url) => (
     new URL(url).pathname === '/api/catalog/sparklines'
   ))).toHaveLength(0);

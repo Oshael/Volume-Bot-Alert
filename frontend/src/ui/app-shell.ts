@@ -88,8 +88,8 @@ type UserMenuDraft = {
 };
 
 type LivePanelPresetPickerDraft = {
-  focusedAction: string | null;
-  focusedPreset: string | null;
+  picker: HTMLElement;
+  focusedElement: HTMLElement | null;
 };
 
 type SearchInputDraft = {
@@ -1628,8 +1628,8 @@ function captureLivePanelPresetPickerDraft(root: HTMLElement): LivePanelPresetPi
     ? document.activeElement
     : null;
   return {
-    focusedAction: focusedElement?.dataset.action || null,
-    focusedPreset: focusedElement?.dataset.preset || null,
+    picker,
+    focusedElement,
   };
 }
 
@@ -1638,26 +1638,17 @@ function applyLivePanelPresetPickerDraft(root: HTMLElement, draft: LivePanelPres
     return;
   }
 
-  const picker = root.querySelector<HTMLElement>('[data-role="live-panel-preset-picker"]');
-  const trigger = picker?.querySelector<HTMLButtonElement>('[data-action="toggle-live-panel-presets"]');
-  const popover = picker?.querySelector<HTMLElement>('[data-role="live-panel-preset-popover"]');
-  if (!picker || !trigger || !popover) {
+  const renderedPicker = root.querySelector<HTMLElement>('[data-role="live-panel-preset-picker"]');
+  if (!renderedPicker) {
+    draft.picker.querySelector<HTMLButtonElement>('[data-action="toggle-live-panel-presets"]')?.click();
     return;
   }
 
-  if (popover.hidden) {
-    trigger.click();
+  if (renderedPicker !== draft.picker) {
+    renderedPicker.replaceWith(draft.picker);
   }
 
-  if (!draft.focusedAction) {
-    return;
-  }
-  const presetSelector = draft.focusedPreset
-    ? `[data-preset="${CSS.escape(draft.focusedPreset)}"]`
-    : '';
-  picker.querySelector<HTMLElement>(
-    `[data-action="${CSS.escape(draft.focusedAction)}"]${presetSelector}`,
-  )?.focus();
+  draft.focusedElement?.focus();
 }
 
 function captureSearchInputDraft(root: HTMLElement): SearchInputDraft | null {
