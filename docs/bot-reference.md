@@ -1538,7 +1538,9 @@ de Monitored somente como compatibilidade enquanto seu novo read-model ainda nã
 As cinco IDs aceitas são `discovery_alerts`, `compare`, `alerts_focus`, `token_focus` e
 `command_center`. O App Shell mantém slots próprios para as duas panes Monitored e monta
 somente as regiões ativas, na ordem, proporção e centralização produzidas pelo resolver
-do preset; regiões inativas permanecem sem conteúdo. Views duplicadas normalizam para
+do preset; regiões inativas permanecem sem conteúdo. Cada região visível pode ajustar e
+persistir sua própria altura somente pela borda inferior; não há resize horizontal nem
+mutação livre dos spans do preset. Views duplicadas normalizam para
 `trending + watchlist`. O reader ainda
 migra o formato legado baseado em `monitored`/`pumpfun`/`alerts`; a saída persistida é
 sempre canônica e não volta a emitir `pumpfun`.

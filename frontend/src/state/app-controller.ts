@@ -94,6 +94,7 @@ import {
   getLivePanelPaneSpan,
   resolveLivePanelLayoutPreference,
   resolveMonitoredPaneSelection,
+  type LivePanelPaneKey,
   type LivePanelPresetId,
 } from '../utils/live-panel-layout';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
@@ -854,8 +855,7 @@ export interface AppController {
     terminals: AppState['ui']['enabledTradeTerminals'],
   ): void;
   setLivePanelPreset(preset: LivePanelPresetId): void;
-  setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
-  setLivePanelHeight(panel: 'monitored' | 'alerts', height: number): void;
+  setLivePanelHeight(pane: LivePanelPaneKey, height: number): void;
   setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>): void;
   resetLivePanelLayout(): void;
   setSoundEnabled(enabled: boolean): void;
@@ -14796,29 +14796,14 @@ export function createAppController(): AppController {
       void refreshActiveMonitoredViews(state.session.token);
       refreshMonitoredSparklinesIfExpanded('live-panel-preset');
     },
-    setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
-      const preset = panel === 'alerts' && span > 1
-        ? 'alerts_focus'
-        : panel === 'monitored' && span === 3
-          ? 'token_focus'
-          : 'discovery_alerts';
-      const next = resolveLivePanelLayoutPreference({ ...state.ui.livePanelLayout, preset });
-      if (next.preset === state.ui.livePanelLayout.preset) return;
-      state.ui.livePanelLayout = next;
-      queueUiPrefsPersist();
-      emit('monitored', 'alerts');
-      void refreshActiveMonitoredViews(state.session.token);
-      refreshMonitoredSparklinesIfExpanded('live-panel-span');
-    },
-    setLivePanelHeight(panel: 'monitored' | 'alerts', height: number) {
+    setLivePanelHeight(pane: LivePanelPaneKey, height: number) {
       const nextHeight = normalizeLivePanelHeight(height);
-      const pane = panel === 'monitored' ? 'primary' : 'alerts';
       if (state.ui.livePanelLayout.heights[pane] === nextHeight) {
         return;
       }
       state.ui.livePanelLayout.heights[pane] = nextHeight;
       queueUiPrefsPersist();
-      emit(panel);
+      emit(pane === 'alerts' ? 'alerts' : 'monitored');
     },
     setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>) {
       const nextOrder = resolveLivePanelLayoutPreference({

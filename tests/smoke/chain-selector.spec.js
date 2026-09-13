@@ -1257,7 +1257,7 @@ test('composes the compare preset with two independent Monitored panes', async (
         preset: 'compare',
         order: ['primary', 'secondary', 'alerts'],
         panes: { primaryView: 'trending', secondaryView: 'watchlist' },
-        heights: { primary: 620, secondary: 620, alerts: 620 },
+        heights: { primary: 420, secondary: 420, alerts: 420 },
       },
     },
   };
@@ -1276,9 +1276,33 @@ test('composes the compare preset with two independent Monitored panes', async (
   await expect(primary.getByRole('button', { name: 'Trending', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(secondary.getByRole('button', { name: 'Watchlist', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(panels.locator('[data-pane-key="alerts"] .alerts-panel')).toHaveCount(0);
+  await expect(panels.locator('[data-live-panel-resize-zone="bottom"]')).toHaveCount(2);
+  await expect(panels.locator('[data-live-panel-resize-zone="left"], [data-live-panel-resize-zone="right"]')).toHaveCount(0);
 
   const [primaryBox, secondaryBox] = await Promise.all([primary.boundingBox(), secondary.boundingBox()]);
-  expect(Math.abs((primaryBox?.width || 0) - (secondaryBox?.width || 0))).toBeLessThan(2);
+  expect(primaryBox).not.toBeNull();
+  expect(secondaryBox).not.toBeNull();
+  expect(Math.abs(primaryBox.width - secondaryBox.width)).toBeLessThan(2);
+
+  const secondaryPanel = secondary.locator('.monitored-panel');
+  const secondaryResize = secondary.locator('[data-live-panel-resize-zone="bottom"]');
+  const initialPanelBox = await secondaryPanel.boundingBox();
+  const resizeBox = await secondaryResize.boundingBox();
+  expect(initialPanelBox).not.toBeNull();
+  expect(resizeBox).not.toBeNull();
+  const prefsPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
+  ));
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + 2);
+  await page.mouse.down();
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + 62, { steps: 4 });
+  await page.mouse.up();
+
+  const persistedLayout = (await prefsPatch).postDataJSON().uiPrefs.livePanelLayout;
+  expect(persistedLayout.heights.primary).toBe(420);
+  expect(persistedLayout.heights.secondary).toBeGreaterThan(420);
+  await expect.poll(async () => (await secondaryPanel.boundingBox()).height)
+    .toBeGreaterThan(initialPanelBox.height + 40);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
