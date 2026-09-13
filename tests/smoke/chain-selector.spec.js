@@ -1298,6 +1298,8 @@ test('requests clipboard access once and detects copied contracts from ordinary 
   const shortcut = page.locator('[data-action="activate-clipboard-token"]');
   const permissionNotice = page.getByRole('status', { name: 'Clipboard detection permission' });
   await expect(permissionNotice).toBeVisible();
+  await expect(permissionNotice.locator('.workspace-clipboard-permission-copy')).toHaveCSS('font-family', /Satoshi/);
+  await expect(page.getByRole('searchbox', { name: 'Search tokens across all blockchains' })).toHaveCSS('font-family', /Satoshi/);
   await expect(shortcut).toBeDisabled();
   expect(await page.evaluate(() => window.__clipboardReads)).toBe(0);
 
@@ -1385,6 +1387,7 @@ test('renders the bounded four-view Monitored surface without filter or paginati
   const viewTabs = monitored.getByRole('group', { name: 'Monitored token view' });
 
   await expect(viewTabs.getByRole('button')).toHaveText(['Trending', 'Migrated', 'Pre-bonded', 'Watchlist']);
+  await expect(viewTabs.getByRole('button').first()).toHaveCSS('font-family', /Satoshi/);
   await expect(viewTabs.getByRole('button', { name: 'Trending' })).toHaveAttribute('aria-pressed', 'true');
   await expect(monitored.locator('.monitored-token-row')).toHaveCount(40);
   await expect(monitored.locator('[data-action="monitored-filters-toggle"]')).toHaveCount(0);
