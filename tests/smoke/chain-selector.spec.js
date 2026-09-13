@@ -1460,6 +1460,15 @@ test('composes the compare preset with two independent Monitored panes', async (
   const presetDialog = picker.getByRole('dialog', { name: 'Workspace layout presets' });
   await expect(presetDialog).toBeVisible();
   await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(5);
+  const presetHeading = presetDialog.locator('.workspace-layout-preset-heading');
+  await expect(presetHeading).toHaveCSS('display', 'flex');
+  const [headingTitleBox, headingCaptionBox] = await Promise.all([
+    presetHeading.locator('strong').boundingBox(),
+    presetHeading.locator('span').boundingBox(),
+  ]);
+  expect(headingTitleBox).not.toBeNull();
+  expect(headingCaptionBox).not.toBeNull();
+  expect(headingCaptionBox.x).toBeGreaterThan(headingTitleBox.x + headingTitleBox.width);
   await expect(presetDialog.locator('.workspace-layout-preset-label')).toHaveText([
     'Monitored + Alerts',
     'Doubble Monitored',
@@ -2105,8 +2114,30 @@ test('sends Robinhood identity through Watchlist star and block actions', async 
   );
   await expect(robinhoodRow).toBeVisible();
 
-  await robinhoodRow.locator('[data-action="toggle-star"]').click();
+  const captureRowVisual = () => robinhoodRow.evaluate((row) => {
+    const rowStyle = getComputedStyle(row);
+    const symbolStyle = getComputedStyle(row.querySelector('.token-name'));
+    const avatarStyle = getComputedStyle(row.querySelector('.tok-avatar, .tok-avatar-placeholder'));
+    return {
+      backgroundColor: rowStyle.backgroundColor,
+      backgroundImage: rowStyle.backgroundImage,
+      borderColor: rowStyle.borderColor,
+      boxShadow: rowStyle.boxShadow,
+      symbolColor: symbolStyle.color,
+      symbolTextShadow: symbolStyle.textShadow,
+      avatarBoxShadow: avatarStyle.boxShadow,
+    };
+  });
+  await page.mouse.move(0, 0);
+  const unstarredVisual = await captureRowVisual();
+  const starButton = robinhoodRow.locator('[data-action="toggle-star"]');
+  await starButton.click();
   await expect.poll(() => collectionMutationPayloads.length).toBe(1);
+  await page.mouse.move(0, 0);
+  await expect(starButton).toHaveClass(/active/);
+  await expect(starButton).toHaveText('★');
+  await expect(robinhoodRow).toHaveClass(/token-starred/);
+  expect(await captureRowVisual()).toEqual(unstarredVisual);
 
   await robinhoodRow.locator('[data-action="block-token"]').click();
   await expect.poll(() => collectionMutationPayloads.length).toBe(2);
