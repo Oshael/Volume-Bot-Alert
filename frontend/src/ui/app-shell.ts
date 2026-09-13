@@ -1175,6 +1175,7 @@ function getHeaderRenderKey(state: AppState) {
     state.runtime.monitoredUpdatedAt,
     state.runtime.monitoredFreshnessLabel,
     state.ui.workspace,
+    state.ui.livePanelLayout.preset,
     state.data.availableChains.join(','),
     state.ui.chainFilters.enabledChains.join(','),
     state.ui.chainFilters.radarChains.join(','),

@@ -1542,6 +1542,10 @@ do preset; regiões inativas permanecem sem conteúdo. Cada região visível pod
 persistir sua própria altura somente pela borda inferior; não há resize horizontal nem
 mutação livre dos spans do preset. O drag apenas troca a ordem de panes visíveis e
 persiste a ordem canônica; panes ocultas e a geometria do preset não são alteradas.
+No workspace Live, o header oferece um seletor compacto com SVG próprio e miniaturas
+derivadas das definições canônicas dos cinco presets. A opção ativa é explícita e presets
+fora de sua largura mínima ficam desabilitados; a seleção usa a mesma mutação persistida
+de `uiPrefs.livePanelLayout`, sem estado de layout paralelo.
 Views duplicadas normalizam para
 `trending + watchlist`. O reader ainda
 migra o formato legado baseado em `monitored`/`pumpfun`/`alerts`; a saída persistida é

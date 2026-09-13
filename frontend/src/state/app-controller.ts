@@ -14792,7 +14792,7 @@ export function createAppController(): AppController {
       if (next.preset === state.ui.livePanelLayout.preset) return;
       state.ui.livePanelLayout = next;
       queueUiPrefsPersist();
-      emit('monitored', 'alerts');
+      emit('header', 'monitored', 'alerts');
       void refreshActiveMonitoredViews(state.session.token);
       refreshMonitoredSparklinesIfExpanded('live-panel-preset');
     },
@@ -14836,7 +14836,7 @@ export function createAppController(): AppController {
       state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
       state.ui.monitoredSecondaryPane = createAppState().ui.monitoredSecondaryPane;
       queueUiPrefsPersist();
-      emit('monitored', 'pumpfun', 'alerts');
+      emit('header', 'monitored', 'pumpfun', 'alerts');
     },
     setSoundEnabled(enabled: boolean) {
       state.ui.soundEnabled = enabled;

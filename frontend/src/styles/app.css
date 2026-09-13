@@ -1588,6 +1588,167 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   opacity: 0.82;
 }
 
+.workspace-layout-picker {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.workspace-layout-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 7px;
+  border: 1px solid rgba(0, 212, 255, 0.32);
+  border-radius: 10px;
+  background: rgba(11, 24, 37, 0.88);
+  color: rgba(159, 225, 246, 0.88);
+  cursor: pointer;
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.08);
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.workspace-layout-picker-btn:hover,
+.workspace-layout-picker-btn:focus-visible,
+.workspace-layout-picker-btn[aria-expanded="true"] {
+  border-color: rgba(0, 212, 255, 0.62);
+  background: rgba(0, 212, 255, 0.13);
+  color: #e9faff;
+  outline: none;
+}
+
+.workspace-layout-picker-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.workspace-layout-picker-icon path:last-child {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.72;
+}
+
+.workspace-layout-preset-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 90;
+  width: min(420px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.32);
+  border-radius: 13px;
+  background: rgba(5, 12, 21, 0.98);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.52), 0 0 28px rgba(0, 212, 255, 0.08);
+}
+
+.workspace-layout-preset-popover[hidden] {
+  display: none;
+}
+
+.workspace-layout-preset-heading {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.workspace-layout-preset-heading strong {
+  color: #effaff;
+  font-size: 0.76rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.workspace-layout-preset-heading span {
+  color: rgba(174, 191, 216, 0.7);
+  font-size: 0.65rem;
+}
+
+.workspace-layout-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.workspace-layout-preset-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 7px;
+  min-height: 46px;
+  padding: 6px 8px;
+  border: 1px solid rgba(139, 163, 190, 0.2);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  color: rgba(213, 225, 239, 0.82);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-layout-preset-option:hover:not(:disabled),
+.workspace-layout-preset-option:focus-visible,
+.workspace-layout-preset-option[aria-pressed="true"] {
+  border-color: rgba(0, 212, 255, 0.52);
+  background: rgba(0, 212, 255, 0.1);
+  color: #f3fbff;
+  outline: none;
+}
+
+.workspace-layout-preset-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.workspace-layout-preview {
+  width: 54px;
+  height: 34px;
+  fill: rgba(83, 114, 145, 0.34);
+}
+
+.workspace-layout-preview-pane {
+  stroke: rgba(176, 203, 229, 0.34);
+  stroke-width: 0.8;
+}
+
+.workspace-layout-preview-pane-primary {
+  fill: rgba(0, 212, 255, 0.34);
+}
+
+.workspace-layout-preview-pane-secondary {
+  fill: rgba(143, 102, 255, 0.34);
+}
+
+.workspace-layout-preview-pane-alerts {
+  fill: rgba(255, 101, 135, 0.34);
+}
+
+.workspace-layout-preset-label {
+  overflow: hidden;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+}
+
+.workspace-layout-preset-check {
+  color: #5ee8bd;
+  font-size: 0.75rem;
+  opacity: 0;
+}
+
+.workspace-layout-preset-option[aria-pressed="true"] .workspace-layout-preset-check {
+  opacity: 1;
+}
+
 .workspace-connection-status {
   display: inline-flex;
   align-items: center;
@@ -10800,6 +10961,12 @@ TEMP_LEGACY_BAR_TITLE {
     max-width: 100%;
     box-sizing: border-box;
     justify-content: flex-start;
+  }
+
+  .workspace-layout-preset-popover {
+    position: fixed;
+    top: 12px;
+    left: 12px;
   }
 
   .workspace-route-nav {

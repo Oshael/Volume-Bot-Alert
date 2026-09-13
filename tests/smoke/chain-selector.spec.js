@@ -1115,11 +1115,12 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   await expect(solana).toBeDisabled();
   await expect(solana).toHaveAttribute('title', /Solana is the only selected blockchain/);
 
-  await expect(topbar.locator(':scope > *')).toHaveCount(4);
+  await expect(topbar.locator(':scope > *')).toHaveCount(5);
   await expect(topbar.locator(':scope > *').nth(0)).toHaveClass(/workspace-brand/);
   await expect(topbar.locator(':scope > *').nth(1)).toHaveClass(/workspace-chain-selector/);
-  await expect(topbar.locator(':scope > *').nth(2)).toHaveClass(/workspace-route-group/);
-  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-account-area/);
+  await expect(topbar.locator(':scope > *').nth(2)).toHaveClass(/workspace-layout-picker/);
+  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-route-group/);
+  await expect(topbar.locator(':scope > *').nth(4)).toHaveClass(/workspace-account-area/);
 
   await page.getByRole('button', { name: 'Open user menu' }).click();
   await page.getByRole('button', { name: 'Bot Settings' }).click();
@@ -1303,6 +1304,24 @@ test('composes the compare preset with two independent Monitored panes', async (
   expect(persistedLayout.heights.secondary).toBeGreaterThan(420);
   await expect.poll(async () => (await secondaryPanel.boundingBox()).height)
     .toBeGreaterThan(initialPanelBox.height + 40);
+
+  const picker = page.locator('[data-role="live-panel-preset-picker"]');
+  const pickerButton = picker.getByRole('button', { name: /Choose workspace layout/ });
+  await expect(pickerButton.locator('svg.workspace-layout-picker-icon')).toHaveCount(1);
+  await pickerButton.click();
+  const presetDialog = picker.getByRole('dialog', { name: 'Workspace layout presets' });
+  await expect(presetDialog).toBeVisible();
+  await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(5);
+  await expect(presetDialog.getByRole('button', { name: 'Compare' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toBeDisabled();
+
+  const presetPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
+  ));
+  await presetDialog.getByRole('button', { name: 'Alerts Focus' }).click();
+  expect((await presetPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('alerts_focus');
+  await expect(panels).toHaveAttribute('data-layout-preset', 'alerts_focus');
+  await expect(page.getByRole('button', { name: /Current layout: Alerts Focus/ })).toBeVisible();
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

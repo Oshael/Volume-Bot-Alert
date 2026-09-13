@@ -26,6 +26,13 @@ import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTr
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
 import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
+import {
+  getLivePanelPresetAvailability,
+  LIVE_PANEL_PRESET_IDS,
+  LIVE_PANEL_PRESETS,
+  type LivePanelPresetDefinition,
+  type LivePanelPresetId,
+} from '../../utils/live-panel-layout';
 import { buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
 import { destroyRobinhoodExpandedTrades, mountRobinhoodExpandedTrades } from '../robinhood-expanded-trades';
 import { mountExpandedChartCalloutOverlay } from '../chart-callout-overlay';
@@ -1198,6 +1205,136 @@ function mountWorkspaceChainSelector(
   }
 }
 
+function renderLivePanelPresetPreview(definition: LivePanelPresetDefinition) {
+  const canvasWidth = 48;
+  const inset = 3;
+  const gap = 2;
+  const usableWidth = canvasWidth - (inset * 2);
+  const columnWidth = (usableWidth - (gap * (definition.columns - 1))) / definition.columns;
+  let nextColumn = 0;
+  const regions = definition.regions.map((region) => {
+    const width = (columnWidth * region.span) + (gap * (region.span - 1));
+    const x = region.centered
+      ? inset + ((usableWidth - width) / 2)
+      : inset + (nextColumn * (columnWidth + gap));
+    nextColumn += region.span;
+    return `<rect class="workspace-layout-preview-pane workspace-layout-preview-pane-${region.pane}" data-preview-pane="${region.pane}" x="${x.toFixed(2)}" y="4" width="${width.toFixed(2)}" height="22" rx="2.5" />`;
+  }).join('');
+  return `<svg class="workspace-layout-preview" viewBox="0 0 48 30" aria-hidden="true" focusable="false">${regions}</svg>`;
+}
+
+function renderLivePanelPresetPicker(state: AppState) {
+  if (state.ui.workspace !== 'live') return '';
+  const activePreset = state.ui.livePanelLayout.preset;
+  const options = LIVE_PANEL_PRESET_IDS.map((preset) => {
+    const definition = LIVE_PANEL_PRESETS[preset];
+    const availability = getLivePanelPresetAvailability(preset, window.innerWidth);
+    return `
+      <button
+        type="button"
+        class="workspace-layout-preset-option"
+        data-action="select-live-panel-preset"
+        data-preset="${preset}"
+        data-min-viewport="${definition.minViewportWidth ?? ''}"
+        aria-pressed="${preset === activePreset}"
+        ${availability.available ? '' : 'disabled'}
+        title="${escapeHtml(availability.reason || definition.label)}"
+      >
+        ${renderLivePanelPresetPreview(definition)}
+        <span class="workspace-layout-preset-label">${escapeHtml(definition.label)}</span>
+        <span class="workspace-layout-preset-check" aria-hidden="true">✓</span>
+      </button>
+    `;
+  }).join('');
+  return `
+    <div class="workspace-layout-picker" data-role="live-panel-preset-picker">
+      <button
+        type="button"
+        class="workspace-layout-picker-btn"
+        data-action="toggle-live-panel-presets"
+        aria-label="Choose workspace layout. Current layout: ${escapeHtml(LIVE_PANEL_PRESETS[activePreset].label)}"
+        aria-expanded="false"
+        aria-haspopup="dialog"
+        aria-controls="workspace-layout-preset-popover"
+      >
+        <svg class="workspace-layout-picker-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="2.5" y="3" width="19" height="14" rx="2.5" />
+          <path d="M7 21h10M12 17v4" />
+          <path d="M6 7.5h5v5H6zM13 7.5h5v2H13zM13 10.5h5v2H13z" />
+        </svg>
+      </button>
+      <div
+        id="workspace-layout-preset-popover"
+        class="workspace-layout-preset-popover"
+        data-role="live-panel-preset-popover"
+        role="dialog"
+        aria-label="Workspace layout presets"
+        hidden
+      >
+        <div class="workspace-layout-preset-heading">
+          <strong>Workspace layout</strong>
+          <span>Choose a fixed panel composition</span>
+        </div>
+        <div class="workspace-layout-preset-grid" role="group" aria-label="Available workspace layouts">
+          ${options}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindLivePanelPresetPicker(section: HTMLElement, controller: AppController) {
+  const picker = section.querySelector<HTMLElement>('[data-role="live-panel-preset-picker"]');
+  const trigger = picker?.querySelector<HTMLButtonElement>('[data-action="toggle-live-panel-presets"]');
+  const popover = picker?.querySelector<HTMLElement>('[data-role="live-panel-preset-popover"]');
+  if (!picker || !trigger || !popover) return;
+
+  let openListeners: AbortController | null = null;
+  const updateAvailability = () => {
+    picker.querySelectorAll<HTMLButtonElement>('[data-action="select-live-panel-preset"]').forEach((button) => {
+      const preset = button.dataset.preset as LivePanelPresetId;
+      const availability = getLivePanelPresetAvailability(preset, window.innerWidth);
+      button.disabled = !availability.available;
+      button.title = availability.reason || LIVE_PANEL_PRESETS[preset].label;
+    });
+  };
+  const close = (restoreFocus = false) => {
+    popover.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    openListeners?.abort();
+    openListeners = null;
+    if (restoreFocus) trigger.focus();
+  };
+  const open = () => {
+    updateAvailability();
+    popover.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    openListeners = new AbortController();
+    document.addEventListener('pointerdown', (event) => {
+      if (!picker.contains(event.target as Node)) close();
+    }, { capture: true, signal: openListeners.signal });
+    window.addEventListener('resize', updateAvailability, { signal: openListeners.signal });
+  };
+
+  trigger.addEventListener('click', () => {
+    if (popover.hidden) open(); else close();
+  });
+  picker.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !popover.hidden) {
+      event.preventDefault();
+      close(true);
+    }
+  });
+  picker.querySelectorAll<HTMLButtonElement>('[data-action="select-live-panel-preset"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const preset = button.dataset.preset as LivePanelPresetId;
+      if (!LIVE_PANEL_PRESET_IDS.includes(preset) || button.disabled) return;
+      close();
+      controller.setLivePanelPreset(preset);
+    });
+  });
+}
+
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-topbar workspace-topbar';
@@ -1214,6 +1351,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
           <span class="workspace-brand-sub">Volume Bot Tracker</span>
         </div>
       </div>
+      ${renderLivePanelPresetPicker(state)}
       <div class="workspace-route-group">
         <div class="workspace-route-nav" aria-label="Workspace navigation">
           <a href="${getWorkspaceHref('live')}" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</a>
@@ -1258,6 +1396,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
   section.querySelector<HTMLElement>('[data-role="user-avatar"]')!.textContent = avatarLabel;
   mountWorkspaceChainSelector(section, state, controller);
+  bindLivePanelPresetPicker(section, controller);
   section.querySelector<HTMLAnchorElement>('[data-action="open-workspace-live"]')?.addEventListener('click', (event) => {
     if (!isPlainPrimaryClick(event)) {
       return;
