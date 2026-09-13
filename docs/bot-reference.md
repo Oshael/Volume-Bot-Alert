@@ -1487,8 +1487,11 @@ um subconjunto canônico limitado e, durante a transição, converte o antigo
 `alert_sparklines` por meio da identidade do alerta sem voltar a gravá-lo. O cache
 é abastecido por um único scheduler chain-aware para Monitored e Alerts. Novos
 alertas acordam esse fluxo por evento com debounce de 150 ms; a reconciliação de
-60 s permanece limitada às identidades selecionadas, executa batches em série,
-deduplica a mesma identidade/formato de consulta e aplica timeout de 12 s. Uma
+60 s permanece limitada às linhas Monitored com gráfico renderizado e aos 40
+alertas da página filtrada atual. No preset Alerts Focus, essas identidades de
+Alerts entram primeiro; nos demais presets, Monitored mantém a precedência. O
+scheduler executa batches em série, deduplica a mesma identidade/formato de
+consulta, limita o conjunto combinado a 100 identidades e aplica timeout de 12 s. Uma
 resposta só entra no estado se sessão, token e workspace ainda forem os mesmos.
 Falhas preservam uma série renderizável do mesmo formato e deixam o scheduler
 retomar pelo ciclo de reconciliação após a janela de freshness. A entrada

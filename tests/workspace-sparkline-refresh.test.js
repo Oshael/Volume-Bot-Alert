@@ -13,6 +13,8 @@ let resolveWorkspaceSparklineGranularityMinutes;
 let resolveWorkspaceSparklineRequestShape;
 let runWorkspaceSparklineBatchesSerially;
 let runWorkspaceSparklineRequestWithTimeout;
+let selectVisibleWorkspaceSparklineCandidates;
+let selectVisibleWorkspaceSparklinePage;
 let selectWorkspaceSparklineRefreshBatches;
 let splitWorkspaceSparklineBatchesByChain;
 
@@ -30,6 +32,8 @@ before(async () => {
     resolveWorkspaceSparklineRequestShape,
     runWorkspaceSparklineBatchesSerially,
     runWorkspaceSparklineRequestWithTimeout,
+    selectVisibleWorkspaceSparklineCandidates,
+    selectVisibleWorkspaceSparklinePage,
     selectWorkspaceSparklineRefreshBatches,
     splitWorkspaceSparklineBatchesByChain,
   } = await import('../frontend/src/state/workspace-sparkline-refresh.ts'));
@@ -232,10 +236,46 @@ describe('workspace sparkline request shape', () => {
       { identity: robinhood, ...shape },
       { identity: solana, hours: 24, granularityMinutes: 1 },
     ]), [
-      { hours: 24, granularityMinutes: 1, allAvailable: undefined, queryAllAvailable: undefined, identities: [solana] },
       { ...shape, allAvailable: undefined, queryAllAvailable: undefined, identities: [solana] },
       { ...shape, allAvailable: undefined, queryAllAvailable: undefined, identities: [robinhood] },
+      { hours: 24, granularityMinutes: 1, allAvailable: undefined, queryAllAvailable: undefined, identities: [solana] },
     ]);
+  });
+
+  it('prioritizes visible alerts, deduplicates identities and enforces the work bound', () => {
+    const candidate = (key, source) => ({
+      identity: { chain: 'solana', address: key, key: `solana:${key}` },
+      source,
+    });
+    const monitored = [candidate('shared', 'monitored'), candidate('monitor-only', 'monitored')];
+    const alerts = [candidate('alert-only', 'alert'), candidate('shared', 'alert')];
+
+    assert.deepEqual(selectVisibleWorkspaceSparklineCandidates({
+      monitored,
+      alerts,
+      prioritizeAlerts: true,
+      limit: 2,
+    }).map(({ identity, source }) => [identity.address, source]), [
+      ['alert-only', 'alert'],
+      ['shared', 'alert'],
+    ]);
+    assert.deepEqual(selectVisibleWorkspaceSparklineCandidates({
+      monitored,
+      alerts,
+      limit: 3,
+    }).map(({ identity, source }) => [identity.address, source]), [
+      ['shared', 'monitored'],
+      ['monitor-only', 'monitored'],
+      ['alert-only', 'alert'],
+    ]);
+  });
+
+  it('selects only the current page from an already filtered alert identity list', () => {
+    const alerts = Array.from({ length: 42 }, (_, index) => `alert-${index + 1}`);
+    assert.deepEqual(selectVisibleWorkspaceSparklinePage(alerts, 0, 40), alerts.slice(0, 40));
+    assert.deepEqual(selectVisibleWorkspaceSparklinePage(alerts, 1, 40), alerts.slice(40));
+    assert.deepEqual(selectVisibleWorkspaceSparklinePage(['search-match'], 0, 40), ['search-match']);
+    assert.deepEqual(selectVisibleWorkspaceSparklinePage(alerts, 99, 40), alerts.slice(40));
   });
 
   it('rejects responses from a stale or inactive workspace session', () => {

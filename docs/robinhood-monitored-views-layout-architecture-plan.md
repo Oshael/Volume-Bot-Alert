@@ -682,6 +682,9 @@ series is removed:
   Focus. Preserve bounded periodic reconciliation for missed events without creating a polling discovery path. Validate
   page/search changes, preset transitions, priority order and bounded work with focused unit and smoke coverage. Estimated
   change: 250–400 lines.
+  **Completed:** live selection now reports only chart-visible Monitored rows and the filtered 40-alert page, preserves the
+  100-identity cap, and orders Alerts first in Alerts Focus. Search, pagination and preset transitions wake the shared
+  scheduler without bypassing freshness; periodic refresh remains bounded reconciliation.
 - **7E — realtime convergence and legacy cleanup:** make accepted committed `market:bucket` updates mutate the one compact
   identity series and invalidate every visible consumer of that identity from the same revision, preserving sequence/block
   ordering against late HTTP snapshots. Remove the legacy alert cache writer/key and remaining per-alert fetch residue only

@@ -163,6 +163,8 @@ import {
   resolveWorkspaceSparklineRequestShape as resolveAdaptiveWorkspaceSparklineRequestShape,
   runWorkspaceSparklineBatchesSerially,
   runWorkspaceSparklineRequestWithTimeout,
+  selectVisibleWorkspaceSparklineCandidates,
+  selectVisibleWorkspaceSparklinePage,
   selectWorkspaceSparklineRefreshBatches,
   type WorkspaceIdentitySparklineBatch,
 } from './workspace-sparkline-refresh';
@@ -5976,7 +5978,13 @@ export function createAppController(): AppController {
       const symbol = String(alert.symbol || '').toLowerCase();
       const name = String(alert.name || '').toLowerCase();
       const address = String(alert.address || '').toLowerCase();
-      return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery);
+      const customTitle = String(alert.customTitle || '').toLowerCase();
+      const reasons = (alert.reviewReasons || []).join(' ').toLowerCase();
+      return symbol.includes(normalizedQuery)
+        || name.includes(normalizedQuery)
+        || address.includes(normalizedQuery)
+        || customTitle.includes(normalizedQuery)
+        || reasons.includes(normalizedQuery);
     });
   }
 
@@ -7657,8 +7665,10 @@ export function createAppController(): AppController {
       .filter((identity): identity is TokenIdentity => Boolean(identity));
   }
 
-  function getAlertSparklineIdentities() {
-    return getAlertFeedAlerts(state)
+  function getVisibleAlertSparklineIdentities() {
+    if (getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts') <= 0) return [];
+    const alerts = getFilteredAlertsForPagination();
+    return selectVisibleWorkspaceSparklinePage(alerts, state.ui.alertPage, ALERTS_PER_PAGE)
       .map((alert) => getChartCapableIdentity(alert.chain, alert.address))
       .filter((identity): identity is TokenIdentity => Boolean(identity));
   }
@@ -7750,21 +7760,14 @@ export function createAppController(): AppController {
 
   function getVisibleWorkspaceSparklineIdentityScopes() {
     if (isLiveWorkspace()) {
-      const selected: Array<{ identity: TokenIdentity; scope: SparklineRangeScope }> = [];
-      const seen = new Set<string>();
-      const liveIdentities = [
-        ...getVisibleMonitoredSparklineIdentities(),
-        ...getAlertSparklineIdentities(),
-      ];
-      for (const identity of liveIdentities) {
-        if (selected.length >= SPARKLINE_VISIBLE_LIMIT_TOTAL) break;
-        if (seen.has(identity.key)) {
-          continue;
-        }
-        seen.add(identity.key);
-        selected.push({ identity, scope: 'monitored' });
-      }
-      return selected;
+      return selectVisibleWorkspaceSparklineCandidates({
+        monitored: getVisibleMonitoredSparklineIdentities()
+          .map((identity) => ({ identity, scope: 'monitored' as const })),
+        alerts: getVisibleAlertSparklineIdentities()
+          .map((identity) => ({ identity, scope: 'monitored' as const })),
+        prioritizeAlerts: state.ui.livePanelLayout.preset === 'alerts_focus',
+        limit: SPARKLINE_VISIBLE_LIMIT_TOTAL,
+      });
     }
     if (isHistoryWorkspace()) {
       return getVisibleRoutedHistorySparklineIdentityScopes();
@@ -9331,6 +9334,13 @@ export function createAppController(): AppController {
       return;
     }
     void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller });
+  }
+
+  function refreshVisibleLiveWorkspaceSparklines(caller: string) {
+    if (!state.session.token || !isLiveWorkspace() || getVisibleWorkspaceSparklineBatches().length === 0) {
+      return;
+    }
+    void refreshHistoryWorkspaceSparklines({ token: state.session.token, caller });
   }
 
   function refreshWorkspaceSparklinesAfterRangeChange(addresses?: string[], caller = 'range-change') {
@@ -13036,7 +13046,7 @@ export function createAppController(): AppController {
     queueUiPrefsPersist();
     emit('header', 'monitored', 'alerts');
     void refreshActiveMonitoredViews(state.session.token);
-    refreshMonitoredSparklinesIfExpanded(refreshReason);
+    refreshVisibleLiveWorkspaceSparklines(refreshReason);
     return true;
   }
 
@@ -13833,6 +13843,7 @@ export function createAppController(): AppController {
       state.ui.alertSearchQuery = String(query || '');
       state.ui.alertPage = 0;
       emit('alerts');
+      refreshVisibleLiveWorkspaceSparklines('alerts-search');
     },
     setPrimaryMonitoredView(view: MonitoredViewId) {
       const nextView = normalizeMonitoredViewId(view);
@@ -14012,6 +14023,7 @@ export function createAppController(): AppController {
     setAlertPage(page: number) {
       state.ui.alertPage = clampPage(page, getFilteredAlertsForPagination().length, ALERTS_PER_PAGE);
       emit('alerts');
+      refreshVisibleLiveWorkspaceSparklines('alerts-page');
     },
     setRecentPage(page: number) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });

@@ -1278,6 +1278,10 @@ test('composes the compare preset with two independent Monitored panes', async (
   const diagnostics = await openAuthenticatedWorkspace(page, {
     ...ROBINHOOD_API_FIXTURES,
     'GET /api/config': compareConfig,
+    'GET /api/dashboard/alert-feeds': async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return ROBINHOOD_API_FIXTURES['GET /api/dashboard/alert-feeds'];
+    },
   });
   const panels = page.locator('[data-app-render-slot="panels"]');
   const primary = panels.locator('[data-pane-key="primary"]');
@@ -1329,6 +1333,9 @@ test('composes the compare preset with two independent Monitored panes', async (
   await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(5);
   await expect(presetDialog.getByRole('button', { name: 'Compare' })).toHaveAttribute('aria-pressed', 'true');
   await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toBeDisabled();
+  expect(diagnostics.apiRequests.filter((url) => (
+    new URL(url).pathname === '/api/catalog/sparklines'
+  ))).toHaveLength(0);
 
   const presetPatch = page.waitForRequest((request) => (
     request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
@@ -1337,6 +1344,9 @@ test('composes the compare preset with two independent Monitored panes', async (
   expect((await presetPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('alerts_focus');
   await expect(panels).toHaveAttribute('data-layout-preset', 'alerts_focus');
   await expect(page.getByRole('button', { name: /Current layout: Alerts Focus/ })).toBeVisible();
+  await expect.poll(() => diagnostics.apiRequests.filter((url) => (
+    new URL(url).pathname === '/api/catalog/sparklines'
+  )).length).toBe(1);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
@@ -1661,6 +1671,72 @@ test('shares one compact sparkline identity across duplicate token alerts', asyn
   expect(sparklineRequestPayloads.flatMap((payload) => (
     Array.isArray(payload.identities) ? payload.identities : []
   )).filter((identity) => `${identity.chain}:${identity.address}` === identityKey)).toHaveLength(1);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('requests only the rendered Alerts page across page changes', async ({ page }) => {
+  const base58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const events = Array.from({ length: 42 }, (_, index) => ({
+    id: 300 + index,
+    chain: 'solana',
+    kind: 'hvnc',
+    ruleKey: 'hvnc',
+    address: `${'1'.repeat(31)}${base58[index + 1]}`,
+    symbol: index === 0 ? 'ONLY_OLDEST' : (index === 1 ? 'SECOND_OLDEST' : `VISIBLE${index + 1}`),
+    mcap: 300000 + index,
+    volume24h: 500000,
+    isHvnc: true,
+    label: 'HVNC',
+    triggeredAt: new Date(Date.UTC(2026, 6, 14, 17, 0, index)).toISOString(),
+  }));
+  const sparklineRequestPayloads = [];
+  const diagnostics = await openAuthenticatedWorkspace(page, {
+    ...API_FIXTURES,
+    'GET /api/dashboard/alert-feeds': {
+      generatedAt: '2026-07-14T18:00:00.000Z',
+      mode: 'all',
+      count: events.length,
+      feeds: [{ ruleKey: 'hvnc', kind: 'hvnc', count: events.length, events }],
+    },
+    'POST /api/catalog/sparklines': (request) => {
+      const payload = request.postDataJSON();
+      sparklineRequestPayloads.push(payload);
+      const identities = Array.isArray(payload.identities) ? payload.identities : [];
+      return {
+        generatedAt: '2026-07-14T18:00:00.000Z',
+        chains: ['solana'],
+        hours: payload.hours,
+        points: payload.points,
+        granularityMinutes: payload.granularityMinutes,
+        count: identities.length,
+        items: identities.map((identity) => ({ ...identity, series: [250000, 300000] })),
+      };
+    },
+  });
+  const requestedAddresses = () => sparklineRequestPayloads.flatMap((payload) => (
+    Array.isArray(payload.identities) ? payload.identities.map((identity) => identity.address) : []
+  ));
+  const alertsPanel = page.locator('.alerts-panel');
+  const oldestAddress = events[0].address;
+  const secondOldestAddress = events[1].address;
+
+  await expect.poll(requestedAddresses).toHaveLength(40);
+  await expect.poll(async () => page.evaluate((storageKey) => {
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
+    return Object.keys(stored).length;
+  }, 'frontend_vite:smoke@example.test:compact_sparklines')).toBe(40);
+  expect(requestedAddresses()).not.toContain(oldestAddress);
+  expect(requestedAddresses()).not.toContain(secondOldestAddress);
+
+  await alertsPanel.getByRole('button', { name: 'Next' }).click();
+  await expect(alertsPanel.locator('article.alert-row')).toHaveCount(2);
+  await expect(alertsPanel.locator('article.alert-row[data-alert-id="backend:hvnc:300"]')).toBeVisible();
+  await expect(alertsPanel.locator('article.alert-row[data-alert-id="backend:hvnc:301"]')).toBeVisible();
+  await expect.poll(() => requestedAddresses().filter((address) => address === oldestAddress)).toHaveLength(1);
+  await expect.poll(() => requestedAddresses().filter((address) => address === secondOldestAddress)).toHaveLength(1);
+  expect(requestedAddresses()).toHaveLength(42);
+  expect(Math.max(...sparklineRequestPayloads.map((payload) => payload.identities.length))).toBe(40);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

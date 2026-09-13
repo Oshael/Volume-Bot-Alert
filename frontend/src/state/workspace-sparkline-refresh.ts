@@ -28,6 +28,42 @@ export type WorkspaceSparklineRequest = Omit<WorkspaceIdentitySparklineBatch, 'i
   identity: WorkspaceSparklineIdentity;
 };
 
+export function selectVisibleWorkspaceSparklineCandidates<
+  TCandidate extends { identity: WorkspaceSparklineIdentity },
+>(input: {
+  monitored: readonly TCandidate[];
+  alerts: readonly TCandidate[];
+  prioritizeAlerts?: boolean;
+  limit: number;
+}) {
+  const ordered = input.prioritizeAlerts
+    ? [...input.alerts, ...input.monitored]
+    : [...input.monitored, ...input.alerts];
+  const selected: TCandidate[] = [];
+  const seen = new Set<string>();
+  const limit = Math.max(0, Math.floor(Number(input.limit) || 0));
+
+  for (const candidate of ordered) {
+    if (selected.length >= limit) break;
+    if (seen.has(candidate.identity.key)) continue;
+    seen.add(candidate.identity.key);
+    selected.push(candidate);
+  }
+  return selected;
+}
+
+export function selectVisibleWorkspaceSparklinePage<T>(
+  items: readonly T[],
+  page: number,
+  pageSize: number,
+) {
+  const safePageSize = Math.max(1, Math.floor(Number(pageSize) || 1));
+  const totalPages = Math.max(1, Math.ceil(items.length / safePageSize));
+  const safePage = Math.min(Math.max(0, Math.floor(Number(page) || 0)), totalPages - 1);
+  const pageStart = safePage * safePageSize;
+  return items.slice(pageStart, pageStart + safePageSize);
+}
+
 export type LegacyWorkspaceSparklineBatch = {
   hours: number;
   granularityMinutes: number;
@@ -408,7 +444,6 @@ export function buildWorkspaceSparklineBatches(
   }
 
   return splitWorkspaceSparklineBatchesByChain([...grouped.values()])
-    .sort((left, right) => left.hours - right.hours || left.granularityMinutes - right.granularityMinutes)
     .filter((batch) => batch.identities.length > 0);
 }
 
