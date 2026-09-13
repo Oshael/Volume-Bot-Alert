@@ -1257,23 +1257,6 @@ test('uses the confirmed full-width scrollable selector below 980px', async ({ p
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders a flat Watchlist with search and sort controls only', async ({ page }) => {
-  await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
-  const watchlistSection = page.locator('#watchlist-section');
-  await expect(watchlistSection).not.toContainText('Pinned · always monitored');
-
-  const watchlistSortCluster = watchlistSection.locator('.compact-sort-cluster');
-  await expect(watchlistSortCluster).toContainText('SORT');
-  await expect(watchlistSortCluster.getByRole('button', { name: 'MCAP / FDV', exact: true })).toBeVisible();
-  await expect(watchlistSortCluster).toHaveCSS('flex-wrap', 'nowrap');
-  await expect(watchlistSection).toContainText('WATCHLIST');
-  await expect(watchlistSection.locator('[data-action="manual-starred-only"]')).toHaveCount(0);
-  await expect(watchlistSection.locator('[data-action="manual-folder-create-root"]')).toHaveCount(0);
-  await expect(watchlistSection.locator('[data-role="manual-token-form"]')).toHaveCount(0);
-  await expect(page.locator('[data-action="manual-quick-add"]')).toHaveCount(0);
-  await expect(watchlistSection.locator('[data-action="remove-manual"]')).toHaveCount(0);
-});
-
 test('renders the bounded four-view Monitored surface without filter or pagination controls', async ({ page }) => {
   const trendingTokens = Array.from({ length: 45 }, (_, index) => ({
     chain: 'robinhood',
@@ -1298,6 +1281,8 @@ test('renders the bounded four-view Monitored surface without filter or paginati
   await expect(monitored.locator('[data-action="monitored-per-page"]')).toHaveCount(0);
   await expect(monitored.locator('[data-action="monitored-page-jump"]')).toHaveCount(0);
   await expect(monitored.locator('[data-action="monitored-prev"], [data-action="monitored-next"]')).toHaveCount(0);
+  await expect(page.locator('[data-app-render-slot="top-performers"], [data-app-render-slot="manual"]')).toHaveCount(0);
+  await expect(page.locator('#top-performers-section, #watchlist-section')).toHaveCount(0);
 
   await viewTabs.getByRole('button', { name: 'Watchlist' }).click();
   await expect(viewTabs.getByRole('button', { name: 'Watchlist' })).toHaveAttribute('aria-pressed', 'true');
@@ -1421,8 +1406,11 @@ test('chain-scoped bot settings remain usable on a narrow viewport', async ({ pa
 
 test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {
   await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
-  const watchlistSection = page.locator('#watchlist-section');
-  const fomoLink = watchlistSection.locator('.trade-link.fomo').first();
+  const monitored = page.locator('.monitored-panel');
+  await monitored.getByRole('button', { name: 'Watchlist' }).click();
+  const fomoLink = monitored.locator(
+    `article.monitored-token-row[data-address="${SOLANA_WATCHLIST}"] .trade-link.fomo`,
+  );
   await expect(fomoLink).toHaveAttribute('href', `https://fomo.family/tokens/solana/${SOLANA_WATCHLIST}`);
   await expect(fomoLink).toContainText('FOMO');
   await expect(fomoLink.locator('.terminal-icon-fomo')).toHaveAttribute('src', /terminal-fomo/);
@@ -1439,9 +1427,6 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
 
   const monitoredSolanaRow = page.locator('.monitored-panel article.monitored-token-row[data-address="So11111111111111111111111111111111111111112"]');
   await expect(monitoredSolanaRow).toBeVisible();
-  await expect(page.locator('#top-performers-section')).toContainText('TOPSOL');
-  const watchlistSection = page.locator('#watchlist-section');
-  await expect(watchlistSection).toContainText('WATCHSOL');
 
   await expect(selector.locator('.workspace-chain-selector-btn')).toHaveCount(2);
   await expect(solanaButton).toHaveAttribute('aria-pressed', 'true');
@@ -1483,12 +1468,6 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   await expect(selector.locator('[data-chain="solana"]')).toHaveAttribute('aria-pressed', 'false');
   await expect(selector.locator('[data-chain="robinhood"]')).toBeDisabled();
   await expect(monitoredSolanaRow).toHaveCount(0);
-  await expect(page.locator('#top-performers-section')).not.toContainText('TOPSOL');
-  await expect(page.locator('#watchlist-section')).not.toContainText('WATCHSOL');
-  await expect(page.locator('[data-chain-readiness-surface="monitored"]')).toContainText('syncing market coverage');
-  await expect(page.locator('[data-chain-readiness-surface="top-performers"]')).toContainText('syncing market coverage');
-  await expect(page.locator('#watchlist-section [data-chain-readiness-surface="watchlist"]')).toHaveCount(0);
-  await expect(page.locator('#watchlist-section [data-role="manual-token-form"]')).toHaveCount(0);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
@@ -1562,7 +1541,6 @@ test('rehydrates Robinhood market panels immediately when readiness recovers', a
 
 test('refetches market panels by chain and rejects a stale combined response', async ({ page }) => {
   test.setTimeout(40_000);
-  marketPinPayloads.length = 0;
   compactChartRequestPayloads.length = 0;
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_MARKET_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
@@ -1570,7 +1548,6 @@ test('refetches market panels by chain and rejects a stale combined response', a
   const robinhoodButton = selector.locator('[data-chain="robinhood"]');
 
   await expect(page.locator('.monitored-panel')).toContainText('MONSOL');
-  await expect(page.locator('#top-performers-section')).toContainText('TOPSOL');
 
   await robinhoodButton.click();
   await expect.poll(() => diagnostics.apiRequests.some((requestUrl) => {
@@ -1592,19 +1569,6 @@ test('refetches market panels by chain and rejects a stale combined response', a
   await expect(robinhoodRow.locator('.monitored-main-metric')).toHaveText('$0');
   await expect(robinhoodRow.locator('.monitored-coverage-partial')).toContainText('~');
   await expect(robinhoodRow.locator('.monitored-coverage-unavailable')).toHaveText('-');
-  await expect(page.locator('#top-performers-section')).toContainText('TOPRHFRESH');
-  await expect(page.locator('#top-performers-section')).toContainText('FDV');
-  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
-    payload.identities?.some((identity) => (
-      identity.chain === 'robinhood' && identity.address === ROBINHOOD_TOP
-    ))
-  ))).toBe(true);
-  const topSparkline = page.locator(
-    `.top-performer-card:not(.is-duplicate)[data-address="${ROBINHOOD_TOP}"] .sparkline-wrap`,
-  );
-  await expect(topSparkline).toHaveAttribute('data-chain', 'robinhood');
-  await expect(topSparkline).toHaveAttribute('data-sparkline-key', `robinhood:${ROBINHOOD_TOP}`);
-  await expect(topSparkline).toHaveAttribute('data-sparkline-summary', /Mini FDV chart · 2 pts/);
   const monitoredSparkline = robinhoodRow.locator('.monitored-mini-chart .sparkline-wrap');
   await expect(monitoredSparkline).toHaveAttribute('data-sparkline-key', `robinhood:${ROBINHOOD_TOKEN}`);
   await expect(monitoredSparkline.locator('[data-action="toggle-token-sparkline-range"]')).toHaveCount(0);
@@ -1639,28 +1603,8 @@ test('refetches market panels by chain and rejects a stale combined response', a
   ))).toBe(true);
   await expect(monitoredQuickRanges.getByRole('button', { name: '4h', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
-  await topSparkline.hover();
-  await expect(topSparkline.locator('.sparkline-hover-tooltip')).toContainText('FDV');
-  await topSparkline.locator('[data-action="toggle-token-sparkline-range"]').click();
-  await topSparkline.locator('[data-action="set-token-sparkline-range-preset"][data-sparkline-range-preset="7d"]').click();
-  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
-    payload.hours === 168 && payload.identities?.some((identity) => (
-      identity.chain === 'robinhood' && identity.address === ROBINHOOD_TOP
-    ))
-  ))).toBe(true);
   await page.waitForTimeout(500);
   await expect(page.locator('.monitored-panel')).not.toContainText('RHSTALE');
-  await expect(page.locator('#top-performers-section')).not.toContainText('TOPRHSTALE');
-
-  const pinHandle = robinhoodRow.locator('.monitored-pin-handle');
-  await pinHandle.click();
-  await expect.poll(() => marketPinPayloads.length).toBe(1);
-  expect(marketPinPayloads[0].chains).toEqual(['robinhood']);
-  expect(marketPinPayloads[0].pinnedTokens[0].chain).toBe('robinhood');
-  await expect(pinHandle).toHaveAttribute('data-pinned', 'true');
-  await pinHandle.dblclick();
-  await expect.poll(() => marketPinPayloads.length).toBe(2);
-  expect(marketPinPayloads[1]).toEqual({ chains: ['robinhood'], pinnedTokens: [] });
 
   const marketRequests = diagnostics.apiRequests
     .map((requestUrl) => new URL(requestUrl))
@@ -2184,15 +2128,19 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(monitoredRow).toBeVisible();
   await expect(monitoredRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
   await expect(monitoredRow.locator('.trade-link')).toHaveCount(2);
-  await expect(monitoredRow).toContainText('HOLDERS 4,424');
+  await expect(monitoredRow).toContainText('HLD 4,424');
   await expect(monitoredRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
   await expect(monitoredRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
-  const watchlistRow = page.locator(`#watchlist-section tr[data-token-identity="robinhood:${ROBINHOOD_WATCHLIST}"]`);
+  const monitored = page.locator('.monitored-panel');
+  await monitored.getByRole('button', { name: 'Watchlist' }).click();
+  const watchlistRow = monitored.locator(
+    `article.monitored-token-row[data-address="${ROBINHOOD_WATCHLIST}"]`,
+  );
   await expect(watchlistRow).toBeVisible();
   await expect(watchlistRow.locator('.monitored-ticker-peer-badge')).toHaveText('OG');
   await expect(watchlistRow.locator('.trade-link')).toHaveCount(2);
-  await expect(watchlistRow.locator('.radar-size-item').filter({ hasText: 'HLD' })).toContainText('2,001');
+  await expect(watchlistRow).toContainText('HLD 2,001');
   await expect(watchlistRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
   await expect(watchlistRow.locator('.trade-link.fomo'))
     .toHaveAttribute('href', `https://fomo.family/tokens/robinhood/${ROBINHOOD_WATCHLIST}`);

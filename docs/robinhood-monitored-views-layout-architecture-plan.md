@@ -548,6 +548,22 @@ remove pagination/filter controls; and keep reads and DOM work bounded.
   chart range, count and bounded rows. Remove Filters and visible pagination controls from this surface.
 - **5D — legacy surface retirement:** remove standalone Best Performance and Watchlist render slots plus their now-dead
   presentation/controller code after the unified surface smoke coverage passes; preserve dormant folder storage and routes.
+  Because the complete retirement exceeds the 500-line slice limit, execute it through these bounded cuts:
+  - **5D1 — visible slot detachment:** remove both standalone render slots and their App Shell patch/render-key ownership;
+    update smoke coverage so the unified Monitored surface is the only visible owner.
+  - **5D2 — standalone Watchlist presentation owner:** delete the unreachable Watchlist section renderer and presentation-only
+    bindings while preserving membership, star actions, neutral folder storage and folder routes.
+  - **5D3 — Best Performance presentation owner:** delete the unreachable Best Performance renderer and its local
+    auto-scroll/debug presentation helpers.
+  - **5D4a — legacy render regions:** remove obsolete `manual` and `top-performers` render-region emissions and invalidation
+    wiring without changing canonical Watchlist or Monitored refreshes.
+  - **5D4b — legacy controller/state reads:** retire standalone Top Performance polling/snapshot state and Watchlist-only UI
+    preferences that no longer have a consumer; keep any endpoint or compatibility contract still used outside this UI.
+  - **5D5a — Best Performance styles:** remove the now-unreachable card, carousel and responsive CSS in a bounded pass.
+  - **5D5b — standalone Watchlist styles:** remove the now-unreachable table/control CSS without touching shared Monitored,
+    Radar or dormant folder persistence contracts.
+  - **5D6 — residual verification:** run scoped dead-code/style searches, consolidate stale smoke expectations and prove that
+    the unified four-view surface, star-based Watchlist membership, neutral folder storage and routes remain intact.
 
 ### Slice 6: fixed layouts
 

@@ -1546,9 +1546,10 @@ export function getPrimaryMonitoredViewTokens(state: AppState) {
     : useTrendingCompatibility
       ? state.data.monitoredTokenIdentities
       : systemView?.tokenIdentities || [];
-  return identities
+  const tokens = identities
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is WatchlistTokenEntry => Boolean(item));
+  return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
 export function getRecentTokens(state: AppState) {

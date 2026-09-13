@@ -1,13 +1,11 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getExpandedTokenSparkline, getWatchlistTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
-import { renderWatchlistSection } from './sections/manual-section';
 import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
 import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
-import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
-import { resolveWatchlistTableRows, resolveMonitoredViewRows } from '../utils/token-table';
+import { resolveMonitoredViewRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
 import { buildTokenIdentityKey, type TokenChain } from '../utils/token-chain';
@@ -164,10 +162,8 @@ type AppRenderFrame = {
   shell: HTMLElement;
   toastsSlot: HTMLElement;
   legacySlot: HTMLElement;
-  topPerformersSlot: HTMLElement;
   oldWeekSlot: HTMLElement;
   recentSlot: HTMLElement;
-  manualSlot: HTMLElement;
   panels: HTMLElement;
   monitoredStack: HTMLElement;
   monitoredSlot: HTMLElement;
@@ -184,10 +180,8 @@ const APP_HEADER_SLOT_SELECTOR = '[data-app-render-slot="header"]';
 const APP_SHELL_SELECTOR = '[data-app-render-slot="shell"]';
 const APP_TOASTS_SLOT_SELECTOR = '[data-app-render-slot="toasts"]';
 const APP_LEGACY_SLOT_SELECTOR = '[data-app-render-slot="legacy"]';
-const APP_TOP_PERFORMERS_SLOT_SELECTOR = '[data-app-render-slot="top-performers"]';
 const APP_OLD_WEEK_SLOT_SELECTOR = '[data-app-render-slot="old-week"]';
 const APP_RECENT_SLOT_SELECTOR = '[data-app-render-slot="recent"]';
-const APP_MANUAL_SLOT_SELECTOR = '[data-app-render-slot="manual"]';
 const APP_PANELS_SELECTOR = '[data-app-render-slot="panels"]';
 const APP_MONITORED_STACK_SELECTOR = '.monitored-stack';
 const LIVE_PANEL_DRAG_HANDLE_SELECTOR = '[data-live-panel-drag-handle="true"]';
@@ -250,8 +244,6 @@ export function renderAppShell(
   if (state.session.status === 'authenticated' && !isAccountSecurityRoute) {
     renderFrame.oldWeekSlot.hidden = !isHistoryWorkspace;
     renderFrame.recentSlot.hidden = !isHistoryWorkspace;
-    renderFrame.topPerformersSlot.hidden = !isLiveWorkspace;
-    renderFrame.manualSlot.hidden = !isLiveWorkspace;
     renderFrame.panels.hidden = false;
 
     if (isHistoryWorkspace) {
@@ -278,15 +270,6 @@ export function renderAppShell(
 
     if (isLiveWorkspace) {
       updateRegionSlot(
-        renderFrame.topPerformersSlot,
-        'top-performers',
-        dirtyRegions,
-        getTopPerformersRenderKey(state),
-        () => [renderTopPerformersSection(state, controller)],
-        () => patchTopPerformersSlot(renderFrame.topPerformersSlot, state, controller),
-      );
-      updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getWatchlistRenderKey(state), () => [renderWatchlistSection(state, controller)]);
-      updateRegionSlot(
         renderFrame.monitoredSlot,
         'monitored',
         dirtyRegions,
@@ -297,8 +280,6 @@ export function renderAppShell(
       updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
       updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
     } else {
-      updateRenderSlot(renderFrame.topPerformersSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.monitoredSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.alertsSlot, 'hidden', () => []);
@@ -312,14 +293,10 @@ export function renderAppShell(
   } else {
     renderFrame.oldWeekSlot.hidden = true;
     renderFrame.recentSlot.hidden = true;
-    renderFrame.topPerformersSlot.hidden = true;
-    renderFrame.manualSlot.hidden = true;
     renderFrame.panels.hidden = true;
 
     updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
     updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
-    updateRenderSlot(renderFrame.topPerformersSlot, 'hidden', () => []);
-    updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
     renderFrame.monitoredSlot.replaceChildren();
     renderFrame.bidZoneSlot.replaceChildren();
     renderFrame.pumpfunSlot.replaceChildren();
@@ -389,10 +366,8 @@ function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null 
     shell: existingFrame.querySelector<HTMLElement>(APP_SHELL_SELECTOR),
     toastsSlot: existingFrame.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR),
     legacySlot: existingFrame.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR),
-    topPerformersSlot: existingFrame.querySelector<HTMLElement>(APP_TOP_PERFORMERS_SLOT_SELECTOR),
     oldWeekSlot: existingFrame.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR),
     recentSlot: existingFrame.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR),
-    manualSlot: existingFrame.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR),
     panels: existingFrame.querySelector<HTMLElement>(APP_PANELS_SELECTOR),
     monitoredStack: existingFrame.querySelector<HTMLElement>(APP_MONITORED_STACK_SELECTOR),
     monitoredSlot: existingFrame.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR),
@@ -428,10 +403,8 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
 
   const toastsSlot = createRenderSlot('toasts');
   const legacySlot = createRenderSlot('legacy');
-  const topPerformersSlot = createRenderSlot('top-performers');
   const oldWeekSlot = createRenderSlot('old-week');
   const recentSlot = createRenderSlot('recent');
-  const manualSlot = createRenderSlot('manual');
   const panels = createRenderSlot('panels');
   panels.className = 'legacy-panels';
 
@@ -445,7 +418,7 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
 
   monitoredStack.append(monitoredSlot, bidZoneSlot);
   panels.append(monitoredStack, pumpfunSlot, alertsSlot);
-  shell.append(toastsSlot, legacySlot, topPerformersSlot, oldWeekSlot, recentSlot, manualSlot, panels);
+  shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, panels);
 
   const overlaySlot = createRenderSlot('overlay');
   const floatingQuickBuySlot = createRenderSlot('floating-quick-buy');
@@ -460,10 +433,8 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
     shell,
     toastsSlot,
     legacySlot,
-    topPerformersSlot,
     oldWeekSlot,
     recentSlot,
-    manualSlot,
     panels,
     monitoredStack,
     monitoredSlot,
@@ -885,86 +856,6 @@ function updateRegionSlot(
   }
 
   updateRenderSlot(slot, nextKey, build);
-}
-
-function patchTopPerformersSlot(slot: HTMLElement, state: AppState, controller: AppController) {
-  const previousViewport = slot.querySelector<HTMLElement>('.top-performers-viewport');
-  const previousScrollLeft = previousViewport?.scrollLeft ?? 0;
-  const previousMaxScrollLeft = previousViewport
-    ? Math.max(0, previousViewport.scrollWidth - previousViewport.clientWidth)
-    : 0;
-  logTopPerformersDebug('patch-before', {
-    previousScrollLeft: Math.round(previousScrollLeft),
-    previousMaxScrollLeft: Math.round(previousMaxScrollLeft),
-    previousScrollWidth: Math.round(previousViewport?.scrollWidth ?? 0),
-    previousClientWidth: Math.round(previousViewport?.clientWidth ?? 0),
-  });
-  const nextSection = renderTopPerformersSection(state, controller, { autoScrollStartDelayMs: 0 });
-  preserveTopPerformerCharts(previousViewport, nextSection);
-  slot.replaceChildren(nextSection);
-
-  const nextViewport = slot.querySelector<HTMLElement>('.top-performers-viewport');
-  if (!nextViewport || !(previousScrollLeft > 0)) {
-    logTopPerformersDebug('patch-after', {
-      restored: false,
-      reason: nextViewport ? 'previous-scroll-zero' : 'next-viewport-missing',
-    });
-    return true;
-  }
-
-  const nextMaxScrollLeft = Math.max(0, nextViewport.scrollWidth - nextViewport.clientWidth);
-  const scrollRatio = previousMaxScrollLeft > 0 ? previousScrollLeft / previousMaxScrollLeft : 0;
-  const nextScrollLeft = Math.min(nextMaxScrollLeft, Math.max(previousScrollLeft, Math.round(nextMaxScrollLeft * scrollRatio)));
-  const previousScrollBehavior = nextViewport.style.scrollBehavior;
-  nextViewport.style.scrollBehavior = 'auto';
-  nextViewport.scrollTo({ left: nextScrollLeft, behavior: 'auto' });
-  nextViewport.scrollLeft = nextScrollLeft;
-  nextViewport.style.scrollBehavior = previousScrollBehavior;
-  logTopPerformersDebug('patch-after', {
-    restored: true,
-    nextScrollLeft: Math.round(nextViewport.scrollLeft),
-    targetScrollLeft: Math.round(nextScrollLeft),
-    nextMaxScrollLeft: Math.round(nextMaxScrollLeft),
-    nextScrollWidth: Math.round(nextViewport.scrollWidth),
-    nextClientWidth: Math.round(nextViewport.clientWidth),
-  });
-  return true;
-}
-
-function preserveTopPerformerCharts(previousViewport: HTMLElement | null, nextSection: HTMLElement) {
-  if (!previousViewport) {
-    return;
-  }
-
-  const previousChartsByAddress = new Map<string, HTMLElement>();
-  previousViewport.querySelectorAll<HTMLElement>('.top-performer-card[data-address]').forEach((card) => {
-    const address = String(card.dataset.address || '').trim();
-    const chart = card.querySelector<HTMLElement>('.top-performer-chart');
-    if (address && chart?.querySelector('.sparkline-wrap')) {
-      previousChartsByAddress.set(address, chart);
-    }
-  });
-
-  nextSection.querySelectorAll<HTMLElement>('.top-performer-card[data-address]').forEach((card) => {
-    const address = String(card.dataset.address || '').trim();
-    const previousChart = previousChartsByAddress.get(address);
-    const nextChart = card.querySelector<HTMLElement>('.top-performer-chart');
-    if (previousChart && nextChart?.querySelector('.sparkline-wrap') && getTopPerformerChartSignature(previousChart) === getTopPerformerChartSignature(nextChart)) {
-      nextChart.replaceWith(previousChart);
-    }
-  });
-}
-
-function getTopPerformerChartSignature(chart: HTMLElement) {
-  const wrap = chart.querySelector<HTMLElement>('.sparkline-wrap');
-  const line = chart.querySelector<SVGPolylineElement>('.token-sparkline-line');
-  const area = chart.querySelector<SVGPolygonElement>('.token-sparkline-area');
-  return serializePrimitiveList([
-    wrap?.className,
-    wrap?.dataset.sparklineSummary,
-    line?.getAttribute('points'),
-    area?.getAttribute('points'),
-  ]);
 }
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
@@ -1417,27 +1308,6 @@ function getLegacyRenderKey(state: AppState) {
   });
 }
 
-function getTopPerformersRenderKey(state: AppState) {
-  return JSON.stringify({
-    generatedAt: state.data.topPerformersGeneratedAt,
-    ranking: state.data.topPerformersRanking,
-    tradeTerminals: state.ui.enabledTradeTerminals,
-    robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
-    tokens: getTopPerformerTokens(state).map((token) => serializePrimitiveList([
-      token.address,
-      token.symbol,
-      token.name,
-      token.imageUrl,
-      token.pairUrl,
-      token.performanceRank,
-      token.mcap,
-      token.volume24h,
-      token.priceChange24h,
-      serializeSparklineForView(state, token.address, token.chain),
-    ])),
-  });
-}
-
 function getMonitoredRenderKey(state: AppState) {
   const monitoredSpan = state.ui.livePanelLayout.spans.monitored;
   const pageItems = resolveMonitoredViewRows(
@@ -1473,40 +1343,6 @@ function getMonitoredRenderKey(state: AppState) {
     sparklines: monitoredSpan > 1
       ? pageItems.map((token) => serializeSparklineForView(state, token.address, token.chain))
       : [],
-  });
-}
-
-function getWatchlistRenderKey(state: AppState) {
-  const watchlistTokens = getWatchlistTokens(state);
-  const filteredWatchlistTokens = resolveWatchlistTableRows(watchlistTokens, {
-    searchQuery: state.ui.watchlistSearchQuery,
-    sortCriteria: state.ui.watchlistSorts,
-  });
-
-  return JSON.stringify({
-    collapsed: state.ui.collapsed.manual,
-    busy: state.ui.busy,
-    role: state.session.role,
-    tradeTerminals: state.ui.enabledTradeTerminals,
-    robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
-    search: state.ui.watchlistSearchQuery,
-    sorts: state.ui.watchlistSorts,
-    starred: state.data.watchlistTokenIdentities,
-    meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
-    tokens: watchlistTokens.map(serializeTrackedTokenForView),
-    mockTrading: watchlistTokens.map((token) => serializeMockTradingForView(state, token.address)),
-    sparklines: filteredWatchlistTokens.map((token) => {
-      const sparkline = getTokenSparkline(state, token.address, token.chain);
-      const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
-      return {
-        address: token.address,
-        loading: Boolean(sparkline?.loading),
-        generatedAt: sparkline?.generatedAt ?? null,
-        latestBucketAt: sparkline?.latestBucketAt ?? null,
-        points: series.length,
-        last: series.length > 0 ? series[series.length - 1] : null,
-      };
-    }),
   });
 }
 
