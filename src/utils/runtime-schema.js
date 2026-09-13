@@ -6058,6 +6058,19 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage217-robinhood-catalog-search-indexes',
+    name: 'Stage 217 Robinhood catalog search indexes',
+    repair: 'node src/utils/db-init-stage217.js',
+    tables: [{
+      table: 'token_catalog',
+      indexes: [
+        { name: 'idx_token_catalog_robinhood_symbol_search', includes: ['lower', 'symbol', 'address', 'robinhood'] },
+        { name: 'idx_token_catalog_robinhood_name_search', includes: ['lower', 'name', 'address', 'robinhood'] },
+        { name: 'idx_token_catalog_robinhood_text_search', includes: ['gin', 'to_tsvector', 'symbol', 'name', 'robinhood'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

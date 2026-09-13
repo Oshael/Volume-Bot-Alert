@@ -29,6 +29,16 @@ import {
   resolveLivePanelLayoutPreference,
   type LivePanelLayoutPreference,
 } from '../utils/live-panel-layout';
+import type { GlobalSearchHit } from '../services/api/search';
+
+export type GlobalSearchUiStatus = 'idle' | 'debouncing' | 'loading' | 'ready' | 'empty' | 'syncing' | 'unavailable' | 'unsupported' | 'error';
+export interface GlobalSearchState {
+  query: string;
+  status: GlobalSearchUiStatus;
+  hits: GlobalSearchHit[];
+  error: string | null;
+}
+export const createGlobalSearchState = (): GlobalSearchState => ({ query: '', status: 'idle', hits: [], error: null });
 
 export interface AlertEntry {
   id: string;
@@ -920,6 +930,7 @@ export interface AppState {
     pendingLoginOtpChallengeToken: string | null;
     pendingLoginOtpEmailHint: string | null;
     blockTokenWarning: BlockTokenWarningState | null;
+    globalSearch: GlobalSearchState;
     alertSearchQuery: string;
     monitoredSearchQuery: string;
     monitoredLoadError: string | null;
@@ -1169,6 +1180,7 @@ export function createAppState(): AppState {
       pendingLoginOtpChallengeToken: null,
       pendingLoginOtpEmailHint: null,
       blockTokenWarning: null,
+      globalSearch: createGlobalSearchState(),
       alertSearchQuery: '',
       monitoredSearchQuery: '',
       monitoredLoadError: null,

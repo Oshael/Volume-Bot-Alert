@@ -198,6 +198,7 @@ import {
   saveBrowserNotificationSettings,
 } from '../services/alerts/browser-notifications';
 import { createTelegramConnectionController } from './telegram-connection-controller';
+import { createGlobalSearchController } from './global-search-controller';
 import {
   connectSolanaWallet,
   getSolanaNetworkLabel,
@@ -740,6 +741,8 @@ export interface AppController {
   refreshTelegram(): Promise<void>;
   createTelegramLink(): Promise<void>;
   disconnectTelegram(): Promise<void>;
+  setGlobalSearchQuery(query: string): void;
+  clearGlobalSearch(): void;
   updateAccountProfile(username: string, email: string, password: string, confirmPassword: string): Promise<void>;
   startSocialLink(provider: 'google' | 'discord'): void;
   startSocialLogin(provider: 'google' | 'discord'): void;
@@ -3476,6 +3479,11 @@ export function createAppController(): AppController {
     notify: () => emit('overlay'),
     createInitialState: () => createAppState().telegram,
     sessionToken: COOKIE_SESSION_MARKER,
+  });
+  const globalSearch = createGlobalSearchController({
+    state: state.ui.globalSearch,
+    isAuthenticated: () => state.session.status === 'authenticated',
+    notify: () => emit('header'),
   });
 
   function flushPumpfunEmit() {
@@ -10453,6 +10461,7 @@ export function createAppController(): AppController {
     state.session.accessDaysRemaining = null;
     state.session.accessReason = null;
     telegramConnection.reset();
+    globalSearch.reset();
     state.session.tokenTier = null;
     state.session.tokenDiscountPercent = 0;
     state.session.tokenBalanceRaw = null;
@@ -13113,6 +13122,12 @@ export function createAppController(): AppController {
     },
     async disconnectTelegram() {
       await telegramConnection.disconnect();
+    },
+    setGlobalSearchQuery(query: string) {
+      globalSearch.setQuery(query);
+    },
+    clearGlobalSearch() {
+      globalSearch.reset();
     },
     openAuthPanel(panel: Exclude<AuthPanel, 'none'>) {
       state.ui.pendingIdentityUnlinkProvider = null;

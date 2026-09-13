@@ -1,4 +1,5 @@
 const tokenCatalog = require('../models/token-catalog');
+const globalTokenSearch = require('../models/global-token-search');
 const workspaceChainReadiness = require('./workspace-chain-readiness');
 const { createTokenIdentity } = require('../utils/token-identity');
 const { normalizeGlobalSearchRequest } = require('./global-search-contract');
@@ -13,6 +14,7 @@ function optionalText(value) {
 
 function createRobinhoodGlobalSearchAdapter(options = {}) {
   const catalog = options.tokenCatalog || tokenCatalog;
+  const textSearch = options.globalTokenSearch || globalTokenSearch;
   return Object.freeze({
     chain: 'robinhood',
     addressFamilies: Object.freeze(['evm_address']),
@@ -30,6 +32,19 @@ function createRobinhoodGlobalSearchAdapter(options = {}) {
         destination: { type: 'expanded-chart', chain: identity.chain, address: identity.address },
         match: 'exact_address',
       }];
+    },
+    async searchTokens(input) {
+      const rows = await textSearch.searchRobinhoodTokens(input.query, input.limit, { signal: input.signal });
+      return rows.map((row) => {
+        const identity = createTokenIdentity('robinhood', row.address);
+        return {
+          kind: 'token', chain: identity.chain, address: identity.address,
+          symbol: optionalText(row.symbol), name: optionalText(row.name),
+          imageUrl: optionalText(row.last_image_url ?? row.imageUrl),
+          destination: { type: 'expanded-chart', chain: identity.chain, address: identity.address },
+          match: row.match,
+        };
+      });
     },
   });
 }

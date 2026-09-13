@@ -713,6 +713,9 @@ destination are implemented and tested.
   then connect the frontend API client and search state with text debounce, stale-request cancellation and deterministic
   response ownership. Keep this cut UI-dark so the request lifecycle can be validated independently from header rendering.
   Estimated change: 320–480 lines.
+  **Completed:** Robinhood ticker/name lookup now uses dedicated prefix/full-text catalog indexes, stable identity ordering
+  and a 1.5 s database statement bound. The UI-dark frontend client debounces by 250 ms, aborts superseded requests and
+  applies results only when their request revision still owns the current query.
 - **8B2 — compact header surface and navigation:** render the centered responsive search field, expose duplicate-ticker
   choices with chain/address identity, and open the selected token in its expanded chart. Keep Alerts/Monitor controls
   immediately to the right, preserve keyboard and narrow-screen usability, and cover the assembled flow with focused smoke

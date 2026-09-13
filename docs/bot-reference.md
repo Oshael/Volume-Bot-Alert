@@ -1508,12 +1508,15 @@ sparklines; descoberta inicial de uma chain já pronta não conta como recupera�
 
 A busca global autenticada começa em `GET /api/search/global`. Seu contrato não
 aceita o filtro de chains do workspace: ele consulta todos os adapters registrados
-que declaram capacidade para a classificação e o tipo pedidos. Nesta etapa apenas
-contratos exatos de token Robinhood são resolvidos, pela identidade canônica do
-`token_catalog`, com destino `expanded-chart`. Busca textual e resultados de wallet
-respondem como `unsupported`; readiness Robinhood pode ainda produzir `syncing` ou
-`unavailable`. A entrada é limitada a 120 caracteres, o limite de resultados é
-1–20 e cada resposta expõe disponibilidade por chain e tipo.
+que declaram capacidade para a classificação e o tipo pedidos. Contratos exatos e
+texto por ticker/nome Robinhood são resolvidos pela identidade canônica do
+`token_catalog`, com ordem estável, limite de 1–20 resultados e destino
+`expanded-chart`; resultados de wallet continuam `unsupported`. A Stage 217
+(`node src/utils/db-init-stage217.js`) instala os índices de prefixo e full-text que
+evitam varredura do catálogo a cada tecla e deve preceder a ativação da busca no
+header. O frontend já cancela a requisição anterior e só aceita a resposta da
+revisão mais recente após debounce de 250 ms. Readiness Robinhood pode produzir
+`syncing` ou `unavailable`, e cada resposta expõe disponibilidade por chain e tipo.
 
 No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket` e a aplicação no
 estado marca `clientAppliedAt`. O console administrativo

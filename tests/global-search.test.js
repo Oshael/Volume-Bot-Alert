@@ -9,6 +9,9 @@ const {
   createGlobalSearchReader,
   createRobinhoodGlobalSearchAdapter,
 } = require('../src/services/global-search-reader');
+const globalTokenSearch = require('../src/models/global-token-search');
+const stage217 = require('../src/utils/db-init-stage217');
+const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 const ADDRESS = `0x${'a'.repeat(40)}`;
 
@@ -126,5 +129,56 @@ describe('global exact-address search', () => {
     await assert.rejects(reader.search({ q: ADDRESS }), (error) => (
       error.status === 504 && /timed out/.test(error.message)
     ));
+  });
+});
+
+describe('global Robinhood text search', () => {
+  it('uses indexed bounded catalog predicates and registers their runtime schema', async () => {
+    let call;
+    const rows = [{ address: ADDRESS, symbol: 'HOOD', name: 'Robin Hood', match: 'exact_ticker' }];
+    const result = await globalTokenSearch.searchRobinhoodTokens('Ho%od', 99, {
+      database: {
+        async queryWithStatementTimeout(sql, params, timeoutMs) {
+          call = { sql, params, timeoutMs };
+          return { rows };
+        },
+      },
+    });
+    assert.equal(result, rows);
+    assert.deepEqual(call.params, ['ho%od', 'ho\\%od%', 20]);
+    assert.equal(call.timeoutMs, globalTokenSearch.SEARCH_TIMEOUT_MS);
+    assert.match(call.sql, /plainto_tsquery\('simple', \$1\)/);
+    assert.match(call.sql, /ORDER BY CASE WHEN LOWER\(symbol\) = \$1 THEN 0/);
+
+    const sql = stage217.STATEMENTS.join('\n');
+    assert.match(sql, /LOWER\(symbol\) text_pattern_ops/);
+    assert.match(sql, /LOWER\(name\) text_pattern_ops/);
+    assert.match(sql, /USING GIN[\s\S]+to_tsvector\('simple'/);
+    const group = SCHEMA_GROUPS.find(({ key }) => key === 'stage217-robinhood-catalog-search-indexes');
+    assert.equal(group.repair, 'node src/utils/db-init-stage217.js');
+    assert.deepEqual(group.tables[0].indexes.map(({ name }) => name), stage217.INDEX_NAMES);
+  });
+
+  it('maps deterministic duplicate-ticker identities without workspace chain scope', async () => {
+    const second = `0x${'b'.repeat(40)}`;
+    const adapter = createRobinhoodGlobalSearchAdapter({
+      globalTokenSearch: {
+        async searchRobinhoodTokens(query, limit, options) {
+          assert.equal(query, 'hood');
+          assert.equal(limit, 20);
+          assert.ok(options.signal instanceof AbortSignal);
+          return [
+            { address: second, symbol: 'HOOD', name: 'Hood Two', match: 'exact_ticker' },
+            { address: ADDRESS, symbol: 'HOOD', name: 'Hood One', match: 'exact_ticker' },
+          ];
+        },
+      },
+    });
+    const reader = createGlobalSearchReader({
+      adapters: { robinhood: adapter }, workspaceChainReadiness: readyReadiness(),
+    });
+    const result = await reader.search({ q: 'hood', chains: 'solana' });
+    assert.deepEqual(result.hits.map(({ address }) => address), [ADDRESS, second]);
+    assert.ok(result.hits.every(({ destination }) => destination.type === 'expanded-chart'));
   });
 });
