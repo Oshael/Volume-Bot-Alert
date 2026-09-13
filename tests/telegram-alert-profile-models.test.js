@@ -138,7 +138,7 @@ describe('Telegram alert rule setting model', () => {
 });
 
 describe('Telegram alert rule contracts', () => {
-  it('preserves current matcher defaults and excludes claims', () => {
+  it('builds defaults only for active matcher rules', () => {
     const solana = ruleContracts.buildDefaultRules('solana');
     const robinhood = ruleContracts.buildDefaultRules('robinhood');
     const byKey = (rules, key) => rules.find((rule) => rule.ruleKey === key);
@@ -146,14 +146,13 @@ describe('Telegram alert rule contracts', () => {
     assert.deepEqual(
       solana.map((rule) => rule.ruleKey).sort(),
       [
-        'hvnc', 'meteora-surge', 'monitored-mcap', 'monitored-vol',
+        'hvnc', 'meteora-surge',
         'old-week-surge-1h', 'old-week-surge-6h',
         'recent-surge-1h', 'recent-surge-6h',
       ]
     );
-    assert.equal(byKey(robinhood, 'monitored-fdv').enabled, false);
-    assert.equal(byKey(solana, 'monitored-vol').settings.cooldownMinutes, 1);
-    assert.equal(byKey(solana, 'monitored-vol').settings.defaultsVersion, 1);
+    assert.equal(byKey(robinhood, 'monitored-fdv'), undefined);
+    assert.equal(byKey(solana, 'monitored-vol'), undefined);
     assert.equal(byKey(solana, 'hvnc').settings.cooldownMinutes, 0);
     assert.equal(byKey(solana, 'recent-surge-6h').settings.cooldownMinutes, 360);
     assert.equal(byKey(solana, 'meteora-surge').settings.cooldownMinutes, 30);

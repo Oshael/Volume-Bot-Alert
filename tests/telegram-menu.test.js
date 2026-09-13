@@ -23,20 +23,20 @@ describe('Telegram menu contracts', () => {
       { kind: 'confirm-disconnect', connectionId: '9007199254740993', version: 6 },
       { kind: 'disconnect', connectionId: '9007199254740993', version: 6 },
       { kind: 'chain', chain: 'solana' },
-      { kind: 'rule', chain: 'robinhood', ruleKey: 'monitored-fdv' },
+      { kind: 'rule', chain: 'robinhood', ruleKey: 'robinhood-hvnc-v2' },
       { kind: 'toggle-connection', version: 36 },
       { kind: 'toggle-profile', chain: 'solana', version: 35 },
       {
         kind: 'edit-rule-field', chain: 'solana',
-        ruleKey: 'monitored-vol', field: 'thresholdPct', version: 5,
+        ruleKey: 'hvnc', field: 'minHvncVolumeUsd', version: 5,
       },
       {
         kind: 'toggle-rule', chain: 'robinhood',
-        ruleKey: 'monitored-fdv', version: 71,
+        ruleKey: 'robinhood-hvnc-v2', version: 71,
       },
       {
         kind: 'confirm-reset-rule', chain: 'solana',
-        ruleKey: 'monitored-vol', version: 5,
+        ruleKey: 'hvnc', version: 5,
       },
     ];
     for (const route of routes) {
@@ -48,10 +48,17 @@ describe('Telegram menu contracts', () => {
     assert.equal(parseCallbackData('ts2:m'), null);
     assert.equal(parseCallbackData(`ts1:m${'x'.repeat(60)}`), null);
     assert.equal(parseCallbackData('ts1:t:r:f:0'), null);
-    assert.throws(
-      () => callbackData({ kind: 'rule', chain: 'solana', ruleKey: 'monitored-fdv' }),
-      /Unsupported Telegram menu rule/
-    );
+    for (const [chain, ruleKey] of [
+      ['solana', 'monitored-vol'],
+      ['solana', 'monitored-mcap'],
+      ['robinhood', 'monitored-vol'],
+      ['robinhood', 'monitored-fdv'],
+    ]) {
+      assert.throws(
+        () => callbackData({ kind: 'rule', chain, ruleKey }),
+        /Unsupported Telegram menu rule/
+      );
+    }
   });
 
   it('renders versioned controls without exposing claims', () => {
@@ -66,19 +73,18 @@ describe('Telegram menu contracts', () => {
       profile: {
         chain: 'solana', enabled: true, sparkline_enabled: true, version: 4,
       },
-      rules: [{ rule_key: 'monitored-vol', enabled: false, version: 2 }],
+      rules: [{ rule_key: 'hvnc', enabled: false, version: 2 }],
     });
     const rule = renderMenu(
-      { kind: 'rule', chain: 'solana', ruleKey: 'monitored-vol' },
+      { kind: 'rule', chain: 'solana', ruleKey: 'hvnc' },
       {
         rule: {
           enabled: true,
           version: 3,
           settings_json: {
             defaultsVersion: 1,
-            thresholdPct: 50,
-            cooldownMinutes: 1,
-            minVolumeUsd: 10_000,
+            minHvncVolumeUsd: 300_000,
+            cooldownMinutes: 0,
           },
         },
       }
@@ -109,21 +115,21 @@ describe('Telegram menu contracts', () => {
     assert.deepEqual(targetRoute(connectionMutation), { kind: 'main' });
     assert.match(chain.text, /Alerts \/ Solana/);
     assert.match(chain.text, /Network: Active ✅/);
-    assert.match(chain.reply_markup.inline_keyboard[0][0].text, /❌ Volume 5M/);
-    assert.match(chain.reply_markup.inline_keyboard[1][0].text, /Market Cap 5M/);
+    assert.match(chain.reply_markup.inline_keyboard[0][0].text, /❌ HVNC/);
+    assert.match(chain.reply_markup.inline_keyboard[1][0].text, /Recent Surge 1H/);
+    assert.doesNotMatch(JSON.stringify(chain), /Volume 5M|Market Cap 5M|FDV 5M/);
     assert.equal(chain.reply_markup.inline_keyboard.at(-2)[0].text, '❌ Deactivate network');
-    assert.match(rule.text, /Threshold: 50%/);
     assert.match(rule.text, /State: Active ✅/);
-    assert.match(rule.text, /Minimum volume: \$10,000/);
+    assert.match(rule.text, /Minimum HVNC volume: \$300,000/);
     assert.equal(rule.reply_markup.inline_keyboard[0][0].text, '❌ Deactivate');
     const editButton = rule.reply_markup.inline_keyboard.flat().find(
-      ({ text }) => text === '✏️ Change Threshold'
+      ({ text }) => text === '✏️ Change Minimum HVNC volume'
     );
     assert.deepEqual(parseCallbackData(editButton.callback_data), {
       kind: 'edit-rule-field',
       chain: 'solana',
-      ruleKey: 'monitored-vol',
-      field: 'thresholdPct',
+      ruleKey: 'hvnc',
+      field: 'minHvncVolumeUsd',
       version: 3,
     });
     assert.equal(isInputRoute(parseCallbackData(editButton.callback_data)), true);
@@ -132,7 +138,7 @@ describe('Telegram menu contracts', () => {
     );
     assert.equal(isMutationRoute(mutation), true);
     assert.deepEqual(targetRoute(mutation), {
-      kind: 'rule', chain: 'solana', ruleKey: 'monitored-vol',
+      kind: 'rule', chain: 'solana', ruleKey: 'hvnc',
     });
     const confirmationRoute = parseCallbackData(
       rule.reply_markup.inline_keyboard[1][0].callback_data
@@ -176,7 +182,7 @@ describe('Telegram menu contracts', () => {
       ruleSettingModel: {
         async listByProfileId(profileId) {
           calls.push(`rules:${profileId}`);
-          return [{ rule_key: 'monitored-vol' }];
+          return [{ rule_key: 'hvnc' }];
         },
         async findByProfileAndRule(profileId, ruleKey) {
           calls.push(`rule:${profileId}:${ruleKey}`);
@@ -191,13 +197,13 @@ describe('Telegram menu contracts', () => {
     assert.equal(calls.length, callsAfterOverview);
     const chain = await reader.read(7, { kind: 'chain', chain: 'solana' });
     const rule = await reader.read(7, {
-      kind: 'rule', chain: 'robinhood', ruleKey: 'monitored-fdv',
+      kind: 'rule', chain: 'robinhood', ruleKey: 'robinhood-hvnc-v2',
     });
 
     assert.equal(overview.profiles.length, 2);
     assert.equal(chain.rules.length, 1);
-    assert.equal(rule.rule.rule_key, 'monitored-fdv');
+    assert.equal(rule.rule.rule_key, 'robinhood-hvnc-v2');
     assert.ok(calls.includes('rules:10'));
-    assert.ok(calls.includes('rule:11:monitored-fdv'));
+    assert.ok(calls.includes('rule:11:robinhood-hvnc-v2'));
   });
 });

@@ -161,6 +161,15 @@ const API_FIXTURES = {
     plans: [],
     orders: [],
   },
+  'GET /api/telegram/status': {
+    available: false,
+    status: 'disconnected',
+    identity: null,
+    botUrl: null,
+    linkedAt: null,
+    lastDeliveryAt: null,
+    lastError: null,
+  },
   'GET /api/dashboard/monitored': {
     generatedAt: null,
     tokens: [],
@@ -1129,16 +1138,20 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   await expect(page.locator('.workspace-market-ticker')).toHaveCSS('z-index', '110');
   await expect(page.locator('[data-auth-modal="bot-settings"] .legacy-auth-modal-backdrop'))
     .toHaveCSS('backdrop-filter', 'blur(7px)');
-  await expect(dialog.getByRole('tab')).toHaveCount(3);
+  await expect(dialog.getByRole('tab')).toHaveCount(4);
   const solanaSettingsTab = dialog.getByRole('tab', { name: 'Solana' });
   await expect(solanaSettingsTab).toHaveAttribute('aria-selected', 'true');
   await expect(solanaSettingsTab.locator('.token-chain-icon')).toBeVisible();
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveCount(0);
   await expect(dialog.getByRole('tab', { name: 'Alerts & Chains' })).toHaveCount(0);
-  await expect(dialog.locator('input[name="solana-threshold"]')).toBeVisible();
-  await expect(dialog.locator('input[name="solana-mcap-threshold"]')).toBeVisible();
+  await expect(dialog.locator('input[name="solana-threshold"]')).toHaveCount(0);
+  await expect(dialog.locator('input[name="solana-mcap-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('input[name="solana-fdv-threshold"]')).toHaveCount(0);
-  await expect(dialog.locator('[data-config-toggle-key="solana-alert-vol-enabled"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.locator('[data-config-toggle-key="solana-alert-vol-enabled"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="solana-alert-mcap-enabled"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="sound-vol-enabled"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="sound-mcap-enabled"]')).toHaveCount(0);
+  await expect(dialog.locator('input[name="solana-hvnc-min-vol"]')).toBeVisible();
   const pumpClaim = dialog.locator(
     '.bot-settings-claim-toggle:has([data-config-toggle-key="solana-alert-gmgn-claim-pump-enabled"])',
   );
@@ -1428,11 +1441,12 @@ test('chain-scoped bot settings persist independent supported controls and roll 
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toBeVisible();
   await expect(dialog.getByRole('tab', { name: 'Robinhood' }).locator('.token-chain-icon')).toBeVisible();
   await dialog.getByRole('tab', { name: 'Robinhood' }).click();
-  const robinhoodThreshold = dialog.locator('input[name="robinhood-threshold"]');
-  await expect(robinhoodThreshold).toHaveValue('75');
-  await expect(dialog.locator('input[name="robinhood-fdv-threshold"]')).toBeVisible();
-  const fdvToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-fdv-enabled"]');
-  await expect(fdvToggle).toHaveAttribute('aria-pressed', 'true');
+  const robinhoodHvnc = dialog.locator('input[name="robinhood-hvnc-min-vol"]');
+  await expect(robinhoodHvnc).toHaveValue('300000');
+  await expect(dialog.locator('input[name="robinhood-threshold"]')).toHaveCount(0);
+  await expect(dialog.locator('input[name="robinhood-fdv-threshold"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="robinhood-alert-vol-enabled"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="robinhood-alert-fdv-enabled"]')).toHaveCount(0);
   await expect(dialog.locator('input[name="robinhood-mcap-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('input[name="robinhood-meteora-alert-1h-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('[data-config-toggle-key="robinhood-alert-gmgn-claim-pump-enabled"]')).toHaveCount(0);
@@ -1464,42 +1478,45 @@ test('chain-scoped bot settings persist independent supported controls and roll 
   await expect(solanaTerminalMenu.locator('[data-trade-terminal-key="axiom"]')).toHaveClass(/active/);
   await dialog.getByRole('tab', { name: 'Robinhood' }).click();
 
-  const thresholdPatch = page.waitForRequest((request) => (
+  const hvncPatch = page.waitForRequest((request) => (
     request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config'
   ));
-  await robinhoodThreshold.fill('80');
-  await robinhoodThreshold.press('Enter');
-  expect((await thresholdPatch).postDataJSON()).toEqual({
-    configs: { 'robinhood-threshold': 80 },
+  await robinhoodHvnc.fill('350000');
+  await robinhoodHvnc.press('Enter');
+  expect((await hvncPatch).postDataJSON()).toEqual({
+    configs: { 'robinhood-hvnc-min-vol': 350000 },
   });
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
 
   const configPatch = page.waitForRequest((request) => (
     request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config'
   ));
-  await fdvToggle.click();
+  const hvncToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-hvnc-enabled"]');
+  await hvncToggle.click();
   expect((await configPatch).postDataJSON()).toEqual({
-    configs: { 'robinhood-alert-fdv-enabled': 'off' },
+    configs: { 'robinhood-alert-hvnc-enabled': 'off' },
   });
-  await expect(fdvToggle).toHaveAttribute('aria-pressed', 'false');
-  const fdvOption = fdvToggle.locator('xpath=ancestor::div[contains(@class, "bot-settings-field-group")][1]');
-  await expect(fdvOption).toHaveCSS('filter', 'grayscale(0.85)');
-  await expect(fdvOption).toHaveCSS('opacity', '0.58');
+  await expect(hvncToggle).toHaveAttribute('aria-pressed', 'false');
+  const hvncOption = hvncToggle.locator('xpath=ancestor::div[contains(@class, "bot-settings-field-group")][1]');
+  await expect(hvncOption).toHaveCSS('filter', 'grayscale(0.85)');
+  await expect(hvncOption).toHaveCSS('opacity', '0.58');
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
 
   await dialog.getByRole('tab', { name: 'Solana' }).click();
-  await expect(dialog.locator('input[name="solana-threshold"]')).toHaveValue('55');
+  await expect(dialog.locator('input[name="solana-hvnc-min-vol"]')).toHaveValue('300000');
   await dialog.getByRole('tab', { name: 'Robinhood' }).click();
 
-  const volumeToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-vol-enabled"]');
+  const recentSurgeToggle = dialog.locator(
+    '[data-config-toggle-key="robinhood-alert-recent-surge-1h-enabled"]',
+  );
   const failedPatch = page.waitForResponse((response) => (
     response.request().method() === 'PATCH'
     && new URL(response.url()).pathname === '/api/config'
     && response.status() === 500
   ));
-  await volumeToggle.click();
+  await recentSurgeToggle.click();
   await failedPatch;
-  await expect(volumeToggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(recentSurgeToggle).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
   await expect(dialog.locator('[data-bot-settings-error]')).toContainText('Config write failed');
 });
@@ -1514,9 +1531,9 @@ test('chain-scoped bot settings remain usable on a narrow viewport', async ({ pa
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.bot-settings-nav')).toHaveCSS('overflow-x', 'auto');
   await dialog.getByRole('tab', { name: 'Robinhood' }).click();
-  const fdvToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-fdv-enabled"]');
-  await expect(fdvToggle).toBeVisible();
-  await expect(fdvToggle).toHaveCSS('width', '42px');
+  const hvncToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-hvnc-enabled"]');
+  await expect(hvncToggle).toBeVisible();
+  await expect(hvncToggle).toHaveCSS('width', '42px');
   expect(await dialog.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
 });
 

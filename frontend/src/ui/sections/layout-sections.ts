@@ -401,21 +401,11 @@ function bindFocusTrap(panel: HTMLElement | null) {
 type ConfigField = { key: string; label: string; type?: 'number' | 'text'; min?: number; step?: number; placeholder?: string };
 
 const CONFIG_FIELDS: ConfigField[] = [
-  { key: 'threshold', label: 'Alert when 5m volume rises (%)', min: 1 },
-  { key: 'mcap-threshold', label: 'Alert when MKT CAP rises (%) in 5m', min: 0, placeholder: '0 = disabled' },
-  { key: 'fdv-threshold', label: 'Alert when FDV rises (%) in 5m', min: 0, placeholder: '0 = disabled' },
-  { key: 'min-vol', label: 'Min 5m volume to alert ($)', min: 0 },
-  { key: 'min-mcap', label: 'Min market cap to alert ($)', min: 30000 },
-  { key: 'max-mcap', label: 'Max market cap to alert ($)', min: 0, placeholder: '0 = no limit' },
-  { key: 'monitored-fdv-min', label: 'Min FDV to alert ($)', min: 30000 },
-  { key: 'monitored-fdv-max', label: 'Max FDV to alert ($)', min: 0, placeholder: '0 = no limit' },
   { key: 'meteora-alert-1h-threshold', label: 'Meteora pool alert 1h (%)', min: 0, placeholder: '0 = disabled' },
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
 ];
 
 const SOUND_TOGGLE_FIELDS = [
-  { key: 'sound-vol-enabled', label: 'VOL' },
-  { key: 'sound-mcap-enabled', label: 'MCAP' },
   { key: 'sound-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
   { key: 'sound-old-surge-1h-enabled', label: 'SURGE 1H' },
   { key: 'sound-old-surge-6h-enabled', label: 'SURGE 6H' },
@@ -6706,32 +6696,6 @@ function renderInlineAlertToggle(
   `;
 }
 
-function renderBotSettingsValuationRange(
-  chain: AlertSettingsChain,
-  fields: Map<string, ConfigField>,
-  valuation: 'market cap' | 'FDV',
-) {
-  const minKey = valuation === 'FDV' ? 'monitored-fdv-min' : 'min-mcap';
-  const maxKey = valuation === 'FDV' ? 'monitored-fdv-max' : 'max-mcap';
-  const minField = fields.get(minKey)!;
-  const maxField = fields.get(maxKey)!;
-  const renderInput = (field: ConfigField, label: string) => `
-    <div class="bot-settings-field">
-      <input type="number" name="${chain}-${field.key}" data-config-legacy-key="${field.key}" min="${field.min ?? 0}" placeholder="${escapeHtml(field.placeholder || '')}" aria-label="${label}" />
-      <span>$</span>
-    </div>
-  `;
-  return `
-    <div class="config-item bot-settings-field-group">
-      <label>Min / max ${valuation} to alert</label>
-      <div class="bot-settings-field-pair">
-        ${renderInput(minField, `Minimum ${valuation} to alert`)}
-        ${renderInput(maxField, `Maximum ${valuation} to alert`)}
-      </div>
-    </div>
-  `;
-}
-
 function renderBotSettingsSurgePair(
   state: AppState,
   chain: AlertSettingsChain,
@@ -6780,18 +6744,6 @@ function renderChainAlertSettings(state: AppState, chain: AlertSettingsChain) {
   const isSolana = chain === 'solana';
   return `
     <div class="bot-settings-grid">
-      ${renderBotSettingsNumberField(state, chain, fields.get('threshold')!, '%', {
-        toggle: { key: 'alert-vol-enabled', label: 'Volume alerts' },
-      })}
-      ${renderBotSettingsNumberField(
-        state,
-        chain,
-        fields.get(isSolana ? 'mcap-threshold' : 'fdv-threshold')!,
-        '%',
-        { toggle: { key: isSolana ? 'alert-mcap-enabled' : 'alert-fdv-enabled', label: isSolana ? 'Market cap alerts' : 'FDV alerts' } },
-      )}
-      ${renderBotSettingsNumberField(state, chain, fields.get('min-vol')!, '$')}
-      ${renderBotSettingsValuationRange(chain, fields, isSolana ? 'market cap' : 'FDV')}
       ${renderBotSettingsNumberField(state, chain, fields.get('hvnc-min-vol')!, '$', {
         help: {
           label: 'What is High Volume New Coin?',

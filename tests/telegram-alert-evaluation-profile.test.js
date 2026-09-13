@@ -37,21 +37,19 @@ function rule(profile, ruleKey) {
 }
 
 describe('Telegram alert evaluation profile adapter', () => {
-  it('preserves independent Solana rule settings, cooldowns and bigint identities', () => {
+  it('preserves active Solana rule settings, cooldowns and bigint identities', () => {
     const input = fixture('solana');
-    const volume = input.rules.find((item) => item.rule_key === 'monitored-vol');
-    const mcap = input.rules.find((item) => item.rule_key === 'monitored-mcap');
-    volume.settings_json = {
-      ...volume.settings_json,
-      thresholdPct: 75,
+    const hvnc = input.rules.find((item) => item.rule_key === 'hvnc');
+    const recent = input.rules.find((item) => item.rule_key === 'recent-surge-1h');
+    hvnc.settings_json = {
+      ...hvnc.settings_json,
       cooldownMinutes: 2,
-      minVolumeUsd: 5_000,
+      minHvncVolumeUsd: 500_000,
     };
-    mcap.settings_json = {
-      ...mcap.settings_json,
+    recent.settings_json = {
+      ...recent.settings_json,
       thresholdPct: 90,
       cooldownMinutes: 9,
-      minVolumeUsd: 25_000,
     };
 
     const result = adaptTelegramAlertEvaluationProfile(input);
@@ -61,25 +59,36 @@ describe('Telegram alert evaluation profile adapter', () => {
     assert.equal(result.connectionId, '9007199254740995');
     assert.equal(result.userId, 7);
     assert.equal(result.updatedAt, '2026-07-29T12:00:00.000Z');
-    assert.equal(rule(result, 'monitored-vol').updatedAt, '2026-07-29T12:00:00.000Z');
-    assert.equal(result.ruleEnabled.monitoredVol, true);
-    assert.equal(rule(result, 'monitored-vol').settings.minVolumeUsd, 5_000);
-    assert.equal(rule(result, 'monitored-vol').cooldownMs, 120_000);
-    assert.equal(rule(result, 'monitored-mcap').settings.minVolumeUsd, 25_000);
-    assert.equal(rule(result, 'monitored-mcap').cooldownMs, 540_000);
+    assert.equal(rule(result, 'hvnc').updatedAt, '2026-07-29T12:00:00.000Z');
+    assert.equal(result.ruleEnabled.hvnc, true);
+    assert.equal(rule(result, 'hvnc').settings.minHvncVolumeUsd, 500_000);
+    assert.equal(rule(result, 'hvnc').cooldownMs, 120_000);
+    assert.equal(rule(result, 'recent-surge-1h').settings.thresholdPct, 90);
+    assert.equal(rule(result, 'recent-surge-1h').cooldownMs, 540_000);
     assert.notEqual(
-      rule(result, 'monitored-vol').settings,
-      rule(result, 'monitored-mcap').settings
+      rule(result, 'hvnc').settings,
+      rule(result, 'recent-surge-1h').settings
     );
   });
 
-  it('keeps Robinhood rule enablement and versions scoped to each rule', () => {
+  it('ignores compatible retired rows while keeping active Robinhood rules scoped', () => {
     const input = fixture('robinhood', {
       profile: { enabled: false, sparkline_enabled: false, version: 8 },
     });
-    const fdv = input.rules.find((item) => item.rule_key === 'monitored-fdv');
-    fdv.enabled = true;
-    fdv.version = 12;
+    const hvnc = input.rules.find((item) => item.rule_key === 'robinhood-hvnc-v2');
+    hvnc.version = 12;
+    input.rules.push({
+      profile_id: input.profile.id,
+      chain: 'robinhood',
+      rule_key: 'monitored-fdv',
+      enabled: true,
+      settings_json: {
+        defaultsVersion: 1, thresholdPct: 50, cooldownMinutes: 1,
+        minVolumeUsd: 10_000, minFdvUsd: 30_000, maxFdvUsd: 0,
+      },
+      version: 99,
+      updated_at: '2026-07-29T12:09:00.000Z',
+    });
 
     const result = adaptTelegramAlertEvaluationProfile(input);
 
@@ -87,8 +96,9 @@ describe('Telegram alert evaluation profile adapter', () => {
     assert.equal(result.enabled, false);
     assert.equal(result.sparklineEnabled, false);
     assert.equal(result.version, 8);
-    assert.equal(rule(result, 'monitored-fdv').enabled, true);
-    assert.equal(rule(result, 'monitored-fdv').version, 12);
+    assert.equal(rule(result, 'robinhood-hvnc-v2').version, 12);
+    assert.equal(rule(result, 'monitored-fdv'), undefined);
+    assert.equal(result.ruleEnabled.monitoredFdv, undefined);
     assert.equal(result.rules.some((item) => item.ruleKey.includes('claim')), false);
   });
 

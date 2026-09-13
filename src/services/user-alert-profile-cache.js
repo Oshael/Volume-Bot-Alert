@@ -105,9 +105,9 @@ function resolveNumberWithFallback(configs, storedKeys, primaryKey, legacyKey, f
 function buildAlertRuleSettings(configs, storedKeys) {
   return {
     ruleEnabled: {
-      monitoredVol: isEnabled(configs, 'alert-vol-enabled'),
-      monitoredMcap: isEnabled(configs, 'alert-mcap-enabled'),
-      monitoredFdv: isEnabled(configs, 'alert-fdv-enabled', false),
+      monitoredVol: false,
+      monitoredMcap: false,
+      monitoredFdv: false,
       hvnc: isEnabled(configs, 'alert-hvnc-enabled'),
       recentSurge1h: resolveEnabledWithFallback(
         configs,
@@ -189,7 +189,6 @@ function buildChainAlertSettings(chain, configs, storedKeys) {
 
   const settings = buildAlertRuleSettings(scopedConfigs, scopedStoredKeys);
   if (chain === 'solana') {
-    settings.ruleEnabled.monitoredFdv = false;
     settings.ruleEnabled.gmgnClaimPump = isEnabled(
       scopedConfigs,
       'alert-gmgn-claim-pump-enabled',
@@ -199,7 +198,6 @@ function buildChainAlertSettings(chain, configs, storedKeys) {
       'alert-gmgn-claim-bags-enabled',
     );
   } else {
-    settings.ruleEnabled.monitoredMcap = false;
     settings.ruleEnabled.meteoraSurge = false;
     settings.ruleEnabled.gmgnClaimPump = false;
     settings.ruleEnabled.gmgnClaimBags = false;

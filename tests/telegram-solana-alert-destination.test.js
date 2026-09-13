@@ -33,7 +33,7 @@ function candidate(reactivation) {
       profile_id: profile.id,
       chain: 'solana',
       rule_key: rule.ruleKey,
-      enabled: rule.ruleKey === 'monitored-vol',
+      enabled: rule.ruleKey === 'hvnc',
       settings_json: rule.settings,
       version: index + 1,
       updated_at: `2026-07-29T15:0${index}:00.000Z`,
@@ -83,8 +83,8 @@ describe('Telegram Solana alert destination', () => {
     assert.deepEqual(calls, [{ chain: 'solana', nowMs: 123 }]);
     assert.equal(profiles.length, 1);
     assert.equal(profiles[0].destination, 'telegram');
-    assert.equal(profiles[0].ruleEnabled.monitoredVol, true);
-    assert.equal(profiles[0].ruleEnabled.monitoredMcap, false);
+    assert.equal(profiles[0].ruleEnabled.hvnc, true);
+    assert.equal(profiles[0].ruleEnabled.monitoredVol, undefined);
   });
 
   it('loads state, plans and commits each profile while isolating failures', async () => {

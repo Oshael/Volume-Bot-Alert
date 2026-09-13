@@ -44,9 +44,9 @@ describe('user alert profile cache', () => {
     assert.equal(profile.userId, 9);
     assert.deepEqual(profile.enabledChains, ['solana']);
     assert.deepEqual(profile.ruleEnabled, {
-      monitoredVol: true,
+      monitoredVol: false,
       monitoredMcap: false,
-      monitoredFdv: true,
+      monitoredFdv: false,
       hvnc: true,
       recentSurge1h: false,
       recentSurge6h: true,
@@ -70,8 +70,14 @@ describe('user alert profile cache', () => {
     assert.equal(profile.meteoraAlert1hThreshold, 75);
   });
 
-  it('keeps monitored-fdv disabled when the user has not opted in', () => {
-    const profile = userAlertProfileCache.buildNormalizedAlertProfile(12, {});
+  it('keeps retired standard rules disabled despite legacy opt-ins', () => {
+    const profile = userAlertProfileCache.buildNormalizedAlertProfile(12, {
+      'alert-vol-enabled': 'on',
+      'alert-mcap-enabled': 'on',
+      'alert-fdv-enabled': 'on',
+    });
+    assert.equal(profile.ruleEnabled.monitoredVol, false);
+    assert.equal(profile.ruleEnabled.monitoredMcap, false);
     assert.equal(profile.ruleEnabled.monitoredFdv, false);
   });
 
@@ -92,14 +98,14 @@ describe('user alert profile cache', () => {
     const solana = profile.alertConfigByChain.solana;
     const robinhood = profile.alertConfigByChain.robinhood;
     assert.equal(solana.thresholdPct, 65);
-    assert.equal(solana.ruleEnabled.monitoredVol, true);
+    assert.equal(solana.ruleEnabled.monitoredVol, false);
     assert.equal(solana.ruleEnabled.monitoredMcap, false);
     assert.equal(solana.ruleEnabled.monitoredFdv, false);
     assert.equal(solana.ruleEnabled.gmgnClaimPump, false);
     assert.equal(robinhood.thresholdPct, 92);
     assert.equal(robinhood.fdvThresholdPct, 78);
     assert.equal(robinhood.ruleEnabled.monitoredVol, false);
-    assert.equal(robinhood.ruleEnabled.monitoredFdv, true);
+    assert.equal(robinhood.ruleEnabled.monitoredFdv, false);
     assert.equal(robinhood.ruleEnabled.monitoredMcap, false);
     assert.equal(robinhood.ruleEnabled.meteoraSurge, false);
   });

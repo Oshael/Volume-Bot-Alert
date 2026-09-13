@@ -613,6 +613,9 @@ Execute the retirement through these bounded cuts:
   before browser notification or audio side effects; realtime ingestion and historical rendering remain intact.
 - **R3 — active configuration surfaces:** remove the retired types from active profiles, Telegram menus and Bot Settings so
   users cannot create or enable them through supported configuration flows.
+  **Completed:** dashboard profiles force the retired rules off, Bot Settings no longer renders their thresholds, toggles
+  or sound controls, and Telegram creates and exposes only active rule defaults while safely ignoring compatible legacy
+  rows during evaluation.
 - **R4 — dead runtime contracts:** remove reset/publication/state branches that no longer have active consumers, while
   retaining only compatibility code required to read historical alerts or legacy persisted settings safely.
 - **R5 — compatibility and final verification:** verify historical rendering, normalize legacy inputs to disabled state,

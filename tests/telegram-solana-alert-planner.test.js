@@ -32,8 +32,8 @@ function profileFixture(reactivation) {
     profile_id: profile.id,
     chain: 'solana',
     rule_key: rule.ruleKey,
-    enabled: rule.ruleKey === 'monitored-vol',
-    settings_json: rule.ruleKey === 'monitored-vol'
+    enabled: rule.ruleKey === 'hvnc',
+    settings_json: rule.ruleKey === 'hvnc'
       ? { ...rule.settings, cooldownMinutes: 10 }
       : rule.settings,
     version: index + 2,
@@ -52,7 +52,8 @@ function signals() {
     prevVolume1m: null,
     currentMcap: 100_000,
     prevMcap: 90_000,
-    volume24h: 200_000,
+    volume24h: 400_000,
+    passesHvncPrereqs: true,
     isMcapDeclining: false,
   };
 }
@@ -61,7 +62,7 @@ function stateRow(profile, ruleVersion) {
   return {
     profileId: profile.profileId,
     chain: 'solana',
-    ruleKey: 'monitored-vol',
+    ruleKey: 'hvnc',
     tokenAddress: TOKEN_ADDRESS,
     ruleVersion,
     state: {
@@ -100,7 +101,7 @@ describe('Telegram Solana alert planner', () => {
     assert.equal(result.intents.length, 1);
     assert.equal(result.intents[0].profileId, profile.profileId);
     assert.equal(result.intents[0].connectionId, profile.connectionId);
-    assert.equal(result.intents[0].ruleKey, 'monitored-vol');
+    assert.equal(result.intents[0].ruleKey, 'hvnc');
     assert.match(result.intents[0].dedupeKey, new RegExp(`^profile:${profile.profileId}:`));
     assert.equal(result.stateTransitions.length, 1);
     assert.equal(result.stateTransitions[0].expectedVersion, null);
@@ -118,7 +119,7 @@ describe('Telegram Solana alert planner', () => {
   it('uses matching rule state for cooldown but resets state from an older rule version', async () => {
     const profile = profileFixture();
     const ruleVersion = profile.rules.find(
-      (rule) => rule.ruleKey === 'monitored-vol'
+      (rule) => rule.ruleKey === 'hvnc'
     ).version;
     const planner = createPlanner();
 

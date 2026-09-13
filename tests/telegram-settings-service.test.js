@@ -19,13 +19,12 @@ function fixture(options = {}) {
   const rule = {
     profile_id: 10,
     chain: 'solana',
-    rule_key: 'monitored-vol',
+    rule_key: 'hvnc',
     enabled: true,
     settings_json: {
       defaultsVersion: 1,
-      thresholdPct: 80,
+      minHvncVolumeUsd: 400_000,
       cooldownMinutes: 2,
-      minVolumeUsd: 20_000,
     },
     version: 5,
   };
@@ -126,13 +125,13 @@ describe('Telegram settings service', () => {
     await service.apply(7, {
       kind: 'toggle-rule',
       chain: 'solana',
-      ruleKey: 'monitored-vol',
+      ruleKey: 'hvnc',
       version: 5,
     });
 
     const input = calls.at(-1)[1];
     assert.equal(input.enabled, false);
-    assert.equal(input.settings.thresholdPct, 80);
+    assert.equal(input.settings.minHvncVolumeUsd, 400_000);
     assert.equal(input.expectedVersion, 5);
   });
 
@@ -141,15 +140,15 @@ describe('Telegram settings service', () => {
     await service.apply(7, {
       kind: 'set-rule-field',
       chain: 'solana',
-      ruleKey: 'monitored-vol',
-      field: 'thresholdPct',
-      value: 75,
+      ruleKey: 'hvnc',
+      field: 'minHvncVolumeUsd',
+      value: 350_000,
       version: 5,
     });
 
     const input = calls.at(-1)[1];
     assert.equal(input.enabled, true);
-    assert.equal(input.settings.thresholdPct, 75);
+    assert.equal(input.settings.minHvncVolumeUsd, 350_000);
     assert.equal(input.settings.cooldownMinutes, 2);
     assert.equal(input.expectedVersion, 5);
   });
@@ -159,7 +158,7 @@ describe('Telegram settings service', () => {
     await service.apply(7, {
       kind: 'reset-rule',
       chain: 'solana',
-      ruleKey: 'monitored-vol',
+      ruleKey: 'hvnc',
       version: 5,
     });
 
@@ -167,9 +166,8 @@ describe('Telegram settings service', () => {
     assert.equal(input.enabled, true);
     assert.deepEqual(input.settings, {
       defaultsVersion: 1,
-      thresholdPct: 50,
-      cooldownMinutes: 1,
-      minVolumeUsd: 10_000,
+      minHvncVolumeUsd: 300_000,
+      cooldownMinutes: 0,
     });
   });
 

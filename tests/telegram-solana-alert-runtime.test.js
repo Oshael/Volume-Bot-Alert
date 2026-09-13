@@ -31,7 +31,7 @@ function candidate() {
       profile_id: profile.id,
       chain: profile.chain,
       rule_key: rule.ruleKey,
-      enabled: rule.ruleKey === 'monitored-vol',
+      enabled: rule.ruleKey === 'hvnc',
       settings_json: rule.settings,
       version: 1,
       updated_at: '2026-07-29T20:00:00.000Z',
@@ -95,6 +95,7 @@ describe('Telegram Solana alert runtime composition', () => {
     assert.equal(profiles.length, 1);
     assert.equal(profiles[0].destination, 'telegram');
     assert.equal(profiles[0].profileId, '10');
-    assert.equal(profiles[0].ruleEnabled.monitoredVol, true);
+    assert.equal(profiles[0].ruleEnabled.hvnc, true);
+    assert.equal(profiles[0].ruleEnabled.monitoredVol, undefined);
   });
 });

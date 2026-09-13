@@ -44,15 +44,14 @@ function fixture(linkService, options = {}) {
       async read() {
         return options.settingsContext || {
           profiles: [{ chain: 'solana', enabled: true, sparkline_enabled: true }],
-          rules: [{ rule_key: 'monitored-vol', enabled: true }],
+          rules: [{ rule_key: 'hvnc', enabled: true }],
           rule: {
-            rule_key: 'monitored-vol',
+            rule_key: 'hvnc',
             enabled: true,
             settings_json: {
               defaultsVersion: 1,
-              thresholdPct: 50,
-              cooldownMinutes: 1,
-              minVolumeUsd: 10_000,
+              minHvncVolumeUsd: 300_000,
+              cooldownMinutes: 0,
             },
           },
         };
@@ -293,7 +292,7 @@ describe('Telegram basic command handler', () => {
     const result = await handler.handleUpdate({
       callback_query: {
         id: 'mutation-1',
-        data: 'ts1:t:s:v:5',
+        data: 'ts1:t:s:h:5',
         from: { id: 123 },
         message: { message_id: 45, chat: { id: 123, type: 'private' } },
       },
@@ -303,7 +302,7 @@ describe('Telegram basic command handler', () => {
     assert.equal(mutations[0][0], 7);
     assert.equal(mutations[0][1].version, 5);
     assert.equal(answered[0].text, 'Settings updated.');
-    assert.match(edited[0].text, /Solana \/ Volume 5M/);
+    assert.match(edited[0].text, /Solana \/ HVNC/);
   });
 
   it('starts a versioned numeric edit with a private force-reply prompt', async () => {
@@ -319,13 +318,13 @@ describe('Telegram basic command handler', () => {
     await handler.handleUpdate({
       callback_query: {
         id: 'edit-1',
-        data: 'ts1:e:s:v:t:5',
+        data: 'ts1:e:s:h:h:5',
         from: { id: 123 },
         message: { message_id: 48, chat: { id: 123, type: 'private' } },
       },
     });
 
-    assert.equal(inputCalls[0][1].field, 'thresholdPct');
+    assert.equal(inputCalls[0][1].field, 'minHvncVolumeUsd');
     assert.equal(inputCalls[0][1].expectedVersion, 5);
     assert.deepEqual(answered, [{ callback_query_id: 'edit-1' }]);
     assert.equal(sent[0].reply_markup.force_reply, true);
@@ -341,7 +340,7 @@ describe('Telegram basic command handler', () => {
       },
     }, {
       inputSubmitResult: {
-        route: { kind: 'rule', chain: 'solana', ruleKey: 'monitored-vol' },
+        route: { kind: 'rule', chain: 'solana', ruleKey: 'hvnc' },
       },
       settingsContext: {
         rule: {
@@ -349,9 +348,8 @@ describe('Telegram basic command handler', () => {
           version: 6,
           settings_json: {
             defaultsVersion: 1,
-            thresholdPct: 75,
-            cooldownMinutes: 1,
-            minVolumeUsd: 10_000,
+            minHvncVolumeUsd: 350_000,
+            cooldownMinutes: 0,
           },
         },
       },
@@ -363,7 +361,7 @@ describe('Telegram basic command handler', () => {
     assert.equal(inputCalls[0][0], 'submit');
     assert.equal(inputCalls[0][1].text, '75');
     assert.equal(inputCalls[1][0], 'cancel');
-    assert.match(sent[0].text, /Threshold: 75%/);
+    assert.match(sent[0].text, /Minimum HVNC volume: \$350,000/);
     assert.equal(sent[1].text, 'Edit canceled.');
   });
 

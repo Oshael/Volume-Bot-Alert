@@ -1,13 +1,11 @@
 const {
+  ACTIVE_RULE_CONTRACTS,
   RULE_CONTRACTS,
   validateRuleSettings,
 } = require('./telegram-alert-rule-contracts');
 
 const MINUTE_MS = 60 * 1000;
 const RULE_ENABLED_FIELDS = Object.freeze({
-  'monitored-vol': 'monitoredVol',
-  'monitored-mcap': 'monitoredMcap',
-  'monitored-fdv': 'monitoredFdv',
   hvnc: 'hvnc',
   'robinhood-hvnc-v2': 'hvnc',
   'recent-surge-1h': 'recentSurge1h',
@@ -98,17 +96,19 @@ function adaptRule(profile, row, ruleKey) {
   });
 }
 
-function indexRules(rows, expectedRuleKeys) {
+function indexRules(rows, expectedRuleKeys, compatibleRuleKeys) {
   if (!Array.isArray(rows)) {
     throw new TypeError('Telegram alert rules must be an array');
   }
   const expected = new Set(expectedRuleKeys);
+  const compatible = new Set(compatibleRuleKeys);
   const indexed = new Map();
   for (const row of rows) {
     const ruleKey = String(row?.rule_key || '').trim();
-    if (!expected.has(ruleKey)) {
+    if (!compatible.has(ruleKey)) {
       throw new TypeError(`Unexpected Telegram alert rule: ${ruleKey || 'missing'}`);
     }
+    if (!expected.has(ruleKey)) continue;
     if (indexed.has(ruleKey)) {
       throw new TypeError(`Duplicate Telegram alert rule: ${ruleKey}`);
     }
@@ -132,7 +132,7 @@ function adaptTelegramAlertEvaluationProfile(input = {}) {
     throw new TypeError('Telegram alert profile row is required');
   }
   const chain = String(row.chain || '').trim();
-  const contracts = RULE_CONTRACTS[chain];
+  const contracts = ACTIVE_RULE_CONTRACTS[chain];
   if (!contracts) {
     throw new TypeError(`Unsupported Telegram alert chain: ${chain || 'missing'}`);
   }
@@ -148,7 +148,7 @@ function adaptTelegramAlertEvaluationProfile(input = {}) {
   }
 
   const ruleKeys = Object.keys(contracts);
-  const indexed = indexRules(input.rules, ruleKeys);
+  const indexed = indexRules(input.rules, ruleKeys, Object.keys(RULE_CONTRACTS[chain]));
   const rules = ruleKeys.map((ruleKey) => adaptRule(profile, indexed.get(ruleKey), ruleKey));
   const reactivation = adaptReactivation(input.reactivation);
 

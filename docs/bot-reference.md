@@ -954,6 +954,10 @@ estado legado permanecem compatíveis, mas não podem reativar emissão desses q
 O frontend também não avalia localmente Volume 5m ou MCap 5m e rejeita os quatro tipos aposentados
 antes de qualquer notificação do navegador ou reprodução de áudio. A ingestão realtime, a
 atualização live de tokens e a renderização do histórico não são afetadas por esse bloqueio.
+Os perfis efetivos forçam essas regras como desativadas mesmo quando existem opt-ins legados. Bot Settings não expõe mais
+seus thresholds, toggles ou controles de som; os filtros de valuation da view Monitored continuam configuráveis na própria
+view. O Telegram cria e lista apenas regras ativas, rejeita callbacks desses tipos aposentados e ignora seus registros
+legados ao montar o perfil de avaliação, sem removê-los da persistência compatível.
 
 A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
 (`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de

@@ -74,6 +74,20 @@ const RULE_CONTRACTS = Object.freeze({
   }),
 });
 
+const RETIRED_RULE_KEYS = Object.freeze(new Set([
+  'monitored-vol',
+  'monitored-mcap',
+  'monitored-fdv',
+]));
+const ACTIVE_RULE_CONTRACTS = Object.freeze(Object.fromEntries(
+  Object.entries(RULE_CONTRACTS).map(([chain, contracts]) => [
+    chain,
+    Object.freeze(Object.fromEntries(
+      Object.entries(contracts).filter(([ruleKey]) => !RETIRED_RULE_KEYS.has(ruleKey))
+    )),
+  ])
+));
+
 function ruleContract(chain, ruleKey) {
   const resolved = RULE_CONTRACTS[chain]?.[ruleKey];
   if (!resolved) {
@@ -133,7 +147,7 @@ function validateRuleSettings(chain, ruleKey, settings) {
 }
 
 function buildDefaultRules(chain) {
-  const contracts = RULE_CONTRACTS[chain];
+  const contracts = ACTIVE_RULE_CONTRACTS[chain];
   if (!contracts) throw new TypeError(`Unsupported Telegram alert chain: ${chain}`);
   return Object.entries(contracts).map(([ruleKey, spec]) => ({
     chain,
@@ -144,6 +158,7 @@ function buildDefaultRules(chain) {
 }
 
 module.exports = {
+  ACTIVE_RULE_CONTRACTS,
   DEFAULTS_VERSION,
   MAX_COOLDOWN_MINUTES,
   RULE_CONTRACTS,

@@ -1,4 +1,4 @@
-const { RULE_CONTRACTS } = require('./telegram-alert-rule-contracts');
+const { ACTIVE_RULE_CONTRACTS } = require('./telegram-alert-rule-contracts');
 const { createTelegramTranslator } = require('./telegram-i18n');
 
 const CHAIN_CODES = Object.freeze({ solana: 's', robinhood: 'r' });
@@ -17,9 +17,6 @@ const FIELD_BY_CODE = Object.freeze(Object.fromEntries(
   Object.entries(FIELD_CODES).map(([field, code]) => [code, field])
 ));
 const RULE_CODES = Object.freeze({
-  'monitored-vol': 'v',
-  'monitored-mcap': 'm',
-  'monitored-fdv': 'f',
   hvnc: 'h',
   'robinhood-hvnc-v2': 'h',
   'recent-surge-1h': 'r1',
@@ -29,9 +26,6 @@ const RULE_CODES = Object.freeze({
   'meteora-surge': 'me',
 });
 const RULE_LABELS = Object.freeze({
-  'monitored-vol': 'Volume 5M',
-  'monitored-mcap': 'Market Cap 5M',
-  'monitored-fdv': 'FDV 5M',
   hvnc: 'HVNC',
   'robinhood-hvnc-v2': 'HVNC',
   'recent-surge-1h': 'Recent Surge 1H',
@@ -42,12 +36,12 @@ const RULE_LABELS = Object.freeze({
 });
 const RULE_ORDER = Object.freeze({
   solana: Object.freeze([
-    'monitored-vol', 'monitored-mcap', 'hvnc',
+    'hvnc',
     'recent-surge-1h', 'recent-surge-6h',
     'old-week-surge-1h', 'old-week-surge-6h', 'meteora-surge',
   ]),
   robinhood: Object.freeze([
-    'monitored-vol', 'monitored-fdv', 'robinhood-hvnc-v2',
+    'robinhood-hvnc-v2',
     'recent-surge-1h', 'recent-surge-6h',
     'old-week-surge-1h', 'old-week-surge-6h',
   ]),
@@ -77,7 +71,7 @@ function catalogCallbackData(route) {
   if (!chainCode) throw new TypeError('Unsupported Telegram menu chain');
   if (route.kind === 'chain') return `ts1:c:${chainCode}`;
   const ruleCode = RULE_CODES[route.ruleKey];
-  const supportedRule = ruleCode && RULE_CONTRACTS[route.chain]?.[route.ruleKey];
+  const supportedRule = ruleCode && ACTIVE_RULE_CONTRACTS[route.chain]?.[route.ruleKey];
   const ruleAction = {
     rule: 'r',
     'toggle-rule': 't',
@@ -108,7 +102,7 @@ function editCallbackData(route) {
   const chainCode = CHAIN_CODES[route.chain];
   const ruleCode = RULE_CODES[route.ruleKey];
   const fieldCode = FIELD_CODES[route.field];
-  const contract = RULE_CONTRACTS[route.chain]?.[route.ruleKey];
+  const contract = ACTIVE_RULE_CONTRACTS[route.chain]?.[route.ruleKey];
   if (!chainCode || !ruleCode || !fieldCode || !contract?.fields.includes(route.field)) {
     throw new TypeError('Unsupported Telegram menu setting field');
   }
@@ -163,7 +157,7 @@ function parseVersion(value) {
 
 function findRuleKey(chain, code) {
   return Object.keys(RULE_CODES).find((key) => (
-    RULE_CODES[key] === code && RULE_CONTRACTS[chain]?.[key]
+    RULE_CODES[key] === code && ACTIVE_RULE_CONTRACTS[chain]?.[key]
   )) || null;
 }
 
@@ -184,7 +178,7 @@ function parseRuleRoute(parts, chain) {
   const field = FIELD_BY_CODE[parts[4]];
   const fieldVersion = parseVersion(parts[5]);
   if (parts.length === 6 && parts[1] === 'e' && field && fieldVersion
-    && RULE_CONTRACTS[chain][ruleKey].fields.includes(field)) {
+    && ACTIVE_RULE_CONTRACTS[chain][ruleKey].fields.includes(field)) {
     return { kind: 'edit-rule-field', chain, ruleKey, field, version: fieldVersion };
   }
   const kinds = {
