@@ -1116,7 +1116,7 @@ export function createAppState(): AppState {
             radar: true,
             monitored: true,
             topPerformers: true,
-            manualTokens: true,
+            watchlist: true,
             starred: true,
             blocklist: true,
             history: true,

@@ -20,7 +20,7 @@ export type WorkspaceChainCapability =
   | 'radar'
   | 'monitored'
   | 'topPerformers'
-  | 'manualTokens'
+  | 'watchlist'
   | 'starred'
   | 'blocklist'
   | 'history'
@@ -44,6 +44,14 @@ export interface WorkspaceChainReadiness {
 }
 
 export type WorkspaceChainReadinessMap = Partial<Record<TokenChain, WorkspaceChainReadiness>>;
+export type WorkspaceChainCapabilityPayload = Partial<Record<WorkspaceChainCapability, boolean>> & {
+  /** @deprecated rollout-only input compatibility */
+  manualTokens?: boolean;
+};
+export type WorkspaceChainReadinessPayload = Omit<WorkspaceChainReadiness, 'capabilities'> & {
+  capabilities?: WorkspaceChainCapabilityPayload;
+};
+export type WorkspaceChainReadinessPayloadMap = Partial<Record<TokenChain, WorkspaceChainReadinessPayload>>;
 
 export type ChainFilterSurface = Exclude<keyof ChainFilterPreferences, 'enabledChains'>;
 
@@ -76,6 +84,29 @@ export function normalizeAvailableTokenChains(value: unknown): TokenChain[] {
     }
   }
   return normalized.size > 0 ? [...normalized] : ['solana'];
+}
+
+export function normalizeWorkspaceChainReadinessMap(
+  value: WorkspaceChainReadinessPayloadMap | WorkspaceChainReadinessMap | null | undefined,
+): WorkspaceChainReadinessMap {
+  const normalized: WorkspaceChainReadinessMap = {};
+  for (const chain of TOKEN_CHAINS) {
+    const readiness = value?.[chain];
+    if (!readiness) continue;
+
+    const capabilities: WorkspaceChainCapabilityPayload = { ...(readiness.capabilities || {}) };
+    const legacyManualTokens = capabilities.manualTokens;
+    delete capabilities.manualTokens;
+    capabilities.watchlist = typeof capabilities.watchlist === 'boolean'
+      ? capabilities.watchlist
+      : legacyManualTokens === true;
+    normalized[chain] = {
+      ...readiness,
+      chain,
+      capabilities: capabilities as Record<WorkspaceChainCapability, boolean>,
+    };
+  }
+  return normalized;
 }
 
 function normalizeChainSelection(value: unknown, allowedChains: Set<TokenChain>, fallback: TokenChain[]) {

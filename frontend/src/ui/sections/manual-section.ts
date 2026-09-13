@@ -12,7 +12,7 @@ export function renderWatchlistSection(state: AppState, controller: AppControlle
   const section = document.createElement('section');
   section.id = 'watchlist-section';
   section.className = 'legacy-token-bar manual-bar';
-  const capabilityNotice = getChainCapabilityNotice(state, 'manualTokens');
+  const capabilityNotice = getChainCapabilityNotice(state, 'watchlist');
   if (capabilityNotice) {
     section.innerHTML = `
       <div class="legacy-bar-head">

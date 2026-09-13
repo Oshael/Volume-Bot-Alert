@@ -90,6 +90,24 @@ describe('frontend chain-aware token identity', () => {
     assert.deepEqual(tokenChain.normalizeAvailableTokenChains(null), ['solana']);
   });
 
+  it('normalizes the legacy manual-token capability to the canonical Watchlist boundary', () => {
+    const readiness = tokenChain.normalizeWorkspaceChainReadinessMap({
+      solana: {
+        chain: 'solana',
+        capabilities: { manualTokens: true },
+      },
+      robinhood: {
+        chain: 'robinhood',
+        capabilities: { manualTokens: true, watchlist: false },
+      },
+    });
+
+    assert.equal(readiness.solana.capabilities.watchlist, true);
+    assert.equal(readiness.robinhood.capabilities.watchlist, false);
+    assert.equal('manualTokens' in readiness.solana.capabilities, false);
+    assert.equal('manualTokens' in readiness.robinhood.capabilities, false);
+  });
+
   it('normalizes stale Radar and alert-feed filters to the master selection', () => {
     assert.deepEqual(
       tokenChain.normalizeChainFilterPreferences({

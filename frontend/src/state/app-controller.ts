@@ -14912,7 +14912,7 @@ export function createAppController(): AppController {
       emit('overlay');
     },
     async toggleWatchlistToken(address: string, chain: TokenChain = 'solana') {
-      if (state.data.chainReadiness[chain]?.capabilities.manualTokens !== true) return;
+      if (state.data.chainReadiness[chain]?.capabilities.watchlist !== true) return;
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');

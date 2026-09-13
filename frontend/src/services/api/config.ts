@@ -1,5 +1,11 @@
 import { apiFetch } from './base';
-import type { ChainFilterPreferences, TokenChain, WorkspaceChainReadinessMap } from '../../utils/token-chain';
+import {
+  normalizeWorkspaceChainReadinessMap,
+  type ChainFilterPreferences,
+  type TokenChain,
+  type WorkspaceChainReadinessMap,
+  type WorkspaceChainReadinessPayloadMap,
+} from '../../utils/token-chain';
 import type { DashboardMonitoredToken } from './catalog';
 
 export interface AddressItem {
@@ -175,15 +181,29 @@ export interface ConfigSyncPayload {
   starredTokens?: Array<{ chain?: TokenChain; address: string }>;
 }
 
-export function fetchConfig(token?: string | null) {
-  return apiFetch<ConfigPayload>('/api/config', { token });
+type ConfigApiPayload = Omit<ConfigPayload, 'chainReadiness'> & {
+  chainReadiness?: WorkspaceChainReadinessPayloadMap;
+};
+
+export async function fetchConfig(token?: string | null): Promise<ConfigPayload> {
+  const payload = await apiFetch<ConfigApiPayload>('/api/config', { token });
+  return {
+    ...payload,
+    chainReadiness: payload.chainReadiness
+      ? normalizeWorkspaceChainReadinessMap(payload.chainReadiness)
+      : undefined,
+  };
 }
 
-export function fetchChainReadiness(token?: string | null) {
-  return apiFetch<{
+export async function fetchChainReadiness(token?: string | null) {
+  const payload = await apiFetch<{
     availableChains: TokenChain[];
-    chainReadiness: WorkspaceChainReadinessMap;
+    chainReadiness: WorkspaceChainReadinessPayloadMap;
   }>('/api/config/chain-readiness', { token });
+  return {
+    ...payload,
+    chainReadiness: normalizeWorkspaceChainReadinessMap(payload.chainReadiness),
+  };
 }
 
 export function fetchManualTokenFolders(token?: string | null) {
