@@ -122,7 +122,7 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.workspaceReady, false);
     assert.equal(readiness.capabilities.monitored, false);
     assert.equal(readiness.capabilities.launchpadLifecycle, false);
-    assert.equal(readiness.capabilities.manualTokens, true);
+    assert.equal(readiness.capabilities.watchlist, true);
     assert.equal(readiness.capabilities.starred, true);
     assert.equal(readiness.capabilities.blocklist, true);
     assert.equal(readiness.capabilities.history, false);
@@ -147,7 +147,7 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.capabilities.monitored, true);
     assert.equal(readiness.capabilities.launchpadLifecycle, true);
     assert.equal(readiness.capabilities.topPerformers, true);
-    assert.equal(readiness.capabilities.manualTokens, true);
+    assert.equal(readiness.capabilities.watchlist, true);
     assert.equal(readiness.capabilities.starred, true);
     assert.equal(readiness.capabilities.blocklist, true);
   });

@@ -96,7 +96,7 @@ describe('dexscreener rate-limit helpers', () => {
 
     dexscreener.__private.getThrottleState(Date.now() + (11 * 60 * 1000));
     assert.equal(dexscreener.getThrottleState().mode, 'recovery');
-    assert.equal(dexscreener.getThrottleState().recoveryPhase, 'high-manual');
+    assert.equal(dexscreener.getThrottleState().recoveryPhase, 'high-watchlist');
 
     for (let index = 0; index < 5; index += 1) {
       dexscreener.__private.completeRecoveryCycle();

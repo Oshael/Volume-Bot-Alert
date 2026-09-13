@@ -17,11 +17,11 @@ function stubLiveManualAddress(value = true) {
   const originalDemoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress;
   tokenCatalog.hasUserWatchlistAddress = async () => value;
   tokenCatalog.demoteFormerWatchlistAddress = async () => null;
-  catalogWorker.__private.clearManualGmgnCachesForTest();
+  catalogWorker.__private.clearWatchlistGmgnCachesForTest();
   return () => {
     tokenCatalog.hasUserWatchlistAddress = originalHasUserWatchlistAddress;
     tokenCatalog.demoteFormerWatchlistAddress = originalDemoteFormerWatchlistAddress;
-    catalogWorker.__private.clearManualGmgnCachesForTest();
+    catalogWorker.__private.clearWatchlistGmgnCachesForTest();
   };
 }
 
@@ -959,7 +959,7 @@ describe('catalog worker drift compensation', () => {
       eligibility_state: 'dex-unavailable',
     };
 
-    catalogWorker.__private.clearManualGmgnCachesForTest();
+    catalogWorker.__private.clearWatchlistGmgnCachesForTest();
     tokenCatalog.hasUserWatchlistAddress = async () => false;
     tokenCatalog.demoteFormerWatchlistAddress = async (address) => {
       demotedAddress = address;
@@ -985,7 +985,7 @@ describe('catalog worker drift compensation', () => {
       tokenCatalog.hasUserWatchlistAddress = originalHasUserWatchlistAddress;
       tokenCatalog.demoteFormerWatchlistAddress = originalDemoteFormerWatchlistAddress;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
-      catalogWorker.__private.clearManualGmgnCachesForTest();
+      catalogWorker.__private.clearWatchlistGmgnCachesForTest();
     }
   });
 

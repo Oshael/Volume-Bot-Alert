@@ -24,7 +24,7 @@ function normalizeIdentity(address, chainValue = 'solana') {
 }
 
 /**
- * Get all manual tokens for a user.
+ * Get all Watchlist tokens for a user.
  */
 async function getAll(userId, chainValue = 'solana') {
   const chain = normalizeTokenChain(chainValue);
@@ -73,7 +73,7 @@ async function getAllForChains(userId, chainValues = ['solana', 'robinhood']) {
 }
 
 /**
- * Check whether a manual token already exists for a user.
+ * Check whether a Watchlist token already exists for a user.
  */
 async function exists(userId, address, chainValue = 'solana') {
   const identity = normalizeIdentity(address, chainValue);
@@ -88,7 +88,7 @@ async function exists(userId, address, chainValue = 'solana') {
 }
 
 /**
- * Add a manual token. Returns the created row or null if duplicate.
+ * Add a Watchlist token. Returns the created row or null if duplicate.
  */
 async function add(userId, address, label = null, chainValue = 'solana') {
   const identity = normalizeIdentity(address, chainValue);
@@ -133,7 +133,7 @@ async function setAll(userId, tokens, chainValue = 'solana') {
 }
 
 /**
- * Remove a manual token. Returns true if deleted.
+ * Remove a Watchlist token. Returns true if deleted.
  */
 async function remove(userId, address, chainValue = 'solana') {
   const identity = normalizeIdentity(address, chainValue);

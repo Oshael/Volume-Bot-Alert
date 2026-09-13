@@ -41,7 +41,7 @@ function buildSolanaReadiness(runtimeConfig, checkedAt) {
       radar: true,
       monitored: true,
       topPerformers: true,
-      manualTokens: true,
+      watchlist: true,
       starred: true,
       blocklist: true,
       history: true,
@@ -117,7 +117,7 @@ function buildRobinhoodReadiness(
       launchpadLifecycle: marketWorkspaceReady
         && runtimeConfig.robinhoodTokenViews?.lifecycleEnabled === true,
       topPerformers: marketWorkspaceReady,
-      manualTokens: true,
+      watchlist: true,
       starred: true,
       blocklist: true,
       history: marketWorkspaceReady,

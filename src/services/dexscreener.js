@@ -17,7 +17,7 @@ const LAUNCH_FLOOR_MAX_LIQUIDITY_USD = 1000;
 const FDV_MATCH_MAX_DEVIATION = 0.05;
 const FDV_SUPPLY_INFLATION_RATIO = 1.35;
 const RECOVERY_PHASES = [
-  { name: 'high-manual', cycles: 5, batchDelayMs: 500 },
+  { name: 'high-watchlist', cycles: 5, batchDelayMs: 500 },
   { name: 'normal', cycles: 5, batchDelayMs: 350 },
   { name: 'low-near', cycles: 5, batchDelayMs: 200 },
   { name: 'low-dust', cycles: 5, batchDelayMs: 150 },

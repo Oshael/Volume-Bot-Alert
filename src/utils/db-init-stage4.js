@@ -19,7 +19,7 @@ const TABLES = `
   CREATE INDEX IF NOT EXISTS idx_user_configs_user
     ON user_configs(user_id);
 
-  -- ── user_tokens: manual tokens por user ───────────────────────────
+  -- ── user_tokens: Watchlist tokens por user ────────────────────────
   CREATE TABLE IF NOT EXISTS user_tokens (
     id        SERIAL PRIMARY KEY,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

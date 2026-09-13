@@ -1544,7 +1544,9 @@ reconhecem o legado `user-manual`. Depois de publicar os writers canônicos, exe
 os estados Robinhood de metadata associados. A rota canônica de bootstrap é
 `POST /api/catalog/watchlist-track`; `/api/catalog/manual-track` é somente um alias
 temporário. Preferências retornam `collapsed.watchlist` e `watchlistSorts`, aceitando
-as chaves antigas apenas como entrada de compatibilidade.
+as chaves antigas apenas como entrada de compatibilidade. Chain readiness publica a
+capability `watchlist`; o frontend ainda normaliza `manualTokens` somente na entrada
+para tolerar servidores antigos durante o rollout.
 
 A primeira UI é uma lista plana: a estrela adiciona/remove em `user_tokens`. Tabelas
 e rotas neutras de pastas são preservadas, porém não participam dessa interface.

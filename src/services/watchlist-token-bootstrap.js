@@ -44,7 +44,7 @@ async function upsertWatchlistCatalogToken(address, options = {}) {
   if (eagerEvaluate) {
     try {
       dexscreener.clearCache(addr);
-      const dexData = await dexscreener.getTokenPairs(addr, { priority: 'manual' });
+      const dexData = await dexscreener.getTokenPairs(addr, { priority: 'watchlist' });
       await catalogWorker.__private.evaluateTokenWithData(catalogToken, dexData);
       bootstrapState = 'evaluated';
     } catch (error) {

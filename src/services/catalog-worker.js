@@ -41,16 +41,16 @@ const HIGH_WARM_RECHECK_MS = 3 * 1000;
 const HIGH_VERY_LOW_VOL_RECHECK_MS = 5 * 1000;
 const HIGH_LOW_VOL_RECHECK_MS = HIGH_WARM_RECHECK_MS;
 const ERROR_RECHECK_MS = 60 * 1000;
-const MANUAL_BOOTSTRAP_RECHECK_MS = 5 * 1000;
+const WATCHLIST_BOOTSTRAP_RECHECK_MS = 5 * 1000;
 const RATE_LIMIT_HIGH_RECHECK_MS = 15 * 1000;
 const RATE_LIMIT_NORMAL_RECHECK_MS = 2 * 60 * 1000;
 const RATE_LIMIT_LOW_NEAR_RECHECK_MS = 3 * 60 * 1000;
 const RATE_LIMIT_LOW_DUST_RECHECK_MS = 2 * 60 * 1000;
-const RATE_LIMIT_MANUAL_RECHECK_MS = 15 * 1000;
+const RATE_LIMIT_WATCHLIST_RECHECK_MS = 15 * 1000;
 const DEX_BATCH_DELAY_MS = 100;
-const MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS = 5 * 1000;
+const WATCHLIST_PRE_MIGRATION_GMGN_RECHECK_MS = 5 * 1000;
 const RECENT_DEX_MCAP_REFERENCE_MAX_AGE_MS = 60 * 60 * 1000;
-const MANUAL_GMGN_TOKEN_INFO_CONCURRENCY = 3;
+const WATCHLIST_GMGN_TOKEN_INFO_CONCURRENCY = 3;
 const THROTTLE_LIST_LIMIT_MULTIPLIER = 8;
 const THROTTLE_LIST_LIMIT_CAP = 2500;
 const LOW_NEAR_JITTER_MS = 3 * 1000;
@@ -80,10 +80,10 @@ let timer = null;
 let running = false;
 let defaultGmgnClient = null;
 const youngExtremeChurnState = new Map();
-const manualGmgnTokenInfoInflight = new Map();
-const manualGmgnTokenInfoQueue = [];
-const liveManualAddressCache = new Map();
-let manualGmgnTokenInfoActive = 0;
+const watchlistGmgnTokenInfoInflight = new Map();
+const watchlistGmgnTokenInfoQueue = [];
+const liveWatchlistAddressCache = new Map();
+let watchlistGmgnTokenInfoActive = 0;
 let status = {
   running: false,
   lastRunAt: null,
@@ -227,11 +227,11 @@ function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) 
   return marketCap >= 0 && marketCap < 15000 && isMigrationGraceActive(token, now);
 }
 
-function isManualSource(token) {
+function isWatchlistTokenSource(token) {
   return isWatchlistSource(token?.source);
 }
 
-function isGmgnManualState(token) {
+function isGmgnWatchlistState(token) {
   return String(token?.eligibility_state || '').trim().toLowerCase().startsWith('gmgn-');
 }
 
@@ -241,8 +241,8 @@ function hasDexPairSnapshot(token) {
     || pairUrl.includes('dexscreener.com');
 }
 
-function shouldCheckManualGmgnBeforeDex(token) {
-  if (!isManualSource(token)) {
+function shouldCheckWatchlistGmgnBeforeDex(token) {
+  if (!isWatchlistTokenSource(token)) {
     return false;
   }
 
@@ -251,7 +251,7 @@ function shouldCheckManualGmgnBeforeDex(token) {
   const marketCap = Number(token?.last_mcap || 0);
 
   return eligibilityState === 'pending'
-    || isGmgnManualState(token)
+    || isGmgnWatchlistState(token)
     || eligibilityState === 'dex-missing'
     || eligibilityState === 'dex-unavailable'
     || suppressedReason === 'dex_pair_missing'
@@ -272,7 +272,7 @@ function hasYoungLowLiquidityExemptSuffix(token) {
 }
 
 function isGmgnDexUnavailableZombie(token) {
-  if (!token || isManualSource(token) || hasKnownLaunchAddressSuffix(token)) {
+  if (!token || isWatchlistTokenSource(token) || hasKnownLaunchAddressSuffix(token)) {
     return false;
   }
 
@@ -506,23 +506,23 @@ function buildGmgnDexUnavailableMarketSnapshot(token, gmgnInfo) {
   };
 }
 
-function resolveGmgnManualPreMigrationPriority(marketCap) {
+function resolveGmgnWatchlistPreMigrationPriority(marketCap) {
   if (marketCap >= 100000) return 'high';
   if (marketCap >= 30000) return 'normal';
   return 'low';
 }
 
-function resolveGmgnManualPreMigrationState(marketCap) {
+function resolveGmgnWatchlistPreMigrationState(marketCap) {
   if (marketCap >= 100000) return 'gmgn-high';
   if (marketCap >= 30000) return 'gmgn-normal';
   return 'gmgn-low';
 }
 
-function hasManualPreMigrationGmgnMarketData(marketCap, price) {
+function hasWatchlistPreMigrationGmgnMarketData(marketCap, price) {
   return marketCap > 0 || price > 0;
 }
 
-function buildManualPreMigrationGmgnVolumes(gmgnInfo, now) {
+function buildWatchlistPreMigrationGmgnVolumes(gmgnInfo, now) {
   return fillYoungTokenVolumeWindows({
     tokenCreatedAt: gmgnInfo?.tokenCreatedAt,
     vol1m: toNumber(gmgnInfo?.vol1m),
@@ -533,7 +533,7 @@ function buildManualPreMigrationGmgnVolumes(gmgnInfo, now) {
   }, { now });
 }
 
-function buildManualPreMigrationGmgnMetadata(token, gmgnInfo) {
+function buildWatchlistPreMigrationGmgnMetadata(token, gmgnInfo) {
   return {
     symbol: firstPresentValue(gmgnInfo?.symbol, token?.symbol),
     name: firstPresentValue(gmgnInfo?.name, token?.name),
@@ -544,7 +544,7 @@ function buildManualPreMigrationGmgnMetadata(token, gmgnInfo) {
   };
 }
 
-function buildManualPreMigrationGmgnPriceChanges(gmgnInfo) {
+function buildWatchlistPreMigrationGmgnPriceChanges(gmgnInfo) {
   return {
     priceChange1h: toNumber(gmgnInfo?.priceChange1h),
     priceChange6h: toNumber(gmgnInfo?.priceChange6h),
@@ -580,18 +580,18 @@ function shouldUseGmgnPreMigrationInfo(gmgnInfo = {}) {
     && !hasGmgnMigrationSignal(gmgnInfo);
 }
 
-function shouldUseGmgnManualFallbackInfo(gmgnInfo = {}) {
+function shouldUseGmgnWatchlistFallbackInfo(gmgnInfo = {}) {
   return hasGmgnLaunchpadSignal(gmgnInfo);
 }
 
-function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) {
+function buildWatchlistPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) {
   const marketCap = toNumber(gmgnInfo?.marketCap);
   const price = toNumber(gmgnInfo?.price);
-  if (!hasManualPreMigrationGmgnMarketData(marketCap, price)) {
+  if (!hasWatchlistPreMigrationGmgnMarketData(marketCap, price)) {
     return null;
   }
 
-  const filledVolumes = buildManualPreMigrationGmgnVolumes(gmgnInfo, now);
+  const filledVolumes = buildWatchlistPreMigrationGmgnVolumes(gmgnInfo, now);
   const volumeCoverage = deriveRollingVolumeCoverage({
     tokenCreatedAt: gmgnInfo?.tokenCreatedAt,
     vol1m: toNumber(gmgnInfo?.vol1m),
@@ -600,8 +600,8 @@ function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) 
     vol6h: toNumber(gmgnInfo?.vol6h),
     vol24h: toNumber(gmgnInfo?.vol24h),
   }, filledVolumes, { now, tokenCreatedAt: gmgnInfo?.tokenCreatedAt });
-  const metadata = buildManualPreMigrationGmgnMetadata(token, gmgnInfo);
-  const priceChanges = buildManualPreMigrationGmgnPriceChanges(gmgnInfo);
+  const metadata = buildWatchlistPreMigrationGmgnMetadata(token, gmgnInfo);
+  const priceChanges = buildWatchlistPreMigrationGmgnPriceChanges(gmgnInfo);
 
   return {
     address: token.address,
@@ -619,69 +619,65 @@ function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) 
   };
 }
 
-function runManualGmgnTokenInfoTask(task) {
+function runWatchlistGmgnTokenInfoTask(task) {
   return new Promise((resolve, reject) => {
-    manualGmgnTokenInfoQueue.push({ task, resolve, reject });
-    drainManualGmgnTokenInfoQueue();
+    watchlistGmgnTokenInfoQueue.push({ task, resolve, reject });
+    drainWatchlistGmgnTokenInfoQueue();
   });
 }
 
-function drainManualGmgnTokenInfoQueue() {
+function drainWatchlistGmgnTokenInfoQueue() {
   while (
-    manualGmgnTokenInfoActive < MANUAL_GMGN_TOKEN_INFO_CONCURRENCY
-    && manualGmgnTokenInfoQueue.length > 0
+    watchlistGmgnTokenInfoActive < WATCHLIST_GMGN_TOKEN_INFO_CONCURRENCY
+    && watchlistGmgnTokenInfoQueue.length > 0
   ) {
-    const next = manualGmgnTokenInfoQueue.shift();
-    manualGmgnTokenInfoActive += 1;
+    const next = watchlistGmgnTokenInfoQueue.shift();
+    watchlistGmgnTokenInfoActive += 1;
     Promise.resolve()
       .then(next.task)
       .then(next.resolve, next.reject)
       .finally(() => {
-        manualGmgnTokenInfoActive = Math.max(0, manualGmgnTokenInfoActive - 1);
-        drainManualGmgnTokenInfoQueue();
+        watchlistGmgnTokenInfoActive = Math.max(0, watchlistGmgnTokenInfoActive - 1);
+        drainWatchlistGmgnTokenInfoQueue();
       });
   }
 }
 
-async function hasLiveManualAddressForGmgn(address) {
+async function hasLiveWatchlistAddressForGmgn(address) {
   const normalized = String(address || '').trim();
   if (!normalized) {
     return false;
   }
 
-  const cached = liveManualAddressCache.get(normalized);
+  const cached = liveWatchlistAddressCache.get(normalized);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
   }
 
-  const hasWatchlistAddress = tokenCatalog.hasUserWatchlistAddress
-    || tokenCatalog.hasUserManualAddress;
-  const value = await hasWatchlistAddress(normalized);
-  liveManualAddressCache.set(normalized, {
+  const value = await tokenCatalog.hasUserWatchlistAddress(normalized);
+  liveWatchlistAddressCache.set(normalized, {
     value,
     expiresAt: Date.now() + 30 * 1000,
   });
-  const demoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress
-    || tokenCatalog.demoteFormerManualAddress;
-  if (!value && typeof demoteFormerWatchlistAddress === 'function') {
-    await demoteFormerWatchlistAddress(normalized);
+  if (!value && typeof tokenCatalog.demoteFormerWatchlistAddress === 'function') {
+    await tokenCatalog.demoteFormerWatchlistAddress(normalized);
   }
   return value;
 }
 
-async function fetchManualGmgnTokenInfo(token) {
-  if (!isManualSource(token)) {
+async function fetchWatchlistGmgnTokenInfo(token) {
+  if (!isWatchlistTokenSource(token)) {
     return null;
   }
 
   const address = String(token?.address || '').trim();
-  if (!await hasLiveManualAddressForGmgn(address)) {
+  if (!await hasLiveWatchlistAddressForGmgn(address)) {
     return null;
   }
 
   const chain = token?.chain || 'solana';
   const cacheKey = `${String(chain).trim().toLowerCase()}:${address}`;
-  const inflight = manualGmgnTokenInfoInflight.get(cacheKey);
+  const inflight = watchlistGmgnTokenInfoInflight.get(cacheKey);
   if (inflight) {
     try {
       return await inflight;
@@ -691,14 +687,14 @@ async function fetchManualGmgnTokenInfo(token) {
     }
   }
 
-  const request = runManualGmgnTokenInfoTask(() => getDefaultGmgnClient().fetchTokenInfo({
+  const request = runWatchlistGmgnTokenInfoTask(() => getDefaultGmgnClient().fetchTokenInfo({
     chain,
     address,
     skipCache: true,
   })).finally(() => {
-    manualGmgnTokenInfoInflight.delete(cacheKey);
+    watchlistGmgnTokenInfoInflight.delete(cacheKey);
   });
-  manualGmgnTokenInfoInflight.set(cacheKey, request);
+  watchlistGmgnTokenInfoInflight.set(cacheKey, request);
 
   try {
     return await request;
@@ -708,21 +704,21 @@ async function fetchManualGmgnTokenInfo(token) {
   }
 }
 
-async function applyManualGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval, resultLabel) {
-  const snapshot = buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, new Date());
+async function applyWatchlistGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval, resultLabel) {
+  const snapshot = buildWatchlistPreMigrationGmgnSnapshot(token, gmgnInfo, new Date());
   if (!snapshot) {
     return null;
   }
 
-  const nextEvaluationAt = new Date(Date.now() + MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS);
+  const nextEvaluationAt = new Date(Date.now() + WATCHLIST_PRE_MIGRATION_GMGN_RECHECK_MS);
 
   const marketCap = snapshot.mcap || 0;
   const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
     evaluationSource: 'gmgn',
-    eligibilityState: resolveGmgnManualPreMigrationState(marketCap),
+    eligibilityState: resolveGmgnWatchlistPreMigrationState(marketCap),
     eligibleForMonitoring: marketCap > 0,
     suppressedReason: marketCap > 0 ? null : 'mcap_unavailable',
-    monitorPriority: resolveGmgnManualPreMigrationPriority(marketCap),
+    monitorPriority: resolveGmgnWatchlistPreMigrationPriority(marketCap),
     nextEvaluationAt,
     lastEvaluationError: null,
     evaluationErrorCount: 0,
@@ -783,32 +779,32 @@ async function applyManualGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval, re
   return updatedToken;
 }
 
-async function evaluateManualPreMigrationWithGmgn(token, gmgnInfo, traceInitialEval) {
+async function evaluateWatchlistPreMigrationWithGmgn(token, gmgnInfo, traceInitialEval) {
   if (!shouldUseGmgnPreMigrationInfo(gmgnInfo)) {
     return null;
   }
-  return applyManualGmgnInfoSnapshot(
+  return applyWatchlistGmgnInfoSnapshot(
     token,
     gmgnInfo,
     traceInitialEval,
-    'gmgn-manual-launchpad-pre-migration'
+    'gmgn-watchlist-launchpad-pre-migration'
   );
 }
 
-async function evaluateManualGmgnFallback(token, gmgnInfo, traceInitialEval, dexResult) {
-  if (!shouldUseGmgnManualFallbackInfo(gmgnInfo)) {
+async function evaluateWatchlistGmgnFallback(token, gmgnInfo, traceInitialEval, dexResult) {
+  if (!shouldUseGmgnWatchlistFallbackInfo(gmgnInfo)) {
     return null;
   }
-  return applyManualGmgnInfoSnapshot(
+  return applyWatchlistGmgnInfoSnapshot(
     token,
     gmgnInfo,
     traceInitialEval,
-    `gmgn-manual-fallback-${dexResult}`
+    `gmgn-watchlist-fallback-${dexResult}`
   );
 }
 
-async function evaluateDexUnavailableWithManualFallback(token, gmgnInfo, traceInitialEval) {
-  const gmgnFallbackToken = await evaluateManualGmgnFallback(token, gmgnInfo, traceInitialEval, 'dex-unavailable');
+async function evaluateDexUnavailableWithWatchlistFallback(token, gmgnInfo, traceInitialEval) {
+  const gmgnFallbackToken = await evaluateWatchlistGmgnFallback(token, gmgnInfo, traceInitialEval, 'dex-unavailable');
   return gmgnFallbackToken || evaluateDexUnavailableToken(token, traceInitialEval);
 }
 
@@ -874,7 +870,7 @@ function passesYoungExtremeChurnMarketShape({ currentMcap, initialMcap, vol5m, v
 }
 
 function assessYoungExtremeChurn(token, pair, snapshot, initialBucket, now = Date.now()) {
-  if (isManualSource(token) || isPumpLikeToken(token, pair)) {
+  if (isWatchlistTokenSource(token) || isPumpLikeToken(token, pair)) {
     return { shouldBlock: false, reason: 'trusted-source' };
   }
 
@@ -978,7 +974,7 @@ async function autoBlockYoungExtremeChurn(token, updatedToken, pair, snapshot) {
 }
 
 function getYoungLowLiquiditySkipReason(token) {
-  if (!token || isManualSource(token)) {
+  if (!token || isWatchlistTokenSource(token)) {
     return 'trusted-source';
   }
   if (hasYoungLowLiquidityExemptSuffix(token)) {
@@ -1092,7 +1088,7 @@ function assessSpamTickerLaunch(token, updatedToken, pair, snapshot, options = {
   if (denylist.size === 0) {
     return { shouldBlock: false, reason: 'denylist-empty' };
   }
-  if (isManualSource(token)) {
+  if (isWatchlistTokenSource(token)) {
     return { shouldBlock: false, reason: 'trusted-source' };
   }
 
@@ -1229,7 +1225,7 @@ function isLowActivityAutoToken(token, vol24h, volumeWindows = {}) {
   const numericVol24h = Number(vol24h);
   const vol1h = volumeWindows.vol1h ?? token?.last_vol_1h;
   const vol6h = volumeWindows.vol6h ?? token?.last_vol_6h;
-  return !isManualSource(token)
+  return !isWatchlistTokenSource(token)
     && Number.isFinite(numericVol24h)
     && numericVol24h >= 0
     && numericVol24h < LOW_ACTIVITY_24H_MAX_VOL
@@ -1350,7 +1346,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
 
   if (marketCap < 30000) {
     const nextLowMs = marketCap >= 15000
-      || isManualSource(token)
+      || isWatchlistTokenSource(token)
       || isLowDustProtectedByMigrationGrace(token, marketCap, now)
       ? addPriorityJitter(LOW_NEAR_RECHECK_MS, LOW_NEAR_JITTER_MS)
       : addPriorityJitter(LOW_DUST_RECHECK_MS, LOW_DUST_JITTER_MS);
@@ -1459,8 +1455,8 @@ function getRetryMsForPriority(priority) {
   }
 }
 
-function shouldFastRetryManualBootstrap(token) {
-  return isManualSource(token)
+function shouldFastRetryWatchlistBootstrap(token) {
+  return isWatchlistTokenSource(token)
     && !token?.last_eligible_at;
 }
 
@@ -1476,8 +1472,8 @@ function getRateLimitedRetryMs(token) {
   const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
   const lastVol24h = Number(token?.last_vol_24h);
 
-  if (shouldFastRetryManualBootstrap(token)) {
-    return RATE_LIMIT_MANUAL_RECHECK_MS;
+  if (shouldFastRetryWatchlistBootstrap(token)) {
+    return RATE_LIMIT_WATCHLIST_RECHECK_MS;
   }
 
   if (shouldFastRetryMigratedBootstrap(token)) {
@@ -1518,8 +1514,8 @@ function getDexUnavailableRetryMs(token, options = {}) {
     return LOW_NEAR_RECHECK_MS;
   }
 
-  if (shouldFastRetryManualBootstrap(token)) {
-    return MANUAL_BOOTSTRAP_RECHECK_MS;
+  if (shouldFastRetryWatchlistBootstrap(token)) {
+    return WATCHLIST_BOOTSTRAP_RECHECK_MS;
   }
 
   if (isLowActivityAutoToken(token, token?.last_vol_24h)) {
@@ -1539,7 +1535,7 @@ function getThrottleTokenBucket(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
-  if (isWatchlistSource(source)) return 'manual';
+  if (isWatchlistSource(source)) return 'watchlist';
   if (isLowActivityAutoToken(token, token?.last_vol_24h)) return 'low-dust';
   if (priority === 'high' || marketCap >= 100000) return 'high';
   if (priority === 'normal' || marketCap >= 30000) return 'normal';
@@ -1549,7 +1545,7 @@ function getThrottleTokenBucket(token) {
 }
 
 const THROTTLE_RECOVERY_BUCKETS = Object.freeze({
-  'high-manual': new Set(['high']),
+  'high-watchlist': new Set(['high']),
   normal: new Set(['high', 'normal']),
   'low-near': new Set(['high', 'normal', 'low-near']),
   'low-dust': new Set(['high', 'normal', 'low-near', 'low-dust']),
@@ -1564,12 +1560,12 @@ function isTokenAllowedByThrottle(token, throttleState = { mode: 'normal' }) {
     return true;
   }
 
-  if (bucket === 'manual') {
+  if (bucket === 'watchlist') {
     return true;
   }
 
   if (mode === 'cooldown') return bucket === 'high';
-  return (THROTTLE_RECOVERY_BUCKETS[phase] || THROTTLE_RECOVERY_BUCKETS['high-manual'])
+  return (THROTTLE_RECOVERY_BUCKETS[phase] || THROTTLE_RECOVERY_BUCKETS['high-watchlist'])
     .has(bucket);
 }
 
@@ -1577,7 +1573,7 @@ function getThrottleTokenRank(token, throttleState = { mode: 'normal' }) {
   const bucket = getThrottleTokenBucket(token);
   const phase = String(throttleState?.recoveryPhase || '').trim().toLowerCase();
 
-  if (bucket === 'manual') return 0;
+  if (bucket === 'watchlist') return 0;
   if (bucket === 'high') return 1;
   if (bucket === 'normal') return 2;
   if (bucket === 'low-near') return 3;
@@ -1736,14 +1732,14 @@ async function maybeAutoBlockGmgnDexUnavailableLowLiquidity(token) {
 }
 
 async function evaluateDexMissingToken(token, gmgnInfo, traceInitialEval) {
-  const gmgnFallbackToken = await evaluateManualGmgnFallback(token, gmgnInfo, traceInitialEval, 'dex-missing');
+  const gmgnFallbackToken = await evaluateWatchlistGmgnFallback(token, gmgnInfo, traceInitialEval, 'dex-missing');
   if (gmgnFallbackToken) {
     return gmgnFallbackToken;
   }
 
   status.totalIneligible++;
-  const nextRetryMs = shouldFastRetryManualBootstrap(token)
-    ? MANUAL_BOOTSTRAP_RECHECK_MS
+  const nextRetryMs = shouldFastRetryWatchlistBootstrap(token)
+    ? WATCHLIST_BOOTSTRAP_RECHECK_MS
     : DORMANT_RECHECK_MS;
   if (traceInitialEval) {
     logTrace('catalog_eval_result', {
@@ -1768,29 +1764,29 @@ async function evaluateDexMissingToken(token, gmgnInfo, traceInitialEval) {
 
 async function evaluateTokenWithData(token, data) {
   const traceInitialEval = shouldTraceInitialEvalOnly(token);
-  let manualGmgnInfo = shouldCheckManualGmgnBeforeDex(token)
-    ? await fetchManualGmgnTokenInfo(token)
+  let watchlistGmgnInfo = shouldCheckWatchlistGmgnBeforeDex(token)
+    ? await fetchWatchlistGmgnTokenInfo(token)
     : null;
 
-  const gmgnManualPreMigrationToken = await evaluateManualPreMigrationWithGmgn(token, manualGmgnInfo, traceInitialEval);
-  if (gmgnManualPreMigrationToken) {
-    return gmgnManualPreMigrationToken;
+  const gmgnWatchlistPreMigrationToken = await evaluateWatchlistPreMigrationWithGmgn(token, watchlistGmgnInfo, traceInitialEval);
+  if (gmgnWatchlistPreMigrationToken) {
+    return gmgnWatchlistPreMigrationToken;
   }
 
   if (!data) {
-    if (!manualGmgnInfo) {
-      manualGmgnInfo = await fetchManualGmgnTokenInfo(token);
+    if (!watchlistGmgnInfo) {
+      watchlistGmgnInfo = await fetchWatchlistGmgnTokenInfo(token);
     }
-    return evaluateDexUnavailableWithManualFallback(token, manualGmgnInfo, traceInitialEval);
+    return evaluateDexUnavailableWithWatchlistFallback(token, watchlistGmgnInfo, traceInitialEval);
   }
 
   const bestPair = dexscreener.getBestPair(data, token.chain || 'solana');
 
   if (!bestPair) {
-    if (!manualGmgnInfo) {
-      manualGmgnInfo = await fetchManualGmgnTokenInfo(token);
+    if (!watchlistGmgnInfo) {
+      watchlistGmgnInfo = await fetchWatchlistGmgnTokenInfo(token);
     }
-    return evaluateDexMissingToken(token, manualGmgnInfo, traceInitialEval);
+    return evaluateDexMissingToken(token, watchlistGmgnInfo, traceInitialEval);
   }
 
   const snapshot = derivePrioritySnapshot(bestPair, token);
@@ -2060,11 +2056,11 @@ function stop() {
   }
 }
 
-function clearManualGmgnCachesForTest() {
-  liveManualAddressCache.clear();
-  manualGmgnTokenInfoInflight.clear();
-  manualGmgnTokenInfoQueue.length = 0;
-  manualGmgnTokenInfoActive = 0;
+function clearWatchlistGmgnCachesForTest() {
+  liveWatchlistAddressCache.clear();
+  watchlistGmgnTokenInfoInflight.clear();
+  watchlistGmgnTokenInfoQueue.length = 0;
+  watchlistGmgnTokenInfoActive = 0;
 }
 
 function getStatus() {
@@ -2094,9 +2090,9 @@ module.exports = {
     isLowActivityAutoToken,
     isGmgnDexUnavailableZombie,
     setDefaultGmgnClientForTest,
-    isManualSource,
+    isWatchlistTokenSource,
     hasYoungLowLiquidityExemptSuffix,
-    shouldCheckManualGmgnBeforeDex,
+    shouldCheckWatchlistGmgnBeforeDex,
     isMigrationGraceActive,
     assessSpamTickerLaunch,
     buildSpamTickerLaunchLabel,
@@ -2105,7 +2101,7 @@ module.exports = {
     assessYoungExtremeChurn,
     buildYoungExtremeChurnLabel,
     clearYoungExtremeChurnState,
-    clearManualGmgnCachesForTest,
+    clearWatchlistGmgnCachesForTest,
     getYoungExtremeChurnState,
     recordYoungExtremeChurnSuspicion,
     getRateLimitedRetryMs,

@@ -1354,7 +1354,7 @@ describe('gmgn catalog ingestion', () => {
         async getByAddress(address) {
           return { address, source: 'gmgn' };
         },
-        async hasUserManualAddress() {
+        async hasUserWatchlistAddress() {
           return true;
         },
         async upsertToken(payload) {
