@@ -1692,7 +1692,7 @@ function isAgeBucketEmpty(tokens: WatchlistTokenEntry[], totalCount: number) {
   return tokens.length === 0 && totalCount === 0;
 }
 
-export function renderManualTokenTable(
+export function renderWatchlistTokenTable(
   tokens: WatchlistTokenEntry[],
   busy: boolean,
   starredTokens: string[] = [],
@@ -3131,7 +3131,7 @@ export function fmtConfig(state: AppState, key: string, fallback: number) {
 
 export function renderTokenCard(item: WatchlistTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[]; enabledRobinhoodTradeTerminals?: TradeTerminalKey[] }) {
   const wrapper = document.createElement('div');
-  wrapper.innerHTML = renderManualTokenTable(
+  wrapper.innerHTML = renderWatchlistTokenTable(
     [item], busy,
     options.isStarred ? [buildTokenIdentityKey(item.chain || 'solana', item.address)] : [],
     [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin),

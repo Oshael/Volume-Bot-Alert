@@ -20,7 +20,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
   const visibleIdentities = state.data.watchlistTokenIdentities.filter((identityKey) => (
     state.ui.chainFilters.enabledChains.includes(parseTokenIdentityKey(identityKey).chain)
   ));
-  const manualAddressSet = new Set(getWatchlistTokens(state).map((token) => (
+  const watchlistAddressSet = new Set(getWatchlistTokens(state).map((token) => (
     buildTokenIdentityKey(token.chain || 'solana', token.address)
   )));
   const recentAddressSet = new Set(getRecentTokens(state).map((token) => (
@@ -48,7 +48,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
         renderedTokens.push(item);
         const wrapper = document.createElement('div');
         wrapper.innerHTML = renderTokenCard(item, state.ui.busy, {
-          mode: manualAddressSet.has(identityKey) || item._userWatchlist ? 'manual' : recentAddressSet.has(identityKey) ? 'recent' : oldWeekAddressSet.has(identityKey) ? 'old-week' : 'monitored',
+          mode: watchlistAddressSet.has(identityKey) || item._userWatchlist ? 'manual' : recentAddressSet.has(identityKey) ? 'recent' : oldWeekAddressSet.has(identityKey) ? 'old-week' : 'monitored',
           isStarred: true,
           isAdmin: state.session.role === 'admin',
           enabledTradeTerminals: state.ui.enabledTradeTerminals,

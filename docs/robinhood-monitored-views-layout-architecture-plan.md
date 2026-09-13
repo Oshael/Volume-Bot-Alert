@@ -436,7 +436,9 @@ This product slice is split into bounded implementation cuts:
 - **4C3a — frontend token type:** remove the deprecated `ManualTokenEntry` alias and use `WatchlistTokenEntry` directly.
 - **4C3b1 — frontend token markers:** rename the internal user-added-token flags to Watchlist vocabulary while retaining
   legacy input compatibility only at payload boundaries.
-- **4C3b2 — frontend state vocabulary:** rename remaining user-added-token counters, capability and local helper symbols.
+- **4C3b2a — frontend state vocabulary:** rename user-added-token counters, variables and local helper symbols.
+- **4C3b2b — frontend capability boundary:** expose `watchlist` internally and normalize legacy `manualTokens` capability
+  input at the API boundary during rollout.
 - **4C3b3 — frontend copy and logs:** replace remaining user-facing and diagnostic Manual Tokens vocabulary while keeping
   neutral folder naming and explicit persisted compatibility keys intact.
 - **4C3c — backend runtime vocabulary:** rename user-added-token model/catalog symbols, comments and logs without changing

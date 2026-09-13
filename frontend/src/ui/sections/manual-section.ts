@@ -1,9 +1,9 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getWatchlistTokens, getMockTradingPositionsViewByAddress, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, renderManualTokenTable } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, renderWatchlistTokenTable } from './shared';
 import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
 import { bindRadarIdentityBadges } from './radar-identity-badges';
-import { resolveManualTableRows } from '../../utils/token-table';
+import { resolveWatchlistTableRows } from '../../utils/token-table';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 import { escapeHtml } from './html-safety';
 import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
@@ -139,7 +139,7 @@ function getManualSortClasses(state: AppState) {
 }
 
 function renderWatchlistTable(state: AppState, searchQuery: string) {
-  const filteredWatchlistTokens = resolveManualTableRows(getWatchlistTokens(state), {
+  const filteredWatchlistTokens = resolveWatchlistTableRows(getWatchlistTokens(state), {
     searchQuery,
     sortCriteria: state.ui.watchlistSorts,
   });
@@ -148,7 +148,7 @@ function renderWatchlistTable(state: AppState, searchQuery: string) {
     return '<p class="muted-block">No Watchlist tokens match your search.</p>';
   }
 
-  return renderManualTokenTable(
+  return renderWatchlistTokenTable(
     filteredWatchlistTokens,
     state.ui.busy,
     state.data.watchlistTokenIdentities,

@@ -35,7 +35,7 @@ export function sortBucketTokens(tokens: WatchlistTokenEntry[], criteria: Bucket
   });
 }
 
-export function filterManualTableTokens(
+export function filterWatchlistTableTokens(
   tokens: WatchlistTokenEntry[],
   options: {
     starredOnly?: boolean;
@@ -61,7 +61,7 @@ export function filterManualTableTokens(
   });
 }
 
-export function resolveManualTableRows(
+export function resolveWatchlistTableRows(
   tokens: WatchlistTokenEntry[],
   options: {
     starredOnly?: boolean;
@@ -70,7 +70,7 @@ export function resolveManualTableRows(
     sortCriteria?: BucketSortCriterion[];
   } = {},
 ) {
-  const filtered = filterManualTableTokens(tokens, options);
+  const filtered = filterWatchlistTableTokens(tokens, options);
   return sortBucketTokens(filtered, options.sortCriteria || [{ mode: 'mcap', window: 'highest' }]);
 }
 

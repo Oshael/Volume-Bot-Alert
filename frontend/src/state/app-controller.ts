@@ -1,5 +1,5 @@
 import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
-import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
+import { resolveWatchlistTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
   didEnabledChainCapabilityBecomeAvailable,
@@ -341,8 +341,8 @@ const SPARKLINE_RANGE_HOURS = new Map(SPARKLINE_RANGE_TIMED_PRESETS);
 const MONITORED_QUICK_SPARKLINE_HOURS = new Set([0, 1, 4, 12, 24, 72, 168, 336]);
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
-const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
-const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
+const WATCHLIST_METADATA_BATCH_CACHE_MS = 12 * 1000;
+const WATCHLIST_METADATA_METEORA_REFRESH_MS = 12 * 1000;
 const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const ADMIN_TOKEN_REVIEW_ALERT_REFRESH_INTERVAL_MS = 15 * 1000;
@@ -1466,12 +1466,12 @@ export function createAppController(): AppController {
   let nextSparklineRefreshAt = 0;
   let lastSparklineAddressKey = '';
   let lastSparklineVisibleAddresses: string[] = [];
-  let manualMetadataBatchCacheKey = '';
-  let manualMetadataBatchCacheExpiresAt = 0;
-  let manualMetadataMeteoraCacheKey = '';
-  let manualMetadataNextMeteoraRefreshAt = 0;
-  let manualMetadataBatchRefreshInFlight: Promise<void> | null = null;
-  let manualMetadataBatchRefreshInFlightKey = '';
+  let watchlistMetadataBatchCacheKey = '';
+  let watchlistMetadataBatchCacheExpiresAt = 0;
+  let watchlistMetadataMeteoraCacheKey = '';
+  let watchlistMetadataNextMeteoraRefreshAt = 0;
+  let watchlistMetadataBatchRefreshInFlight: Promise<void> | null = null;
+  let watchlistMetadataBatchRefreshInFlightKey = '';
   const sparklineDebugControllerId = createSparklineDebugId('controller');
   let sparklineDebugCaptureUntil = 0;
   let sparklineDebugRecentEntries: SparklineDebugEntry[] = [];
@@ -2363,7 +2363,7 @@ export function createAppController(): AppController {
 
   function commitTrackedStateRebuild(input: {
     nextTrackedStore: Record<string, WatchlistTokenEntry>;
-    manualTokens: WatchlistTokenEntry[];
+    watchlistTokens: WatchlistTokenEntry[];
     monitoredMap: Map<string, WatchlistTokenEntry>;
     pinnedIdentities: string[];
     alertCandidates: Set<string>;
@@ -2376,10 +2376,10 @@ export function createAppController(): AppController {
 
     state.data.trackedTokensByIdentity = input.nextTrackedStore;
     applyPersistedFrontendAlertFlags(state.data.trackedTokensByIdentity);
-    state.data.watchlistTokenIdentities = input.manualTokens.map(getTokenIdentityKey);
+    state.data.watchlistTokenIdentities = input.watchlistTokens.map(getTokenIdentityKey);
     state.data.monitoredTokenIdentities = [...input.monitoredMap.keys()];
     state.data.pinnedMonitoredTokenIdentities = input.pinnedIdentities;
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     if (!usesHistoryBucketBootstrap()) {
       state.data.recentTokenIdentities = [];
       state.data.oldWeekTokenIdentities = [];
@@ -3570,7 +3570,7 @@ export function createAppController(): AppController {
     historyBootstrapRequestRevision += 1;
     monitoredBootstrapHydrationRevision += 1;
     nextMonitoredFullHydrationAt = 0;
-    resetManualMetadataBatchState();
+    resetWatchlistMetadataBatchState();
   }
 
   function getMockTradingAdminToken() {
@@ -5182,7 +5182,7 @@ export function createAppController(): AppController {
       identityKey,
       wasInMonitored: state.data.monitoredTokenIdentities.includes(identityKey),
       wasPinnedMonitored: state.data.pinnedMonitoredTokenIdentities.includes(identityKey),
-      wasInManual: state.data.watchlistTokenIdentities.includes(identityKey),
+      wasInWatchlist: state.data.watchlistTokenIdentities.includes(identityKey),
       wasEligibleCatalog: state.data.eligibleCatalogTokens.includes(address),
       removedPumpTokens: state.data.pumpTokens
         .filter((item) => item.mint === address || item.mintAddress === address)
@@ -5220,7 +5220,7 @@ export function createAppController(): AppController {
       state.data.pinnedMonitoredTokenIdentities = [...state.data.pinnedMonitoredTokenIdentities, identityKey];
     }
 
-    if (snapshot.wasInManual && !state.data.watchlistTokenIdentities.includes(identityKey)) {
+    if (snapshot.wasInWatchlist && !state.data.watchlistTokenIdentities.includes(identityKey)) {
       state.data.watchlistTokenIdentities = [...state.data.watchlistTokenIdentities, identityKey];
     }
 
@@ -5284,8 +5284,8 @@ export function createAppController(): AppController {
       replaceStarredTokens([...state.data.starredTokenIdentities, snapshot.identityKey]);
     }
 
-    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
@@ -5318,8 +5318,8 @@ export function createAppController(): AppController {
       replaceStarredTokens(state.data.starredTokenIdentities.filter((item) => item !== identityKey));
     }
 
-    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
@@ -6220,7 +6220,7 @@ export function createAppController(): AppController {
     });
     state.data.dismissedRecentIdentities = state.data.dismissedRecentIdentities.filter((identity) => !blockedIdentities.has(identity));
     state.data.dismissedOldWeekIdentities = state.data.dismissedOldWeekIdentities.filter((identity) => !blockedIdentities.has(identity));
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshMonitoredPanelCounts();
     refreshPumpPanelCounts();
@@ -6258,7 +6258,7 @@ export function createAppController(): AppController {
       return Boolean(tracked?._userWatchlist) || state.data.monitoredTokenIdentities.includes(identityKey);
     });
     refreshTrackedTokenStore();
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
 
     if (removed.length > 0) {
@@ -7530,7 +7530,7 @@ export function createAppController(): AppController {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  function buildManualHolderFields(
+  function buildWatchlistHolderFields(
     item: ConfigPayload['tokens'][number],
     chain: TokenChain,
   ): Partial<WatchlistTokenEntry> {
@@ -7546,7 +7546,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildManualConfigTokenBase(item: ConfigPayload['tokens'][number], existingItem?: WatchlistTokenEntry) {
+  function buildWatchlistConfigTokenBase(item: ConfigPayload['tokens'][number], existingItem?: WatchlistTokenEntry) {
     const chain = resolveAppTokenChain(item.chain);
     return {
       ...existingItem,
@@ -7579,7 +7579,7 @@ export function createAppController(): AppController {
       createdAt: finiteNumberOrNull(item.last_token_created_at_ms),
       catalogFirstSeenAt: item.first_seen_at ? new Date(item.first_seen_at).getTime() : null,
       lastSeenAt: firstDefinedTrackedValue(item.last_seen_at, null),
-      ...buildManualHolderFields(item, chain),
+      ...buildWatchlistHolderFields(item, chain),
       tickerPeers: firstDefinedTrackedValue(item.tickerPeers, existingItem?.tickerPeers, null),
       watchlisted: true,
       _userWatchlist: true,
@@ -7588,7 +7588,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildManualTrackedTokens(input: {
+  function buildWatchlistTrackedTokens(input: {
     payload: ConfigPayload;
     blockedSet: Set<string>;
     dashboardByIdentity: Map<string, DashboardMonitoredToken>;
@@ -7609,7 +7609,7 @@ export function createAppController(): AppController {
         const mergedItem = mergeTrackedDashboardFields({
           existingItem,
           dashboardItem,
-          base: buildManualConfigTokenBase(item, existingItem),
+          base: buildWatchlistConfigTokenBase(item, existingItem),
           coldRefreshDue: input.coldRefreshDue,
         });
         const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
@@ -7736,7 +7736,7 @@ export function createAppController(): AppController {
       .filter((item) => !blockedSet.has(getTrackedTokenKey(item.address, item.chain)));
     const pinnedIdentities = pinnedDashboardItems.map((item) => getTrackedTokenKey(item.address, item.chain));
 
-    const manualTokens = buildManualTrackedTokens({
+    const watchlistTokens = buildWatchlistTrackedTokens({
       payload,
       blockedSet,
       dashboardByIdentity,
@@ -7746,7 +7746,7 @@ export function createAppController(): AppController {
       coldRefreshDue,
     });
     const monitoredMap = new Map<string, WatchlistTokenEntry>();
-    for (const item of manualTokens) {
+    for (const item of watchlistTokens) {
       monitoredMap.set(getTokenIdentityKey(item), item);
     }
 
@@ -7770,7 +7770,7 @@ export function createAppController(): AppController {
 
     commitTrackedStateRebuild({
       nextTrackedStore,
-      manualTokens,
+      watchlistTokens,
       monitoredMap,
       pinnedIdentities,
       alertCandidates,
@@ -7920,7 +7920,7 @@ export function createAppController(): AppController {
       selected.push(identity);
     }
 
-    for (const item of resolveManualTableRows(getWatchlistTokens(state), {
+    for (const item of resolveWatchlistTableRows(getWatchlistTokens(state), {
       starredOnly: state.ui.manualStarredOnly,
       starredTokens: state.data.watchlistTokenIdentities,
       searchQuery: state.ui.watchlistSearchQuery,
@@ -10154,7 +10154,7 @@ export function createAppController(): AppController {
 
     if (usesHistoryBucketBootstrap()) {
       await refreshHistoryWorkspaceBootstrap({ token });
-      void hydrateManualTokensMetadataBatch(token, getWatchlistTokens(state).map((item) => ({
+      void hydrateWatchlistTokensMetadataBatch(token, getWatchlistTokens(state).map((item) => ({
         chain: item.chain || 'solana',
         address: item.address,
         label: item.label ?? null,
@@ -10171,7 +10171,7 @@ export function createAppController(): AppController {
 
     monitoredRefreshKeysInFlight.add(requestKey);
     try {
-      const manualTokens = getWatchlistTokens(state).map((item) => ({
+      const watchlistTokens = getWatchlistTokens(state).map((item) => ({
         chain: item.chain || 'solana',
         address: item.address,
         label: item.label ?? null,
@@ -10187,7 +10187,7 @@ export function createAppController(): AppController {
         { workspace: state.ui.workspace, mode: 'poll' },
         () => hydratePagedDashboardMonitored(
           token,
-          manualTokens,
+          watchlistTokens,
           requestedChains,
           { fullHydration },
         ),
@@ -10195,7 +10195,7 @@ export function createAppController(): AppController {
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
       void refreshDashboardTopPerformers(token);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'monitored-poll' });
-      void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: isLiveWorkspace() });
+      void hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: isLiveWorkspace() });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
@@ -10983,7 +10983,7 @@ export function createAppController(): AppController {
     state.configSummary = {
       loaded: false,
       configCount: 0,
-      manualTokens: 0,
+      watchlistTokens: 0,
       blocklist: 0,
       starredTokens: 0,
       eligibleCatalogTokens: 0,
@@ -11039,7 +11039,7 @@ export function createAppController(): AppController {
     nonSolanaHistoryTrackedIdentities = new Set<string>();
     state.ui.chainFilters = normalizeChainFilterPreferences(null, state.data.availableChains);
     state.ui.manualVisibleFolderIds = [];
-    state.bars.manual = 0;
+    state.bars.watchlist = 0;
     state.bars.recent = 0;
     state.bars.oldWeek = 0;
     state.bars.blocklist = 0;
@@ -11206,18 +11206,18 @@ export function createAppController(): AppController {
       {
         tokens: monitoredDashboardTokens.length,
         pinnedTokens: pinnedDashboardTokens.length,
-        manualOverride: watchlistTokensOverride?.length ?? null,
+        watchlistOverride: watchlistTokensOverride?.length ?? null,
         workspace: state.ui.workspace,
       },
       () => {
-        const manualPayload = buildMonitoredDashboardPayload(watchlistTokensOverride);
-        syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens, pinnedDashboardTokens);
+        const watchlistPayload = buildMonitoredDashboardPayload(watchlistTokensOverride);
+        syncMeteoraDashboardCache(monitoredDashboardTokens, watchlistPayload.tokens, pinnedDashboardTokens);
         state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
         state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
         if (generatedAt !== undefined) {
           updateMonitoredFreshness(generatedAt ?? null);
         }
-        rebuildTrackedState(manualPayload, monitoredDashboardTokens, pinnedDashboardTokens);
+        rebuildTrackedState(watchlistPayload, monitoredDashboardTokens, pinnedDashboardTokens);
       },
     );
   }
@@ -11417,11 +11417,11 @@ export function createAppController(): AppController {
   }
 
   function getCurrentMonitoredDashboardSnapshot(): DashboardMonitoredToken[] {
-    const manualIdentities = new Set(state.data.watchlistTokenIdentities);
+    const watchlistIdentities = new Set(state.data.watchlistTokenIdentities);
     const snapshot: DashboardMonitoredToken[] = [];
 
     for (const identityKey of state.data.monitoredTokenIdentities) {
-      if (manualIdentities.has(identityKey)) {
+      if (watchlistIdentities.has(identityKey)) {
         continue;
       }
       const identity = parseTokenIdentityKey(identityKey);
@@ -11912,7 +11912,7 @@ export function createAppController(): AppController {
       foldersById.set(folder.id, folder);
     }
 
-    const manualAddressSet = new Set(state.data.watchlistTokenIdentities);
+    const watchlistAddressSet = new Set(state.data.watchlistTokenIdentities);
     const items = (Array.isArray(payload?.items) ? payload.items : [])
       .map((item) => ({
         userId: Number(item.userId),
@@ -11923,7 +11923,7 @@ export function createAppController(): AppController {
         addedAt: item.addedAt ?? null,
       }))
       .filter((item) => foldersById.has(item.folderId)
-        && manualAddressSet.has(getTrackedTokenKey(item.address, item.chain)));
+        && watchlistAddressSet.has(getTrackedTokenKey(item.address, item.chain)));
 
     return {
       folders: folders.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id - b.id),
@@ -12008,14 +12008,14 @@ export function createAppController(): AppController {
 
   function syncMeteoraDashboardCache(
     monitoredDashboardTokens: DashboardMonitoredToken[],
-    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
+    watchlistTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
     pinnedDashboardTokens: DashboardMonitoredToken[] = [],
   ) {
     const activeAddresses = new Set([
       ...monitoredDashboardTokens.map((item) => item.address),
       ...pinnedDashboardTokens.map((item) => item.address),
     ]);
-    for (const item of manualTokens) {
+    for (const item of watchlistTokens) {
       if (resolveAppTokenChain(item.chain) === 'solana') activeAddresses.add(item.address);
     }
 
@@ -12105,7 +12105,7 @@ export function createAppController(): AppController {
     state.configSummary = {
       loaded: true,
       configCount: Object.keys(payload.configs || {}).length,
-      manualTokens: payload.tokens.length,
+      watchlistTokens: payload.tokens.length,
       blocklist: payload.blocklist.length,
       starredTokens: payload.starredTokens.length,
       eligibleCatalogTokens: monitoredDashboardTokens.length,
@@ -12143,7 +12143,7 @@ export function createAppController(): AppController {
 
   function applyPagedMonitoredHydrationSnapshot(input: {
     token: string;
-    manualTokens: AddressItem[];
+    watchlistTokens: AddressItem[];
     tokens: DashboardMonitoredToken[];
     pinnedTokens: DashboardMonitoredToken[];
     snapshotComplete: boolean;
@@ -12154,7 +12154,7 @@ export function createAppController(): AppController {
       return false;
     }
 
-    applyMonitoredDashboard(input.tokens, input.manualTokens, input.generatedAt, input.pinnedTokens);
+    applyMonitoredDashboard(input.tokens, input.watchlistTokens, input.generatedAt, input.pinnedTokens);
     emitMonitoredWorkspaceRegions();
     recordLiquidityApplied([...input.tokens, ...input.pinnedTokens]);
     queueSupplementalMeteoraRefresh(input.token, mergeDashboardTokenSnapshots(input.tokens, input.pinnedTokens));
@@ -12208,7 +12208,7 @@ export function createAppController(): AppController {
 
   async function hydratePriorityMonitoredPage(
     token: string,
-    manualTokens: AddressItem[],
+    watchlistTokens: AddressItem[],
     chains: TokenChain[],
   ) {
     if (getCurrentMonitoredDashboardSnapshot().length > 0) return 'existing-snapshot';
@@ -12243,14 +12243,14 @@ export function createAppController(): AppController {
       const snapshotComplete = tokens.length >= firstPage.total || !firstPage.hasMore;
       applyPagedMonitoredHydrationSnapshot({
         token,
-        manualTokens,
+        watchlistTokens,
         tokens,
         pinnedTokens: firstPage.pinnedTokens || [],
         snapshotComplete,
         preserveExistingUntilComplete: false,
         generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
       });
-      void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
+      void hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: false });
       recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.priority-page', {
         generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
         returned: tokens.length,
@@ -12266,7 +12266,7 @@ export function createAppController(): AppController {
 
   async function hydrateRemainingMonitoredPages(input: {
     token: string;
-    manualTokens: AddressItem[];
+    watchlistTokens: AddressItem[];
     chains: TokenChain[];
     requestRevision: number;
     requestKey: string;
@@ -12311,7 +12311,7 @@ export function createAppController(): AppController {
       if (nextPage.tokens.length === 0) {
         applyPagedMonitoredHydrationSnapshot({
           token: input.token,
-          manualTokens: input.manualTokens,
+          watchlistTokens: input.watchlistTokens,
           tokens: aggregatedTokens,
           pinnedTokens: input.pinnedTokens,
           snapshotComplete: true,
@@ -12334,7 +12334,7 @@ export function createAppController(): AppController {
       });
       const applied = applyPagedMonitoredHydrationSnapshot({
         token: input.token,
-        manualTokens: input.manualTokens,
+        watchlistTokens: input.watchlistTokens,
         tokens: aggregatedTokens,
         pinnedTokens: input.pinnedTokens,
         snapshotComplete,
@@ -12342,7 +12342,7 @@ export function createAppController(): AppController {
         generatedAt: input.generatedAt,
       });
       if (applied) {
-        void hydrateManualTokensMetadataBatch(input.token, input.manualTokens, { emitOnComplete: false });
+        void hydrateWatchlistTokensMetadataBatch(input.token, input.watchlistTokens, { emitOnComplete: false });
       }
       await new Promise((resolve) => window.setTimeout(resolve, 0));
     }
@@ -12351,7 +12351,7 @@ export function createAppController(): AppController {
 
   async function hydratePagedDashboardMonitored(
     token: string,
-    manualTokens: AddressItem[],
+    watchlistTokens: AddressItem[],
     chains = getReadySelectedChains('monitored'),
     options: { fullHydration?: boolean } = {},
   ) {
@@ -12398,14 +12398,14 @@ export function createAppController(): AppController {
       : mergeMonitoredFirstPage(existingSnapshot, aggregatedTokens);
     applyPagedMonitoredHydrationSnapshot({
       token,
-      manualTokens,
+      watchlistTokens,
       tokens: previewTokens,
       pinnedTokens,
       snapshotComplete: true,
       preserveExistingUntilComplete: false,
       generatedAt,
     });
-    void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
+    void hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: false });
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
       generatedAt,
       returned: firstPage.tokens.length,
@@ -12428,7 +12428,7 @@ export function createAppController(): AppController {
 
     const completedTokens = await hydrateRemainingMonitoredPages({
       token,
-      manualTokens,
+      watchlistTokens,
       chains,
       requestRevision,
       requestKey,
@@ -12453,10 +12453,10 @@ export function createAppController(): AppController {
 
   async function hydrateDashboardMonitoredInternal(
     token: string,
-    manualTokens: AddressItem[],
+    watchlistTokens: AddressItem[],
   ) {
     recordRestoreControllerDebug('controller.dashboard-hydrate.start', {
-      manualTokens: manualTokens.length,
+      watchlistTokens: watchlistTokens.length,
       usesHistoryBootstrap: usesHistoryBucketBootstrap(),
     });
     if (
@@ -12471,10 +12471,10 @@ export function createAppController(): AppController {
         await Promise.all([
           refreshHistoryWorkspaceBootstrap({
             token,
-            watchlistTokensOverride: manualTokens,
+            watchlistTokensOverride: watchlistTokens,
             suppressErrors: true,
           }),
-          hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false }),
+          hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: false }),
         ]);
         if (isHistoryWorkspace()) {
           void refreshBidZoneTokens({ force: true });
@@ -12483,14 +12483,14 @@ export function createAppController(): AppController {
           emit('recent', 'old-week', 'header');
         }
         recordRestoreControllerDebug('controller.dashboard-hydrate.history.complete', {
-          manualTokens: manualTokens.length,
+          watchlistTokens: watchlistTokens.length,
         });
         return;
       }
 
       const priorityResult = await hydratePriorityMonitoredPage(
         token,
-        manualTokens,
+        watchlistTokens,
         getReadySelectedChains('monitored'),
       );
       if (!priorityResult) return;
@@ -12499,7 +12499,7 @@ export function createAppController(): AppController {
           pollInMs: Math.max(0, nextMonitoredDashboardPollAt - Date.now()),
         });
       } else {
-        await hydratePagedDashboardMonitored(token, manualTokens);
+        await hydratePagedDashboardMonitored(token, watchlistTokens);
         void refreshHistoryWorkspaceSparklines({
           token,
           caller: 'monitored-bootstrap-complete',
@@ -12536,7 +12536,7 @@ export function createAppController(): AppController {
     applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), getCurrentPinnedMonitoredDashboardSnapshot(), tokenFolders);
     recordRestoreControllerDebug('controller.config-reload.apply-preserved-dashboard', {
       deferDashboard: Boolean(options?.deferDashboard),
-      manualTokens: payload.tokens.length,
+      watchlistTokens: payload.tokens.length,
     });
 
     if (options?.deferDashboard) {
@@ -12688,7 +12688,7 @@ export function createAppController(): AppController {
       void hydrateDashboardMonitoredInternal(token, payload.tokens);
       recordRestoreControllerDebug('controller.restored-refresh.apply-preserved-snapshot', {
         force: Boolean(options.force),
-        manualTokens: payload.tokens.length,
+        watchlistTokens: payload.tokens.length,
       });
       void refreshMockTradingState();
       if (shouldRunHistoryAnalyticsRuntime()) {
@@ -13054,8 +13054,8 @@ export function createAppController(): AppController {
       ? state.data.monitoredTokenIdentities
       : [...state.data.monitoredTokenIdentities, identityKey];
 
-    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     refreshMonitoredPanelCounts();
     deriveAgeBuckets();
   }
@@ -13073,8 +13073,8 @@ export function createAppController(): AppController {
         _userWatchlist: false,
       });
     }
-    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshMonitoredPanelCounts();
   }
@@ -13103,8 +13103,8 @@ export function createAppController(): AppController {
         : [...state.data.monitoredTokenIdentities, identityKey]
       : state.data.monitoredTokenIdentities.filter((item) => item !== identityKey);
 
-    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.watchlist = state.data.watchlistTokenIdentities.length;
     refreshMonitoredPanelCounts();
     deriveAgeBuckets();
   }
@@ -13132,7 +13132,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function mergeHydratedManualToken(
+  function mergeHydratedWatchlistToken(
     address: string,
     currentTracked: WatchlistTokenEntry,
     dashboardItem: DashboardMonitoredToken,
@@ -13157,7 +13157,7 @@ export function createAppController(): AppController {
     return selectMergedTrackedToken(currentTracked, mergedItem);
   }
 
-  function applyHydratedManualToken(address: string, nextItem: WatchlistTokenEntry, currentTracked: WatchlistTokenEntry) {
+  function applyHydratedWatchlistToken(address: string, nextItem: WatchlistTokenEntry, currentTracked: WatchlistTokenEntry) {
     if (nextItem === currentTracked) {
       return;
     }
@@ -13169,58 +13169,58 @@ export function createAppController(): AppController {
     emit('monitored', 'manual', 'recent', 'old-week', 'header');
   }
 
-  function buildManualMetadataBatchCacheCandidate(
-    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
+  function buildWatchlistMetadataBatchCacheCandidate(
+    watchlistTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
   ) {
-    return manualTokens
+    return watchlistTokens
       .map((item) => item.address)
       .sort((left, right) => left.localeCompare(right))
       .join(',');
   }
 
-  function shouldReuseManualMetadataBatch(
+  function shouldReuseWatchlistMetadataBatch(
     cacheKeyCandidate: string,
-    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
+    watchlistTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
   ) {
-    if (cacheKeyCandidate !== manualMetadataBatchCacheKey || Date.now() >= manualMetadataBatchCacheExpiresAt) {
+    if (cacheKeyCandidate !== watchlistMetadataBatchCacheKey || Date.now() >= watchlistMetadataBatchCacheExpiresAt) {
       return false;
     }
 
-    return !manualTokens.some((item) => hasCriticalColdFieldGap(getTrackedToken(state, item.address)));
+    return !watchlistTokens.some((item) => hasCriticalColdFieldGap(getTrackedToken(state, item.address)));
   }
 
-  function shouldIncludeMeteoraInManualMetadataBatch(cacheKeyCandidate: string) {
-    return cacheKeyCandidate !== manualMetadataMeteoraCacheKey || Date.now() >= manualMetadataNextMeteoraRefreshAt;
+  function shouldIncludeMeteoraInWatchlistMetadataBatch(cacheKeyCandidate: string) {
+    return cacheKeyCandidate !== watchlistMetadataMeteoraCacheKey || Date.now() >= watchlistMetadataNextMeteoraRefreshAt;
   }
 
-  function resetManualMetadataBatchState() {
-    manualMetadataBatchCacheKey = '';
-    manualMetadataBatchCacheExpiresAt = 0;
-    manualMetadataMeteoraCacheKey = '';
-    manualMetadataNextMeteoraRefreshAt = 0;
+  function resetWatchlistMetadataBatchState() {
+    watchlistMetadataBatchCacheKey = '';
+    watchlistMetadataBatchCacheExpiresAt = 0;
+    watchlistMetadataMeteoraCacheKey = '';
+    watchlistMetadataNextMeteoraRefreshAt = 0;
   }
 
-  function updateManualMetadataBatchRefreshState(cacheKeyCandidate: string, includeMeteora: boolean) {
+  function updateWatchlistMetadataBatchRefreshState(cacheKeyCandidate: string, includeMeteora: boolean) {
     const now = Date.now();
-    manualMetadataBatchCacheKey = cacheKeyCandidate;
-    manualMetadataBatchCacheExpiresAt = now + MANUAL_METADATA_BATCH_CACHE_MS;
+    watchlistMetadataBatchCacheKey = cacheKeyCandidate;
+    watchlistMetadataBatchCacheExpiresAt = now + WATCHLIST_METADATA_BATCH_CACHE_MS;
     if (includeMeteora) {
-      manualMetadataMeteoraCacheKey = cacheKeyCandidate;
-      manualMetadataNextMeteoraRefreshAt = now + MANUAL_METADATA_METEORA_REFRESH_MS;
+      watchlistMetadataMeteoraCacheKey = cacheKeyCandidate;
+      watchlistMetadataNextMeteoraRefreshAt = now + WATCHLIST_METADATA_METEORA_REFRESH_MS;
     }
   }
 
-  async function hydrateManualTokensMetadataBatch(
+  async function hydrateWatchlistTokensMetadataBatch(
     token: string,
-    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
+    watchlistTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
     options?: { emitOnComplete?: boolean },
   ) {
     if (state.session.token !== token || !isAuthenticatedSession()) {
       return;
     }
 
-    const normalizedManualTokens = Array.from(new Map(
-      (Array.isArray(manualTokens) ? manualTokens : [])
+    const normalizedWatchlistTokens = Array.from(new Map(
+      (Array.isArray(watchlistTokens) ? watchlistTokens : [])
         .filter((item) => resolveAppTokenChain(item?.chain) === 'solana')
         .map((item) => ({
           chain: 'solana' as const,
@@ -13231,83 +13231,83 @@ export function createAppController(): AppController {
         .map((item) => [item.address, item]),
     ).values());
 
-    if (normalizedManualTokens.length === 0) {
-      resetManualMetadataBatchState();
+    if (normalizedWatchlistTokens.length === 0) {
+      resetWatchlistMetadataBatchState();
       return;
     }
 
-    const manualMetadataBatchCacheKeyCandidate = buildManualMetadataBatchCacheCandidate(normalizedManualTokens);
-    const criticalGapAddresses = normalizedManualTokens
+    const watchlistMetadataBatchCacheKeyCandidate = buildWatchlistMetadataBatchCacheCandidate(normalizedWatchlistTokens);
+    const criticalGapAddresses = normalizedWatchlistTokens
       .filter((item) => hasCriticalColdFieldGap(getTrackedToken(state, item.address)))
       .map((item) => item.address);
     recordSparklineDebug('metadata.request', {
-      addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
+      addresses: summarizeSparklineDebugAddresses(normalizedWatchlistTokens.map((item) => item.address)),
       criticalGaps: summarizeSparklineDebugAddresses(criticalGapAddresses),
-      cacheKeyMatches: manualMetadataBatchCacheKeyCandidate === manualMetadataBatchCacheKey,
-      cacheExpiresInMs: Math.max(0, manualMetadataBatchCacheExpiresAt - Date.now()),
-      inFlight: Boolean(manualMetadataBatchRefreshInFlight),
+      cacheKeyMatches: watchlistMetadataBatchCacheKeyCandidate === watchlistMetadataBatchCacheKey,
+      cacheExpiresInMs: Math.max(0, watchlistMetadataBatchCacheExpiresAt - Date.now()),
+      inFlight: Boolean(watchlistMetadataBatchRefreshInFlight),
     });
-    if (shouldReuseManualMetadataBatch(manualMetadataBatchCacheKeyCandidate, normalizedManualTokens)) {
+    if (shouldReuseWatchlistMetadataBatch(watchlistMetadataBatchCacheKeyCandidate, normalizedWatchlistTokens)) {
       recordSparklineDebug('metadata.cache-hit', {
-        addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
-        cacheExpiresInMs: Math.max(0, manualMetadataBatchCacheExpiresAt - Date.now()),
+        addresses: summarizeSparklineDebugAddresses(normalizedWatchlistTokens.map((item) => item.address)),
+        cacheExpiresInMs: Math.max(0, watchlistMetadataBatchCacheExpiresAt - Date.now()),
       });
       return;
     }
 
-    const includeMeteora = shouldIncludeMeteoraInManualMetadataBatch(manualMetadataBatchCacheKeyCandidate);
-    const refreshKey = `${manualMetadataBatchCacheKeyCandidate}:${includeMeteora ? 'meteora' : 'base'}`;
-    if (manualMetadataBatchRefreshInFlight && manualMetadataBatchRefreshInFlightKey === refreshKey) {
+    const includeMeteora = shouldIncludeMeteoraInWatchlistMetadataBatch(watchlistMetadataBatchCacheKeyCandidate);
+    const refreshKey = `${watchlistMetadataBatchCacheKeyCandidate}:${includeMeteora ? 'meteora' : 'base'}`;
+    if (watchlistMetadataBatchRefreshInFlight && watchlistMetadataBatchRefreshInFlightKey === refreshKey) {
       recordSparklineDebug('metadata.joined-in-flight', {
-        addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
+        addresses: summarizeSparklineDebugAddresses(normalizedWatchlistTokens.map((item) => item.address)),
         includeMeteora,
       });
-      await manualMetadataBatchRefreshInFlight;
+      await watchlistMetadataBatchRefreshInFlight;
       if (options?.emitOnComplete !== false && state.session.token === token && isAuthenticatedSession()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'header');
       }
       return;
     }
 
-    const refreshPromise = hydrateManualTokensMetadataBatchInternal(
+    const refreshPromise = hydrateWatchlistTokensMetadataBatchInternal(
       token,
-      normalizedManualTokens,
-      manualMetadataBatchCacheKeyCandidate,
+      normalizedWatchlistTokens,
+      watchlistMetadataBatchCacheKeyCandidate,
       includeMeteora,
       options,
     );
-    manualMetadataBatchRefreshInFlight = refreshPromise;
-    manualMetadataBatchRefreshInFlightKey = refreshKey;
+    watchlistMetadataBatchRefreshInFlight = refreshPromise;
+    watchlistMetadataBatchRefreshInFlightKey = refreshKey;
     try {
       await refreshPromise;
     } finally {
-      if (manualMetadataBatchRefreshInFlight === refreshPromise) {
-        manualMetadataBatchRefreshInFlight = null;
-        manualMetadataBatchRefreshInFlightKey = '';
+      if (watchlistMetadataBatchRefreshInFlight === refreshPromise) {
+        watchlistMetadataBatchRefreshInFlight = null;
+        watchlistMetadataBatchRefreshInFlightKey = '';
       }
     }
   }
 
-  async function hydrateManualTokensMetadataBatchInternal(
+  async function hydrateWatchlistTokensMetadataBatchInternal(
     token: string,
-    normalizedManualTokens: Array<{ address: string; label?: string | null }>,
-    manualMetadataBatchCacheKeyCandidate: string,
+    normalizedWatchlistTokens: Array<{ address: string; label?: string | null }>,
+    watchlistMetadataBatchCacheKeyCandidate: string,
     includeMeteora: boolean,
     options?: { emitOnComplete?: boolean },
   ) {
     let changed = false;
 
-    for (let index = 0; index < normalizedManualTokens.length; index += 500) {
+    for (let index = 0; index < normalizedWatchlistTokens.length; index += 500) {
       if (state.session.token !== token || !isAuthenticatedSession()) {
         return;
       }
 
-      const chunk = normalizedManualTokens.slice(index, index + 500);
+      const chunk = normalizedWatchlistTokens.slice(index, index + 500);
       const chunkAddresses = chunk.map((item) => item.address);
       const startedAt = Date.now();
       recordSparklineDebug('metadata.fetch-start', {
         chunk: Math.floor(index / 500) + 1,
-        chunks: Math.ceil(normalizedManualTokens.length / 500),
+        chunks: Math.ceil(normalizedWatchlistTokens.length / 500),
         includeMeteora,
         addresses: summarizeSparklineDebugAddresses(chunkAddresses),
       });
@@ -13342,24 +13342,24 @@ export function createAppController(): AppController {
       }
 
       const dashboardByAddress = new Map(dashboardItems.map((item) => [item.address, item]));
-      for (const manualToken of chunk) {
-        const currentTracked = getTrackedToken(state, manualToken.address);
-        const dashboardItem = dashboardByAddress.get(manualToken.address);
+      for (const watchlistToken of chunk) {
+        const currentTracked = getTrackedToken(state, watchlistToken.address);
+        const dashboardItem = dashboardByAddress.get(watchlistToken.address);
         if (!currentTracked || !dashboardItem) {
           continue;
         }
 
-        const nextItem = mergeHydratedManualToken(manualToken.address, currentTracked, dashboardItem);
+        const nextItem = mergeHydratedWatchlistToken(watchlistToken.address, currentTracked, dashboardItem);
         if (nextItem === currentTracked) {
           continue;
         }
 
-        replaceTrackedTokenReferences(manualToken.address, nextItem);
+        replaceTrackedTokenReferences(watchlistToken.address, nextItem);
         changed = true;
       }
     }
 
-    updateManualMetadataBatchRefreshState(manualMetadataBatchCacheKeyCandidate, includeMeteora);
+    updateWatchlistMetadataBatchRefreshState(watchlistMetadataBatchCacheKeyCandidate, includeMeteora);
 
     if (!changed) {
       return;
@@ -13401,8 +13401,8 @@ export function createAppController(): AppController {
       return false;
     }
 
-    const nextItem = mergeHydratedManualToken(address, currentTracked, dashboardItem);
-    applyHydratedManualToken(address, nextItem, currentTracked);
+    const nextItem = mergeHydratedWatchlistToken(address, currentTracked, dashboardItem);
+    applyHydratedWatchlistToken(address, nextItem, currentTracked);
     return !hasCriticalColdFieldGap(nextItem);
   }
 
@@ -15756,7 +15756,7 @@ export function createAppController(): AppController {
       const folderSnapshot = state.data.manualTokenFolders.map((item) => ({ ...item }));
       const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
       const visibleFolderIdsSnapshot = [...state.ui.manualVisibleFolderIds];
-      const manualAddressesSnapshot = [...state.data.watchlistTokenIdentities];
+      const watchlistAddressesSnapshot = [...state.data.watchlistTokenIdentities];
       const trackedTokenSnapshots = Object.fromEntries(
         removedIdentities
           .map((item) => {
@@ -15791,8 +15791,8 @@ export function createAppController(): AppController {
           });
         }
       }
-      state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-      state.bars.manual = state.data.watchlistTokenIdentities.length;
+      state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+      state.bars.watchlist = state.data.watchlistTokenIdentities.length;
       deriveAgeBuckets();
       refreshMonitoredPanelCounts();
       emit('manual', 'monitored', 'header');
@@ -15815,7 +15815,7 @@ export function createAppController(): AppController {
         state.data.manualTokenFolders = folderSnapshot;
         state.data.manualTokenFolderItems = folderItemsSnapshot;
         state.ui.manualVisibleFolderIds = visibleFolderIdsSnapshot;
-        state.data.watchlistTokenIdentities = manualAddressesSnapshot;
+        state.data.watchlistTokenIdentities = watchlistAddressesSnapshot;
         for (const [identityKey, snapshot] of Object.entries(trackedTokenSnapshots)) {
           if (snapshot) {
             setTrackedToken(snapshot);
@@ -15824,8 +15824,8 @@ export function createAppController(): AppController {
             deleteTrackedToken(identity.address, identity.chain);
           }
         }
-        state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
-        state.bars.manual = state.data.watchlistTokenIdentities.length;
+        state.configSummary.watchlistTokens = state.data.watchlistTokenIdentities.length;
+        state.bars.watchlist = state.data.watchlistTokenIdentities.length;
         deriveAgeBuckets();
         refreshMonitoredPanelCounts();
         setError(error instanceof Error ? error.message : 'Failed to delete folder');

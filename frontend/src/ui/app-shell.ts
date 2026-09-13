@@ -7,7 +7,7 @@ import { patchMonitoredSection, renderMonitoredSection } from './sections/monito
 import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
 import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
-import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
+import { resolveWatchlistTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
 import { buildTokenIdentityKey, type TokenChain } from '../utils/token-chain';
@@ -1485,7 +1485,7 @@ function getMonitoredRenderKey(state: AppState) {
 
 function getWatchlistRenderKey(state: AppState) {
   const watchlistTokens = getWatchlistTokens(state);
-  const filteredWatchlistTokens = resolveManualTableRows(watchlistTokens, {
+  const filteredWatchlistTokens = resolveWatchlistTableRows(watchlistTokens, {
     searchQuery: state.ui.watchlistSearchQuery,
     sortCriteria: state.ui.watchlistSorts,
   });

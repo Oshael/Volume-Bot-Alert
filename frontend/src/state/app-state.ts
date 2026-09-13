@@ -255,7 +255,7 @@ export interface WatchlistTokenEntry {
   _isTopPerformer?: boolean;
   performanceRank?: number | null;
   performanceScore?: number | null;
-  meteora?: ManualTokenMeteoraEntry | null;
+  meteora?: WatchlistTokenMeteoraEntry | null;
   tickerPeers?: AlertEntry['tickerPeers'];
   _isPinnedMonitored?: boolean;
   pinnedSortOrder?: number | null;
@@ -338,7 +338,7 @@ export interface MeteoraEntry {
   history?: MeteoraTvlPoint[];
 }
 
-export interface ManualTokenMeteoraEntry {
+export interface WatchlistTokenMeteoraEntry {
   address: string;
   tvl?: number | null;
   poolAddress?: string | null;
@@ -783,7 +783,7 @@ export interface MarketTickerEntry {
 export interface ConfigSummary {
   loaded: boolean;
   configCount: number;
-  manualTokens: number;
+  watchlistTokens: number;
   blocklist: number;
   starredTokens: number;
   eligibleCatalogTokens: number;
@@ -848,7 +848,7 @@ export interface AppState {
     bidZoneRefreshInFlight: boolean;
   };
   bars: {
-    manual: number;
+    watchlist: number;
     recent: number;
     oldWeek: number;
     blocklist: number;
@@ -1072,7 +1072,7 @@ export function createAppState(): AppState {
       bidZoneRefreshInFlight: false,
     },
     bars: {
-      manual: 0,
+      watchlist: 0,
       recent: 0,
       oldWeek: 0,
       blocklist: 0,
@@ -1093,7 +1093,7 @@ export function createAppState(): AppState {
     configSummary: {
       loaded: false,
       configCount: 0,
-      manualTokens: 0,
+      watchlistTokens: 0,
       blocklist: 0,
       starredTokens: 0,
       eligibleCatalogTokens: 0,
