@@ -46,6 +46,20 @@ This document is the standalone implementation source of truth. Implementation m
 13. Horizontal drag-resize is removed and preset widths are authoritative. Bottom-edge vertical resizing remains for each
     visible Monitored or Alerts panel.
 14. When multiple panels are visible, dragging may exchange their positions without changing preset widths.
+15. The global workspace header gains one compact centered search field for token ticker, token contract or wallet address.
+    It searches every search-capable chain regardless of the user's current workspace chain selection.
+16. Search results always expose their chain and kind. Duplicate tickers produce separate choices and never select a token
+    implicitly; an exact contract or wallet match ranks ahead of text matches.
+17. A compact clipboard shortcut sits immediately left of global search. When a copied value resolves to a token contract,
+    the shortcut expands to show the token image and ticker; activating it opens that token's expanded chart.
+18. Clipboard access is gesture/permission-driven. The app may check on shortcut activation or an allowed focus/visibility
+    transition, but it does not continuously poll, retain unrelated clipboard contents or upload text before local address
+    classification.
+19. A compact single-monitor SVG control sits left of the clipboard shortcut. It opens the fixed-layout preset picker with
+    small schematic previews of each available layout. Hover may preview it, but keyboard focus and click/tap must expose
+    the same choices.
+20. Alerts and Monitor navigation controls move immediately right of global search. Brand remains on the left and workspace
+    identity remains at the far right; all new boxes are materially more compact than the annotated concept image.
 
 ## Current repository evidence
 
@@ -97,6 +111,10 @@ both surfaces.
 - Do not let view membership mutate alert eligibility, catalog identity, risk state or Watchlist membership.
 - Do not infer lifecycle when an adapter cannot prove it.
 - Do not poll to discover live changes already represented by an observed event.
+- Do not make global search obey pane or workspace chain filters; availability and search capability are its only chain
+  gates. In the initial Robinhood-only release this still yields Robinhood results until another chain has an accepted
+  search adapter and canonical source.
+- Do not continuously read or send the user's clipboard, and do not treat clipboard text as a command.
 - Do not create a standalone VPS service. Extend existing Robinhood capture, persistence and publication boundaries. If a
   permanent service later becomes necessary, read `docs/new-worker-service-runbook.md` before proposing it.
 
@@ -310,6 +328,68 @@ One-pane presets persist the primary selection. Two-pane presets persist primary
 in one pane is disabled in the other; corrupted duplicates normalize to `Trending + Watchlist`; returning to one pane
 preserves the secondary choice; and each pane preserves scroll independently.
 
+## Global discovery header
+
+The workspace header is a discovery surface, not a filter for the current panel. Its desktop logical order is:
+
+```text
+Brand | Layout preset SVG | Clipboard token shortcut | Global search | Alerts | Monitor | Workspace identity
+```
+
+Global search remains visually centered. The left and right control clusters must not displace it when their contents
+change; use a centered grid/overlay contract with responsive collision rules rather than balancing arbitrary widths. The
+field and adjacent controls use compact heights, gaps and result cards. On narrower screens they may collapse into an
+explicit search affordance or a second header row without changing search scope.
+
+### Cross-chain search contract
+
+The accepted inputs are ticker/name text, an exact token contract or an exact wallet address. Search runs across all chains
+whose adapters declare the relevant capability, independently from `enabledChains`, Radar filters or the active Monitored
+view. Robinhood is the only search adapter enabled in the first release; adding Solana or another chain still requires its
+accepted canonical source.
+
+```text
+GlobalSearchQuery {
+  query
+  kinds: token | wallet
+  chains: all search-capable chains
+  limit
+}
+
+GlobalSearchHit {
+  kind: token | wallet
+  chain
+  address
+  symbol? | displayLabel?
+  name?
+  imageUrl?
+  destination
+  match: exact_address | exact_ticker | prefix | text
+}
+```
+
+Normalize and classify the query locally before dispatch. Exact address matches rank before ticker/name matches, then
+stable comparable relevance and `(chain,address)` break ties. Token results open the canonical expanded chart. Wallet
+results open a canonical wallet detail destination; wallet search must remain disabled with an explicit unavailable state
+until that destination and a bounded wallet index/read model exist. Debounce text input, cancel stale requests, cap result
+count and never scan live tables or call providers once per keystroke.
+
+### Clipboard token shortcut
+
+The closed state is a clipboard/paste identifier. After an allowed clipboard read, locally reject empty, oversized or
+non-address text before any request. A valid address uses the same exact-address resolver as global search. Only a resolved
+token expands the shortcut, showing its sanitized image, ticker and chain label; unresolved addresses remain a compact
+neutral state. The resolved state is ephemeral, clears when clipboard content changes or the session ends and never adds
+the token to Watchlist. Click, Enter or Space opens the expanded chart.
+
+### Layout preset picker
+
+The trigger is an authored single-monitor SVG that inherits the UI theme; do not use a bitmap asset. Its popover lists only
+currently enabled presets. Each option includes its name and a small schematic SVG preview with blocks representing primary
+Monitored, secondary Monitored and Alerts proportions. The current preset is selected, unavailable responsive presets are
+disabled with a reason, and choosing one uses the same preference mutation defined below. The popover supports hover
+preview, click/tap selection, arrow-key navigation, Escape dismissal and focus return to the trigger.
+
 ## Fixed layout presets
 
 ### 1. Discovery + Alerts
@@ -370,6 +450,7 @@ Prefer one chain-aware read boundary:
 
 ```text
 GET /api/dashboard/token-views/:view?chains=robinhood&limit=40
+GET /api/search/global?q=...&kinds=token,wallet&limit=...
 ```
 
 System views are `trending`, `migrated` and `pre-bonded`. Watchlist keeps authenticated user configuration as membership
@@ -378,6 +459,11 @@ source but may reuse the hydrated row mapper.
 The parser rejects unavailable chains, defaults to enabled chains, caps system views at 40, captures one normalized `asOf`
 for all adapters, returns per-chain capability/readiness, deduplicates by identity and keys caches by view, chains, limit,
 score version and policy version.
+
+Global search does not accept the workspace's selected chains as an implicit scope. The server resolves all registered
+search-capable adapters, returns explicit per-chain/kind availability and enforces bounded query length, result limit,
+timeout and cancellation. Exact token-contract lookup and clipboard resolution share this endpoint and normalization. Do
+not enable wallet hits until a bounded canonical wallet read model and destination exist.
 
 The response distinguishes `ready with zero results`, `unsupported` and `syncing`; it never reports an unsupported lifecycle
 view as an ordinary empty result.
@@ -468,12 +554,23 @@ remove pagination/filter controls; and keep reads and DOM work bounded.
 Add presets and two pane slots, prevent duplicate views, remove horizontal resize, preserve bottom resize and drag exchange,
 and add Command Center's responsive guard.
 
+Include the compact authored monitor SVG and accessible preset popover here. Its schematic SVG previews are pure layout
+diagrams and call the same preset resolver used by persisted preferences; they do not maintain a second layout state.
+
 ### Slice 7: Alerts sparkline convergence
 
 Move compact cache ownership to token identity, share fetch deduplication/live merges, prioritize visible Alerts Focus
 identities and remove redundant per-alert series ownership after compatibility is proven.
 
-### Slice 8: rollout and cleanup
+### Slice 8: global discovery header
+
+Split this cross-cutting surface into bounded cuts: first add the chain-adapter search contract and exact-address resolver;
+then add the centered compact header search and result navigation; then add the permission-safe clipboard token shortcut.
+Keep Alerts/Monitor controls immediately right of search and validate desktop centering plus narrow collision behavior.
+Token search ships for Robinhood first. Wallet results stay explicitly unavailable until their canonical read model and
+detail destination are implemented and tested.
+
+### Slice 9: rollout and cleanup
 
 Enable behind a reversible gate, run score/UI validation, remove old surfaces and dead resize code, remove compatibility
 only after telemetry confirms migration, and consolidate `docs/bot-reference.md` with the final operational state.
@@ -486,6 +583,8 @@ only after telemetry confirms migration, and consolidate `docs/bot-reference.md`
 - global multi-chain pool versus one-chain filtering;
 - missing/partial coverage exclusion;
 - pane duplicate normalization and preset resolution;
+- global-search classification, deterministic ranking, bounds and independence from workspace chain filters;
+- clipboard local rejection, permission states and stale-resolution cancellation;
 - Watchlist legacy preference normalization.
 
 ### Integration
@@ -496,6 +595,7 @@ only after telemetry confirms migration, and consolidate `docs/bot-reference.md`
 - flat Watchlist star-driven add/remove;
 - UI preference migration;
 - shared sparkline identity and duplicate-alert deduplication.
+- global exact-address resolution, duplicate-ticker disambiguation and per-chain/kind availability.
 
 ### Frontend build and smoke
 
@@ -506,6 +606,10 @@ only after telemetry confirms migration, and consolidate `docs/bot-reference.md`
 - no horizontal resize, with vertical resize and drag exchange retained;
 - Alerts Focus sparkline advances after a live bucket;
 - Watchlist star-driven add/remove and search behavior remains intact; dormant folder data remains unchanged.
+- global search stays centered, searches all search-capable chains despite the active filter and navigates token hits to the
+  expanded chart;
+- preset SVG/popover supports pointer and keyboard use, and clipboard denial leaves the header usable without repeated
+  prompts or background polling.
 
 ### Commands by affected slice
 
@@ -523,7 +627,9 @@ only after telemetry confirms migration, and consolidate `docs/bot-reference.md`
 4. Capture and review representative 40-token Robinhood snapshots.
 5. Deploy Watchlist compatibility readers and canonical writers.
 6. Deploy fixed-layout multi-view frontend behind a reversible gate.
-7. Enable internally, expand, then remove old UI/compatibility only after telemetry confirms no dependency.
+7. Deploy the global search contract and header behind its own reversible gate, enabling only adapters with canonical
+   sources and destinations.
+8. Enable internally, expand, then remove old UI/compatibility only after telemetry confirms no dependency.
 
 Rollback disables the frontend gate and restores prior presentation. It never deletes lifecycle evidence, Watchlist
 membership, folders or migrated preferences. Additive schema remains until separately approved cleanup.
@@ -539,4 +645,8 @@ membership, folders or migrated preferences. Additive schema remains until separ
 - Five presets work as specified, or Command Center is explicitly deferred while the other four ship.
 - Horizontal resize is absent; vertical resize and allowed drag exchange remain.
 - Alerts Focus uses the same advancing series as Monitored.
+- The compact global header contains the accessible SVG preset picker, permission-safe clipboard token shortcut, centered
+  cross-chain search and Alerts/Monitor controls in the approved order.
+- Global search ignores the current workspace chain filter, disambiguates duplicate tickers and never advertises wallet
+  navigation before a canonical wallet result destination exists.
 - Operational docs, schema checks, targeted tests, frontend build and relevant smoke tests pass.
