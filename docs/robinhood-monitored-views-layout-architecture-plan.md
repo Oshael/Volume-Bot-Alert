@@ -691,6 +691,9 @@ series is removed:
   after duplicate-fetch, shared-render and live-merge coverage passes; update the operational reference, run scoped
   dead-reference searches and validate the frontend build, smoke coverage and repository lint. Estimated change: 250–400
   lines.
+  **Completed:** accepted live buckets now update and persist the canonical identity series, invalidate all visible consumers
+  in one revision and reject late source buckets before merge; the alert-ID storage key, compatibility migration and
+  alert-named refresh queue are removed after focused merge and shared-render coverage.
 
 ### Slice 8: global discovery header
 

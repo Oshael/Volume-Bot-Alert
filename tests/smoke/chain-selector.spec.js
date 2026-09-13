@@ -1617,6 +1617,7 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
 
 test('shares one compact sparkline identity across duplicate token alerts', async ({ page }) => {
   const sparklineRequestPayloads = [];
+  const socketScenario = { socket: null, clientFrames: [] };
   const duplicateEvents = [201, 202].map((id) => ({
     id,
     chain: 'solana',
@@ -1652,11 +1653,17 @@ test('shares one compact sparkline identity across duplicate token alerts', asyn
         items: identities.map((identity) => ({
           ...identity,
           valuationType: 'market-cap',
+          granularityMinutes: payload.granularityMinutes,
+          latestBucketAt: '2026-07-14T18:00:00.000Z',
           series: [250000, 300000],
+          candles: [
+            { bucketTs: '2026-07-14T17:30:00.000Z', granularityMinutes: payload.granularityMinutes, closeMcap: 250000, sampleCount: 1 },
+            { bucketTs: '2026-07-14T18:00:00.000Z', granularityMinutes: payload.granularityMinutes, closeMcap: 300000, sampleCount: 1 },
+          ],
         })),
       };
     },
-  });
+  }, '/alerts', socketScenario);
   const identityKey = `solana:${SOLANA_MONITORED}`;
   const alertCharts = page.locator('article.alert-row .sparkline-wrap');
 
@@ -1671,6 +1678,33 @@ test('shares one compact sparkline identity across duplicate token alerts', asyn
   expect(sparklineRequestPayloads.flatMap((payload) => (
     Array.isArray(payload.identities) ? payload.identities : []
   )).filter((identity) => `${identity.chain}:${identity.address}` === identityKey)).toHaveLength(1);
+
+  const initialAlertSummaries = await alertCharts.evaluateAll((charts) => (
+    charts.map((chart) => chart.getAttribute('data-sparkline-summary'))
+  ));
+  await expect.poll(() => socketScenario.clientFrames.some((frame) => (
+    frame.includes('"market:sync"') && frame.includes(`"address":"${SOLANA_MONITORED}"`)
+  ))).toBe(true);
+  sendSocketEvent(socketScenario, 'market:bucket', {
+    type: 'market:bucket', chain: 'solana', address: SOLANA_MONITORED,
+    bucketTs: '2026-07-14T18:01:00.000Z', granularityMinutes: 1,
+    generatedAt: '2026-07-14T18:01:10.000Z', sequence: 'solana:000000000000000000000001',
+    valuation: { type: 'mcap', mcapUsd: 360000, observedAt: '2026-07-14T18:01:10.000Z' },
+    candle: {
+      bucketTs: '2026-07-14T18:01:00.000Z', granularityMinutes: 1,
+      openMcap: 300000, highMcap: 365000, lowMcap: 295000, closeMcap: 360000, sampleCount: 2,
+    },
+  });
+  await expect.poll(async () => alertCharts.evaluateAll((charts) => (
+    charts.map((chart) => chart.getAttribute('data-sparkline-summary'))
+  ))).not.toEqual(initialAlertSummaries);
+  expect(await alertCharts.evaluateAll((charts) => (
+    charts.map((chart) => chart.getAttribute('data-sparkline-summary'))
+  ))).toEqual(Array(2).fill(await alertCharts.first().getAttribute('data-sparkline-summary')));
+  await expect.poll(async () => page.evaluate(({ key, identity }) => {
+    const stored = JSON.parse(window.localStorage.getItem(key) || '{}');
+    return stored[identity]?.series?.at(-1);
+  }, { key: 'frontend_vite:smoke@example.test:compact_sparklines', identity: identityKey })).toBe(360000);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

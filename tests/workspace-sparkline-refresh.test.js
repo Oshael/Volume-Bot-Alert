@@ -3,11 +3,10 @@ const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
 let buildWorkspaceSparklineBatches;
-let hydrateCompactSparklineCache;
 let isWorkspaceSparklineSessionCurrent;
+let mergeWorkspaceSparklineLiveEntry;
 let mergeWorkspaceSparklineRefreshEntry;
 let mergeWorkspaceSparklineSnapshotEntry;
-let migrateLegacyAlertSparklineCache;
 let normalizeCompactSparklineCache;
 let resolveWorkspaceSparklineGranularityMinutes;
 let resolveWorkspaceSparklineRequestShape;
@@ -22,11 +21,10 @@ before(async () => {
   ({
     buildWorkspaceSparklineBatches,
     getWorkspaceSparklineNextRefreshAt,
-    hydrateCompactSparklineCache,
     isWorkspaceSparklineSessionCurrent,
+    mergeWorkspaceSparklineLiveEntry,
     mergeWorkspaceSparklineRefreshEntry,
     mergeWorkspaceSparklineSnapshotEntry,
-    migrateLegacyAlertSparklineCache,
     normalizeCompactSparklineCache,
     resolveWorkspaceSparklineGranularityMinutes,
     resolveWorkspaceSparklineRequestShape,
@@ -70,56 +68,6 @@ describe('compact sparkline identity cache', () => {
     assert.deepEqual(solana[`solana:${solanaAddress}`].series.slice(0, 2), [5, 6]);
   });
 
-  it('collapses duplicate alert rows to the newest series while isolating chains', () => {
-    const migrated = migrateLegacyAlertSparklineCache({
-      'alert-a': {
-        address: solanaAddress,
-        generatedAt: '2026-09-13T12:00:00.000Z',
-        series: [1, 2],
-      },
-      'alert-b': {
-        address: solanaAddress,
-        generatedAt: '2026-09-13T12:01:00.000Z',
-        series: [3, 4],
-      },
-      'alert-c': {
-        address: evmAddress,
-        generatedAt: '2026-09-13T12:02:00.000Z',
-        series: [5, 6],
-      },
-      orphan: { address: solanaAddress, series: [7, 8] },
-    }, [
-      { id: 'alert-a', chain: 'solana', address: solanaAddress },
-      { id: 'alert-b', chain: 'solana', address: solanaAddress },
-      { id: 'alert-c', chain: 'robinhood', address: evmAddress },
-    ]);
-
-    assert.deepEqual(Object.keys(migrated).sort(), [
-      `robinhood:${evmAddress}`,
-      `solana:${solanaAddress}`,
-    ]);
-    assert.deepEqual(migrated[`solana:${solanaAddress}`].series, [3, 4]);
-    assert.deepEqual(migrated[`robinhood:${evmAddress}`].series, [5, 6]);
-  });
-
-  it('prefers an existing canonical entry over migrated legacy data', () => {
-    const identityKey = `solana:${solanaAddress}`;
-    const cache = hydrateCompactSparklineCache({
-      [identityKey]: {
-        address: solanaAddress,
-        generatedAt: '2026-09-13T11:00:00.000Z',
-        series: [10, 11],
-      },
-    }, {
-      legacy: {
-        address: solanaAddress,
-        generatedAt: '2026-09-13T12:00:00.000Z',
-        series: [20, 21],
-      },
-    }, [{ id: 'legacy', chain: 'solana', address: solanaAddress }]);
-
-    assert.deepEqual(cache[identityKey].series, [10, 11]);
-  });
 });
 
 describe('workspace sparkline request shape', () => {
@@ -373,6 +321,46 @@ describe('workspace sparkline refresh selection', () => {
       refreshedAt: 100,
       series: [10, 12],
     }, incoming), incoming);
+  });
+
+  it('merges an accepted live candle into the canonical compact identity series', () => {
+    const previous = {
+      chain: 'robinhood', address: '0x1', valuationType: 'fdv', hours: 24,
+      granularityMinutes: 5, points: 3,
+      generatedAt: '2026-08-02T12:00:30.000Z', series: [90, 100],
+      candles: [
+        { bucketTs: '2026-08-02T11:55:00.000Z', closeFdvUsd: 90, sampleCount: 1 },
+        { bucketTs: '2026-08-02T12:00:00.000Z', highFdvUsd: 105, lowFdvUsd: 95, closeFdvUsd: 100, sampleCount: 2 },
+      ],
+    };
+    const merged = mergeWorkspaceSparklineLiveEntry(previous, {
+      bucketTs: '2026-08-02T12:04:00.000Z', granularityMinutes: 1, valuationType: 'fdv',
+      highFdvUsd: 125, lowFdvUsd: 98, closeFdvUsd: 120, sampleCount: 4,
+      liveSourceBucketTs: '2026-08-02T12:04:00.000Z', liveSequence: 'robinhood:3:1:1',
+    }, {
+      chain: 'robinhood', address: '0x1', generatedAt: '2026-08-02T12:04:10.000Z', defaultPoints: 60,
+    });
+
+    assert.deepEqual(merged.series, [90, 120]);
+    assert.equal(merged.candles[1].liveSequence, 'robinhood:3:1:1');
+  });
+
+  it('rejects a late live source bucket without mutating the compact series', () => {
+    const previous = {
+      chain: 'robinhood', address: '0x1', valuationType: 'fdv', granularityMinutes: 5,
+      series: [90, 120],
+      candles: [{
+        bucketTs: '2026-08-02T12:00:00.000Z', closeFdvUsd: 120, sampleCount: 4,
+        liveSourceBucketTs: '2026-08-02T12:04:00.000Z', liveSequence: 'robinhood:3:1:1',
+      }],
+    };
+    const merged = mergeWorkspaceSparklineLiveEntry(previous, {
+      bucketTs: '2026-08-02T12:03:00.000Z', granularityMinutes: 1, valuationType: 'fdv',
+      closeFdvUsd: 999, sampleCount: 9,
+      liveSourceBucketTs: '2026-08-02T12:03:00.000Z', liveSequence: 'robinhood:9:1:1',
+    }, { chain: 'robinhood', address: '0x1', defaultPoints: 60 });
+
+    assert.equal(merged, null);
   });
 
   it('keeps a newer realtime candle when an older HTTP snapshot finishes later', () => {

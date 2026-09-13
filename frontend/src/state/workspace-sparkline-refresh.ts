@@ -1,8 +1,8 @@
 import {
-  createLegacyCompatibleTokenIdentity,
   parseTokenIdentityKey,
   type TokenChain,
 } from '../utils/token-chain.ts';
+import type { TokenSparklineCandleEntry, TokenSparklineEntry } from './app-state.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -119,12 +119,6 @@ export type CompactSparklineCacheEntry = Omit<WorkspaceSparklineMergeValue, 'can
   series: number[];
 };
 
-export type LegacyAlertSparklineIdentity = {
-  id?: unknown;
-  chain?: unknown;
-  address?: unknown;
-};
-
 function optionalFiniteNumber(value: unknown) {
   if (value == null) return null;
   const parsed = Number(value);
@@ -210,44 +204,6 @@ export function normalizeCompactSparklineCache(
   return boundCompactSparklineCache(normalized, maxEntries);
 }
 
-export function migrateLegacyAlertSparklineCache(
-  value: unknown,
-  alerts: readonly LegacyAlertSparklineIdentity[],
-  maxEntries = MAX_PERSISTED_COMPACT_SPARKLINES,
-): Record<string, CompactSparklineCacheEntry> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const alertById = new Map(alerts.map((alert) => [String(alert.id || '').trim(), alert]));
-  const migrated = new Map<string, CompactSparklineCacheEntry>();
-
-  for (const [alertId, entry] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) {
-    const alert = alertById.get(alertId);
-    if (!alert) continue;
-    try {
-      const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
-      const normalizedEntry = normalizeCompactSparklineEntry(identity, entry);
-      const previous = migrated.get(identity.key);
-      if (normalizedEntry && (!previous
-        || getCompactSparklineRecency(normalizedEntry) > getCompactSparklineRecency(previous))) {
-        migrated.set(identity.key, normalizedEntry);
-      }
-    } catch {
-      // Ignore legacy rows that cannot resolve to a valid token identity.
-    }
-  }
-  return boundCompactSparklineCache([...migrated.entries()], maxEntries);
-}
-
-export function hydrateCompactSparklineCache(
-  canonicalValue: unknown,
-  legacyValue: unknown,
-  alerts: readonly LegacyAlertSparklineIdentity[],
-  maxEntries = MAX_PERSISTED_COMPACT_SPARKLINES,
-) {
-  const legacy = migrateLegacyAlertSparklineCache(legacyValue, alerts, maxEntries);
-  const canonical = normalizeCompactSparklineCache(canonicalValue, maxEntries);
-  return boundCompactSparklineCache(Object.entries({ ...legacy, ...canonical }), maxEntries);
-}
-
 function hasRenderableSeries(entry?: WorkspaceSparklineMergeValue | null) {
   return Array.isArray(entry?.series) && entry.series.length >= 2;
 }
@@ -299,6 +255,140 @@ function getCandleSeriesValue(
 ) {
   const value = valuationType === 'fdv' ? candle.closeFdvUsd : candle.closeMcap;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function floorLiveCandleBucketTs(bucketTs: string, granularityMinutes: number) {
+  const timestampMs = parseTimestamp(bucketTs);
+  if (timestampMs == null) return null;
+  const bucketMs = Math.max(1, granularityMinutes) * 60 * 1000;
+  return new Date(Math.floor(timestampMs / bucketMs) * bucketMs).toISOString();
+}
+
+function firstPresent<T>(...values: Array<T | null | undefined>) {
+  return values.find((value) => value != null) ?? null;
+}
+
+function maxFinite(left: number | null | undefined, right: number | null | undefined) {
+  const values = [left, right].filter((value): value is number => Number.isFinite(value));
+  return values.length ? Math.max(...values) : null;
+}
+
+function minFinite(left: number | null | undefined, right: number | null | undefined) {
+  const values = [left, right].filter((value): value is number => Number.isFinite(value));
+  return values.length ? Math.min(...values) : null;
+}
+
+function isNewerLiveCandle(
+  existing: TokenSparklineCandleEntry,
+  incoming: TokenSparklineCandleEntry,
+) {
+  const existingSource = parseTimestamp(existing.liveSourceBucketTs || existing.bucketTs) ?? 0;
+  const incomingSource = parseTimestamp(incoming.liveSourceBucketTs || incoming.bucketTs) ?? 0;
+  return incomingSource > existingSource || (
+    incomingSource === existingSource
+    && String(incoming.liveSequence || '').localeCompare(String(existing.liveSequence || '')) > 0
+  );
+}
+
+function mergeAcceptedLiveCandle(
+  existing: TokenSparklineCandleEntry | null,
+  incoming: TokenSparklineCandleEntry,
+  granularityMinutes: number,
+) {
+  if (!existing) return { ...incoming, granularityMinutes };
+  if (!isNewerLiveCandle(existing, incoming)) return null;
+  return {
+    ...existing,
+    pairAddress: firstPresent(incoming.pairAddress, existing.pairAddress),
+    granularityMinutes,
+    openMcap: firstPresent(existing.openMcap, incoming.openMcap),
+    highMcap: maxFinite(existing.highMcap, incoming.highMcap),
+    lowMcap: minFinite(existing.lowMcap, incoming.lowMcap),
+    closeMcap: firstPresent(incoming.closeMcap, existing.closeMcap),
+    valuationType: firstPresent(incoming.valuationType, existing.valuationType),
+    openFdvUsd: firstPresent(existing.openFdvUsd, incoming.openFdvUsd),
+    highFdvUsd: maxFinite(existing.highFdvUsd, incoming.highFdvUsd),
+    lowFdvUsd: minFinite(existing.lowFdvUsd, incoming.lowFdvUsd),
+    closeFdvUsd: firstPresent(incoming.closeFdvUsd, existing.closeFdvUsd),
+    openPrice: firstPresent(existing.openPrice, incoming.openPrice),
+    highPrice: maxFinite(existing.highPrice, incoming.highPrice),
+    lowPrice: minFinite(existing.lowPrice, incoming.lowPrice),
+    closePrice: firstPresent(incoming.closePrice, existing.closePrice),
+    openPriceUsd: firstPresent(existing.openPriceUsd, incoming.openPriceUsd),
+    highPriceUsd: maxFinite(existing.highPriceUsd, incoming.highPriceUsd),
+    lowPriceUsd: minFinite(existing.lowPriceUsd, incoming.lowPriceUsd),
+    closePriceUsd: firstPresent(incoming.closePriceUsd, existing.closePriceUsd),
+    sampleCount: Math.max(Number(existing.sampleCount) || 0, Number(incoming.sampleCount) || 0),
+    liveSourceBucketTs: incoming.liveSourceBucketTs,
+    liveSequence: incoming.liveSequence,
+  } satisfies TokenSparklineCandleEntry;
+}
+
+function canMergeLiveSparkline(previous: TokenSparklineEntry | null | undefined) {
+  return Boolean(previous && !previous.loading && Array.isArray(previous.candles));
+}
+
+function resolveLiveGeneratedAt(
+  previous: TokenSparklineEntry,
+  generatedAt?: string | null,
+) {
+  const previousMs = parseTimestamp(previous.generatedAt) ?? 0;
+  const incomingMs = parseTimestamp(generatedAt) ?? Date.now();
+  return incomingMs >= previousMs
+    ? (generatedAt || new Date(incomingMs).toISOString())
+    : previous.generatedAt;
+}
+
+export function mergeWorkspaceSparklineLiveEntry(
+  previous: TokenSparklineEntry | null | undefined,
+  incoming: TokenSparklineCandleEntry,
+  metadata: {
+    chain: TokenChain;
+    address: string;
+    pairAddress?: string | null;
+    generatedAt?: string | null;
+    defaultPoints: number;
+  },
+): TokenSparklineEntry | null {
+  if (!canMergeLiveSparkline(previous)) return null;
+  const current = previous as TokenSparklineEntry & { candles: TokenSparklineCandleEntry[] };
+  const granularityMinutes = Math.max(1, Number(current.granularityMinutes) || incoming.granularityMinutes);
+  const bucketTs = floorLiveCandleBucketTs(incoming.bucketTs, granularityMinutes);
+  if (!bucketTs) return null;
+  const normalizedIncoming = { ...incoming, bucketTs };
+  const existingIndex = current.candles.findIndex((candle) => candle.bucketTs === bucketTs);
+  const mergedCandle = mergeAcceptedLiveCandle(
+    existingIndex >= 0 ? current.candles[existingIndex] : null,
+    normalizedIncoming,
+    granularityMinutes,
+  );
+  if (!mergedCandle) return null;
+
+  const candles = current.candles.slice();
+  if (existingIndex >= 0) candles[existingIndex] = mergedCandle;
+  else candles.push(mergedCandle);
+  candles.sort((left, right) => (parseTimestamp(left.bucketTs) ?? 0) - (parseTimestamp(right.bucketTs) ?? 0));
+  const maxCandles = Math.max(current.candles.length, Number(current.points) || metadata.defaultPoints);
+  const boundedCandles = candles.slice(-maxCandles);
+  const valuationType = incoming.valuationType ?? current.valuationType;
+  const series = boundedCandles
+    .map((candle) => getCandleSeriesValue(candle, valuationType))
+    .filter((value): value is number => value != null);
+
+  return {
+    ...current,
+    chain: metadata.chain,
+    address: metadata.address,
+    valuationType,
+    pairAddress: metadata.pairAddress ?? current.pairAddress ?? null,
+    granularityMinutes,
+    generatedAt: resolveLiveGeneratedAt(current, metadata.generatedAt),
+    latestBucketAt: boundedCandles.at(-1)?.bucketTs ?? current.latestBucketAt ?? null,
+    bucketCount: boundedCandles.length,
+    series: series.length >= 2 ? series : current.series,
+    candles: boundedCandles,
+    loading: false,
+  };
 }
 
 export function mergeWorkspaceSparklineSnapshotEntry<T extends WorkspaceSparklineMergeValue>(

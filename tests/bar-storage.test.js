@@ -37,21 +37,16 @@ describe('compact sparkline storage', () => {
   const identityKey = `solana:${address}`;
   const storageKey = `frontend_vite:${scope}:compact_sparklines`;
 
-  it('hydrates legacy alert-id entries into the canonical identity key', () => {
+  it('loads and normalizes only the canonical identity cache', () => {
     const localStorage = createLocalStorage({
-      [`frontend_vite:${scope}:alert_sparklines`]: JSON.stringify({
-        legacy: {
-          address,
-          generatedAt: '2026-09-13T12:00:00.000Z',
-          series: [1, 2, 3],
-        },
+      [storageKey]: JSON.stringify({
+        [identityKey]: { address, series: [1, 2, 3] },
+        [address]: { address, series: [4, 5] },
       }),
     });
     global.window = { localStorage };
 
-    const cache = loadCompactSparklineCache(scope, [
-      { id: 'legacy', chain: 'solana', address },
-    ]);
+    const cache = loadCompactSparklineCache(scope);
 
     assert.deepEqual(cache[identityKey].series, [1, 2, 3]);
     assert.deepEqual(

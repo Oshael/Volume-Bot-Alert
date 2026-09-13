@@ -1482,11 +1482,10 @@ Por isso a VPS1 mantém flags de rollout/readiness Robinhood mesmo com
 `RUN_BACKGROUND_JOBS=false`.
 
 As sparklines compactas de Monitored e Alerts compartilham um único cache por
-`(chain,address)`; IDs de alerta não possuem séries próprias. O navegador persiste
-um subconjunto canônico limitado e, durante a transição, converte o antigo
-`alert_sparklines` por meio da identidade do alerta sem voltar a gravá-lo. O cache
-é abastecido por um único scheduler chain-aware para Monitored e Alerts. Novos
-alertas acordam esse fluxo por evento com debounce de 150 ms; a reconciliação de
+`(chain,address)`; IDs de alerta não possuem séries próprias e o navegador só lê e
+persiste o subconjunto canônico limitado `compact_sparklines`. O cache é abastecido
+por um único scheduler chain-aware para Monitored e Alerts. Mudanças na lista
+visível acordam esse fluxo por evento com debounce de 150 ms; a reconciliação de
 60 s permanece limitada às linhas Monitored com gráfico renderizado e aos 40
 alertas da página filtrada atual. No preset Alerts Focus, essas identidades de
 Alerts entram primeiro; nos demais presets, Monitored mantém a precedência. O
@@ -1498,10 +1497,12 @@ retomar pelo ciclo de reconciliação após a janela de freshness. A entrada
 preservada recebe apenas o novo instante de refresh, evitando apagar o gráfico ou
 iniciar retries agressivos; mudanças reais de range/resolução não reutilizam a
 série anterior. Eventos
-`market:bucket` atualizam métricas e candles em realtime; se um snapshot HTTP
-iniciado antes terminar depois, os candles
-realtime posteriores ao corte do snapshot são mesclados novamente para impedir
-rollback visual. Quando uma chain selecionada recupera as capacidades `monitored`
+`market:bucket` aceitos atualizam a série compacta canônica e invalidam, na mesma
+revisão, cada consumidor visível daquela identidade, inclusive alertas duplicados.
+Uma sequência ou bucket de origem atrasado não substitui o candle já aplicado; se
+um snapshot HTTP iniciado antes terminar depois, os candles realtime posteriores
+ao corte do snapshot são mesclados novamente para impedir rollback visual. Quando
+uma chain selecionada recupera as capacidades `monitored`
 ou `charts`, o controller força imediatamente a reidratação do dashboard e das
 sparklines; descoberta inicial de uma chain já pronta não conta como recuperação.
 

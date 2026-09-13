@@ -158,6 +158,7 @@ import {
   buildWorkspaceSparklineBatches,
   getWorkspaceSparklineNextRefreshAt,
   isWorkspaceSparklineSessionCurrent,
+  mergeWorkspaceSparklineLiveEntry,
   mergeWorkspaceSparklineRefreshEntry,
   mergeWorkspaceSparklineSnapshotEntry,
   resolveWorkspaceSparklineRequestShape as resolveAdaptiveWorkspaceSparklineRequestShape,
@@ -372,7 +373,7 @@ const SPARKLINE_DEBUG_MAX_ENTRIES = 400;
 const SPARKLINE_DEBUG_CONTEXT_MAX_ENTRIES = 160;
 const SPARKLINE_DEBUG_TRIGGER_CAPTURE_MS = 5 * 60 * 1000;
 const SPARKLINE_DEBUG_LOW_REMAINING_THRESHOLD = 80;
-const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
+const WORKSPACE_SPARKLINE_EVENT_DEBOUNCE_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
 const HISTORY_SYNC_PEER_TTL_MS = 6000;
@@ -1443,7 +1444,7 @@ export function createAppController(): AppController {
   let uiPrefsPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let uiPrefsPersistRevision = 0;
   let alertsPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  let sparklineRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let sparklineEventRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let alertsPersistScope: string | null = null;
   let alertsPersistLifecycleBound = false;
   let emitScheduled = false;
@@ -1952,6 +1953,10 @@ export function createAppController(): AppController {
     const identities = new Map<string, { chain: TokenChain; address: string }>();
     for (const token of getVisibleMonitoredPageTokens()) {
       const identity = createLegacyCompatibleTokenIdentity(token.chain || 'solana', token.address);
+      identities.set(identity.key, { chain: identity.chain, address: identity.address });
+      if (identities.size >= WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT) break;
+    }
+    for (const identity of getVisibleAlertSparklineIdentities()) {
       identities.set(identity.key, { chain: identity.chain, address: identity.address });
       if (identities.size >= WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT) break;
     }
@@ -5043,12 +5048,12 @@ export function createAppController(): AppController {
     clearRecentRemovalLogStorage(scope);
     clearOldWeekRemovalLogStorage(scope);
     state.data.alerts = loadAlerts(scope);
-    state.data.sparklineByAddress = loadCompactSparklineCache(scope, state.data.alerts);
+    state.data.sparklineByAddress = loadCompactSparklineCache(scope);
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision = state.data.alerts.length > 0 ? 1 : 0;
     state.panels.alerts = state.data.alerts.length;
     syncAlertPagination();
-    queueMissingAlertSparklineRefresh();
+    queueMissingVisibleWorkspaceSparklineRefresh();
     recordAlertMutationDebug('hydrate.local-storage', beforeAlerts, {
       scope,
       loaded: summarizeAlertDebug(state.data.alerts),
@@ -5068,6 +5073,7 @@ export function createAppController(): AppController {
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision += 1;
     state.panels.alerts = state.data.alerts.length;
+    syncWorkspaceMarketSubscriptions();
     scheduleAlertsPersist();
   }
 
@@ -6487,7 +6493,7 @@ export function createAppController(): AppController {
     recordAlertMutationDebug('push.apply', beforeAlerts, {
       entry: summarizeAlertDebug([entry]),
     });
-    queueAlertSparklineRefresh();
+    queueWorkspaceSparklineRefreshFromEvent();
     emit('alerts', 'legacy');
     return true;
   }
@@ -6528,7 +6534,7 @@ export function createAppController(): AppController {
     recordAlertMutationDebug('backend.upsert.update-existing', beforeAlerts, {
       entry: summarizeAlertDebug([entry]),
     });
-    queueAlertSparklineRefresh();
+    queueWorkspaceSparklineRefreshFromEvent();
     return true;
   }
 
@@ -6790,7 +6796,7 @@ export function createAppController(): AppController {
         builtEntries: summarizeAlertDebug(backendAlerts),
         localOnlyCount: localOnlyAlerts.length,
       });
-      queueMissingAlertSparklineRefresh();
+      queueMissingVisibleWorkspaceSparklineRefresh();
       emit('alerts', 'header', 'legacy');
       flushEmit();
     } catch (error) {
@@ -8460,37 +8466,18 @@ export function createAppController(): AppController {
     const identity = createLegacyCompatibleTokenIdentity(payload.chain, payload.address);
     const entry = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
     const liveCandle = buildLiveTokenChartCandle(payload);
-    if (!entry || entry.loading || !Array.isArray(entry.candles) || !liveCandle) {
-      return null;
-    }
-
-    const granularityMinutes = Math.max(1, Number(entry.granularityMinutes) || payload.granularityMinutes);
-    const maxCandles = Math.max(entry.candles.length, Number(entry.points) || SPARKLINE_POINT_COUNT);
-    const candles = mergeLiveCandleList(entry.candles, liveCandle, granularityMinutes, maxCandles);
-    if (!candles) {
-      return null;
-    }
-
-    const valuationType = liveCandle.valuationType ?? entry.valuationType;
-    const series = candles
-      .map((candle) => valuationType === 'fdv' ? candle.closeFdvUsd : candle.closeMcap)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    if (!liveCandle) return null;
+    const nextEntry = mergeWorkspaceSparklineLiveEntry(entry, liveCandle, {
+      chain: identity.chain,
+      address: identity.address,
+      pairAddress: payload.pairAddress,
+      generatedAt: payload.generatedAt,
+      defaultPoints: SPARKLINE_POINT_COUNT,
+    });
+    if (!nextEntry) return null;
     return {
       identity,
-      entry: {
-        ...entry,
-        chain: identity.chain,
-        address: identity.address,
-        valuationType,
-        pairAddress: payload.pairAddress ?? entry.pairAddress ?? null,
-        granularityMinutes,
-        generatedAt: payload.generatedAt || new Date().toISOString(),
-        latestBucketAt: candles[candles.length - 1]?.bucketTs ?? entry.latestBucketAt ?? null,
-        bucketCount: candles.length,
-        series: series.length ? series : entry.series,
-        candles,
-        loading: false,
-      } satisfies TokenSparklineEntry,
+      entry: nextEntry,
     };
   }
 
@@ -8552,6 +8539,9 @@ export function createAppController(): AppController {
     regions: Set<AppRenderRegion>,
   ) {
     const identityKey = createLegacyCompatibleTokenIdentity(payload.chain, payload.address).key;
+    if (getVisibleAlertSparklineIdentities().some((identity) => identity.key === identityKey)) {
+      regions.add('alerts');
+    }
     if (
       state.data.monitoredTokenIdentities.includes(identityKey)
       || state.data.pinnedMonitoredTokenIdentities.includes(identityKey)
@@ -8571,13 +8561,19 @@ export function createAppController(): AppController {
 
     const dirtyRegions = new Set<AppRenderRegion>();
     const appliedPayloads: MarketBucketUpdateEvent[] = [];
+    let compactSparklineChanged = false;
     for (const payload of payloads) {
       const tokenChanged = applyLiveTokenMarketUpdate(payload);
       const sparklineChanged = applyLiveMarketBucketUpdate(payload);
+      compactSparklineChanged = compactSparklineChanged || sparklineChanged;
       if (tokenChanged || sparklineChanged) {
         addLiveMarketRenderRegions(payload, dirtyRegions);
         appliedPayloads.push(payload);
       }
+    }
+    if (compactSparklineChanged) {
+      state.runtime.alertRevision += 1;
+      scheduleAlertsPersist();
     }
     if (state.ui.expandedSparklineAddress) {
       for (const region of dirtyRegions) deferredExpandedSparklineRenderRegions.add(region);
@@ -8926,31 +8922,30 @@ export function createAppController(): AppController {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
-  function queueAlertSparklineRefresh() {
-    if (sparklineRefreshDebounceTimer) {
+  function queueWorkspaceSparklineRefreshFromEvent() {
+    if (sparklineEventRefreshTimer) {
       return;
     }
 
     if (typeof window === 'undefined') {
-      void refreshHistoryWorkspaceSparklines({ caller: 'alert-queue' });
+      void refreshHistoryWorkspaceSparklines({ caller: 'workspace-event' });
       return;
     }
 
-    sparklineRefreshDebounceTimer = window.setTimeout(() => {
-      sparklineRefreshDebounceTimer = null;
-      void refreshHistoryWorkspaceSparklines({ caller: 'alert-queue' });
-    }, ALERT_SPARKLINE_BATCH_DELAY_MS);
+    sparklineEventRefreshTimer = window.setTimeout(() => {
+      sparklineEventRefreshTimer = null;
+      void refreshHistoryWorkspaceSparklines({ caller: 'workspace-event' });
+    }, WORKSPACE_SPARKLINE_EVENT_DEBOUNCE_MS);
   }
 
-  function queueMissingAlertSparklineRefresh() {
-    for (const alert of state.data.alerts) {
-      const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
+  function queueMissingVisibleWorkspaceSparklineRefresh() {
+    for (const { identity } of getVisibleWorkspaceSparklineIdentityScopes()) {
       const entry = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
       const series = Array.isArray(entry?.series) ? entry.series : [];
       if (series.length >= 2) {
         continue;
       }
-      queueAlertSparklineRefresh();
+      queueWorkspaceSparklineRefreshFromEvent();
       return;
     }
   }
@@ -10583,9 +10578,9 @@ export function createAppController(): AppController {
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
     state.ui.alertPage = 0;
-    if (sparklineRefreshDebounceTimer) {
-      clearTimeout(sparklineRefreshDebounceTimer);
-      sparklineRefreshDebounceTimer = null;
+    if (sparklineEventRefreshTimer) {
+      clearTimeout(sparklineEventRefreshTimer);
+      sparklineEventRefreshTimer = null;
     }
     state.ui.monitoredPage = 0;
     state.ui.recentPage = 0;
@@ -13043,6 +13038,7 @@ export function createAppController(): AppController {
     const next = resolveLivePanelLayoutPreference({ ...state.ui.livePanelLayout, preset });
     if (next.preset === state.ui.livePanelLayout.preset) return false;
     state.ui.livePanelLayout = next;
+    syncWorkspaceMarketSubscriptions();
     queueUiPrefsPersist();
     emit('header', 'monitored', 'alerts');
     void refreshActiveMonitoredViews(state.session.token);
@@ -13842,6 +13838,7 @@ export function createAppController(): AppController {
     setAlertSearchQuery(query: string) {
       state.ui.alertSearchQuery = String(query || '');
       state.ui.alertPage = 0;
+      syncWorkspaceMarketSubscriptions();
       emit('alerts');
       refreshVisibleLiveWorkspaceSparklines('alerts-search');
     },
@@ -13979,6 +13976,7 @@ export function createAppController(): AppController {
       state.ui.monitoredPage = 0;
       state.ui.recentPage = 0;
       state.ui.oldWeekPage = 0;
+      syncWorkspaceMarketSubscriptions();
       clearHistoryBucketOrderLocks({ applyPending: false });
       queueUiPrefsPersist();
       if (usesHistoryBucketBootstrap()) {
@@ -14022,6 +14020,7 @@ export function createAppController(): AppController {
     },
     setAlertPage(page: number) {
       state.ui.alertPage = clampPage(page, getFilteredAlertsForPagination().length, ALERTS_PER_PAGE);
+      syncWorkspaceMarketSubscriptions();
       emit('alerts');
       refreshVisibleLiveWorkspaceSparklines('alerts-page');
     },
@@ -14393,6 +14392,7 @@ export function createAppController(): AppController {
       state.ui.livePanelLayout = resolveLivePanelLayoutPreference(defaults);
       state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
       state.ui.monitoredSecondaryPane = createAppState().ui.monitoredSecondaryPane;
+      syncWorkspaceMarketSubscriptions();
       queueUiPrefsPersist();
       emit('header', 'monitored', 'pumpfun', 'alerts');
     },
