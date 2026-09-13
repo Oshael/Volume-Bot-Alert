@@ -28,17 +28,12 @@ function buildMatcherProfile(profile) {
       ...profile.rules.map((rule) => `${rule.ruleKey}:${rule.version}`),
     ].join(':'),
     ruleEnabled: profile.ruleEnabled,
-    thresholdPct: settings('monitored-vol').thresholdPct,
-    mcapThresholdPct: settings('monitored-mcap').thresholdPct,
     hvncMinVol: settings('hvnc').minHvncVolumeUsd,
     recentSurge1hThresholdPct: settings('recent-surge-1h').thresholdPct,
     recentSurge6hThresholdPct: settings('recent-surge-6h').thresholdPct,
     oldWeekSurge1hThresholdPct: settings('old-week-surge-1h').thresholdPct,
     oldWeekSurge6hThresholdPct: settings('old-week-surge-6h').thresholdPct,
     meteoraAlert1hThreshold: settings('meteora-surge').thresholdPct,
-    minVol: 0,
-    minMcap: 0,
-    maxMcap: 0,
     ruleSettingsByKey: Object.fromEntries(
       profile.rules.map((rule) => [rule.ruleKey, rule.settings])
     ),

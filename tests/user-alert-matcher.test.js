@@ -204,12 +204,20 @@ describe('user alert matcher', () => {
 
       const decision = userAlertMatcher.__private.buildRuleCandidate(profile, tokenAfter, signals);
 
+      assert.deepEqual(userAlertMatcher.MATCHER_RULE_KEYS, [
+        'hvnc',
+        'recent-surge-1h',
+        'recent-surge-6h',
+        'old-week-surge-1h',
+        'old-week-surge-6h',
+        'meteora-surge',
+      ]);
       assert.deepEqual(decision.qualifiedRuleKeys, ['hvnc']);
       assert.equal(decision.candidates[0].ruleKey, 'hvnc');
     });
   });
 
-  it('loads a volume baseline for a Telegram-only signal profile', async () => {
+  it('skips the retired volume baseline for a Telegram-only signal profile', async () => {
     const context = createDeps();
     let volumeReads = 0;
     let destinationSignals;
@@ -233,7 +241,7 @@ describe('user alert matcher', () => {
       tokenAfter: { address: TOKEN_ADDRESS, last_mcap: 100_000, last_vol_5m: 20_000 },
     }, { now: '2026-07-29T15:00:00.000Z', deps: context.deps });
 
-    assert.equal(volumeReads, 1);
+    assert.equal(volumeReads, 0);
     assert.equal(destinationSignals.currentVolume5m, 20_000);
   });
 
@@ -936,7 +944,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('starts the monitored-vol cold reset timer while a rearmed token stays at or below 5k volume', async () => {
+  it('does not maintain cold-reset state for retired monitored-vol rules', async () => {
     const context = createDeps({
       profiles: [{
         userId: 48,
@@ -977,12 +985,10 @@ describe('user alert matcher', () => {
 
     assert.equal(result.emitted, 0);
     assert.equal(result.rearmed, 0);
-    assert.equal(context.rearmWrites.length, 1);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:30:00.000Z');
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdMaxVolume5m, 5000);
+    assert.equal(context.rearmWrites.length, 0);
   });
 
-  it('keeps legacy monitored-volume cold metadata without emitting', async () => {
+  it('ignores legacy monitored-volume cold metadata without writing', async () => {
     const context = createDeps({
       profiles: [{
         userId: 49,
@@ -1027,14 +1033,10 @@ describe('user alert matcher', () => {
     assert.equal(result.emitted, 0);
     assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
-    assert.equal(context.rearmWrites.length, 1);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:00:00.000Z');
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotSinceAt, '2026-04-17T18:29:59.000Z');
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotVolume5m, 24000);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdInterruptedVolume5m, undefined);
+    assert.equal(context.rearmWrites.length, 0);
   });
 
-  it('updates legacy monitored-volume reset metadata without emitting', async () => {
+  it('does not update legacy monitored-volume reset metadata', async () => {
     const context = createDeps({
       profiles: [{
         userId: 52,
@@ -1081,13 +1083,10 @@ describe('user alert matcher', () => {
     assert.equal(result.emitted, 0);
     assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
-    assert.equal(context.rearmWrites.length, 1);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, undefined);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotSinceAt, undefined);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdInterruptedVolume5m, 24000);
+    assert.equal(context.rearmWrites.length, 0);
   });
 
-  it('clears a short monitored-vol hot blip when volume cools again without restarting the cold timer', async () => {
+  it('does not process a legacy monitored-vol hot blip', async () => {
     const context = createDeps({
       profiles: [{
         userId: 53,
@@ -1132,10 +1131,7 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T18:20:30.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(context.rearmWrites.length, 1);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:00:00.000Z');
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotSinceAt, undefined);
-    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotVolume5m, undefined);
+    assert.equal(context.rearmWrites.length, 0);
   });
 
   it('does not emit after a legacy monitored-volume anchor expires', async () => {
@@ -1273,7 +1269,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('preserves legacy monitored-volume cooldown metadata without re-emission', async () => {
+  it('leaves legacy monitored-volume cooldown state untouched', async () => {
     const cooldownUntil = '2026-04-16T12:01:00.000Z';
     const rearmContext = createDeps({
       profiles: [{
@@ -1312,9 +1308,8 @@ describe('user alert matcher', () => {
       },
     }, { now: '2026-04-16T12:00:11.000Z', deps: rearmContext.deps });
 
-    assert.equal(rearmResult.rearmed, 1);
-    assert.equal(rearmContext.rearmWrites.length, 1);
-    assert.equal(rearmContext.rearmWrites[0].cooldownUntil, cooldownUntil);
+    assert.equal(rearmResult.rearmed, 0);
+    assert.equal(rearmContext.rearmWrites.length, 0);
 
     const suppressContext = createDeps({
       profiles: [{

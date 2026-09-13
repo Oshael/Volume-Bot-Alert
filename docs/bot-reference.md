@@ -962,6 +962,10 @@ No runtime Robinhood, o matcher e a publicação consultam, preparam e gravam es
 Continuation. Os identificadores `monitored-vol` e `monitored-fdv` permanecem no catálogo legado exclusivamente para
 schemas, registros persistidos e leitura histórica; não participam mais da construção de candidatos, rearm ou payload de
 publicação.
+No runtime Solana, `monitored-vol`, `gmgn-vol-1m` e `monitored-mcap` também não constroem candidatos, não carregam baselines
+dedicados e não executam rearm, cold reset ou reescrita de payload por âncora. Price Surge, Surge Continuation, HVNC,
+Meteora, Custom alerts e o destino Telegram continuam ativos. As regras aposentadas permanecem aceitas somente nos
+contratos legados necessários para configurações persistidas e alertas históricos.
 
 A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
 (`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de

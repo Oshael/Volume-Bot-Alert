@@ -631,6 +631,9 @@ Execute the retirement through these bounded cuts:
     dedicated baseline loads, cold-reset/rearm work and anchored-repeat payload handling. Preserve Price Surge, Surge
     Continuation, HVNC, Meteora, Custom alerts and the active Telegram destination. Validate the matcher, profile evaluator,
     Telegram planner/destination and repository lint. Estimated change: 400–500 lines.
+    **Completed:** the Solana matcher no longer constructs or rearms the retired rules, reads no dedicated volume or market-cap
+    baseline for them and has no anchored-repeat payload branch. Active alert priority and the Telegram planning/destination
+    path remain unchanged; legacy contracts and historical records stay readable.
   - **R4c — shared runtime residue:** remove the temporary emission-retirement shim and test-only private exports only after
     R4a/R4b leave them without runtime consumers, consolidate obsolete negative-path tests and run scoped dead-reference
     searches. Historical feed, replay, chart-marker, formatter, schema and persisted-configuration compatibility remains for

@@ -1,6 +1,5 @@
 const db = require('../models/db');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
-const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const userAlertEvent = require('../models/user-alert-event');
 const userAlertRuleState = require('../models/user-alert-rule-state');
@@ -16,9 +15,6 @@ const { normalizeTokenChain } = require('../utils/token-identity');
 const standardAlertReset = require('./standard-alert-reset');
 const standardTransition = require('./standard-alert-transition');
 const {
-  isStandardAlertEmissionRetired,
-} = require('./standard-alert-emission-policy');
-const {
   createSolanaAlertProfileEvaluator,
 } = require('./solana-alert-profile-evaluator');
 const {
@@ -28,9 +24,6 @@ const {
   createTelegramSolanaAlertRuntime,
 } = require('./telegram-solana-alert-runtime');
 const {
-  MONITORED_VOL_COLD_RESET_DURATION_MS,
-  MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS,
-  MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M,
   SURGE_6H_RESET_MAX_PCHANGE_PCT,
   SURGE_6H_RESET_PCHANGE_DURATION_MS,
   SURGE_6H_RESET_DRAWDOWN_RATIO,
@@ -42,7 +35,6 @@ const {
 } = standardAlertReset;
 
 const ALERT_CHAIN = 'solana';
-const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
 const SURGE_1H_MIN_MCAP = 45_000;
 const SURGE_6H_MIN_MCAP = 40_000;
@@ -69,16 +61,8 @@ const SOLANA_SURGE_VALUATION_KEYS = Object.freeze({
   high: 'surgePostAlertHighMcap',
   interrupted: 'surgeResetDrawdownInterruptedMcap',
 });
-const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
-const GMGN_VOL_1M_ALERT_THRESHOLD_PCT = 50;
-const GMGN_VOL_1M_ALERT_COOLDOWN_MS = 60 * 1000;
-const GMGN_VOL_1M_REPEAT_STEP_PCT = 50;
-const GMGN_VOL_1M_ALERT_ENABLED = false;
 const CUSTOM_ALERT_RULE_KEY = 'custom-alert';
 const MATCHER_RULE_KEYS = Object.freeze([
-  'monitored-vol',
-  GMGN_VOL_1M_RULE_KEY,
-  'monitored-mcap',
   'hvnc',
   'recent-surge-1h',
   'recent-surge-6h',
@@ -93,9 +77,6 @@ const SURGE_RULE_KEYS = Object.freeze([
   'old-week-surge-6h',
 ]);
 const RULE_ENABLED_FIELD_BY_KEY = Object.freeze({
-  'monitored-vol': 'monitoredVol',
-  [GMGN_VOL_1M_RULE_KEY]: 'monitoredVol',
-  'monitored-mcap': 'monitoredMcap',
   hvnc: 'hvnc',
   'recent-surge-1h': 'recentSurge1h',
   'recent-surge-6h': 'recentSurge6h',
@@ -104,15 +85,7 @@ const RULE_ENABLED_FIELD_BY_KEY = Object.freeze({
   'meteora-surge': 'meteoraSurge',
 });
 const REARM_PRESERVE_COOLDOWN_RULE_KEYS = new Set([
-  'monitored-vol',
-  GMGN_VOL_1M_RULE_KEY,
-  'monitored-mcap',
   'meteora-surge',
-]);
-const ANCHORED_REPEAT_RULE_KEYS = new Set([
-  'monitored-vol',
-  GMGN_VOL_1M_RULE_KEY,
-  'monitored-mcap',
 ]);
 
 function toNumberOrNull(value) {
@@ -297,19 +270,6 @@ function buildCustomAlertPayload(rule, tokenBefore, tokenAfter, currentValue, pr
   };
 }
 
-function readEnvNumber(name, fallback) {
-  const parsed = Number(process.env[name]);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function readEnvBoolean(name, fallback) {
-  const raw = process.env[name];
-  if (raw == null || raw === '') {
-    return fallback;
-  }
-  return raw === 'true' || raw === '1';
-}
-
 function getRuleSettings(profile, ruleKey) {
   const settings = profile?.ruleSettingsByKey?.[ruleKey];
   return settings && typeof settings === 'object' && !Array.isArray(settings)
@@ -320,27 +280,6 @@ function getRuleSettings(profile, ruleKey) {
 function getRuleCooldownMs(profile, ruleKey, fallback) {
   const configured = Number(profile?.cooldownMsByRule?.[ruleKey]);
   return Number.isFinite(configured) && configured >= 0 ? configured : fallback;
-}
-
-function passesCommonAlertFilters(profile, signals, ruleKey) {
-  const settings = getRuleSettings(profile, ruleKey);
-  const currentVolume5m = toNumberOrNull(signals.currentVolume5m) || 0;
-  const currentMcap = toNumberOrNull(signals.currentMcap) || 0;
-  const minVol = toNumberOrNull(settings.minVolumeUsd) ?? toNumberOrNull(profile?.minVol) ?? 0;
-  const minMcap = toNumberOrNull(settings.minMarketCapUsd) ?? toNumberOrNull(profile?.minMcap) ?? 0;
-  const maxMcap = toNumberOrNull(settings.maxMarketCapUsd) ?? toNumberOrNull(profile?.maxMcap) ?? 0;
-
-  if (currentVolume5m < minVol) {
-    return false;
-  }
-  if (currentMcap > 0 && currentMcap < minMcap) {
-    return false;
-  }
-  if (maxMcap > 0 && currentMcap > maxMcap) {
-    return false;
-  }
-
-  return true;
 }
 
 function buildHvncCandidate(profile, shared, signals) {
@@ -572,89 +511,6 @@ function buildSurgeCandidate(input) {
   };
 }
 
-function buildMonitoredVolCandidate(profile, shared, signals) {
-  const qualifies = signals.hasVol5mBaseline
-    && signals.vol5mChangePct != null
-    && signals.vol5mChangePct >= (toNumberOrNull(profile.thresholdPct) || 0)
-    && passesCommonAlertFilters(profile, signals, 'monitored-vol')
-    && !signals.isMcapDeclining;
-  if (!qualifies) {
-    return null;
-  }
-
-  return {
-    ruleKey: 'monitored-vol',
-    kind: 'monitored-vol',
-    label: 'VOL',
-    pct: signals.vol5mChangePct,
-    lastAlertedValue: signals.currentVolume5m,
-    cooldownMs: getRuleCooldownMs(profile, 'monitored-vol', STANDARD_ALERT_COOLDOWN_MS),
-    repeatStepPct: toNumberOrNull(profile?.thresholdPct) || 0,
-    fingerprint: buildFingerprint([signals.vol5mChangePct, signals.prevVolume5m, signals.currentVolume5m]),
-    payload: shared,
-  };
-}
-
-function buildGmgnVol1mCandidate(profile, shared, signals) {
-  if (!readEnvBoolean('GMGN_VOL_1M_ALERT_ENABLED', GMGN_VOL_1M_ALERT_ENABLED)) {
-    return null;
-  }
-
-  const thresholdPct = readEnvNumber('GMGN_VOL_1M_ALERT_THRESHOLD_PCT', GMGN_VOL_1M_ALERT_THRESHOLD_PCT);
-  const qualifies = signals.alertSource === 'gmgn'
-    && signals.hasVol1mBaseline
-    && signals.vol1mChangePct != null
-    && signals.vol1mChangePct >= thresholdPct
-    && passesCommonAlertFilters(profile, signals, 'monitored-vol')
-    && !signals.isMcapDeclining;
-  if (!qualifies) {
-    return null;
-  }
-
-  return {
-    ruleKey: GMGN_VOL_1M_RULE_KEY,
-    kind: 'monitored-vol',
-    label: 'GMGN 1M',
-    pct: signals.vol1mChangePct,
-    lastAlertedValue: signals.currentVolume1m,
-    cooldownMs: readEnvNumber('GMGN_VOL_1M_ALERT_COOLDOWN_MS', GMGN_VOL_1M_ALERT_COOLDOWN_MS),
-    repeatStepPct: readEnvNumber('GMGN_VOL_1M_REPEAT_STEP_PCT', GMGN_VOL_1M_REPEAT_STEP_PCT),
-    fingerprint: buildFingerprint([GMGN_VOL_1M_RULE_KEY, signals.vol1mChangePct, signals.prevVolume1m, signals.currentVolume1m]),
-    payload: {
-      ...shared,
-      source: 'gmgn',
-      gmgnInterval: '1m',
-      thresholdPct,
-      prevVolume1m: signals.prevVolume1m,
-      volume1m: signals.currentVolume1m,
-      volume5m: signals.currentVolume5m,
-    },
-  };
-}
-
-function buildMonitoredMcapCandidate(profile, shared, signals) {
-  const qualifies = signals.hasMcapBaseline
-    && signals.mcapAlertTokenAgeGatePassed
-    && signals.mcapChangePct != null
-    && signals.mcapChangePct >= (toNumberOrNull(profile.mcapThresholdPct) || 0)
-    && passesCommonAlertFilters(profile, signals, 'monitored-mcap');
-  if (!qualifies) {
-    return null;
-  }
-
-  return {
-    ruleKey: 'monitored-mcap',
-    kind: 'monitored-mcap',
-    label: 'MCAP',
-    pct: signals.mcapChangePct,
-    lastAlertedValue: signals.currentMcap,
-    cooldownMs: getRuleCooldownMs(profile, 'monitored-mcap', STANDARD_ALERT_COOLDOWN_MS),
-    repeatStepPct: toNumberOrNull(profile?.mcapThresholdPct) || 0,
-    fingerprint: buildFingerprint([signals.mcapChangePct, signals.prevMcap, signals.currentMcap]),
-    payload: shared,
-  };
-}
-
 function buildSurgeCandidates(profile, shared, signals) {
   if (signals.recentSurge1hAgeGatePassed || signals.recentSurge6hAgeGatePassed || signals.recentSurgeAgeGatePassed) {
     return [
@@ -720,28 +576,12 @@ function buildRuleCandidate(profile, tokenAfter, signals) {
   if (profile?.ruleEnabled?.meteoraSurge) {
     candidates.push(buildMeteoraCandidate(profile, shared, signals));
   }
-  if (profile?.ruleEnabled?.monitoredVol) {
-    candidates.push(buildGmgnVol1mCandidate(profile, shared, signals));
-    candidates.push(buildMonitoredVolCandidate(profile, shared, signals));
-  }
-  if (profile?.ruleEnabled?.monitoredMcap) {
-    candidates.push(buildMonitoredMcapCandidate(profile, shared, signals));
-  }
-
-  const qualifiedCandidates = candidates
-    .filter(Boolean)
-    .filter((candidate) => !isStandardAlertEmissionRetired(candidate.ruleKey));
+  const qualifiedCandidates = candidates.filter(Boolean);
   return {
-    candidate: qualifiedCandidates.find((candidate) => candidate.ruleKey !== GMGN_VOL_1M_RULE_KEY) || qualifiedCandidates[0] || null,
-    candidates: buildLifecycleCandidates(qualifiedCandidates),
+    candidate: qualifiedCandidates[0] || null,
+    candidates: qualifiedCandidates.slice(0, 1),
     qualifiedRuleKeys: qualifiedCandidates.map((candidate) => candidate.ruleKey),
   };
-}
-
-function buildLifecycleCandidates(qualifiedCandidates = []) {
-  const primary = qualifiedCandidates.find((candidate) => candidate.ruleKey !== GMGN_VOL_1M_RULE_KEY) || null;
-  const gmgnVol1m = qualifiedCandidates.find((candidate) => candidate.ruleKey === GMGN_VOL_1M_RULE_KEY) || null;
-  return [primary, gmgnVol1m].filter(Boolean);
 }
 
 function buildRearmRuleKeys(profile, qualifiedRuleKeys = []) {
@@ -756,19 +596,6 @@ function buildRearmRuleKeys(profile, qualifiedRuleKeys = []) {
   });
 }
 
-function needsVolumeBaseline(profiles = []) {
-  return profiles.some((profile) => profile?.ruleEnabled?.monitoredVol);
-}
-
-function needsGmgnVolume1mBaseline(profiles = [], context = {}) {
-  return context.alertSource === 'gmgn'
-    && profiles.some((profile) => profile?.ruleEnabled?.monitoredVol);
-}
-
-function needsMcapBaseline(profiles = []) {
-  return profiles.some((profile) => profile?.ruleEnabled?.monitoredMcap);
-}
-
 function needsSurgeBaseline(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.recentSurge1h
     || profile?.ruleEnabled?.recentSurge6h
@@ -778,40 +605,6 @@ function needsSurgeBaseline(profiles = []) {
 
 function needsMeteoraState(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.meteoraSurge);
-}
-
-function mergeVolumeRows(vol5mRow, vol1mRow) {
-  if (!vol5mRow && !vol1mRow) {
-    return null;
-  }
-  return {
-    ...(vol5mRow || {}),
-    ...(vol1mRow || {}),
-    token_address: vol5mRow?.token_address || vol1mRow?.token_address || null,
-  };
-}
-
-async function loadVolumeRows(address, profiles, deps, context = {}) {
-  if (!needsVolumeBaseline(profiles)) {
-    return [];
-  }
-
-  const [vol5mRows, vol1mRows] = await Promise.all([
-    deps.tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses([address], 5),
-    needsGmgnVolume1mBaseline(profiles, context)
-      ? deps.tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses([address], 1, { volumeWindow: '1m' })
-      : [],
-  ]);
-  const merged = mergeVolumeRows(vol5mRows[0] || null, vol1mRows[0] || null);
-  return merged ? [merged] : [];
-}
-
-async function loadMcapRows(address, profiles, deps) {
-  if (!needsMcapBaseline(profiles)) {
-    return [];
-  }
-
-  return deps.tokenMarketBucket1m.listCurrentAndBaselineByAddresses([address], 5);
 }
 
 async function loadSurgeRows(address, profiles, deps) {
@@ -846,20 +639,16 @@ function readPriceChange(token, window) {
   return token?.last_price_change_6h ?? token?.priceChange6h ?? null;
 }
 
-function buildVolumeSignalInput(tokenBefore, tokenAfter, volumeRow) {
+function buildVolumeSignalInput(tokenAfter) {
   return {
-    last_vol_1m: volumeRow?.current_vol_1m ?? volumeRow?.current_volume_1m ?? null,
-    baseline_vol_1m: volumeRow?.baseline_vol_1m ?? null,
     last_vol_5m: tokenAfter?.last_vol_5m,
-    baseline_vol_5m: volumeRow?.baseline_vol_5m ?? tokenBefore?.last_vol_5m ?? null,
     last_vol_24h: tokenAfter?.last_vol_24h,
   };
 }
 
-function buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow, surgeRow) {
+function buildMcapSignalInput(tokenAfter, surgeRow) {
   return {
-    last_mcap: mcapRow?.current_mcap ?? surgeRow?.current_mcap ?? tokenAfter?.last_mcap,
-    baseline_mcap: mcapRow?.baseline_mcap ?? tokenBefore?.last_mcap ?? null,
+    last_mcap: surgeRow?.current_mcap ?? tokenAfter?.last_mcap,
   };
 }
 
@@ -883,13 +672,13 @@ function buildPriceChangeSignalInput(tokenBefore, tokenAfter) {
   };
 }
 
-function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, context = {}) {
+function buildCoreSignalInput(tokenBefore, tokenAfter, surgeRow, context = {}) {
   return {
     tokenAddress: String(tokenAfter?.address || '').trim(),
     alertSource: toTextOrNull(context.alertSource),
     ...buildMigrationSignalInput(tokenAfter),
-    ...buildVolumeSignalInput(tokenBefore, tokenAfter, volumeRow),
-    ...buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow, surgeRow),
+    ...buildVolumeSignalInput(tokenAfter),
+    ...buildMcapSignalInput(tokenAfter, surgeRow),
     ...buildInternalSurgeSignalInput(surgeRow),
     last_token_created_at_ms: tokenAfter?.last_token_created_at_ms,
     ...buildPriceChangeSignalInput(tokenBefore, tokenAfter),
@@ -906,9 +695,9 @@ function buildMeteoraSignalInput(meteoraRow) {
   };
 }
 
-function buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, meteoraRow, context = {}) {
+function buildSignalInput(tokenBefore, tokenAfter, surgeRow, meteoraRow, context = {}) {
   return {
-    ...buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, context),
+    ...buildCoreSignalInput(tokenBefore, tokenAfter, surgeRow, context),
     ...buildMeteoraSignalInput(meteoraRow),
   };
 }
@@ -922,10 +711,6 @@ function canRepeatCandidate(candidate, state) {
     return false;
   }
 
-  if (ANCHORED_REPEAT_RULE_KEYS.has(candidate?.ruleKey)) {
-    return hasAdvancedRepeatValue(candidate, state);
-  }
-
   const lastAlertedPct = toNumberOrNull(state?.lastAlertedPct);
   return lastAlertedPct != null
     && toNumberOrNull(candidate?.pct) != null
@@ -934,10 +719,6 @@ function canRepeatCandidate(candidate, state) {
 
 function hasAdvancedRepeatValue(candidate, state) {
   return standardTransition.hasAdvancedRepeatValue(candidate, state);
-}
-
-function isMonitoredVolAnchorExpired(candidate, state, nowMs) {
-  return standardAlertReset.isMonitoredVolAnchorExpired(candidate, state, nowMs);
 }
 
 function isSixHourSurgeRuleKey(ruleKey) {
@@ -986,58 +767,6 @@ function buildSurgePostAlertHighMetadata(ruleKey, state, signals) {
     valuation: toNumberOrNull(signals?.last_mcap ?? signals?.currentMcap ?? signals?.mcap),
     valuationKeys: SOLANA_SURGE_VALUATION_KEYS,
   });
-}
-
-function buildMonitoredVolColdMetadata(state, signals, nowMs) {
-  return standardAlertReset.buildMonitoredVolColdMetadata(
-    state,
-    toNumberOrNull(signals?.currentVolume5m ?? signals?.volume5m ?? signals?.last_vol_5m),
-    nowMs,
-  );
-}
-
-async function syncRearmedMonitoredVolColdState(
-  profile,
-  tokenAfter,
-  ruleKey,
-  state,
-  signals,
-  nowMs,
-  deps,
-  options = {},
-) {
-  if (ruleKey !== 'monitored-vol' || state?.status !== 'rearmed') {
-    return state;
-  }
-
-  if (options.preserveExpiredColdAnchor === true && isMonitoredVolAnchorExpired({ ruleKey }, state, nowMs)) {
-    return state;
-  }
-
-  const { metadata, changed } = buildMonitoredVolColdMetadata(state, signals, nowMs);
-  if (!changed) {
-    return state;
-  }
-
-  await deps.userAlertRuleState.markRearmed({
-    userId: profile.userId,
-    ruleKey,
-    chain: ALERT_CHAIN,
-    tokenAddress: tokenAfter.address,
-    cooldownUntil: state.cooldownUntil,
-    metadata: {
-      ...metadata,
-      lastDecision: 'rearmed',
-    },
-  });
-
-  return {
-    ...state,
-    metadata: {
-      ...metadata,
-      lastDecision: 'rearmed',
-    },
-  };
 }
 
 async function syncRearmedSurgeResetState(
@@ -1094,21 +823,11 @@ async function syncRearmedResetState(
   deps,
   options = {},
 ) {
-  const volState = await syncRearmedMonitoredVolColdState(
-    profile,
-    tokenAfter,
-    ruleKey,
-    state,
-    signals,
-    nowMs,
-    deps,
-    options,
-  );
   return syncRearmedSurgeResetState(
     profile,
     tokenAfter,
     ruleKey,
-    volState,
+    state,
     signals,
     nowMs,
     deps,
@@ -1250,48 +969,10 @@ function canRepeatMeteoraInSession(candidate, state, profile) {
   return nextTvl >= requiredNextTvl;
 }
 
-function getAnchoredRepeatPct(candidate, state) {
-  const nextAlertedValue = toNumberOrNull(candidate?.lastAlertedValue);
-  const lastAlertedValue = toNumberOrNull(state?.lastAlertedValue);
-  if (nextAlertedValue == null || lastAlertedValue == null || lastAlertedValue <= 0) {
-    return toNumberOrNull(candidate?.pct);
-  }
-  return ((nextAlertedValue - lastAlertedValue) / lastAlertedValue) * 100;
-}
-
-function buildRepeatAwarePayload(candidate, state) {
-  const payload = {
-    ...(candidate?.payload || {}),
-  };
-
-  if (!ANCHORED_REPEAT_RULE_KEYS.has(candidate?.ruleKey) || !state) {
-    return {
-      ...payload,
-      pct: candidate?.pct,
-      label: candidate?.label,
-    };
-  }
-
-  const lastAlertedValue = toNumberOrNull(state?.lastAlertedValue);
-  if (lastAlertedValue == null) {
-    return {
-      ...payload,
-      pct: candidate?.pct,
-      label: candidate?.label,
-    };
-  }
-
-  if (candidate.ruleKey === 'monitored-vol') {
-    payload.prevVolume5m = lastAlertedValue;
-  } else if (candidate.ruleKey === GMGN_VOL_1M_RULE_KEY) {
-    payload.prevVolume1m = lastAlertedValue;
-  } else if (candidate.ruleKey === 'monitored-mcap') {
-    payload.prevMcap = lastAlertedValue;
-  }
-
+function buildRepeatAwarePayload(candidate) {
   return {
-    ...payload,
-    pct: getAnchoredRepeatPct(candidate, state),
+    ...(candidate?.payload || {}),
+    pct: candidate?.pct,
     label: candidate?.label,
   };
 }
@@ -1543,7 +1224,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
   try {
     await client.query('BEGIN');
 
-    const eventPayload = buildRepeatAwarePayload(candidate, state);
+    const eventPayload = buildRepeatAwarePayload(candidate);
     if (tickerPeers) {
       eventPayload.tickerPeers = tickerPeers;
     }
@@ -1684,11 +1365,7 @@ function shouldPreserveCooldownOnRearm(ruleKey) {
   return REARM_PRESERVE_COOLDOWN_RULE_KEYS.has(String(ruleKey || '').trim().toLowerCase());
 }
 
-async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, signals = null) {
-  const coldMetadata = ruleKey === 'monitored-vol'
-    ? buildMonitoredVolColdMetadata(state, signals, nowMs).metadata
-    : null;
-
+async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps) {
   return deps.userAlertRuleState.markRearmed({
     userId: profile.userId,
     ruleKey,
@@ -1697,7 +1374,6 @@ async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, signa
     cooldownUntil: shouldPreserveCooldownOnRearm(ruleKey) ? state?.cooldownUntil : null,
     metadata: {
       ...(state?.metadata || {}),
-      ...(coldMetadata || {}),
       lastDecision: 'rearmed',
       rearmedAt: new Date(nowMs).toISOString(),
     },
@@ -1705,9 +1381,6 @@ async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, signa
 }
 
 function resolveCandidateState(candidate, rawState, profile, nowMs) {
-  if (isMonitoredVolAnchorExpired(candidate, rawState, nowMs)) {
-    return null;
-  }
   if (isSurgeAnchorExpired(candidate, rawState, nowMs)) {
     return null;
   }
@@ -1863,7 +1536,7 @@ async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKey
     if (isResettableSurgeRuleKey(ruleKey)) {
       await syncRearmedResetState(profile, tokenAfter, ruleKey, state, tokenAfter, nowMs, deps);
     } else if (state?.status === 'triggered' && state?.rearmRequired === true) {
-      await rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, tokenAfter);
+      await rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps);
       summary.rearmed += 1;
     } else {
       await syncRearmedResetState(profile, tokenAfter, ruleKey, state, tokenAfter, nowMs, deps);
@@ -1873,20 +1546,16 @@ async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKey
 
 async function loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps, context = {}) {
   const address = String(tokenAfter?.address || '').trim();
-  const [volumeRows, mcapRows, surgeRows, meteoraRows] = await Promise.all([
-    loadVolumeRows(address, profiles, deps, context),
-    loadMcapRows(address, profiles, deps),
+  const [surgeRows, meteoraRows] = await Promise.all([
     loadSurgeRows(address, profiles, deps),
     loadMeteoraRows(address, profiles, deps),
   ]);
 
-  const volumeRow = volumeRows[0] || null;
-  const mcapRow = mcapRows[0] || null;
   const surgeRow = surgeRows[0] || null;
   const meteoraRow = meteoraRows[0] || null;
 
   return deps.tokenAlertSignalBuilder.buildTokenAlertSignals(
-    buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, meteoraRow, context),
+    buildSignalInput(tokenBefore, tokenAfter, surgeRow, meteoraRow, context),
     { nowMs }
   );
 }
@@ -1948,7 +1617,6 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
   const deps = {
     db,
     tokenMarketBucket1m,
-    tokenMarketVolumeBucket1m,
     tokenMeteoraState,
     userAlertEvent,
     userAlertRuleState,
@@ -1996,7 +1664,6 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
 
 module.exports = {
   MATCHER_RULE_KEYS,
-  STANDARD_ALERT_COOLDOWN_MS,
   SURGE_CROSS_WINDOW_COOLDOWN_MS,
   SURGE_1H_MIN_MCAP,
   SURGE_6H_MIN_MCAP,
@@ -2010,9 +1677,6 @@ module.exports = {
   METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT,
   METEORA_FINGERPRINT_CHANGE_BUCKET_PCT,
   METEORA_FINGERPRINT_TVL_BUCKET_USD,
-  MONITORED_VOL_COLD_RESET_DURATION_MS,
-  MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS,
-  MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M,
   SURGE_6H_RESET_MAX_PCHANGE_PCT,
   SURGE_6H_RESET_PCHANGE_DURATION_MS,
   SURGE_6H_RESET_DRAWDOWN_RATIO,
@@ -2021,10 +1685,6 @@ module.exports = {
   SURGE_1H_RESET_PCHANGE_DURATION_MS,
   SURGE_1H_RESET_DRAWDOWN_RATIO,
   SURGE_1H_RESET_DRAWDOWN_DURATION_MS,
-  GMGN_VOL_1M_RULE_KEY,
-  GMGN_VOL_1M_ALERT_THRESHOLD_PCT,
-  GMGN_VOL_1M_ALERT_COOLDOWN_MS,
-  GMGN_VOL_1M_REPEAT_STEP_PCT,
   evaluateSolanaAlertProfile: solanaAlertProfileEvaluator.evaluate,
   evaluateUpdatedToken,
   __private: {
@@ -2032,13 +1692,9 @@ module.exports = {
     buildFingerprint,
     buildHvncCandidate,
     buildMeteoraCandidate,
-    buildGmgnVol1mCandidate,
-    buildMonitoredMcapCandidate,
-    buildMonitoredVolCandidate,
     buildSurgeCandidate,
     buildSurgeCandidates,
     buildRuleCandidate,
-    buildLifecycleCandidates,
     buildSignalInput,
     buildRepeatAwarePayload,
     buildVolumeSignalInput,
@@ -2050,11 +1706,9 @@ module.exports = {
     canRepeatCandidate,
     canRepeatSurgeInSession,
     buildEventDedupeKey,
-    getAnchoredRepeatPct,
     hasRequiredSurgePctAdvance,
     hasSatisfiedRepeatAdvance,
     hasAdvancedRepeatValue,
-    isMonitoredVolAnchorExpired,
     hasBlockingRelatedSurgeAlert,
     createEmptySummary,
     getCandidateLifecycleDecision,
@@ -2065,16 +1719,9 @@ module.exports = {
     isSameSessionMeteoraPrimedState,
     isSameSurgeSessionState,
     isCooldownActive,
-    loadMcapRows,
     loadSignals,
     loadMeteoraRows,
-    loadVolumeRows,
-    mergeVolumeRows,
-    needsGmgnVolume1mBaseline,
-    needsMcapBaseline,
     needsMeteoraState,
-    needsVolumeBaseline,
-    passesCommonAlertFilters,
     primeCandidate,
     roundAlertMetric,
     resolveCandidateState,
