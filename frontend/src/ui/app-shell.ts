@@ -124,14 +124,12 @@ type LivePanelResizePendingDraft = {
 };
 
 type LivePanelReorderDraft = {
-  panelKey: LiveWorkspacePanelKey;
+  panelKey: LivePanelPaneKey;
   item: HTMLElement;
   panels: HTMLElement;
   pointerId: number;
-  startX: number;
-  startY: number;
-  originalOrder: LiveWorkspacePanelKey[];
-  previewOrder: LiveWorkspacePanelKey[];
+  originalOrder: LivePanelPaneKey[];
+  previewOrder: LivePanelPaneKey[];
 };
 
 type LivePanelReorderPendingDraft = {
@@ -477,7 +475,7 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
   return tryGetExistingAppRenderFrame(root) ?? createAppRenderFrame(root);
 }
 
-function syncLivePanelDragHandle(element: HTMLElement, panelKey: LiveWorkspacePanelKey, enabled: boolean) {
+function syncLivePanelDragHandle(element: HTMLElement, panelKey: LivePanelPaneKey, enabled: boolean) {
   const existingHandle = element.querySelector<HTMLElement>(LIVE_PANEL_DRAG_HANDLE_SELECTOR);
   if (!enabled) {
     existingHandle?.remove();
@@ -594,8 +592,6 @@ function syncLegacyLivePanelComposition(
     .flatMap((region): LiveWorkspacePanelKey[] => (
       region.pane === 'primary' ? ['monitored'] : region.pane === 'alerts' ? ['alerts'] : []
     ));
-  const previewOrder = (livePanelReorderDraft?.previewOrder ?? resolvedOrder)
-    .filter((panelKey) => panelKey !== 'pumpfun');
   const spanMap = new Map<LiveWorkspacePanelKey, 1 | 2 | 3>([
     ['monitored', primarySpan],
     ['alerts', alertsSpan],
@@ -608,7 +604,7 @@ function syncLegacyLivePanelComposition(
   applyLivePanelHeight(livePanelItems.alerts, 'alerts', heightMap.alerts);
   syncAlertsPanelLayoutPreset(livePanelItems.alerts, alertsSpan);
 
-  const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(previewOrder, spanMap, state);
+  const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(resolvedOrder, spanMap, state);
   if (collapsedStackLayout) {
     const stack = getOrCreateLivePanelCollapsedStack(renderFrame.panels);
     syncElementChildOrder(
@@ -625,20 +621,14 @@ function syncLegacyLivePanelComposition(
   } else {
     flattenLivePanelCollapsedStack(renderFrame.panels);
     syncElementChildOrder(renderFrame.panels, [
-      ...previewOrder.map((panelKey) => livePanelItems[panelKey]),
+      ...resolvedOrder.map((panelKey) => livePanelItems[panelKey]),
       ...hiddenItems,
       renderFrame.pumpfunSlot,
     ]);
   }
 
-  if (livePanelReorderDraft) {
-    const previewItem = livePanelItems[livePanelReorderDraft.panelKey];
-    previewItem.dataset.reordering = 'true';
-    previewItem.style.pointerEvents = 'none';
-    renderFrame.frame.classList.add('live-panel-reorder-active');
-  }
   applyActiveLivePanelResizeState(renderFrame);
-  syncLivePanelDragHandle(livePanelItems.monitored, 'monitored', true);
+  syncLivePanelDragHandle(livePanelItems.monitored, 'primary', true);
   syncLivePanelDragHandle(livePanelItems.alerts, 'alerts', true);
   syncLivePanelResizeFrame(livePanelItems.monitored, 'primary', true);
   syncLivePanelResizeFrame(livePanelItems.alerts, 'alerts', true);
@@ -670,9 +660,8 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   if (state.ui.workspace !== 'live') {
     delete renderFrame.panels.dataset.layoutPreset;
     delete renderFrame.panels.dataset.layoutColumns;
-    syncLivePanelDragHandle(monitoredItem, 'monitored', false);
-    syncLivePanelDragHandle(secondaryItem, 'monitored', false);
-    syncLivePanelDragHandle(renderFrame.pumpfunSlot, 'pumpfun', false);
+    syncLivePanelDragHandle(monitoredItem, 'primary', false);
+    syncLivePanelDragHandle(secondaryItem, 'secondary', false);
     syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', false);
     syncLivePanelResizeFrame(monitoredItem, 'primary', false);
     syncLivePanelResizeFrame(secondaryItem, 'secondary', false);
@@ -691,7 +680,10 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     secondary: secondaryItem,
     alerts: renderFrame.alertsSlot,
   };
-  const visibleItems = regions.map((region) => regionItems[region.pane]);
+  const visiblePaneKeys = regions.map((region) => region.pane);
+  const renderedPaneOrder = livePanelReorderDraft?.previewOrder.filter((pane) => visiblePaneKeys.includes(pane))
+    ?? visiblePaneKeys;
+  const visibleItems = renderedPaneOrder.map((pane) => regionItems[pane]);
   const hiddenItems = Object.values(regionItems).filter((item) => !visibleItems.includes(item));
   renderFrame.panels.dataset.layoutPreset = preset.id;
   renderFrame.panels.dataset.layoutColumns = String(preset.columns);
@@ -707,7 +699,8 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   const alertsSpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2;
   const supportsLegacyManipulation = getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary') === 0
     && regions.length === 2
-    && regions.every((region) => !region.centered);
+    && regions.every((region) => !region.centered)
+    && !livePanelReorderDraft;
   secondaryItem.dataset.span = String(secondarySpan);
   applyLivePanelHeight(secondaryItem, 'secondary', state.ui.livePanelLayout.heights.secondary);
   if (supportsLegacyManipulation) {
@@ -719,7 +712,7 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
       primarySpan,
       alertsSpan,
     );
-    syncLivePanelDragHandle(secondaryItem, 'monitored', false);
+    syncLivePanelDragHandle(secondaryItem, 'secondary', false);
     syncLivePanelResizeFrame(secondaryItem, 'secondary', false);
     return;
   }
@@ -730,12 +723,18 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   applyLivePanelHeight(renderFrame.alertsSlot, 'alerts', state.ui.livePanelLayout.heights.alerts);
   syncAlertsPanelLayoutPreset(renderFrame.alertsSlot, alertsSpan);
   syncElementChildOrder(renderFrame.panels, [...visibleItems, ...hiddenItems, renderFrame.pumpfunSlot]);
-  syncLivePanelDragHandle(monitoredItem, 'monitored', false);
-  syncLivePanelDragHandle(secondaryItem, 'monitored', false);
-  syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', false);
+  const dragEnabled = regions.length > 1;
+  syncLivePanelDragHandle(monitoredItem, 'primary', dragEnabled && visiblePaneKeys.includes('primary'));
+  syncLivePanelDragHandle(secondaryItem, 'secondary', dragEnabled && visiblePaneKeys.includes('secondary'));
+  syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', dragEnabled && visiblePaneKeys.includes('alerts'));
   syncLivePanelResizeFrame(monitoredItem, 'primary', getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 0);
   syncLivePanelResizeFrame(secondaryItem, 'secondary', getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary') > 0);
   syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts') > 0);
+  if (livePanelReorderDraft) {
+    livePanelReorderDraft.item.dataset.reordering = 'true';
+    livePanelReorderDraft.item.style.pointerEvents = 'none';
+    renderFrame.frame.classList.add('live-panel-reorder-active');
+  }
 }
 
 function getLivePanelElement(item: HTMLElement, panelKey: LiveResizablePanelKey) {
@@ -2121,13 +2120,9 @@ function isLiveResizablePanelKey(value: string | null | undefined): value is Liv
   return value === 'primary' || value === 'secondary' || value === 'alerts';
 }
 
-function isLiveWorkspacePanelKey(value: string | null | undefined): value is LiveWorkspacePanelKey {
-  return value === 'monitored' || value === 'alerts';
-}
-
 function getLivePanelItems(panels: HTMLElement) {
-  return Array.from(panels.querySelectorAll<HTMLElement>('.live-panel-item[data-panel-key]'))
-    .filter((item) => isLiveWorkspacePanelKey(item.dataset.panelKey));
+  return Array.from(panels.querySelectorAll<HTMLElement>('.live-panel-item[data-pane-key]'))
+    .filter((item) => !item.hidden && isLiveResizablePanelKey(item.dataset.paneKey));
 }
 
 function findLivePanelsContainer(element: HTMLElement) {
@@ -2208,15 +2203,15 @@ function resolveLivePanelCollapsedStackLayout(
   };
 }
 
-function getLivePanelOrderFromDom(panels: HTMLElement): LiveWorkspacePanelKey[] {
+function getLivePanelOrderFromDom(panels: HTMLElement): LivePanelPaneKey[] {
   return getLivePanelItems(panels)
-    .map((item) => item.dataset.panelKey)
-    .filter(isLiveWorkspacePanelKey);
+    .map((item) => item.dataset.paneKey)
+    .filter(isLiveResizablePanelKey);
 }
 
-function beginLivePanelReorder(item: HTMLElement, pointerId: number, startX: number, startY: number) {
-  const panelKey = item.dataset.panelKey;
-  if (!isLiveWorkspacePanelKey(panelKey)) {
+function beginLivePanelReorder(item: HTMLElement, pointerId: number) {
+  const panelKey = item.dataset.paneKey;
+  if (!isLiveResizablePanelKey(panelKey)) {
     return false;
   }
 
@@ -2233,8 +2228,6 @@ function beginLivePanelReorder(item: HTMLElement, pointerId: number, startX: num
     item,
     panels,
     pointerId,
-    startX,
-    startY,
     originalOrder: getLivePanelOrderFromDom(panels),
     previewOrder: getLivePanelOrderFromDom(panels),
   };
@@ -2249,7 +2242,6 @@ function previewLivePanelReorder(clientX: number, clientY: number) {
     return;
   }
 
-  void clientY;
   const draft = livePanelReorderDraft;
   const { panels } = draft;
   const nextOrder = buildLivePanelReorderPreviewOrder(draft, clientX, clientY);
@@ -2261,7 +2253,7 @@ function previewLivePanelReorder(clientX: number, clientY: number) {
     return;
   }
 
-  const itemMap = new Map(getLivePanelItems(panels).map((panelItem) => [panelItem.dataset.panelKey, panelItem]));
+  const itemMap = new Map(getLivePanelItems(panels).map((panelItem) => [panelItem.dataset.paneKey, panelItem]));
   for (const panelKey of nextOrder) {
     const panelItem = itemMap.get(panelKey);
     if (panelItem) {
@@ -2272,264 +2264,21 @@ function previewLivePanelReorder(clientX: number, clientY: number) {
 }
 
 function buildLivePanelReorderPreviewOrder(draft: LivePanelReorderDraft, clientX: number, clientY: number) {
-  const panelRect = draft.panels.getBoundingClientRect();
-  const columnWidth = Math.max(panelRect.width / 3, 1);
-  const desiredCol = Math.max(0, Math.min(2, Math.floor((clientX - panelRect.left) / columnWidth)));
-  const spanMap = getLivePanelSpanMap(draft.panels);
-  const permutations = getLivePanelOrderPermutations(draft.panelKey, draft.originalOrder);
-  const originalPlacements = simulateLivePanelPlacement(draft.originalOrder, spanMap);
-  const deltaY = clientY - draft.startY;
-  const verticalIntent = Math.abs(deltaY) >= 28;
-  const horizontalIntent = !verticalIntent;
-  const originalPlacement = originalPlacements.get(draft.panelKey);
-  const desiredRow = verticalIntent && originalPlacement
-    ? Math.max(0, originalPlacement.row + (deltaY > 0 ? 1 : -1))
-    : null;
-  const smartAdjacentSwap = horizontalIntent
-    ? resolveLivePanelSmartAdjacentSwap(draft, spanMap, clientX)
-    : null;
-  if (smartAdjacentSwap) {
-    return smartAdjacentSwap;
-  }
-
-  const smartVerticalSwap = verticalIntent
-    ? resolveLivePanelSmartVerticalSwap(draft, spanMap, clientX, clientY)
-    : null;
-  if (smartVerticalSwap) {
-    return smartVerticalSwap;
-  }
-
-  let bestOrder: LiveWorkspacePanelKey[] | null = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  for (const order of permutations) {
-    const placements = simulateLivePanelPlacement(order, spanMap);
-    const placement = placements.get(draft.panelKey);
-    if (!placement) {
-      continue;
-    }
-
-    const colScore = desiredCol < placement.startCol
-      ? placement.startCol - desiredCol
-      : desiredCol >= placement.endCol
-        ? desiredCol - placement.endCol + 1
-        : 0;
-    const rowScore = desiredRow == null ? 0 : Math.abs(placement.row - desiredRow);
-    const movementScore = order.reduce((score, panelKey, index) => {
-      const currentIndex = draft.previewOrder.indexOf(panelKey);
-      return score + Math.abs(currentIndex - index);
-    }, 0);
-    const rowPenalty = horizontalIntent
-      ? getLivePanelHorizontalIntentPenalty(draft.panelKey, spanMap, originalPlacements, placements)
-      : 0;
-    const score = desiredRow == null
-      ? colScore * 100 + rowPenalty + movementScore
-      : rowScore * 1000 + colScore * 20 + movementScore;
-    if (score < bestScore) {
-      bestScore = score;
-      bestOrder = order;
-    }
-  }
-
-  return bestOrder;
-}
-
-function resolveLivePanelSmartAdjacentSwap(
-  draft: LivePanelReorderDraft,
-  spanMap: Map<LiveWorkspacePanelKey, 1 | 2 | 3>,
-  clientX: number,
-) {
-  const draggedSpan = spanMap.get(draft.panelKey) ?? 1;
-  if (draggedSpan !== 1) {
-    return null;
-  }
-
-  const deltaX = clientX - draft.startX;
-  if (Math.abs(deltaX) < 18) {
-    return null;
-  }
-
-  const movingRight = deltaX > 0;
-  const order = [...draft.previewOrder];
-  const draggedIndex = order.indexOf(draft.panelKey);
-  if (draggedIndex < 0) {
-    return null;
-  }
-
-  const adjacentIndex = movingRight ? draggedIndex + 1 : draggedIndex - 1;
-  const adjacentKey = order[adjacentIndex];
-  if (!isLiveWorkspacePanelKey(adjacentKey)) {
-    return null;
-  }
-
-  const adjacentSpan = spanMap.get(adjacentKey) ?? 1;
-  if (adjacentSpan < 2) {
-    return null;
-  }
-
-  const adjacentItem = getLivePanelItems(draft.panels).find((item) => item.dataset.panelKey === adjacentKey);
-  if (!adjacentItem) {
-    return null;
-  }
-
-  const rect = adjacentItem.getBoundingClientRect();
-  const trigger = Math.min(Math.max(rect.width * 0.18, 36), 72);
-  const crossed = movingRight
-    ? clientX >= rect.left + trigger
-    : clientX <= rect.right - trigger;
-  if (!crossed) {
-    return null;
-  }
-
-  const next = order.filter((panelKey) => panelKey !== draft.panelKey);
-  const insertIndex = movingRight ? adjacentIndex : Math.max(adjacentIndex, 0);
-  next.splice(insertIndex, 0, draft.panelKey);
-  return next;
-}
-
-function resolveLivePanelSmartVerticalSwap(
-  draft: LivePanelReorderDraft,
-  spanMap: Map<LiveWorkspacePanelKey, 1 | 2 | 3>,
-  clientX: number,
-  clientY: number,
-) {
-  const draggedSpan = spanMap.get(draft.panelKey) ?? 1;
-  if (draggedSpan !== 1) {
-    return null;
-  }
-
-  const deltaY = clientY - draft.startY;
-  if (Math.abs(deltaY) < 20) {
-    return null;
-  }
-
-  const movingDown = deltaY > 0;
-  const currentPlacements = simulateLivePanelPlacement(draft.previewOrder, spanMap);
-  const draggedPlacement = currentPlacements.get(draft.panelKey);
-  if (!draggedPlacement) {
-    return null;
-  }
-
-  const targetRow = movingDown ? draggedPlacement.row + 1 : Math.max(0, draggedPlacement.row - 1);
-  const preferredCol = draggedPlacement.startCol;
-  const siblingItems = getLivePanelItems(draft.panels).filter((item) => {
-    const panelKey = item.dataset.panelKey;
-    return panelKey !== draft.panelKey
-      && isLiveWorkspacePanelKey(panelKey)
-      && (spanMap.get(panelKey) ?? 1) === 1
-      && currentPlacements.get(panelKey)?.row === targetRow;
+  const targetItem = getLivePanelItems(draft.panels).find((item) => {
+    if (item === draft.item) return false;
+    const rect = item.getBoundingClientRect();
+    return rect.left <= clientX && clientX <= rect.right
+      && rect.top <= clientY && clientY <= rect.bottom;
   });
-  if (siblingItems.length === 0) {
-    return null;
-  }
+  const targetKey = targetItem?.dataset.paneKey;
+  if (!isLiveResizablePanelKey(targetKey)) return null;
 
-  const siblingItem = siblingItems
-    .map((item) => {
-      const panelKey = item.dataset.panelKey as LiveWorkspacePanelKey;
-      const placement = currentPlacements.get(panelKey);
-      return {
-        item,
-        rect: item.getBoundingClientRect(),
-        placement,
-      };
-    })
-    .sort((left, right) => {
-      const leftColScore = Math.abs((left.placement?.startCol ?? preferredCol) - preferredCol);
-      const rightColScore = Math.abs((right.placement?.startCol ?? preferredCol) - preferredCol);
-      if (leftColScore !== rightColScore) {
-        return leftColScore - rightColScore;
-      }
-      const leftXScore = left.rect.left <= clientX && clientX <= left.rect.right ? 0 : Math.abs(((left.rect.left + left.rect.right) / 2) - clientX);
-      const rightXScore = right.rect.left <= clientX && clientX <= right.rect.right ? 0 : Math.abs(((right.rect.left + right.rect.right) / 2) - clientX);
-      if (leftXScore !== rightXScore) {
-        return leftXScore - rightXScore;
-      }
-      return Math.abs(left.rect.top - clientY) - Math.abs(right.rect.top - clientY);
-    })[0];
-  if (!siblingItem) {
-    return null;
-  }
-
-  const horizontalBandMiss = clientX < siblingItem.rect.left || clientX > siblingItem.rect.right;
-  if (horizontalBandMiss) {
-    return null;
-  }
-
-  const trigger = Math.min(Math.max(siblingItem.rect.height * 0.3, 20), 44);
-  const crossed = movingDown
-    ? clientY >= siblingItem.rect.top + trigger
-    : clientY <= siblingItem.rect.bottom - trigger;
-  if (!crossed) {
-    return null;
-  }
-
-  const siblingKey = siblingItem.item.dataset.panelKey;
-  if (!isLiveWorkspacePanelKey(siblingKey)) {
-    return null;
-  }
-
-  const next = [...draft.previewOrder];
-  const draggedIndex = next.indexOf(draft.panelKey);
-  const siblingIndex = next.indexOf(siblingKey);
-  if (draggedIndex < 0 || siblingIndex < 0) {
-    return null;
-  }
-
-  [next[draggedIndex], next[siblingIndex]] = [next[siblingIndex], next[draggedIndex]];
-  return next;
-}
-
-function getLivePanelHorizontalIntentPenalty(
-  draggedPanelKey: LiveWorkspacePanelKey,
-  spanMap: Map<LiveWorkspacePanelKey, 1 | 2 | 3>,
-  originalPlacements: Map<LiveWorkspacePanelKey, { row: number; startCol: number; endCol: number }>,
-  nextPlacements: Map<LiveWorkspacePanelKey, { row: number; startCol: number; endCol: number }>,
-) {
-  let penalty = 0;
-  for (const [panelKey, originalPlacement] of originalPlacements.entries()) {
-    if (panelKey === draggedPanelKey) {
-      continue;
-    }
-
-    const nextPlacement = nextPlacements.get(panelKey);
-    if (!nextPlacement || nextPlacement.row === originalPlacement.row) {
-      continue;
-    }
-
-    penalty += (spanMap.get(panelKey) ?? 1) > 1 ? 1200 : 240;
-  }
-  return penalty;
-}
-
-function getLivePanelSpanMap(panels: HTMLElement) {
-  const spanMap = new Map<LiveWorkspacePanelKey, 1 | 2 | 3>();
-  for (const item of getLivePanelItems(panels)) {
-    const panelKey = item.dataset.panelKey;
-    if (!isLiveWorkspacePanelKey(panelKey)) {
-      continue;
-    }
-    spanMap.set(panelKey, item.dataset.span === '3' ? 3 : item.dataset.span === '2' ? 2 : 1);
-  }
-  return spanMap;
-}
-
-function getLivePanelOrderPermutations(draggedPanelKey: LiveWorkspacePanelKey, order: LiveWorkspacePanelKey[]) {
-  const others = order.filter((panelKey) => panelKey !== draggedPanelKey);
-  if (others.length === 1) {
-    return [
-      [draggedPanelKey, others[0]],
-      [others[0], draggedPanelKey],
-    ] as LiveWorkspacePanelKey[][];
-  }
-
-  return [
-    [draggedPanelKey, others[0], others[1]],
-    [draggedPanelKey, others[1], others[0]],
-    [others[0], draggedPanelKey, others[1]],
-    [others[1], draggedPanelKey, others[0]],
-    [others[0], others[1], draggedPanelKey],
-    [others[1], others[0], draggedPanelKey],
-  ] as LiveWorkspacePanelKey[][];
+  const nextOrder = [...draft.previewOrder];
+  const draggedIndex = nextOrder.indexOf(draft.panelKey);
+  const targetIndex = nextOrder.indexOf(targetKey);
+  if (draggedIndex < 0 || targetIndex < 0) return null;
+  [nextOrder[draggedIndex], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[draggedIndex]];
+  return nextOrder;
 }
 
 function simulateLivePanelPlacement(
@@ -2579,7 +2328,7 @@ function endLivePanelReorder(root: HTMLElement, controller: AppController, optio
     return;
   }
 
-  const itemMap = new Map(getLivePanelItems(draft.panels).map((item) => [item.dataset.panelKey, item]));
+  const itemMap = new Map(getLivePanelItems(draft.panels).map((item) => [item.dataset.paneKey, item]));
   for (const panelKey of draft.originalOrder) {
     const item = itemMap.get(panelKey);
     if (item) {
@@ -2599,7 +2348,7 @@ function wireLivePanelReorder(root: HTMLElement, controller: AppController) {
 
     const target = event.target as HTMLElement | null;
     const handle = target?.closest<HTMLElement>(LIVE_PANEL_DRAG_HANDLE_SELECTOR);
-    const item = handle?.closest<HTMLElement>('.live-panel-item[data-panel-key]');
+    const item = handle?.closest<HTMLElement>('.live-panel-item[data-pane-key]');
     if (!handle || !item) {
       return;
     }
@@ -2635,12 +2384,7 @@ function wireLivePanelReorder(root: HTMLElement, controller: AppController) {
 
     const pendingDraft = livePanelReorderPendingDraft;
     livePanelReorderPendingDraft = null;
-    if (!beginLivePanelReorder(
-      pendingDraft.item,
-      pendingDraft.pointerId,
-      pendingDraft.startX,
-      pendingDraft.startY,
-    )) {
+    if (!beginLivePanelReorder(pendingDraft.item, pendingDraft.pointerId)) {
       releaseLivePanelPointerCapture(pendingDraft.item, pendingDraft.pointerId);
       return;
     }

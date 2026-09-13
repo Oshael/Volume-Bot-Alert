@@ -856,7 +856,7 @@ export interface AppController {
   ): void;
   setLivePanelPreset(preset: LivePanelPresetId): void;
   setLivePanelHeight(pane: LivePanelPaneKey, height: number): void;
-  setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>): void;
+  setLivePanelOrder(order: LivePanelPaneKey[]): void;
   resetLivePanelLayout(): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
@@ -14805,10 +14805,10 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit(pane === 'alerts' ? 'alerts' : 'monitored');
     },
-    setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>) {
+    setLivePanelOrder(order: LivePanelPaneKey[]) {
       const nextOrder = resolveLivePanelLayoutPreference({
         ...state.ui.livePanelLayout,
-        order: order.flatMap((panel) => panel === 'monitored' ? ['primary'] : panel === 'alerts' ? ['alerts'] : []),
+        order,
       }).order;
       const currentOrder = state.ui.livePanelLayout.order;
       if (currentOrder.length === nextOrder.length && currentOrder.every((item, index) => item === nextOrder[index])) {
@@ -14816,7 +14816,7 @@ export function createAppController(): AppController {
       }
       state.ui.livePanelLayout.order = nextOrder;
       queueUiPrefsPersist();
-      emit('monitored', 'pumpfun', 'alerts');
+      emit('monitored', 'alerts');
     },
     resetLivePanelLayout() {
       const defaults = getDefaultLivePanelLayout();

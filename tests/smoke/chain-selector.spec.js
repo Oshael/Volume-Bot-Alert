@@ -1307,6 +1307,50 @@ test('composes the compare preset with two independent Monitored panes', async (
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('exchanges only panes visible in the active fixed preset', async ({ page }) => {
+  const compareConfig = {
+    ...ROBINHOOD_CONFIG,
+    uiPrefs: {
+      ...ROBINHOOD_CONFIG.uiPrefs,
+      livePanelLayout: {
+        preset: 'compare',
+        order: ['primary', 'secondary', 'alerts'],
+        panes: { primaryView: 'trending', secondaryView: 'watchlist' },
+        heights: { primary: 420, secondary: 420, alerts: 420 },
+      },
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, {
+    ...ROBINHOOD_API_FIXTURES,
+    'GET /api/config': compareConfig,
+  });
+  const panels = page.locator('[data-app-render-slot="panels"]');
+  const primary = panels.locator('[data-pane-key="primary"]');
+  const secondary = panels.locator('[data-pane-key="secondary"]');
+  const primaryHandle = primary.getByRole('button', { name: 'Reorder primary panel' });
+
+  await expect(panels.locator('[data-live-panel-drag-handle="true"]')).toHaveCount(2);
+  await expect(panels.locator('[data-pane-key="alerts"] [data-live-panel-drag-handle="true"]')).toHaveCount(0);
+  const [handleBox, targetBox] = await Promise.all([primaryHandle.boundingBox(), secondary.boundingBox()]);
+  expect(handleBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+  const prefsPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
+  ));
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  const persistedLayout = (await prefsPatch).postDataJSON().uiPrefs.livePanelLayout;
+  expect(persistedLayout.order).toEqual(['secondary', 'primary', 'alerts']);
+  await expect(panels.locator(':scope > .live-panel-item:not([hidden])').first()).toHaveAttribute('data-pane-key', 'secondary');
+  await expect(primary).toHaveAttribute('data-span', '1');
+  await expect(secondary).toHaveAttribute('data-span', '1');
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('chain-scoped bot settings persist independent supported controls and roll back failures', async ({ page }) => {
   test.setTimeout(35_000);
   let configPatchCount = 0;

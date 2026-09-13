@@ -1540,7 +1540,9 @@ As cinco IDs aceitas são `discovery_alerts`, `compare`, `alerts_focus`, `token_
 somente as regiões ativas, na ordem, proporção e centralização produzidas pelo resolver
 do preset; regiões inativas permanecem sem conteúdo. Cada região visível pode ajustar e
 persistir sua própria altura somente pela borda inferior; não há resize horizontal nem
-mutação livre dos spans do preset. Views duplicadas normalizam para
+mutação livre dos spans do preset. O drag apenas troca a ordem de panes visíveis e
+persiste a ordem canônica; panes ocultas e a geometria do preset não são alteradas.
+Views duplicadas normalizam para
 `trending + watchlist`. O reader ainda
 migra o formato legado baseado em `monitored`/`pumpfun`/`alerts`; a saída persistida é
 sempre canônica e não volta a emitir `pumpfun`.
