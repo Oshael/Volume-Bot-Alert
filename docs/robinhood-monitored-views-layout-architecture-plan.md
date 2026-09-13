@@ -660,6 +660,8 @@ series is removed:
   legacy `alert_sparklines` entries through their alert identity. Keep the current consumers unchanged while unit tests
   prove chain isolation, duplicate-alert collapse, bounded normalization and deterministic legacy migration. Estimated
   change: 250–350 lines.
+  **Completed:** canonical compact entries are normalized and persisted only by token identity, while the dark compatibility
+  loader collapses legacy alert-ID entries deterministically without changing any current state or UI consumer.
 - **7B — Alerts consumer convergence:** render Alerts and seed the expanded chart from the shared identity cache, make the
   existing alert history fetch write that cache and remove `alertSparklineById` from application state, alert pruning and
   removed-token snapshots. Preserve legacy storage reads and a bounded canonical persisted subset until the unified fetch

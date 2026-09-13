@@ -1,8 +1,14 @@
-import type { TokenChain } from '../utils/token-chain';
+import {
+  createLegacyCompatibleTokenIdentity,
+  parseTokenIdentityKey,
+  type TokenChain,
+} from '../utils/token-chain.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_TIMED_SPARKLINE_HOURS = 30 * 24;
+const MAX_PERSISTED_COMPACT_SPARKLINES = 240;
+const MAX_PERSISTED_SPARKLINE_POINTS = 500;
 
 export type WorkspaceSparklineIdentity = {
   chain: TokenChain;
@@ -50,6 +56,8 @@ export type WorkspaceSparklineCacheValue = {
 export type WorkspaceSparklineMergeValue = WorkspaceSparklineCacheValue & {
   valuationType?: 'market-cap' | 'fdv' | null;
   bucketCount?: number;
+  coverageRatio?: number | null;
+  effectiveHours?: number | null;
   latestBucketAt?: string | null;
   points?: number;
   series?: unknown[];
@@ -61,6 +69,144 @@ export type WorkspaceSparklineMergeValue = WorkspaceSparklineCacheValue & {
   }>;
   loading?: boolean;
 };
+
+export type CompactSparklineCacheEntry = WorkspaceSparklineMergeValue & {
+  chain: TokenChain;
+  address: string;
+  pairAddress?: string | null;
+  firstBucketAt?: string | null;
+  oneMinuteAvailable?: boolean;
+  series: number[];
+};
+
+export type LegacyAlertSparklineIdentity = {
+  id?: unknown;
+  chain?: unknown;
+  address?: unknown;
+};
+
+function optionalFiniteNumber(value: unknown) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function optionalString(value: unknown) {
+  return typeof value === 'string' ? value : null;
+}
+
+function normalizeCompactSparklineEntry(
+  identity: WorkspaceSparklineIdentity,
+  value: unknown,
+): CompactSparklineCacheEntry | null {
+  if (!value || typeof value !== 'object') return null;
+  const source = value as Partial<CompactSparklineCacheEntry>;
+  const series = Array.isArray(source.series)
+    ? source.series
+      .map((item) => Number(item))
+      .filter((item) => Number.isFinite(item))
+      .slice(-MAX_PERSISTED_SPARKLINE_POINTS)
+    : [];
+  if (series.length < 2) return null;
+
+  return {
+    chain: identity.chain,
+    address: identity.address,
+    valuationType: source.valuationType === 'market-cap' || source.valuationType === 'fdv'
+      ? source.valuationType
+      : null,
+    pairAddress: optionalString(source.pairAddress),
+    bucketCount: optionalFiniteNumber(source.bucketCount) ?? 0,
+    coverageRatio: optionalFiniteNumber(source.coverageRatio),
+    effectiveHours: optionalFiniteNumber(source.effectiveHours),
+    granularityMinutes: optionalFiniteNumber(source.granularityMinutes),
+    firstBucketAt: optionalString(source.firstBucketAt),
+    latestBucketAt: optionalString(source.latestBucketAt),
+    oneMinuteAvailable: source.oneMinuteAvailable === true,
+    generatedAt: optionalString(source.generatedAt),
+    refreshedAt: optionalFiniteNumber(source.refreshedAt) ?? undefined,
+    hours: optionalFiniteNumber(source.hours) ?? undefined,
+    allAvailable: source.allAvailable === true,
+    points: optionalFiniteNumber(source.points) ?? undefined,
+    series,
+  };
+}
+
+function getCompactSparklineRecency(entry: CompactSparklineCacheEntry) {
+  return Math.max(
+    Number(entry.refreshedAt) || 0,
+    parseTimestamp(entry.generatedAt) || 0,
+    parseTimestamp(entry.latestBucketAt) || 0,
+  );
+}
+
+function boundCompactSparklineCache(
+  entries: Array<[string, CompactSparklineCacheEntry]>,
+  maxEntries: number,
+) {
+  return Object.fromEntries(entries
+    .sort((left, right) => (
+      getCompactSparklineRecency(right[1]) - getCompactSparklineRecency(left[1])
+      || left[0].localeCompare(right[0])
+    ))
+    .slice(0, Math.max(0, Math.floor(maxEntries))));
+}
+
+export function normalizeCompactSparklineCache(
+  value: unknown,
+  maxEntries = MAX_PERSISTED_COMPACT_SPARKLINES,
+): Record<string, CompactSparklineCacheEntry> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Array<[string, CompactSparklineCacheEntry]> = [];
+  for (const [key, entry] of Object.entries(value)) {
+    try {
+      const identity = parseTokenIdentityKey(key);
+      const normalizedEntry = normalizeCompactSparklineEntry(identity, entry);
+      if (normalizedEntry) normalized.push([identity.key, normalizedEntry]);
+    } catch {
+      // Ignore malformed or legacy address-only keys in the canonical cache.
+    }
+  }
+  return boundCompactSparklineCache(normalized, maxEntries);
+}
+
+export function migrateLegacyAlertSparklineCache(
+  value: unknown,
+  alerts: readonly LegacyAlertSparklineIdentity[],
+  maxEntries = MAX_PERSISTED_COMPACT_SPARKLINES,
+): Record<string, CompactSparklineCacheEntry> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const alertById = new Map(alerts.map((alert) => [String(alert.id || '').trim(), alert]));
+  const migrated = new Map<string, CompactSparklineCacheEntry>();
+
+  for (const [alertId, entry] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) {
+    const alert = alertById.get(alertId);
+    if (!alert) continue;
+    try {
+      const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
+      const normalizedEntry = normalizeCompactSparklineEntry(identity, entry);
+      const previous = migrated.get(identity.key);
+      if (normalizedEntry && (!previous
+        || getCompactSparklineRecency(normalizedEntry) > getCompactSparklineRecency(previous))) {
+        migrated.set(identity.key, normalizedEntry);
+      }
+    } catch {
+      // Ignore legacy rows that cannot resolve to a valid token identity.
+    }
+  }
+  return boundCompactSparklineCache([...migrated.entries()], maxEntries);
+}
+
+export function hydrateCompactSparklineCache(
+  canonicalValue: unknown,
+  legacyValue: unknown,
+  alerts: readonly LegacyAlertSparklineIdentity[],
+  maxEntries = MAX_PERSISTED_COMPACT_SPARKLINES,
+) {
+  const legacy = migrateLegacyAlertSparklineCache(legacyValue, alerts, maxEntries);
+  const canonical = normalizeCompactSparklineCache(canonicalValue, maxEntries);
+  return boundCompactSparklineCache(Object.entries({ ...legacy, ...canonical }), maxEntries);
+}
 
 function hasRenderableSeries(entry?: WorkspaceSparklineMergeValue | null) {
   return Array.isArray(entry?.series) && entry.series.length >= 2;

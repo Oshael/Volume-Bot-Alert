@@ -1,4 +1,9 @@
 import type { AlertEntry, TokenSparklineEntry } from '../state/app-state';
+import {
+  hydrateCompactSparklineCache,
+  normalizeCompactSparklineCache,
+  type CompactSparklineCacheEntry,
+} from '../state/workspace-sparkline-refresh.ts';
 
 const RECENT_DISMISSED_KEY = 'recent_dismissed';
 const OLD_WEEK_DISMISSED_KEY = 'old_week_dismissed';
@@ -6,6 +11,7 @@ const RECENT_REMOVAL_LOG_KEY = 'recent_removal_log';
 const OLD_WEEK_REMOVAL_LOG_KEY = 'old_week_removal_log';
 const ALERTS_KEY = 'alerts';
 const ALERT_SPARKLINES_KEY = 'alert_sparklines';
+const COMPACT_SPARKLINES_KEY = 'compact_sparklines';
 
 function scopedKey(scope: string, key: string) {
   return `frontend_vite:${scope}:${key}`;
@@ -161,4 +167,19 @@ export function loadAlertSparklineCache(scope: string) {
 
 export function saveAlertSparklineCache(scope: string, entries: Record<string, TokenSparklineEntry>) {
   writeJson(scope, ALERT_SPARKLINES_KEY, pruneAlertSparklineCache(entries));
+}
+
+export function loadCompactSparklineCache(scope: string, alerts: readonly AlertEntry[]) {
+  const canonical = readJson<unknown>(scope, COMPACT_SPARKLINES_KEY, {});
+  const legacy = readJson<unknown>(scope, ALERT_SPARKLINES_KEY, {});
+  const hydrated = hydrateCompactSparklineCache(canonical, legacy, alerts);
+  writeJson(scope, COMPACT_SPARKLINES_KEY, hydrated);
+  return hydrated;
+}
+
+export function saveCompactSparklineCache(
+  scope: string,
+  entries: Record<string, CompactSparklineCacheEntry | TokenSparklineEntry>,
+) {
+  writeJson(scope, COMPACT_SPARKLINES_KEY, normalizeCompactSparklineCache(entries));
 }

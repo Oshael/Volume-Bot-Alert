@@ -2,8 +2,11 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
+let hydrateCompactSparklineCache;
 let mergeWorkspaceSparklineRefreshEntry;
 let mergeWorkspaceSparklineSnapshotEntry;
+let migrateLegacyAlertSparklineCache;
+let normalizeCompactSparklineCache;
 let resolveWorkspaceSparklineGranularityMinutes;
 let resolveWorkspaceSparklineRequestShape;
 let runWorkspaceSparklineBatchesSerially;
@@ -14,8 +17,11 @@ let splitWorkspaceSparklineBatchesByChain;
 before(async () => {
   ({
     getWorkspaceSparklineNextRefreshAt,
+    hydrateCompactSparklineCache,
     mergeWorkspaceSparklineRefreshEntry,
     mergeWorkspaceSparklineSnapshotEntry,
+    migrateLegacyAlertSparklineCache,
+    normalizeCompactSparklineCache,
     resolveWorkspaceSparklineGranularityMinutes,
     resolveWorkspaceSparklineRequestShape,
     runWorkspaceSparklineBatchesSerially,
@@ -23,6 +29,89 @@ before(async () => {
     selectWorkspaceSparklineRefreshBatches,
     splitWorkspaceSparklineBatchesByChain,
   } = await import('../frontend/src/state/workspace-sparkline-refresh.ts'));
+});
+
+describe('compact sparkline identity cache', () => {
+  const solanaAddress = '11111111111111111111111111111111';
+  const evmAddress = '0xabcdef0123456789abcdef0123456789abcdef01';
+
+  it('normalizes only canonical identity keys and bounds entries and series', () => {
+    const longSeries = Array.from({ length: 505 }, (_, index) => index);
+    const cache = normalizeCompactSparklineCache({
+      [solanaAddress]: { address: solanaAddress, series: [1, 2] },
+      [`solana:${solanaAddress}`]: {
+        address: 'ignored-address',
+        refreshedAt: 100,
+        series: longSeries,
+      },
+      [`robinhood:${evmAddress.toUpperCase()}`]: {
+        address: evmAddress,
+        refreshedAt: 200,
+        series: [10, 20],
+      },
+    }, 1);
+
+    assert.deepEqual(Object.keys(cache), [`robinhood:${evmAddress}`]);
+    assert.equal(cache[`robinhood:${evmAddress}`].chain, 'robinhood');
+    assert.equal(cache[`robinhood:${evmAddress}`].address, evmAddress);
+
+    const solana = normalizeCompactSparklineCache({
+      [`solana:${solanaAddress}`]: { address: solanaAddress, series: longSeries },
+    });
+    assert.equal(solana[`solana:${solanaAddress}`].series.length, 500);
+    assert.deepEqual(solana[`solana:${solanaAddress}`].series.slice(0, 2), [5, 6]);
+  });
+
+  it('collapses duplicate alert rows to the newest series while isolating chains', () => {
+    const migrated = migrateLegacyAlertSparklineCache({
+      'alert-a': {
+        address: solanaAddress,
+        generatedAt: '2026-09-13T12:00:00.000Z',
+        series: [1, 2],
+      },
+      'alert-b': {
+        address: solanaAddress,
+        generatedAt: '2026-09-13T12:01:00.000Z',
+        series: [3, 4],
+      },
+      'alert-c': {
+        address: evmAddress,
+        generatedAt: '2026-09-13T12:02:00.000Z',
+        series: [5, 6],
+      },
+      orphan: { address: solanaAddress, series: [7, 8] },
+    }, [
+      { id: 'alert-a', chain: 'solana', address: solanaAddress },
+      { id: 'alert-b', chain: 'solana', address: solanaAddress },
+      { id: 'alert-c', chain: 'robinhood', address: evmAddress },
+    ]);
+
+    assert.deepEqual(Object.keys(migrated).sort(), [
+      `robinhood:${evmAddress}`,
+      `solana:${solanaAddress}`,
+    ]);
+    assert.deepEqual(migrated[`solana:${solanaAddress}`].series, [3, 4]);
+    assert.deepEqual(migrated[`robinhood:${evmAddress}`].series, [5, 6]);
+  });
+
+  it('prefers an existing canonical entry over migrated legacy data', () => {
+    const identityKey = `solana:${solanaAddress}`;
+    const cache = hydrateCompactSparklineCache({
+      [identityKey]: {
+        address: solanaAddress,
+        generatedAt: '2026-09-13T11:00:00.000Z',
+        series: [10, 11],
+      },
+    }, {
+      legacy: {
+        address: solanaAddress,
+        generatedAt: '2026-09-13T12:00:00.000Z',
+        series: [20, 21],
+      },
+    }, [{ id: 'legacy', chain: 'solana', address: solanaAddress }]);
+
+    assert.deepEqual(cache[identityKey].series, [10, 11]);
+  });
 });
 
 describe('workspace sparkline request shape', () => {
