@@ -1248,6 +1248,41 @@ test('renders the bounded four-view Monitored surface without filter or paginati
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('composes the compare preset with two independent Monitored panes', async ({ page }) => {
+  const compareConfig = {
+    ...ROBINHOOD_CONFIG,
+    uiPrefs: {
+      ...ROBINHOOD_CONFIG.uiPrefs,
+      livePanelLayout: {
+        preset: 'compare',
+        order: ['primary', 'secondary', 'alerts'],
+        panes: { primaryView: 'trending', secondaryView: 'watchlist' },
+        heights: { primary: 620, secondary: 620, alerts: 620 },
+      },
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, {
+    ...ROBINHOOD_API_FIXTURES,
+    'GET /api/config': compareConfig,
+  });
+  const panels = page.locator('[data-app-render-slot="panels"]');
+  const primary = panels.locator('[data-pane-key="primary"]');
+  const secondary = panels.locator('[data-pane-key="secondary"]');
+
+  await expect(panels).toHaveAttribute('data-layout-preset', 'compare');
+  await expect(panels).toHaveAttribute('data-layout-columns', '2');
+  await expect(primary.locator('[data-monitored-pane="primary"]')).toBeVisible();
+  await expect(secondary.locator('[data-monitored-pane="secondary"]')).toBeVisible();
+  await expect(primary.getByRole('button', { name: 'Trending', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(secondary.getByRole('button', { name: 'Watchlist', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(panels.locator('[data-pane-key="alerts"] .alerts-panel')).toHaveCount(0);
+
+  const [primaryBox, secondaryBox] = await Promise.all([primary.boundingBox(), secondary.boundingBox()]);
+  expect(Math.abs((primaryBox?.width || 0) - (secondaryBox?.width || 0))).toBeLessThan(2);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('chain-scoped bot settings persist independent supported controls and roll back failures', async ({ page }) => {
   test.setTimeout(35_000);
   let configPatchCount = 0;

@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredPaneViewTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
@@ -13,7 +13,9 @@ import { syncElementChildOrder } from '../utils/dom-child-order';
 import {
   getLivePanelPaneSpan,
   getOrderedVisibleLivePanelRegions,
+  LIVE_PANEL_PRESETS,
 } from '../utils/live-panel-layout';
+import type { MonitoredPaneKey } from '../utils/monitored-view';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -171,6 +173,8 @@ type AppRenderFrame = {
   panels: HTMLElement;
   monitoredStack: HTMLElement;
   monitoredSlot: HTMLElement;
+  monitoredSecondaryStack: HTMLElement;
+  monitoredSecondarySlot: HTMLElement;
   bidZoneSlot: HTMLElement;
   pumpfunSlot: HTMLElement;
   alertsSlot: HTMLElement;
@@ -193,6 +197,8 @@ const LIVE_PANEL_RESIZE_FRAME_SELECTOR = '[data-live-panel-resize-frame="true"]'
 const LIVE_PANEL_RESIZE_ZONE_SELECTOR = '[data-live-panel-resize-zone]';
 const LIVE_PANEL_COLLAPSED_STACK_SELECTOR = '[data-live-panel-collapsed-stack="true"]';
 const APP_MONITORED_SLOT_SELECTOR = '[data-app-render-slot="monitored"]';
+const APP_MONITORED_SECONDARY_STACK_SELECTOR = '.monitored-secondary-stack';
+const APP_MONITORED_SECONDARY_SLOT_SELECTOR = '[data-app-render-slot="monitored-secondary"]';
 const APP_BID_ZONE_SLOT_SELECTOR = '[data-app-render-slot="bid-zone"]';
 const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
 const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
@@ -233,6 +239,9 @@ export function renderAppShell(
   const renderFrame = ensureAppRenderFrame(root);
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
+  const primaryPaneVisible = isLiveWorkspace && getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 0;
+  const secondaryPaneVisible = isLiveWorkspace && getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary') > 0;
+  const alertsPaneVisible = isLiveWorkspace && getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts') > 0;
   const pathname = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
   const isAccountSecurityRoute = pathname === '/account-security' || pathname.startsWith('/account-security/');
   updateRegionSlot(renderFrame.headerSlot, 'header', dirtyRegions, getHeaderRenderKey(state), () => (
@@ -272,26 +281,43 @@ export function renderAppShell(
       updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
     }
 
-    if (isLiveWorkspace) {
+    if (primaryPaneVisible) {
       updateRegionSlot(
         renderFrame.monitoredSlot,
         'monitored',
         dirtyRegions,
-        getMonitoredRenderKey(state),
-        () => [renderMonitoredSection(state, controller)],
-        () => patchMonitoredSection(renderFrame.monitoredSlot, state, controller),
+        getMonitoredRenderKey(state, 'primary'),
+        () => [renderMonitoredSection(state, controller, 'primary')],
+        () => patchMonitoredSection(renderFrame.monitoredSlot, state, controller, 'primary'),
       );
-      updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
-      updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
     } else {
       updateRenderSlot(renderFrame.monitoredSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
+    }
+    if (secondaryPaneVisible) {
+      updateRegionSlot(
+        renderFrame.monitoredSecondarySlot,
+        'monitored',
+        dirtyRegions,
+        getMonitoredRenderKey(state, 'secondary'),
+        () => [renderMonitoredSection(state, controller, 'secondary')],
+        () => patchMonitoredSection(renderFrame.monitoredSecondarySlot, state, controller, 'secondary'),
+      );
+    } else {
+      updateRenderSlot(renderFrame.monitoredSecondarySlot, 'hidden', () => []);
+    }
+    updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
+    if (alertsPaneVisible) {
+      updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
+    } else {
       updateRenderSlot(renderFrame.alertsSlot, 'hidden', () => []);
     }
 
-    renderFrame.monitoredSlot.hidden = !isLiveWorkspace;
+    renderFrame.monitoredStack.hidden = !primaryPaneVisible;
+    renderFrame.monitoredSlot.hidden = !primaryPaneVisible;
+    renderFrame.monitoredSecondaryStack.hidden = !secondaryPaneVisible;
+    renderFrame.monitoredSecondarySlot.hidden = !secondaryPaneVisible;
     renderFrame.pumpfunSlot.hidden = true;
-    renderFrame.alertsSlot.hidden = !isLiveWorkspace;
+    renderFrame.alertsSlot.hidden = !alertsPaneVisible;
     renderFrame.bidZoneSlot.hidden = true;
     updateRenderSlot(renderFrame.bidZoneSlot, 'hidden', () => []);
   } else {
@@ -302,6 +328,7 @@ export function renderAppShell(
     updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
     updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
     renderFrame.monitoredSlot.replaceChildren();
+    renderFrame.monitoredSecondarySlot.replaceChildren();
     renderFrame.bidZoneSlot.replaceChildren();
     renderFrame.pumpfunSlot.replaceChildren();
     renderFrame.alertsSlot.replaceChildren();
@@ -375,6 +402,8 @@ function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null 
     panels: existingFrame.querySelector<HTMLElement>(APP_PANELS_SELECTOR),
     monitoredStack: existingFrame.querySelector<HTMLElement>(APP_MONITORED_STACK_SELECTOR),
     monitoredSlot: existingFrame.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR),
+    monitoredSecondaryStack: existingFrame.querySelector<HTMLElement>(APP_MONITORED_SECONDARY_STACK_SELECTOR),
+    monitoredSecondarySlot: existingFrame.querySelector<HTMLElement>(APP_MONITORED_SECONDARY_SLOT_SELECTOR),
     bidZoneSlot: existingFrame.querySelector<HTMLElement>(APP_BID_ZONE_SLOT_SELECTOR),
     pumpfunSlot: existingFrame.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR),
     alertsSlot: existingFrame.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR),
@@ -416,12 +445,16 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
   monitoredStack.className = 'panel-stack monitored-stack';
 
   const monitoredSlot = createRenderSlot('monitored');
+  const monitoredSecondaryStack = document.createElement('div');
+  monitoredSecondaryStack.className = 'panel-stack monitored-secondary-stack';
+  const monitoredSecondarySlot = createRenderSlot('monitored-secondary');
   const bidZoneSlot = createRenderSlot('bid-zone');
   const pumpfunSlot = createRenderSlot('pumpfun');
   const alertsSlot = createRenderSlot('alerts');
 
   monitoredStack.append(monitoredSlot, bidZoneSlot);
-  panels.append(monitoredStack, pumpfunSlot, alertsSlot);
+  monitoredSecondaryStack.append(monitoredSecondarySlot);
+  panels.append(monitoredStack, monitoredSecondaryStack, pumpfunSlot, alertsSlot);
   shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, panels);
 
   const overlaySlot = createRenderSlot('overlay');
@@ -442,6 +475,8 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
     panels,
     monitoredStack,
     monitoredSlot,
+    monitoredSecondaryStack,
+    monitoredSecondarySlot,
     bidZoneSlot,
     pumpfunSlot,
     alertsSlot,
@@ -557,34 +592,14 @@ function applyActiveLivePanelResizeState(renderFrame: AppRenderFrame, livePanelI
   renderFrame.frame.classList.add('live-panel-resize-active');
 }
 
-function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
-  renderFrame.panels.dataset.workspace = state.ui.workspace;
-
-  const monitoredItem = renderFrame.monitoredStack;
-  const livePanelItems = {
-    monitored: monitoredItem,
-    pumpfun: renderFrame.pumpfunSlot,
-    alerts: renderFrame.alertsSlot,
-  };
-
-  resetLivePanelItem(monitoredItem, 'monitored');
-  resetLivePanelItem(renderFrame.alertsSlot, 'alerts');
-  resetPumpfunLivePanelItem(renderFrame.pumpfunSlot);
-
-  if (state.ui.workspace !== 'live') {
-    syncLivePanelDragHandle(monitoredItem, 'monitored', false);
-    syncLivePanelDragHandle(renderFrame.pumpfunSlot, 'pumpfun', false);
-    syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', false);
-    syncLivePanelResizeFrame(monitoredItem, 'monitored', false);
-    syncLivePanelResizeFrame(renderFrame.pumpfunSlot, 'pumpfun', false);
-    syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', false);
-    syncElementChildOrder(
-      renderFrame.panels,
-      [monitoredItem, renderFrame.alertsSlot, renderFrame.pumpfunSlot],
-    );
-    return;
-  }
-
+function syncLegacyLivePanelComposition(
+  renderFrame: AppRenderFrame,
+  state: AppState,
+  livePanelItems: Record<LiveWorkspacePanelKey, HTMLElement>,
+  hiddenItems: HTMLElement[],
+  primarySpan: 1 | 2,
+  alertsSpan: 1 | 2,
+) {
   const resolvedOrder = getOrderedVisibleLivePanelRegions(state.ui.livePanelLayout)
     .flatMap((region): LiveWorkspacePanelKey[] => (
       region.pane === 'primary' ? ['monitored'] : region.pane === 'alerts' ? ['alerts'] : []
@@ -594,21 +609,21 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     ?? resolvedOrder).filter((panelKey) => panelKey !== 'pumpfun');
   const monitoredSpan = livePanelResizeDraft?.panelKey === 'monitored'
     ? livePanelResizeDraft.previewSpan
-    : Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary')) as 1 | 2;
-  const alertsSpan = livePanelResizeDraft?.panelKey === 'alerts'
+    : primarySpan;
+  const renderedAlertsSpan = livePanelResizeDraft?.panelKey === 'alerts'
     ? livePanelResizeDraft.previewSpan
-    : Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2;
+    : alertsSpan;
   const spanMap = new Map<LiveWorkspacePanelKey, 1 | 2 | 3>([
     ['monitored', monitoredSpan],
-    ['alerts', alertsSpan],
+    ['alerts', renderedAlertsSpan],
   ]);
   const heightMap = resolveLivePanelHeights(state);
 
-  monitoredItem.dataset.span = String(monitoredSpan);
-  renderFrame.alertsSlot.dataset.span = String(alertsSpan);
-  applyLivePanelHeight(monitoredItem, 'monitored', heightMap.monitored);
-  applyLivePanelHeight(renderFrame.alertsSlot, 'alerts', heightMap.alerts);
-  syncAlertsPanelLayoutPreset(renderFrame.alertsSlot, alertsSpan);
+  livePanelItems.monitored.dataset.span = String(monitoredSpan);
+  livePanelItems.alerts.dataset.span = String(renderedAlertsSpan);
+  applyLivePanelHeight(livePanelItems.monitored, 'monitored', heightMap.monitored);
+  applyLivePanelHeight(livePanelItems.alerts, 'alerts', heightMap.alerts);
+  syncAlertsPanelLayoutPreset(livePanelItems.alerts, renderedAlertsSpan);
 
   const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(previewOrder, spanMap, state);
   if (collapsedStackLayout) {
@@ -621,12 +636,14 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
       ...(collapsedStackLayout.placeStackBefore
         ? [stack, livePanelItems[collapsedStackLayout.mainKey]]
         : [livePanelItems[collapsedStackLayout.mainKey], stack]),
+      ...hiddenItems,
       renderFrame.pumpfunSlot,
     ]);
   } else {
     flattenLivePanelCollapsedStack(renderFrame.panels);
     syncElementChildOrder(renderFrame.panels, [
       ...previewOrder.map((panelKey) => livePanelItems[panelKey]),
+      ...hiddenItems,
       renderFrame.pumpfunSlot,
     ]);
   }
@@ -637,13 +654,106 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     previewItem.style.pointerEvents = 'none';
     renderFrame.frame.classList.add('live-panel-reorder-active');
   }
-
   applyActiveLivePanelResizeState(renderFrame, livePanelItems);
+  syncLivePanelDragHandle(livePanelItems.monitored, 'monitored', true);
+  syncLivePanelDragHandle(livePanelItems.alerts, 'alerts', true);
+  syncLivePanelResizeFrame(livePanelItems.monitored, 'monitored', true);
+  syncLivePanelResizeFrame(livePanelItems.alerts, 'alerts', true);
+}
 
-  syncLivePanelDragHandle(monitoredItem, 'monitored', true);
-  syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', true);
-  syncLivePanelResizeFrame(monitoredItem, 'monitored', true);
-  syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', true);
+function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
+  renderFrame.panels.dataset.workspace = state.ui.workspace;
+
+  const monitoredItem = renderFrame.monitoredStack;
+  const secondaryItem = renderFrame.monitoredSecondaryStack;
+  const livePanelItems = {
+    monitored: monitoredItem,
+    pumpfun: renderFrame.pumpfunSlot,
+    alerts: renderFrame.alertsSlot,
+  };
+
+  resetLivePanelItem(monitoredItem, 'monitored');
+  resetLivePanelItem(secondaryItem, 'monitored');
+  resetLivePanelItem(renderFrame.alertsSlot, 'alerts');
+  resetPumpfunLivePanelItem(renderFrame.pumpfunSlot);
+  monitoredItem.dataset.paneKey = 'primary';
+  secondaryItem.dataset.paneKey = 'secondary';
+  renderFrame.alertsSlot.dataset.paneKey = 'alerts';
+  for (const item of [monitoredItem, secondaryItem, renderFrame.alertsSlot]) {
+    delete item.dataset.centered;
+  }
+  flattenLivePanelCollapsedStack(renderFrame.panels);
+
+  if (state.ui.workspace !== 'live') {
+    delete renderFrame.panels.dataset.layoutPreset;
+    delete renderFrame.panels.dataset.layoutColumns;
+    syncLivePanelDragHandle(monitoredItem, 'monitored', false);
+    syncLivePanelDragHandle(secondaryItem, 'monitored', false);
+    syncLivePanelDragHandle(renderFrame.pumpfunSlot, 'pumpfun', false);
+    syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', false);
+    syncLivePanelResizeFrame(monitoredItem, 'monitored', false);
+    syncLivePanelResizeFrame(secondaryItem, 'monitored', false);
+    syncLivePanelResizeFrame(renderFrame.pumpfunSlot, 'pumpfun', false);
+    syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', false);
+    syncElementChildOrder(
+      renderFrame.panels,
+      [monitoredItem, secondaryItem, renderFrame.alertsSlot, renderFrame.pumpfunSlot],
+    );
+    return;
+  }
+
+  const regions = getOrderedVisibleLivePanelRegions(state.ui.livePanelLayout);
+  const preset = LIVE_PANEL_PRESETS[state.ui.livePanelLayout.preset];
+  const regionItems = {
+    primary: monitoredItem,
+    secondary: secondaryItem,
+    alerts: renderFrame.alertsSlot,
+  };
+  const visibleItems = regions.map((region) => regionItems[region.pane]);
+  const hiddenItems = Object.values(regionItems).filter((item) => !visibleItems.includes(item));
+  renderFrame.panels.dataset.layoutPreset = preset.id;
+  renderFrame.panels.dataset.layoutColumns = String(preset.columns);
+
+  for (const region of regions) {
+    const item = regionItems[region.pane];
+    item.dataset.span = String(region.span);
+    if (region.centered) item.dataset.centered = 'true';
+  }
+
+  const primarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary')) as 1 | 2;
+  const secondarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary')) as 1 | 2;
+  const alertsSpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2;
+  const supportsLegacyManipulation = getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary') === 0
+    && regions.length === 2
+    && regions.every((region) => !region.centered);
+  secondaryItem.dataset.span = String(secondarySpan);
+  applyLivePanelHeight(secondaryItem, 'monitored', state.ui.livePanelLayout.heights.secondary);
+  if (supportsLegacyManipulation) {
+    syncLegacyLivePanelComposition(
+      renderFrame,
+      state,
+      livePanelItems,
+      hiddenItems,
+      primarySpan,
+      alertsSpan,
+    );
+    syncLivePanelDragHandle(secondaryItem, 'monitored', false);
+    syncLivePanelResizeFrame(secondaryItem, 'monitored', false);
+    return;
+  }
+
+  monitoredItem.dataset.span = String(primarySpan);
+  renderFrame.alertsSlot.dataset.span = String(alertsSpan);
+  applyLivePanelHeight(monitoredItem, 'monitored', state.ui.livePanelLayout.heights.primary);
+  applyLivePanelHeight(renderFrame.alertsSlot, 'alerts', state.ui.livePanelLayout.heights.alerts);
+  syncAlertsPanelLayoutPreset(renderFrame.alertsSlot, alertsSpan);
+  syncElementChildOrder(renderFrame.panels, [...visibleItems, ...hiddenItems, renderFrame.pumpfunSlot]);
+  syncLivePanelDragHandle(monitoredItem, 'monitored', false);
+  syncLivePanelDragHandle(secondaryItem, 'monitored', false);
+  syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', false);
+  syncLivePanelResizeFrame(monitoredItem, 'monitored', false);
+  syncLivePanelResizeFrame(secondaryItem, 'monitored', false);
+  syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', false);
 }
 
 function getLivePanelElement(item: HTMLElement, panelKey: LiveResizablePanelKey) {
@@ -1316,13 +1426,14 @@ function getLegacyRenderKey(state: AppState) {
   });
 }
 
-function getMonitoredRenderKey(state: AppState) {
-  const monitoredSpan = getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary');
+function getMonitoredRenderKey(state: AppState, pane: MonitoredPaneKey) {
+  const monitoredSpan = getLivePanelPaneSpan(state.ui.livePanelLayout, pane);
+  const paneState = pane === 'primary' ? state.ui.monitoredPrimaryPane : state.ui.monitoredSecondaryPane;
   const pageItems = resolveMonitoredViewRows(
-    getPrimaryMonitoredViewTokens(state),
-    state.ui.monitoredPrimaryPane.searchQuery,
+    getMonitoredPaneViewTokens(state, pane),
+    paneState.searchQuery,
   );
-  const activeView = state.ui.monitoredPrimaryPane.view;
+  const activeView = paneState.view;
   const activeViewState = activeView === 'watchlist'
     ? null
     : state.data.monitoredSystemViews[activeView];
@@ -1338,7 +1449,8 @@ function getMonitoredRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
-    search: state.ui.monitoredPrimaryPane.searchQuery,
+    pane,
+    search: paneState.searchQuery,
     sparklinePreset: state.ui.sparklineRange.monitoredPreset,
     monitoredQuickSparklineRanges: pageItems.map((token) => {
       const identity = buildTokenIdentityKey(token.chain || 'solana', token.address);

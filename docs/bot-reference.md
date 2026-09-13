@@ -1536,7 +1536,10 @@ de Monitored somente como compatibilidade enquanto seu novo read-model ainda nã
 `uiPrefs.livePanelLayout` persiste `preset`, a ordem das panes `primary`, `secondary` e
 `alerts`, as seleções `panes.primaryView`/`panes.secondaryView` e alturas independentes.
 As cinco IDs aceitas são `discovery_alerts`, `compare`, `alerts_focus`, `token_focus` e
-`command_center`. Views duplicadas normalizam para `trending + watchlist`. O reader ainda
+`command_center`. O App Shell mantém slots próprios para as duas panes Monitored e monta
+somente as regiões ativas, na ordem, proporção e centralização produzidas pelo resolver
+do preset; regiões inativas permanecem sem conteúdo. Views duplicadas normalizam para
+`trending + watchlist`. O reader ainda
 migra o formato legado baseado em `monitored`/`pumpfun`/`alerts`; a saída persistida é
 sempre canônica e não volta a emitir `pumpfun`.
 
