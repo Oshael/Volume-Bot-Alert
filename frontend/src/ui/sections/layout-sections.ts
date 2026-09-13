@@ -1388,13 +1388,15 @@ function renderGlobalSearch(state: AppState) {
   const clipboard = state.ui.clipboardToken;
   const clipboardHit = clipboard.hit;
   const clipboardTitle = {
-    idle: clipboard.accessStatus === 'granted' ? 'Copied token contracts appear here' : 'Clipboard detection is not enabled',
+    idle: 'Paste copied contract',
     reading: 'Reading clipboard…',
     resolving: 'Resolving copied token…', ready: `Open ${clipboardHit?.symbol || 'copied token'} chart`,
     denied: 'Clipboard access denied', unavailable: 'Clipboard reading is unavailable',
     unsupported: 'Copied address is not supported yet', syncing: 'Copied token search is syncing',
     error: clipboard.error || 'Clipboard token resolution failed',
   }[clipboard.status];
+  const clipboardDisabled = clipboard.status === 'reading' || clipboard.status === 'resolving'
+    || clipboard.accessStatus === 'denied' || clipboard.accessStatus === 'unavailable';
   const clipboardContent = renderGlobalSearchClipboardContent(clipboardHit);
   const open = search.query.trim().length >= 2;
   const permissionNotice = renderClipboardPermissionNotice(clipboard, open);
@@ -1431,7 +1433,7 @@ function renderGlobalSearch(state: AppState) {
       <button type="button" class="workspace-clipboard-token${clipboardHit ? ' is-resolved' : ''}"
         data-action="activate-clipboard-token" data-state="${clipboard.status}"
         aria-label="${escapeHtml(clipboardTitle)}" title="${escapeHtml(clipboardTitle)}"
-        ${!clipboardHit || clipboard.status === 'reading' || clipboard.status === 'resolving' ? 'disabled' : ''}>
+        ${clipboardDisabled ? 'disabled' : ''}>
         ${clipboardContent}
       </button>
     </div>
@@ -1456,7 +1458,10 @@ function bindGlobalSearch(section: HTMLElement, controller: AppController) {
   };
   clipboard?.addEventListener('click', () => {
     const hit = controller.state.ui.clipboardToken.hit;
-    if (!hit) return;
+    if (!hit) {
+      void controller.pasteClipboardTokenIntoSearch();
+      return;
+    }
     controller.openExpandedSparkline(hit.destination.address, hit.destination.chain);
   });
   section.querySelector<HTMLButtonElement>('[data-action="request-clipboard-access"]')?.addEventListener('click', () => {

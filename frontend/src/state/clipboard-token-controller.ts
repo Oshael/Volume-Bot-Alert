@@ -144,10 +144,11 @@ export function createClipboardTokenController(options: Options) {
   }
 
   async function readAndResolve(allowPermissionPrompt: boolean) {
-    if (!await canRead(allowPermissionPrompt)) return;
+    if (!await canRead(allowPermissionPrompt)) return null;
 
     reading = true;
     let notifyOnFinish = false;
+    let address: string | null = null;
     const ownedRevision = ++revision;
     active?.abort();
     active = null;
@@ -157,13 +158,14 @@ export function createClipboardTokenController(options: Options) {
     }
 
     try {
-      const address = classifyClipboardTokenAddress(await readClipboard());
-      if (!owns(ownedRevision)) return;
+      address = classifyClipboardTokenAddress(await readClipboard());
+      if (!owns(ownedRevision)) return null;
       const accessChanged = options.state.accessStatus !== 'granted' || !options.state.promptDismissed;
       Object.assign(options.state, { accessStatus: 'granted', promptDismissed: true, error: null });
       notifyOnFinish = await applyAddress(address, accessChanged, ownedRevision);
+      if (!owns(ownedRevision)) return null;
     } catch (error) {
-      if (!owns(ownedRevision)) return;
+      if (!owns(ownedRevision)) return null;
       notifyOnFinish = true;
       applyFailure(error);
     } finally {
@@ -173,10 +175,11 @@ export function createClipboardTokenController(options: Options) {
         if (notifyOnFinish) options.notify();
       }
     }
+    return address;
   }
 
   async function requestAccess() {
-    await readAndResolve(true);
+    return readAndResolve(true);
   }
 
   async function inspect() {

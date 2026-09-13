@@ -1275,8 +1275,9 @@ test('requests clipboard access once and detects copied contracts from ordinary 
     'GET /api/search/global': (request) => {
       const url = new URL(request.url());
       expect(url.searchParams.get('q')).toBe(ROBINHOOD_TOKEN);
-      expect(url.searchParams.get('kinds')).toBe('token');
-      expect(url.searchParams.get('limit')).toBe('1');
+      const kinds = url.searchParams.get('kinds');
+      expect(['token', 'token,wallet']).toContain(kinds);
+      expect(url.searchParams.get('limit')).toBe(kinds === 'token' ? '1' : '10');
       return {
         query: ROBINHOOD_TOKEN, status: 'ready', count: 1,
         chainStates: { robinhood: { kinds: { token: 'ready' } } },
@@ -1296,21 +1297,23 @@ test('requests clipboard access once and detects copied contracts from ordinary 
   };
   const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
   const shortcut = page.locator('[data-action="activate-clipboard-token"]');
+  const searchInput = page.getByRole('searchbox', { name: 'Search tokens across all blockchains' });
   const permissionNotice = page.getByRole('status', { name: 'Clipboard detection permission' });
   await expect(permissionNotice).toBeVisible();
   await expect(permissionNotice.locator('.workspace-clipboard-permission-copy small')).toHaveCSS('font-family', /Satoshi/);
   await expect(permissionNotice.locator('.workspace-clipboard-permission-copy strong')).toHaveCSS('font-family', /Space Mono/);
   await expect(page.getByRole('searchbox', { name: 'Search tokens across all blockchains' })).toHaveCSS('font-family', /Space Mono/);
-  await expect(shortcut).toBeDisabled();
+  await expect(shortcut).toBeEnabled();
   expect(await page.evaluate(() => window.__clipboardReads)).toBe(0);
 
   await permissionNotice.getByRole('button', { name: 'Allow' }).click();
   await expect(permissionNotice).toHaveCount(0);
   expect(await page.evaluate(() => window.__clipboardReads)).toBe(1);
-  await expect(shortcut).toBeDisabled();
+  await expect(shortcut).toBeEnabled();
 
   await page.evaluate((address) => { window.__clipboardText = address; }, ROBINHOOD_TOKEN);
-  await page.locator('.workspace-brand-title').click();
+  await shortcut.click();
+  await expect(searchInput).toHaveValue(ROBINHOOD_TOKEN);
   await expect(shortcut).toHaveAttribute('data-state', 'ready');
   await expect(shortcut).toBeEnabled();
   await expect(shortcut).toContainText('HOOD');
@@ -1330,10 +1333,13 @@ test('requests clipboard access once and detects copied contracts from ordinary 
   expect(embeddedControlGeometry.followsInput).toBe(true);
   expect(embeddedControlGeometry.rightInset).toBeGreaterThanOrEqual(0);
   expect(embeddedControlGeometry.rightInset).toBeLessThanOrEqual(4);
+  await searchInput.fill('');
+  await page.locator('.workspace-brand-title').click();
+  await expect.poll(() => page.evaluate(() => window.__clipboardReads)).toBe(3);
   await shortcut.click();
   await expect(page).toHaveURL(`/alerts/robinhood/${ROBINHOOD_TOKEN}`);
   await expect(page.locator('[data-auth-modal="expanded-sparkline"]')).toBeVisible();
-  expect(await page.evaluate(() => window.__clipboardReads)).toBe(2);
+  expect(await page.evaluate(() => window.__clipboardReads)).toBe(3);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

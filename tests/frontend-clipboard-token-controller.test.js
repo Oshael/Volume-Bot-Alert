@@ -48,7 +48,8 @@ describe('frontend clipboard token shortcut', () => {
     });
     await controller.initialize();
     assert.equal(state.accessStatus, 'prompt');
-    await controller.requestAccess();
+    const unrelatedAddress = await controller.requestAccess();
+    assert.equal(unrelatedAddress, null);
     assert.equal(requests, 0);
     assert.deepEqual(state, {
       ...createState(), accessStatus: 'granted', promptDismissed: true,
@@ -98,7 +99,8 @@ describe('frontend clipboard token shortcut', () => {
     });
 
     await controller.initialize();
-    await controller.inspect();
+    const pastedAddress = await controller.requestAccess();
+    assert.equal(pastedAddress, ADDRESS);
     await controller.inspect();
     assert.deepEqual(requests, [ADDRESS]);
     assert.equal(state.hit.address, ADDRESS);
