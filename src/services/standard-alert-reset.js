@@ -1,8 +1,3 @@
-const MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M = 5_000;
-const MONITORED_VOL_COLD_RESET_DURATION_MS = 30 * 60 * 1000;
-const MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS = 60 * 1000;
-const MONITORED_VOL_COLD_SINCE_METADATA_KEY = 'monitoredVolColdSinceAt';
-const MONITORED_VOL_HOT_SINCE_METADATA_KEY = 'monitoredVolHotSinceAt';
 const SURGE_6H_RESET_MAX_PCHANGE_PCT = 25;
 const SURGE_6H_RESET_PCHANGE_DURATION_MS = 2 * 60 * 60 * 1000;
 const SURGE_6H_RESET_DRAWDOWN_RATIO = 0.60;
@@ -57,12 +52,6 @@ function getSurgeResetConfig(ruleKey, thresholdPct) {
 
 function metadataTimestamp(state, key) {
   return timestampMs(state?.metadata?.[key]);
-}
-
-function isMonitoredVolAnchorExpired(candidate, state, nowMs) {
-  if (candidate?.ruleKey !== 'monitored-vol' || state?.status !== 'rearmed') return false;
-  const coldSinceMs = metadataTimestamp(state, MONITORED_VOL_COLD_SINCE_METADATA_KEY);
-  return coldSinceMs != null && (nowMs - coldSinceMs) >= MONITORED_VOL_COLD_RESET_DURATION_MS;
 }
 
 function isSurgeAnchorExpired(candidate, state, nowMs, options = {}) {
@@ -143,49 +132,7 @@ function buildSurgePostAlertHighMetadata(input = {}) {
   return { metadata, changed: true };
 }
 
-function buildMonitoredVolColdMetadata(state, volume5m, nowMs) {
-  const metadata = { ...(state?.metadata || {}) };
-  const current = numberOrNull(volume5m);
-  const coldSinceMs = metadataTimestamp(state, MONITORED_VOL_COLD_SINCE_METADATA_KEY);
-  const hotSinceMs = timestampMs(metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY]);
-  if (current == null) return { metadata, changed: false };
-  if (current <= MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M) {
-    if (coldSinceMs != null) {
-      if (hotSinceMs == null) return { metadata, changed: false };
-      delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
-      delete metadata.monitoredVolHotVolume5m;
-      return { metadata, changed: true };
-    }
-    metadata[MONITORED_VOL_COLD_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
-    metadata.monitoredVolColdMaxVolume5m = MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M;
-    delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
-    delete metadata.monitoredVolHotVolume5m;
-    delete metadata.monitoredVolColdInterruptedAt;
-    delete metadata.monitoredVolColdInterruptedVolume5m;
-    return { metadata, changed: true };
-  }
-  if (coldSinceMs == null) return { metadata, changed: false };
-  if (hotSinceMs == null) {
-    metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
-    metadata.monitoredVolHotVolume5m = current;
-    return { metadata, changed: true };
-  }
-  if ((nowMs - hotSinceMs) <= MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS) {
-    metadata.monitoredVolHotVolume5m = current;
-    return { metadata, changed: true };
-  }
-  delete metadata[MONITORED_VOL_COLD_SINCE_METADATA_KEY];
-  delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
-  delete metadata.monitoredVolHotVolume5m;
-  metadata.monitoredVolColdInterruptedAt = new Date(nowMs).toISOString();
-  metadata.monitoredVolColdInterruptedVolume5m = current;
-  return { metadata, changed: true };
-}
-
 module.exports = {
-  MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS,
-  MONITORED_VOL_COLD_RESET_DURATION_MS,
-  MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M,
   SURGE_1H_RESET_DRAWDOWN_DURATION_MS,
   SURGE_1H_RESET_DRAWDOWN_RATIO,
   SURGE_1H_RESET_PCHANGE_DURATION_MS,
@@ -194,9 +141,7 @@ module.exports = {
   SURGE_6H_RESET_DRAWDOWN_RATIO,
   SURGE_6H_RESET_MAX_PCHANGE_PCT,
   SURGE_6H_RESET_PCHANGE_DURATION_MS,
-  buildMonitoredVolColdMetadata,
   buildSurgePostAlertHighMetadata,
   buildSurgeResetMetadata,
-  isMonitoredVolAnchorExpired,
   isSurgeAnchorExpired,
 };

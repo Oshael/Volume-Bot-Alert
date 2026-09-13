@@ -638,6 +638,9 @@ Execute the retirement through these bounded cuts:
     R4a/R4b leave them without runtime consumers, consolidate obsolete negative-path tests and run scoped dead-reference
     searches. Historical feed, replay, chart-marker, formatter, schema and persisted-configuration compatibility remains for
     R5. Validate the surviving alert families plus repository lint. Estimated change: 100–180 lines.
+    **Completed:** the unreferenced retirement shim and monitored-volume cold-reset helpers are removed, and redundant GMGN
+    feature-flag tests are consolidated. Active surge reset logic remains shared, while historical and persisted contracts
+    are unchanged.
 - **R5 — compatibility and final verification:** verify historical rendering, normalize legacy inputs to disabled state,
   update operational documentation and run scoped dead-reference searches plus the applicable test/build/lint matrix.
 

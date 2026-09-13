@@ -146,23 +146,9 @@ function createAlertProfile(overrides = {}) {
   };
 }
 
-async function withGmgnVol1mAlertsEnabled(callback) {
-  const previous = process.env.GMGN_VOL_1M_ALERT_ENABLED;
-  process.env.GMGN_VOL_1M_ALERT_ENABLED = 'true';
-  try {
-    return await callback();
-  } finally {
-    if (previous == null) {
-      delete process.env.GMGN_VOL_1M_ALERT_ENABLED;
-    } else {
-      process.env.GMGN_VOL_1M_ALERT_ENABLED = previous;
-    }
-  }
-}
-
 describe('user alert matcher', () => {
   it('retires standard threshold candidates while preserving HVNC', async () => {
-    await withGmgnVol1mAlertsEnabled(async () => {
+    {
       const profile = createAlertProfile({
         userId: 15,
         ruleEnabled: { monitoredVol: true, monitoredMcap: true, hvnc: true },
@@ -214,7 +200,7 @@ describe('user alert matcher', () => {
       ]);
       assert.deepEqual(decision.qualifiedRuleKeys, ['hvnc']);
       assert.equal(decision.candidates[0].ruleKey, 'hvnc');
-    });
+    }
   });
 
   it('skips the retired volume baseline for a Telegram-only signal profile', async () => {
@@ -577,104 +563,8 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].payload.tickerPeers?.items?.[1]?.address, '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
   });
 
-  it('does not emit retired GMGN 1m volume candidates even when the legacy gate is on', async () => {
-    await withGmgnVol1mAlertsEnabled(async () => {
-      const profile = {
-        userId: 31,
-        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-        thresholdPct: 80,
-        minVol: 8000,
-        minMcap: 30000,
-        maxMcap: 0,
-      };
-      const context = createDeps({
-        profiles: [profile],
-        volumeRows: [{
-          token_address: TOKEN_ADDRESS,
-          baseline_vol_5m: 15000,
-        }],
-        volumeRows1m: [{
-          token_address: TOKEN_ADDRESS,
-          current_vol_1m: 1600,
-          baseline_vol_1m: 1000,
-        }],
-      });
-
-      const result = await userAlertMatcher.evaluateUpdatedToken({
-        alertSource: 'gmgn',
-        tokenBefore: {
-          address: TOKEN_ADDRESS,
-          last_mcap: 250000,
-          last_vol_5m: 15000,
-        },
-        tokenAfter: {
-          address: TOKEN_ADDRESS,
-          symbol: 'WSOL',
-          last_vol_5m: 18000,
-          last_vol_24h: 350000,
-          last_mcap: 300000,
-        },
-      }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
-
-      assert.equal(result.emitted, 0);
-      assert.equal(context.eventWrites.length, 0);
-      assert.equal(context.triggeredWrites.length, 0);
-    });
-  });
-
-  it('keeps GMGN 1m volume alerts disabled by default', async () => {
-    const previous = process.env.GMGN_VOL_1M_ALERT_ENABLED;
-    delete process.env.GMGN_VOL_1M_ALERT_ENABLED;
-    try {
-      const context = createDeps({
-        profiles: [{
-          userId: 34,
-          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-          thresholdPct: 80,
-          minVol: 8000,
-          minMcap: 30000,
-          maxMcap: 0,
-        }],
-        volumeRows: [{
-          token_address: TOKEN_ADDRESS,
-          baseline_vol_5m: 15000,
-        }],
-        volumeRows1m: [{
-          token_address: TOKEN_ADDRESS,
-          current_vol_1m: 3000,
-          baseline_vol_1m: 1000,
-        }],
-      });
-
-      const result = await userAlertMatcher.evaluateUpdatedToken({
-        alertSource: 'gmgn',
-        tokenBefore: {
-          address: TOKEN_ADDRESS,
-          last_mcap: 250000,
-          last_vol_5m: 15000,
-        },
-        tokenAfter: {
-          address: TOKEN_ADDRESS,
-          symbol: 'WSOL',
-          last_vol_5m: 18000,
-          last_vol_24h: 350000,
-          last_mcap: 300000,
-        },
-      }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
-
-      assert.equal(result.emitted, 0);
-      assert.equal(context.eventWrites.length, 0);
-    } finally {
-      if (previous == null) {
-        delete process.env.GMGN_VOL_1M_ALERT_ENABLED;
-      } else {
-        process.env.GMGN_VOL_1M_ALERT_ENABLED = previous;
-      }
-    }
-  });
-
   it('does not emit either retired volume rule from the same GMGN update', async () => {
-    await withGmgnVol1mAlertsEnabled(async () => {
+    {
       const profile = {
         userId: 32,
         ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
@@ -714,11 +604,11 @@ describe('user alert matcher', () => {
       assert.equal(result.emitted, 0);
       assert.deepEqual(context.eventWrites, []);
       assert.deepEqual(context.triggeredWrites, []);
-    });
+    }
   });
 
   it('does not evaluate retired GMGN 1m repeat candidates', async () => {
-    await withGmgnVol1mAlertsEnabled(async () => {
+    {
       const context = createDeps({
         profiles: [{
           userId: 33,
@@ -768,7 +658,7 @@ describe('user alert matcher', () => {
       assert.equal(result.emitted, 0);
       assert.equal(result.suppressed, 0);
       assert.equal(context.eventWrites.length, 0);
-    });
+    }
   });
 
   it('does not evaluate retired monitored-volume retriggers', async () => {

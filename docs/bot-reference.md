@@ -948,9 +948,9 @@ catálogo live ou aggregates no processo derived; esse co-start continua pendent
 
 Os planejadores backend de Solana e Robinhood não emitem mais novos alertas padrão `monitored-vol`
 (Volume 5m), `gmgn-vol-1m` (GMGN Volume 1m), `monitored-mcap` (MCap 5m) ou `monitored-fdv`
-(FDV 5m). Price Surge, Surge Continuation, HVNC, alertas Meteora e Custom continuam ativos. Durante
-a aposentadoria em cortes, contratos de leitura histórica, configurações persistidas e rearm de
-estado legado permanecem compatíveis, mas não podem reativar emissão desses quatro tipos.
+(FDV 5m). Price Surge, Surge Continuation, HVNC, alertas Meteora e Custom continuam ativos. Os
+contratos de leitura histórica, configurações e estados persistidos permanecem compatíveis, mas
+nenhum caminho de runtime pode reativar a emissão desses quatro tipos.
 O frontend também não avalia localmente Volume 5m ou MCap 5m e rejeita os quatro tipos aposentados
 antes de qualquer notificação do navegador ou reprodução de áudio. A ingestão realtime, a
 atualização live de tokens e a renderização do histórico não são afetadas por esse bloqueio.
