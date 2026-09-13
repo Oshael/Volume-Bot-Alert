@@ -14,9 +14,77 @@ export const DASHBOARD_SYSTEM_TOKEN_VIEW_IDS = [
 ] as const;
 
 export const DASHBOARD_TOKEN_VIEW_MAX_LIMIT = 40;
+export const DASHBOARD_TOKEN_VIEW_RELEASE_CHAINS = ['robinhood'] as const satisfies readonly TokenChain[];
 
 export type MonitoredViewId = typeof MONITORED_VIEW_IDS[number];
 export type DashboardSystemTokenViewId = typeof DASHBOARD_SYSTEM_TOKEN_VIEW_IDS[number];
+export type MonitoredSystemViewStatus =
+  | 'idle'
+  | 'loading'
+  | 'ready'
+  | 'syncing'
+  | 'unavailable'
+  | 'unsupported'
+  | 'error';
+
+export interface MonitoredPaneState {
+  view: MonitoredViewId;
+  searchQuery: string;
+  scrollAnchor: string | null;
+}
+
+export interface MonitoredSystemViewState {
+  status: MonitoredSystemViewStatus;
+  tokenIdentities: string[];
+  metadataByIdentity: Record<string, MonitoredSystemViewTokenMetadata>;
+  generatedAt: string | null;
+  error: string | null;
+}
+
+export interface MonitoredSystemViewTokenMetadata {
+  rank: number | null;
+  score: number | null;
+  scoreVersion: string | null;
+  lifecycleStatus: 'migrated' | 'pre_bonded' | null;
+  bondProgressBps: number | null;
+}
+
+export function createMonitoredPaneState(view: MonitoredViewId = 'trending'): MonitoredPaneState {
+  return {
+    view,
+    searchQuery: '',
+    scrollAnchor: null,
+  };
+}
+
+export function createMonitoredSystemViewStates(): Record<
+  DashboardSystemTokenViewId,
+  MonitoredSystemViewState
+> {
+  const createState = (): MonitoredSystemViewState => ({
+    status: 'idle',
+    tokenIdentities: [],
+    metadataByIdentity: {},
+    generatedAt: null,
+    error: null,
+  });
+  return {
+    trending: createState(),
+    migrated: createState(),
+    pre_bonded: createState(),
+  };
+}
+
+export function resolveDashboardTokenViewRequest(view: MonitoredViewId) {
+  if (!isDashboardSystemTokenViewId(view)) return null;
+  return {
+    view,
+    options: {
+      chains: [...DASHBOARD_TOKEN_VIEW_RELEASE_CHAINS],
+      limit: DASHBOARD_TOKEN_VIEW_MAX_LIMIT,
+    },
+  };
+}
 
 export interface DashboardTokenViewRequestOptions {
   chains?: TokenChain[];

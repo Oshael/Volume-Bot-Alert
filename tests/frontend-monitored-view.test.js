@@ -17,6 +17,31 @@ describe('frontend monitored view contract', () => {
     ]);
     assert.equal(monitoredView.isDashboardSystemTokenViewId('watchlist'), false);
     assert.equal(monitoredView.normalizeMonitoredViewId('invalid'), 'trending');
+    assert.deepEqual(monitoredView.DASHBOARD_TOKEN_VIEW_RELEASE_CHAINS, ['robinhood']);
+  });
+
+  it('creates isolated system-view readiness and a Trending primary pane', () => {
+    const pane = monitoredView.createMonitoredPaneState();
+    const views = monitoredView.createMonitoredSystemViewStates();
+
+    assert.deepEqual(pane, {
+      view: 'trending',
+      searchQuery: '',
+      scrollAnchor: null,
+    });
+    assert.deepEqual(Object.keys(views), ['trending', 'migrated', 'pre_bonded']);
+    assert.notEqual(views.trending, views.migrated);
+    views.trending.tokenIdentities.push('robinhood:0xabc');
+    assert.deepEqual(views.migrated.tokenIdentities, []);
+    assert.deepEqual(views.pre_bonded.metadataByIdentity, {});
+  });
+
+  it('resolves requests only for active system views', () => {
+    assert.deepEqual(monitoredView.resolveDashboardTokenViewRequest('trending'), {
+      view: 'trending',
+      options: { chains: ['robinhood'], limit: 40 },
+    });
+    assert.equal(monitoredView.resolveDashboardTokenViewRequest('watchlist'), null);
   });
 
   it('builds a bounded Robinhood request and keeps a future multi-chain hook', () => {

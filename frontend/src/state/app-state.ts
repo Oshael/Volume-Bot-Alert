@@ -17,6 +17,13 @@ import type {
   TokenValuationSnapshot,
   TokenValuationType,
 } from '../utils/token-valuation';
+import {
+  createMonitoredPaneState,
+  createMonitoredSystemViewStates,
+  type DashboardSystemTokenViewId,
+  type MonitoredPaneState,
+  type MonitoredSystemViewState,
+} from '../utils/monitored-view';
 
 export interface AlertEntry {
   id: string;
@@ -877,6 +884,7 @@ export interface AppState {
     trackedTokensByIdentity: Record<string, WatchlistTokenEntry>;
     monitoredTokenIdentities: string[];
     pinnedMonitoredTokenIdentities: string[];
+    monitoredSystemViews: Record<DashboardSystemTokenViewId, MonitoredSystemViewState>;
     watchlistTokenIdentities: string[];
     manualTokenFolders: ManualTokenFolderEntry[];
     manualTokenFolderItems: ManualTokenFolderItemEntry[];
@@ -931,6 +939,7 @@ export interface AppState {
     alertSearchQuery: string;
     monitoredSearchQuery: string;
     monitoredLoadError: string | null;
+    monitoredPrimaryPane: MonitoredPaneState;
     watchlistSearchQuery: string;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
@@ -1135,6 +1144,7 @@ export function createAppState(): AppState {
       trackedTokensByIdentity: {},
       monitoredTokenIdentities: [],
       pinnedMonitoredTokenIdentities: [],
+      monitoredSystemViews: createMonitoredSystemViewStates(),
       watchlistTokenIdentities: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
@@ -1185,6 +1195,7 @@ export function createAppState(): AppState {
       alertSearchQuery: '',
       monitoredSearchQuery: '',
       monitoredLoadError: null,
+      monitoredPrimaryPane: createMonitoredPaneState(),
       watchlistSearchQuery: '',
       recentSearchQuery: '',
       oldWeekSearchQuery: '',
@@ -1522,6 +1533,16 @@ export function getMonitoredTokens(state: AppState) {
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is WatchlistTokenEntry => Boolean(item));
   return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
+}
+
+export function getPrimaryMonitoredViewTokens(state: AppState) {
+  const view = state.ui.monitoredPrimaryPane.view;
+  const identities = view === 'watchlist'
+    ? state.data.watchlistTokenIdentities
+    : state.data.monitoredSystemViews[view].tokenIdentities;
+  return identities
+    .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
+    .filter((item): item is WatchlistTokenEntry => Boolean(item));
 }
 
 export function getRecentTokens(state: AppState) {

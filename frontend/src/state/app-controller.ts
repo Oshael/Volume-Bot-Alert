@@ -1,4 +1,4 @@
-import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveWatchlistTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
@@ -83,7 +83,13 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackWatchlistToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTokenView, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackWatchlistToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTokenViewPayload, type DashboardTokenViewToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import {
+  isDashboardSystemTokenViewId,
+  normalizeMonitoredViewId,
+  resolveDashboardTokenViewRequest,
+  type MonitoredViewId,
+} from '../utils/monitored-view';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
@@ -816,6 +822,7 @@ export interface AppController {
   clearDismissedOldWeek(): void;
   toggleSectionCollapsed(section: CollapsibleSectionKey): void;
   setAlertSearchQuery(query: string): void;
+  setPrimaryMonitoredView(view: MonitoredViewId): void;
   setMonitoredSearchQuery(query: string): void;
   setWatchlistSearchQuery(query: string): void;
   setRecentSearchQuery(query: string): void;
@@ -1405,6 +1412,8 @@ export function createAppController(): AppController {
   } | null = null;
   const topPerformersRefreshKeysInFlight = new Set<string>();
   let topPerformersRefreshRevision = 0;
+  let monitoredSystemViewRefreshInFlight: { view: MonitoredViewId; revision: number } | null = null;
+  let monitoredSystemViewRefreshRevision = 0;
   let chainReadinessRefreshInFlight = false;
   let chainReadinessRefreshRequested = false;
   let mockTradingRefreshInFlight = false;
@@ -1965,6 +1974,7 @@ export function createAppController(): AppController {
       if (identities.size >= WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT) break;
     }
     const tokens = [
+      ...getPrimaryMonitoredViewTokens(state),
       ...getMonitoredTokens(state),
       ...getWatchlistTokens(state),
       ...getRecentTokens(state),
@@ -1992,6 +2002,7 @@ export function createAppController(): AppController {
     const activeIdentities = new Set([
       ...state.data.monitoredTokenIdentities,
       ...state.data.pinnedMonitoredTokenIdentities,
+      ...Object.values(state.data.monitoredSystemViews).flatMap((view) => view.tokenIdentities),
       ...state.data.watchlistTokenIdentities,
       ...state.data.topPerformerIdentities,
       ...state.data.recentTokenIdentities,
@@ -10193,6 +10204,7 @@ export function createAppController(): AppController {
         ),
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
+      void refreshPrimaryMonitoredView(token);
       void refreshDashboardTopPerformers(token);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'monitored-poll' });
       void hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: isLiveWorkspace() });
@@ -10229,6 +10241,118 @@ export function createAppController(): AppController {
       emit('monitored', 'legacy', 'overlay');
     } finally {
       monitoredRefreshKeysInFlight.delete(requestKey);
+    }
+  }
+
+  function buildDashboardTokenViewMetadata(
+    payload: DashboardTokenViewPayload,
+    item: DashboardTokenViewToken,
+  ) {
+    return {
+      rank: item.trendingRank ?? item.lifecycleRank ?? null,
+      score: item.score ?? null,
+      scoreVersion: item.scoreVersion ?? payload.scoreVersion ?? null,
+      lifecycleStatus: item.lifecycle?.status ?? null,
+      bondProgressBps: item.lifecycle?.bondProgressBps ?? null,
+    };
+  }
+
+  function mergeDashboardTokenViewItem(item: DashboardTokenViewToken) {
+    const address = String(item.address).trim();
+    const existingItem = getOptionalTrackedToken(address, item.chain);
+    const mergedItem = mergeTrackedDashboardFields({
+      existingItem,
+      dashboardItem: item,
+      base: {
+        ...existingItem,
+        chain: item.chain,
+        address,
+        label: existingItem?.label ?? item.symbol ?? 'Monitored token',
+        watchlisted: existingItem?.watchlisted ?? false,
+        _userWatchlist: existingItem?._userWatchlist ?? false,
+      },
+      coldRefreshDue: true,
+    });
+    replaceTrackedTokenReferences(address, selectMergedTrackedToken(existingItem, mergedItem));
+  }
+
+  function applyDashboardTokenView(payload: DashboardTokenViewPayload) {
+    const blocked = new Set(state.data.blocklist.map((item) => (
+      getTrackedTokenKey(item.address, item.chain || 'solana')
+    )));
+    const tokenIdentities: string[] = [];
+    const metadataByIdentity: AppState['data']['monitoredSystemViews'][typeof payload.view]['metadataByIdentity'] = {};
+    const seen = new Set<string>();
+
+    for (const item of (payload.tokens || []).slice(0, 40)) {
+      const address = String(item.address || '').trim();
+      if (!address) continue;
+      const identityKey = getTrackedTokenKey(address, item.chain);
+      if (blocked.has(identityKey) || seen.has(identityKey)) continue;
+      seen.add(identityKey);
+      tokenIdentities.push(identityKey);
+      metadataByIdentity[identityKey] = buildDashboardTokenViewMetadata(payload, item);
+      mergeDashboardTokenViewItem(item);
+    }
+
+    state.data.monitoredSystemViews[payload.view] = {
+      status: payload.status,
+      tokenIdentities,
+      metadataByIdentity,
+      generatedAt: payload.generatedAt ?? null,
+      error: null,
+    };
+    refreshTrackedTokenStore();
+    syncWorkspaceMarketSubscriptions();
+  }
+
+  function isPrimaryMonitoredViewRequestCurrent(
+    revision: number,
+    token: string,
+    view: MonitoredViewId,
+  ) {
+    return revision === monitoredSystemViewRefreshRevision
+      && state.session.token === token
+      && state.ui.monitoredPrimaryPane.view === view;
+  }
+
+  async function refreshPrimaryMonitoredView(
+    token = state.session.token,
+    options: { force?: boolean } = {},
+  ) {
+    const request = resolveDashboardTokenViewRequest(state.ui.monitoredPrimaryPane.view);
+    if (!token || !isLiveWorkspace() || !request) return;
+    const { view } = request;
+    if (!options.force && monitoredSystemViewRefreshInFlight?.view === view) return;
+
+    const revision = monitoredSystemViewRefreshRevision + 1;
+    monitoredSystemViewRefreshRevision = revision;
+    monitoredSystemViewRefreshInFlight = { view, revision };
+    state.data.monitoredSystemViews[view] = {
+      ...state.data.monitoredSystemViews[view],
+      status: 'loading',
+      error: null,
+    };
+    emit('monitored');
+
+    try {
+      const payload = await fetchDashboardTokenView(view, token, request.options);
+      if (!isPrimaryMonitoredViewRequestCurrent(revision, token, view)) return;
+      if (payload.view !== view) throw new Error('Monitored view response did not match the active view');
+      applyDashboardTokenView(payload);
+      emit('monitored');
+    } catch (error) {
+      if (!isPrimaryMonitoredViewRequestCurrent(revision, token, view)) return;
+      state.data.monitoredSystemViews[view] = {
+        ...state.data.monitoredSystemViews[view],
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Failed to load monitored view',
+      };
+      emit('monitored');
+    } finally {
+      if (monitoredSystemViewRefreshInFlight?.revision === revision) {
+        monitoredSystemViewRefreshInFlight = null;
+      }
     }
   }
 
@@ -11004,6 +11128,7 @@ export function createAppController(): AppController {
       trackedTokensByIdentity: {},
       monitoredTokenIdentities: [],
       pinnedMonitoredTokenIdentities: [],
+      monitoredSystemViews: createAppState().data.monitoredSystemViews,
       watchlistTokenIdentities: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
@@ -11053,6 +11178,7 @@ export function createAppController(): AppController {
     state.ui.pendingLoginOtpEmailHint = null;
     state.ui.alertSearchQuery = '';
     state.ui.monitoredSearchQuery = '';
+    state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
     state.ui.watchlistSearchQuery = '';
     state.ui.recentSearchQuery = '';
     state.ui.oldWeekSearchQuery = '';
@@ -12507,6 +12633,7 @@ export function createAppController(): AppController {
       }
       state.ui.monitoredLoadError = null;
       emitMonitoredWorkspaceRegions();
+      void refreshPrimaryMonitoredView(token);
       void refreshDashboardTopPerformers(token);
     } catch (error) {
       state.ui.monitoredLoadError = error instanceof Error
@@ -14383,8 +14510,34 @@ export function createAppController(): AppController {
       state.ui.alertPage = 0;
       emit('alerts');
     },
+    setPrimaryMonitoredView(view: MonitoredViewId) {
+      const nextView = normalizeMonitoredViewId(view);
+      if (state.ui.monitoredPrimaryPane.view === nextView) {
+        if (
+          isDashboardSystemTokenViewId(nextView)
+          && state.data.monitoredSystemViews[nextView].status === 'idle'
+        ) {
+          void refreshPrimaryMonitoredView(state.session.token, { force: true });
+        }
+        return;
+      }
+      monitoredSystemViewRefreshRevision += 1;
+      state.ui.monitoredPrimaryPane = {
+        ...state.ui.monitoredPrimaryPane,
+        view: nextView,
+        scrollAnchor: null,
+      };
+      state.ui.monitoredPage = 0;
+      syncWorkspaceMarketSubscriptions();
+      emit('monitored');
+      if (isDashboardSystemTokenViewId(nextView)) {
+        void refreshPrimaryMonitoredView(state.session.token, { force: true });
+      }
+    },
     setMonitoredSearchQuery(query: string) {
-      state.ui.monitoredSearchQuery = String(query || '');
+      const searchQuery = String(query || '');
+      state.ui.monitoredSearchQuery = searchQuery;
+      state.ui.monitoredPrimaryPane.searchQuery = searchQuery;
       state.ui.monitoredPage = 0;
       syncWorkspaceMarketSubscriptions();
       emit('monitored');

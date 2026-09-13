@@ -1521,6 +1521,11 @@ Trending e as duas views lifecycle possuem adapters Robinhood; Watchlist continu
 usa Robinhood como padrão e limita views de sistema a 40 tokens. Lifecycle permanece
 dark até `ROBINHOOD_LIFECYCLE_READ_ENABLED=true` após o replay histórico aprovado.
 
+O frontend mantém seleção, busca e âncora de scroll na pane primária, que inicia em
+`trending`. Readiness, membership ordenada e metadata são isolados por system view;
+somente a view ativa é buscada. Watchlist resolve a membership local sem request de
+system view, e todos os resultados reutilizam o store canônico e seu merge realtime.
+
 Trending usa `scoreVersion=trending-v1`. O adapter lê um prefixo limitado aos 500 maiores
 volumes 24h e hidrata volume, price change, FDV, liquidez, cobertura e frescor pelos
 read-models canônicos Robinhood. O scorer exclui observações com mais de 15 minutos,
