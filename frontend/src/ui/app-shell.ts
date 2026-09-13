@@ -87,6 +87,11 @@ type UserMenuDraft = {
   open: boolean;
 };
 
+type LivePanelPresetPickerDraft = {
+  focusedAction: string | null;
+  focusedPreset: string | null;
+};
+
 type SearchInputDraft = {
   key: string;
   selectionStart: number | null;
@@ -217,6 +222,7 @@ export function renderAppShell(
   const inviteAssistanceDraft = captureInviteAssistanceDraft(root);
   const passwordResetDraft = capturePasswordResetDraft(root);
   const userMenuDraft = captureUserMenuDraft(root);
+  const livePanelPresetPickerDraft = captureLivePanelPresetPickerDraft(root);
   const searchInputDraft = captureSearchInputDraft(root);
   const mockTradingBuyTicketDraft = captureMockTradingBuyTicketDraft(root);
   const renderFrame = ensureAppRenderFrame(root);
@@ -354,6 +360,7 @@ export function renderAppShell(
   applyPasswordResetDraft(root, passwordResetDraft);
   applyPasswordResetFocus(root, state);
   applyUserMenuDraft(root, userMenuDraft);
+  applyLivePanelPresetPickerDraft(root, livePanelPresetPickerDraft);
   applySearchInputDraft(root, searchInputDraft);
   applyMockTradingBuyTicketDraft(root, mockTradingBuyTicketDraft);
   applyConfigDraft(root, configDraft, state);
@@ -1608,6 +1615,49 @@ function applyUserMenuDraft(root: HTMLElement, draft: UserMenuDraft | null) {
   }
 
   root.querySelector<HTMLElement>('[data-user-menu]')?.classList.add('open');
+}
+
+function captureLivePanelPresetPickerDraft(root: HTMLElement): LivePanelPresetPickerDraft | null {
+  const picker = root.querySelector<HTMLElement>('[data-role="live-panel-preset-picker"]');
+  const popover = picker?.querySelector<HTMLElement>('[data-role="live-panel-preset-popover"]');
+  if (!picker || !popover || popover.hidden) {
+    return null;
+  }
+
+  const focusedElement = document.activeElement instanceof HTMLElement && picker.contains(document.activeElement)
+    ? document.activeElement
+    : null;
+  return {
+    focusedAction: focusedElement?.dataset.action || null,
+    focusedPreset: focusedElement?.dataset.preset || null,
+  };
+}
+
+function applyLivePanelPresetPickerDraft(root: HTMLElement, draft: LivePanelPresetPickerDraft | null) {
+  if (!draft) {
+    return;
+  }
+
+  const picker = root.querySelector<HTMLElement>('[data-role="live-panel-preset-picker"]');
+  const trigger = picker?.querySelector<HTMLButtonElement>('[data-action="toggle-live-panel-presets"]');
+  const popover = picker?.querySelector<HTMLElement>('[data-role="live-panel-preset-popover"]');
+  if (!picker || !trigger || !popover) {
+    return;
+  }
+
+  if (popover.hidden) {
+    trigger.click();
+  }
+
+  if (!draft.focusedAction) {
+    return;
+  }
+  const presetSelector = draft.focusedPreset
+    ? `[data-preset="${CSS.escape(draft.focusedPreset)}"]`
+    : '';
+  picker.querySelector<HTMLElement>(
+    `[data-action="${CSS.escape(draft.focusedAction)}"]${presetSelector}`,
+  )?.focus();
 }
 
 function captureSearchInputDraft(root: HTMLElement): SearchInputDraft | null {

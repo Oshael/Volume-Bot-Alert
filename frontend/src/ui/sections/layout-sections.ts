@@ -84,6 +84,7 @@ const PASSWORD_RESET_TRANSIENT_NOTICES = new Set([
   'Set a new password to finish the reset.',
   'Resetting password...',
 ]);
+let livePanelPresetPickerOpenListeners: AbortController | null = null;
 const EXPANDED_CHART_GRANULARITY_OPTIONS = [
   { label: '1M', value: 1 },
   { label: '5M', value: 5 },
@@ -1279,7 +1280,8 @@ function bindLivePanelPresetPicker(section: HTMLElement, controller: AppControll
   const popover = picker?.querySelector<HTMLElement>('[data-role="live-panel-preset-popover"]');
   if (!picker || !trigger || !popover) return;
 
-  let openListeners: AbortController | null = null;
+  livePanelPresetPickerOpenListeners?.abort();
+  livePanelPresetPickerOpenListeners = null;
   const updateAvailability = () => {
     picker.querySelectorAll<HTMLButtonElement>('[data-action="select-live-panel-preset"]').forEach((button) => {
       const preset = button.dataset.preset as LivePanelPresetId;
@@ -1291,15 +1293,17 @@ function bindLivePanelPresetPicker(section: HTMLElement, controller: AppControll
   const close = (restoreFocus = false) => {
     popover.hidden = true;
     trigger.setAttribute('aria-expanded', 'false');
-    openListeners?.abort();
-    openListeners = null;
+    livePanelPresetPickerOpenListeners?.abort();
+    livePanelPresetPickerOpenListeners = null;
     if (restoreFocus) trigger.focus();
   };
   const open = () => {
     updateAvailability();
     popover.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
-    openListeners = new AbortController();
+    livePanelPresetPickerOpenListeners?.abort();
+    const openListeners = new AbortController();
+    livePanelPresetPickerOpenListeners = openListeners;
     document.addEventListener('pointerdown', (event) => {
       if (!picker.contains(event.target as Node)) close();
     }, { capture: true, signal: openListeners.signal });

@@ -1402,6 +1402,11 @@ test('composes the compare preset with two independent Monitored panes', async (
   const diagnostics = await openAuthenticatedWorkspace(page, {
     ...ROBINHOOD_API_FIXTURES,
     'GET /api/config': compareConfig,
+    'GET /api/search/global': {
+      query: 'hood', status: 'ready', count: 0,
+      chainStates: { robinhood: { kinds: { token: 'ready', wallet: 'unsupported' } } },
+      hits: [],
+    },
     'GET /api/dashboard/alert-feeds': async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
       return ROBINHOOD_API_FIXTURES['GET /api/dashboard/alert-feeds'];
@@ -1455,8 +1460,19 @@ test('composes the compare preset with two independent Monitored panes', async (
   const presetDialog = picker.getByRole('dialog', { name: 'Workspace layout presets' });
   await expect(presetDialog).toBeVisible();
   await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(5);
-  await expect(presetDialog.getByRole('button', { name: 'Compare' })).toHaveAttribute('aria-pressed', 'true');
+  const compareOption = presetDialog.getByRole('button', { name: 'Compare' });
+  await expect(compareOption).toHaveAttribute('aria-pressed', 'true');
   await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toBeDisabled();
+  await compareOption.focus();
+  await page.getByRole('searchbox', { name: 'Search tokens across all blockchains' }).evaluate((input) => {
+    input.value = 'hood';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(() => diagnostics.apiRequests.filter((url) => (
+    new URL(url).pathname === '/api/search/global'
+  )).length).toBe(1);
+  await expect(presetDialog).toBeVisible();
+  await expect(compareOption).toBeFocused();
   expect(diagnostics.apiRequests.filter((url) => (
     new URL(url).pathname === '/api/catalog/sparklines'
   ))).toHaveLength(0);
