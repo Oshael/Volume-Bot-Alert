@@ -1278,7 +1278,7 @@ test('resolves a clipboard token by gesture and keeps denial neutral without rep
         chainStates: { robinhood: { kinds: { token: 'ready' } } },
         hits: [{
           kind: 'token', chain: 'robinhood', address: ROBINHOOD_TOKEN, symbol: 'HOOD',
-          name: 'Robin Hood', imageUrl: null,
+          name: 'Robin Hood', imageUrl: 'https://assets.example.test/hood.png',
           destination: { type: 'expanded-chart', chain: 'robinhood', address: ROBINHOOD_TOKEN },
           match: 'exact_address',
         }],
@@ -1305,13 +1305,22 @@ test('resolves a clipboard token by gesture and keeps denial neutral without rep
   await shortcut.click();
   await expect(shortcut).toHaveAttribute('data-state', 'ready');
   await expect(shortcut).toContainText('HOOD');
-  await expect(shortcut).toContainText('Robinhood Chain');
-  const leftControlGap = await page.evaluate(() => {
-    const picker = document.querySelector('.workspace-layout-picker')?.getBoundingClientRect();
+  await expect(shortcut.locator('img')).toHaveAttribute('src', 'https://assets.example.test/hood.png');
+  const searchField = page.locator('.workspace-global-search-field');
+  await expect(searchField.locator(':scope > .workspace-clipboard-token')).toHaveCount(1);
+  const embeddedControlGeometry = await page.evaluate(() => {
+    const field = document.querySelector('.workspace-global-search-field')?.getBoundingClientRect();
+    const input = document.querySelector('.workspace-global-search input')?.getBoundingClientRect();
     const clipboard = document.querySelector('.workspace-clipboard-token')?.getBoundingClientRect();
-    return picker && clipboard ? clipboard.left - picker.right : -1;
+    return field && input && clipboard ? {
+      followsInput: clipboard.left >= input.right - 1,
+      rightInset: field.right - clipboard.right,
+    } : null;
   });
-  expect(leftControlGap).toBeGreaterThanOrEqual(4);
+  expect(embeddedControlGeometry).not.toBeNull();
+  expect(embeddedControlGeometry.followsInput).toBe(true);
+  expect(embeddedControlGeometry.rightInset).toBeGreaterThanOrEqual(0);
+  expect(embeddedControlGeometry.rightInset).toBeLessThanOrEqual(4);
   await shortcut.click();
   await expect(page).toHaveURL(`/alerts/robinhood/${ROBINHOOD_TOKEN}`);
   await expect(page.locator('[data-auth-modal="expanded-sparkline"]')).toBeVisible();
@@ -1376,6 +1385,7 @@ test('renders the bounded four-view Monitored surface without filter or paginati
   await expect(monitored.locator('[data-action="monitored-per-page"]')).toHaveCount(0);
   await expect(monitored.locator('[data-action="monitored-page-jump"]')).toHaveCount(0);
   await expect(monitored.locator('[data-action="monitored-prev"], [data-action="monitored-next"]')).toHaveCount(0);
+  await expect(monitored.locator('[data-action="monitored-search-focus"], [data-action="monitored-search"]')).toHaveCount(0);
   await expect(page.locator('[data-app-render-slot="top-performers"], [data-app-render-slot="manual"]')).toHaveCount(0);
   await expect(page.locator('#top-performers-section, #watchlist-section')).toHaveCount(0);
 

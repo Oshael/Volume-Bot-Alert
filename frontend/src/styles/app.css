@@ -1458,20 +1458,19 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .workspace-clipboard-token {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 6px);
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-width: 34px;
-  height: 34px;
-  max-width: 140px;
+  min-width: 30px;
+  height: 28px;
+  max-width: 112px;
   padding: 0 6px;
-  border: 1px solid rgba(93, 130, 169, 0.46);
-  border-radius: 9px;
-  background: rgba(7, 14, 23, 0.94);
+  border: 0;
+  border-left: 1px solid rgba(93, 130, 169, 0.34);
+  border-radius: 0 7px 7px 0;
+  background: transparent;
   color: rgba(159, 225, 246, 0.88);
   font: inherit;
   cursor: pointer;
@@ -1480,7 +1479,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .workspace-clipboard-token:hover,
 .workspace-clipboard-token:focus-visible,
 .workspace-clipboard-token.is-resolved {
-  border-color: rgba(0, 212, 255, 0.62);
+  border-left-color: rgba(0, 212, 255, 0.62);
   background: rgba(0, 212, 255, 0.13);
   outline: none;
 }
@@ -1493,31 +1492,35 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .workspace-clipboard-token[data-state="denied"],
 .workspace-clipboard-token[data-state="unavailable"],
 .workspace-clipboard-token[data-state="error"] {
-  border-color: rgba(255, 200, 87, 0.4);
+  border-left-color: rgba(255, 200, 87, 0.4);
   color: #ffc857;
 }
 
-.workspace-clipboard-token img {
+.workspace-clipboard-token img,
+.workspace-clipboard-token-fallback {
   width: 22px;
   height: 22px;
   flex: 0 0 auto;
   border-radius: 50%;
+}
+
+.workspace-clipboard-token img {
   object-fit: cover;
+}
+
+.workspace-clipboard-token-fallback {
+  display: grid;
+  place-items: center;
+  background: rgba(0, 212, 255, 0.18);
+  color: #9fe1f6;
+  font-size: 8px;
+  font-weight: 800;
 }
 
 .workspace-clipboard-token strong {
   overflow: hidden;
   max-width: 68px;
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-clipboard-token small {
-  overflow: hidden;
-  max-width: 54px;
-  color: rgba(164, 184, 208, 0.78);
-  font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1537,7 +1540,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   align-items: center;
   gap: 7px;
   min-height: 34px;
-  padding: 0 10px;
+  padding: 0 3px 0 10px;
   border: 1px solid rgba(93, 130, 169, 0.46);
   border-radius: 9px;
   background: rgba(7, 14, 23, 0.94);
@@ -1556,7 +1559,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .workspace-global-search input {
-  width: 100%;
+  width: auto;
+  flex: 1 1 auto;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -11261,13 +11265,6 @@ TEMP_LEGACY_BAR_TITLE {
     left: auto;
     width: 100%;
     transform: none;
-  }
-
-  .workspace-clipboard-token {
-    position: relative;
-    top: auto;
-    right: auto;
-    margin-bottom: 6px;
   }
 
   .workspace-layout-preset-popover {

@@ -1351,6 +1351,21 @@ function bindLivePanelPresetPicker(section: HTMLElement, controller: AppControll
   });
 }
 
+const GLOBAL_SEARCH_CLIPBOARD_ICON = `<svg class="workspace-clipboard-token-icon" viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="6" y="5" width="12" height="16" rx="2"></rect><path d="M9 5V3h6v2M9 9h6M9 13h6"></path>
+</svg>`;
+
+function renderGlobalSearchClipboardContent(hit: AppState['ui']['clipboardToken']['hit']) {
+  if (!hit) {
+    return GLOBAL_SEARCH_CLIPBOARD_ICON;
+  }
+  const imageUrl = sanitizeOptionalHttpUrl(hit.imageUrl);
+  const avatar = imageUrl
+    ? `<img src="${escapeHtml(imageUrl)}" alt="" />`
+    : `<span class="workspace-clipboard-token-fallback" aria-hidden="true">${escapeHtml((hit.symbol || hit.name || '?').slice(0, 2).toUpperCase())}</span>`;
+  return `${avatar}<strong>${escapeHtml(hit.symbol || hit.name || 'Token')}</strong>`;
+}
+
 function renderGlobalSearch(state: AppState) {
   const search = state.ui.globalSearch;
   const clipboard = state.ui.clipboardToken;
@@ -1362,15 +1377,7 @@ function renderGlobalSearch(state: AppState) {
     unsupported: 'Copied address is not supported yet', syncing: 'Copied token search is syncing',
     error: clipboard.error || 'Clipboard token resolution failed',
   }[clipboard.status];
-  const clipboardImage = sanitizeOptionalHttpUrl(clipboardHit?.imageUrl);
-  const clipboardIcon = `<svg class="workspace-clipboard-token-icon" viewBox="0 0 24 24" aria-hidden="true">
-    <rect x="6" y="5" width="12" height="16" rx="2"></rect><path d="M9 5V3h6v2M9 9h6M9 13h6"></path>
-  </svg>`;
-  const clipboardContent = clipboardHit
-    ? `${clipboardImage ? `<img src="${escapeHtml(clipboardImage)}" alt="" />` : clipboardIcon}
-      <strong>${escapeHtml(clipboardHit.symbol || clipboardHit.name || 'Token')}</strong>
-      <small>${escapeHtml(getTokenChainTitle(clipboardHit.chain))}</small>`
-    : clipboardIcon;
+  const clipboardContent = renderGlobalSearchClipboardContent(clipboardHit);
   const open = search.query.trim().length >= 2;
   const statusLabels = {
     debouncing: 'Waiting to search…', loading: 'Searching tokens…', empty: 'No matching token found.',
@@ -1396,19 +1403,19 @@ function renderGlobalSearch(state: AppState) {
   }).join('');
   const fallback = statusLabels[search.status as keyof typeof statusLabels];
   return `<div class="workspace-global-search" role="search" data-state="${search.status}">
-    <button type="button" class="workspace-clipboard-token${clipboardHit ? ' is-resolved' : ''}"
-      data-action="activate-clipboard-token" data-state="${clipboard.status}"
-      aria-label="${escapeHtml(clipboardTitle)}" title="${escapeHtml(clipboardTitle)}"
-      ${clipboard.status === 'reading' || clipboard.status === 'resolving' ? 'disabled' : ''}>
-      ${clipboardContent}
-    </button>
-    <label class="workspace-global-search-field">
+    <div class="workspace-global-search-field">
       <span class="workspace-global-search-icon" aria-hidden="true">⌕</span>
       <input type="search" value="${escapeHtml(search.query)}" maxlength="120" autocomplete="off" spellcheck="false"
         data-action="global-search-input" data-search-input="global" placeholder="Search contract, ticker or wallet"
         aria-label="Search tokens across all blockchains" aria-autocomplete="list"
         aria-controls="workspace-global-search-results" aria-expanded="${open}" />
-    </label>
+      <button type="button" class="workspace-clipboard-token${clipboardHit ? ' is-resolved' : ''}"
+        data-action="activate-clipboard-token" data-state="${clipboard.status}"
+        aria-label="${escapeHtml(clipboardTitle)}" title="${escapeHtml(clipboardTitle)}"
+        ${clipboard.status === 'reading' || clipboard.status === 'resolving' ? 'disabled' : ''}>
+        ${clipboardContent}
+      </button>
+    </div>
     <div id="workspace-global-search-results" class="workspace-global-search-results" role="listbox" ${open ? '' : 'hidden'}>
       ${results || `<div class="workspace-global-search-status" role="status">${escapeHtml(fallback || 'Type at least 2 characters.')}</div>`}
     </div>

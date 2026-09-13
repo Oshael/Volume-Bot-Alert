@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredPaneViewTokens, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type WatchlistTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
+import { bindCopyButtons, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows, resolveMonitoredViewRows } from '../../utils/token-table';
@@ -200,7 +200,7 @@ function resolveMonitoredSectionView(state: AppState, pane: MonitoredPaneKey) {
   const otherPaneState = pane === 'primary' ? state.ui.monitoredSecondaryPane : state.ui.monitoredPrimaryPane;
   const activeView = paneState.view;
   const systemView = activeView === 'watchlist' ? null : state.data.monitoredSystemViews[activeView];
-  const searchQuery = String(paneState.searchQuery || '').trim().toLowerCase();
+  const searchQuery = '';
   const filteredTracked = resolveMonitoredViewRows(getMonitoredPaneViewTokens(state, pane), searchQuery);
   return {
     pane,
@@ -367,10 +367,6 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
         ${renderMonitoredViewButtons(view.activeView, view.disabledView)}
         <div class="monitored-view-tools">
           <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
-          <div class="compact-search ${view.searchQuery ? 'has-query open' : ''}">
-            <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search ${escapeHtml(view.activeViewLabel)} tokens">&#128269;</button>
-            <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
-          </div>
           ${view.miniChartEnabled ? renderSparklineRangeControl(state, 'monitored') : ''}
           ${renderMonitoredViewStatus(view)}
           <span class="monitored-token-pill-wrap">
@@ -628,17 +624,8 @@ function bindMonitoredSectionControls(
   controller: AppController,
   view: MonitoredSectionView,
 ) {
-  const searchInput = section.querySelector<HTMLInputElement>('[data-action="monitored-search"]');
-  if (searchInput) {
-    searchInput.value = view.searchQuery;
-  }
-  bindCompactSearch(section, {
-    toggleAction: 'monitored-search-focus',
-    inputAction: 'monitored-search',
-  });
   bindMonitoredViewButtons(section, controller, view.pane);
   bindMonitoredCollapseToggle(section, controller);
-  bindMonitoredSearchInput(searchInput, controller, view.pane);
   bindMonitoredRowControls(section, state, controller);
   bindSparklineRangeControls(section, controller);
   bindMonitoredTickerPeerPanelClose(section);
@@ -1106,7 +1093,7 @@ function resolveMonitoredAbsoluteDropPosition(
   }).map((item) => buildTokenIdentityKey(item.chain || 'solana', item.address))
     .filter((identity) => identity !== draggedIdentity);
   const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
-  const searchQuery = String(state.ui.monitoredSearchQuery || '').trim().toLowerCase();
+  const searchQuery = '';
   const filteredRows = resolveMonitoredTableRows(getMonitoredTokens(state), {
     searchQuery,
     sortCriteria: state.ui.monitoredSorts,
@@ -1228,29 +1215,6 @@ function isolateMonitoredTickerPeerListWheel(event: WheelEvent) {
 function bindMonitoredCollapseToggle(section: ParentNode, controller: AppController) {
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('monitored');
-  });
-}
-
-function bindMonitoredSearchInput(
-  searchInput: HTMLInputElement | null,
-  controller: AppController,
-  pane: MonitoredPaneKey,
-) {
-  if (!searchInput) {
-    return;
-  }
-
-  const syncSearchInput = (event: Event) => {
-    controller.setMonitoredPaneSearchQuery(pane, (event.currentTarget as HTMLInputElement).value);
-  };
-
-  searchInput.addEventListener('input', syncSearchInput);
-  searchInput.addEventListener('change', syncSearchInput);
-  searchInput.addEventListener('search', syncSearchInput);
-  searchInput.addEventListener('keyup', syncSearchInput);
-  searchInput.addEventListener('cut', (event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    window.setTimeout(() => controller.setMonitoredPaneSearchQuery(pane, input.value), 0);
   });
 }
 
