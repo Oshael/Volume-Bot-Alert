@@ -1196,21 +1196,41 @@ function mountWorkspaceChainSelector(
 }
 
 function renderLivePanelPresetPreview(definition: LivePanelPresetDefinition) {
-  const canvasWidth = 48;
-  const inset = 3;
-  const gap = 2;
+  const canvasWidth = 84;
+  const inset = 5;
+  const gap = 3;
   const usableWidth = canvasWidth - (inset * 2);
   const columnWidth = (usableWidth - (gap * (definition.columns - 1))) / definition.columns;
   let nextColumn = 0;
-  const regions = definition.regions.map((region) => {
+  const regions = definition.regions.map((region, index) => {
     const width = (columnWidth * region.span) + (gap * (region.span - 1));
     const x = region.centered
       ? inset + ((usableWidth - width) / 2)
       : inset + (nextColumn * (columnWidth + gap));
     nextColumn += region.span;
-    return `<rect class="workspace-layout-preview-pane workspace-layout-preview-pane-${region.pane}" data-preview-pane="${region.pane}" x="${x.toFixed(2)}" y="4" width="${width.toFixed(2)}" height="22" rx="2.5" />`;
+    const detailRight = x + width - 4;
+    const detailWidth = Math.max(3, width - 8);
+    const details = region.pane === 'alerts'
+      ? [12, 21, 30].map((y) => `
+          <circle class="workspace-layout-preview-detail-dot" cx="${(x + 5).toFixed(2)}" cy="${y}" r="1.35" />
+          <path class="workspace-layout-preview-detail-line" d="M${(x + 9).toFixed(2)} ${y}H${detailRight.toFixed(2)}" />
+        `).join('')
+      : `
+          <rect class="workspace-layout-preview-detail-bar" x="${(x + 4).toFixed(2)}" y="9" width="${detailWidth.toFixed(2)}" height="2.5" rx="1.25" />
+          <path class="workspace-layout-preview-detail-chart" d="M${(x + 4).toFixed(2)} 32L${(x + width * 0.32).toFixed(2)} 25L${(x + width * 0.5).toFixed(2)} 28L${(x + width * 0.68).toFixed(2)} 18L${detailRight.toFixed(2)} 14" />
+          <circle class="workspace-layout-preview-detail-point" cx="${detailRight.toFixed(2)}" cy="14" r="1.5" />
+        `;
+    return `
+      <g data-preview-pane="${region.pane}" data-preview-region="${index}">
+        <rect class="workspace-layout-preview-pane workspace-layout-preview-pane-${region.pane}" x="${x.toFixed(2)}" y="5" width="${width.toFixed(2)}" height="38" rx="4" />
+        ${details}
+      </g>
+    `;
   }).join('');
-  return `<svg class="workspace-layout-preview" viewBox="0 0 48 30" aria-hidden="true" focusable="false">${regions}</svg>`;
+  return `<svg class="workspace-layout-preview" viewBox="0 0 84 48" aria-hidden="true" focusable="false">
+    <rect class="workspace-layout-preview-frame" x="0.75" y="0.75" width="82.5" height="46.5" rx="6" />
+    ${regions}
+  </svg>`;
 }
 
 function renderLivePanelPresetPicker(state: AppState) {
@@ -1380,7 +1400,7 @@ function renderGlobalSearch(state: AppState) {
     <label class="workspace-global-search-field">
       <span class="workspace-global-search-icon" aria-hidden="true">⌕</span>
       <input type="search" value="${escapeHtml(search.query)}" maxlength="120" autocomplete="off" spellcheck="false"
-        data-action="global-search-input" data-search-input="global" placeholder="Search ticker, name or contract"
+        data-action="global-search-input" data-search-input="global" placeholder="Search contract, ticker or wallet"
         aria-label="Search tokens across all blockchains" aria-autocomplete="list"
         aria-controls="workspace-global-search-results" aria-expanded="${open}" />
     </label>

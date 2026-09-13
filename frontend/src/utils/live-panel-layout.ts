@@ -56,14 +56,14 @@ const DEFAULT_PANE_ORDER: readonly LivePanelPaneKey[] = ['primary', 'secondary',
 export const LIVE_PANEL_PRESETS: Readonly<Record<LivePanelPresetId, LivePanelPresetDefinition>> = {
   discovery_alerts: {
     id: 'discovery_alerts',
-    label: 'Discovery + Alerts',
+    label: 'Monitored + Alerts',
     columns: 3,
     regions: [{ pane: 'primary', span: 2 }, { pane: 'alerts', span: 1 }],
     minViewportWidth: null,
   },
   compare: {
     id: 'compare',
-    label: 'Compare',
+    label: 'Doubble Monitored',
     columns: 2,
     regions: [{ pane: 'primary', span: 1 }, { pane: 'secondary', span: 1 }],
     minViewportWidth: null,
@@ -77,7 +77,7 @@ export const LIVE_PANEL_PRESETS: Readonly<Record<LivePanelPresetId, LivePanelPre
   },
   token_focus: {
     id: 'token_focus',
-    label: 'Token Focus',
+    label: 'Monitored Focus',
     columns: 3,
     regions: [{ pane: 'primary', span: 2, centered: true }],
     minViewportWidth: null,

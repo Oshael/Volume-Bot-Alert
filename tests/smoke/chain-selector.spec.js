@@ -1460,7 +1460,21 @@ test('composes the compare preset with two independent Monitored panes', async (
   const presetDialog = picker.getByRole('dialog', { name: 'Workspace layout presets' });
   await expect(presetDialog).toBeVisible();
   await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(5);
-  const compareOption = presetDialog.getByRole('button', { name: 'Compare' });
+  await expect(presetDialog.locator('.workspace-layout-preset-label')).toHaveText([
+    'Monitored + Alerts',
+    'Doubble Monitored',
+    'Alerts Focus',
+    'Monitored Focus',
+    'Command Center',
+  ]);
+  await expect(presetDialog.locator('[class^="workspace-layout-preview-detail"]')).toHaveCount(36);
+  const optionTopEdges = await presetDialog.locator('.workspace-layout-preset-option').evaluateAll((options) => (
+    options.map((option) => Math.round(option.getBoundingClientRect().top))
+  ));
+  expect(new Set(optionTopEdges).size).toBe(1);
+  await expect(page.getByRole('searchbox', { name: 'Search tokens across all blockchains' }))
+    .toHaveAttribute('placeholder', 'Search contract, ticker or wallet');
+  const compareOption = presetDialog.getByRole('button', { name: 'Doubble Monitored' });
   await expect(compareOption).toHaveAttribute('aria-pressed', 'true');
   await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toBeDisabled();
   await compareOption.focus();
