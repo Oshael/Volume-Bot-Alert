@@ -219,10 +219,8 @@ function resolveAppTokenChain(value: unknown): TokenChain {
 }
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HVNC_MAX_AGE_MS = 5 * 60 * 1000;
-const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
 const PUMP_WINDOW_MS = 5 * 60 * 1000;
 const PUMP_VOLUME_BUCKET_MS = 5 * 1000;
 const PUMP_GC_INTERVAL_MS = 30 * 1000;
@@ -292,7 +290,6 @@ function normalizeWalletLoginError(error: unknown) {
   }
   return message || 'Wallet login failed';
 }
-const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
@@ -2393,7 +2390,6 @@ export function createAppController(): AppController {
       for (const token of getMonitoredTokens(state)) {
         if (!input.alertCandidates.has(getTokenIdentityKey(token))) continue;
         maybeFireSpecialAlerts(token);
-        maybeFireLocalAlert(token);
       }
     }
 
@@ -6328,18 +6324,6 @@ export function createAppController(): AppController {
     }
   }
 
-  function passesAlertFilters(token: WatchlistTokenEntry) {
-    const minVol = getConfigNumber('min-vol', 10000);
-    const minMcap = getConfigNumber('min-mcap', 30000);
-    const maxMcap = getConfigNumber('max-mcap', 0);
-    const volume5m = token.volume5m ?? 0;
-    const mcap = token.mcap ?? 0;
-    if (volume5m < minVol) return false;
-    if (mcap > 0 && mcap < minMcap) return false;
-    if (maxMcap > 0 && mcap > maxMcap) return false;
-    return true;
-  }
-
   function getMeteoraBaselineTvl1h(entry: MeteoraEntry | undefined) {
     const currentTvl = Number(entry?.tvl) || 0;
     const change1hPct = Number(entry?.change1h);
@@ -7270,164 +7254,6 @@ export function createAppController(): AppController {
     }
   }
 
-  function hasLocalAlertCooldown(token: WatchlistTokenEntry, now: number) {
-    return Boolean(token.lastAlertAt && now - token.lastAlertAt < STANDARD_ALERT_COOLDOWN_MS);
-  }
-
-  function evaluateVolumeLocalAlert(
-    token: WatchlistTokenEntry,
-    now: number,
-    symbol: string,
-    threshold: number,
-    previousVol: number,
-    previousMcap: number | null,
-    currentVol: number,
-    mcapDeclining: boolean,
-  ) {
-    const volChange = (currentVol - previousVol) / previousVol;
-    const volPct = volChange * 100;
-    const volEligible = isAlertKindEnabled('monitored-vol') && volChange >= threshold && passesAlertFilters(token) && !mcapDeclining;
-    if (!volEligible) {
-      token._volAlertAboveThreshold = false;
-      return null;
-    }
-
-    const canRepeatVol = token._lastVolAlertPct != null && volPct >= token._lastVolAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
-    if (token._volAlertAboveThreshold && !canRepeatVol) {
-      return null;
-    }
-
-    return {
-      firedKind: 'vol' as const,
-      alert: buildTrackedAlertEntry(token, now, symbol, 'monitored-vol', 'VOL', volPct, {
-        prevVolume5m: previousVol,
-        prevMcap: previousMcap,
-      }),
-    };
-  }
-
-  function evaluateMcapLocalAlert(
-    token: WatchlistTokenEntry,
-    now: number,
-    symbol: string,
-    mcapThreshold: number,
-    previousVol: number | null,
-    previousMcap: number,
-    currentMcap: number,
-  ) {
-    if (typeof token.createdAt === 'number' && token.createdAt > 0) {
-      const tokenAgeMs = now - token.createdAt;
-      if (tokenAgeMs < MCAP_ALERT_MIN_TOKEN_AGE_MS) {
-        token._mcapAlertAboveThreshold = false;
-        return null;
-      }
-    }
-
-    const mcapChange = (currentMcap - previousMcap) / previousMcap;
-    const mcapPct = mcapChange * 100;
-    const mcapEligible = isAlertKindEnabled('monitored-mcap') && mcapChange >= mcapThreshold && passesAlertFilters(token);
-    if (!mcapEligible) {
-      token._mcapAlertAboveThreshold = false;
-      return null;
-    }
-
-    const canRepeatMcap = token._lastMcapAlertPct != null && mcapPct >= token._lastMcapAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
-    if (token._mcapAlertAboveThreshold && !canRepeatMcap) {
-      return null;
-    }
-
-    return {
-      firedKind: 'mcap' as const,
-      alert: buildTrackedAlertEntry(token, now, symbol, 'monitored-mcap', 'MCAP', mcapPct, {
-        prevVolume5m: previousVol,
-        prevMcap: previousMcap,
-      }),
-    };
-  }
-
-  function applyLocalAlertState(token: WatchlistTokenEntry, alert: AlertEntry, firedKind: 'vol' | 'mcap', now: number) {
-    token.lastAlertAt = now;
-    if (firedKind === 'vol') {
-      token._volAlertAboveThreshold = true;
-      token._lastVolAlertPct = alert.pct;
-      token._lastAlertKind = 'monitored-vol';
-      return;
-    }
-
-    token._mcapAlertAboveThreshold = true;
-    token._lastMcapAlertPct = alert.pct;
-    token._lastAlertKind = 'monitored-mcap';
-  }
-
-  function resolveLocalAlertCandidate(
-    token: WatchlistTokenEntry,
-    now: number,
-    symbol: string,
-    threshold: number,
-    mcapThreshold: number,
-    previousVol: number | null,
-    previousMcap: number | null,
-    currentVol: number,
-    currentMcap: number,
-  ) {
-    const mcapDeclining = previousMcap != null && previousMcap > 0 && currentMcap > 0 && currentMcap < previousMcap;
-
-    if (previousVol != null && previousVol > 0) {
-      const volumeCandidate = evaluateVolumeLocalAlert(token, now, symbol, threshold, previousVol, previousMcap, currentVol, mcapDeclining);
-      if (volumeCandidate) {
-        return volumeCandidate;
-      }
-    }
-
-    if (mcapThreshold > 0 && previousMcap != null && previousMcap > 0) {
-      return evaluateMcapLocalAlert(token, now, symbol, mcapThreshold, previousVol, previousMcap, currentMcap);
-    }
-
-    return null;
-  }
-
-  function maybeFireLocalAlert(token: WatchlistTokenEntry) {
-    if (isBlocked(token.address, token.chain || 'solana')) {
-      return;
-    }
-    if (shouldUseBackendOwnedMonitoredAlerts()) {
-      return;
-    }
-
-    const now = Date.now();
-    if (isCrossAlertBlocked(token, now)) {
-      return;
-    }
-    const threshold = getConfigNumber('threshold', 50) / 100;
-    const mcapThreshold = getConfigNumber('mcap-threshold', 50) / 100;
-    const previousVol = token.prevVolume5m ?? null;
-    const previousMcap = token.prevMcap ?? null;
-    const currentVol = token.volume5m ?? 0;
-    const currentMcap = token.mcap ?? 0;
-
-    if (hasLocalAlertCooldown(token, now)) {
-      return;
-    }
-
-    const symbol = getAlertSymbol(token);
-    const localAlertCandidate = resolveLocalAlertCandidate(
-      token,
-      now,
-      symbol,
-      threshold,
-      mcapThreshold,
-      previousVol,
-      previousMcap,
-      currentVol,
-      currentMcap,
-    );
-
-    if (localAlertCandidate) {
-      applyLocalAlertState(token, localAlertCandidate.alert, localAlertCandidate.firedKind, now);
-      pushAlert(localAlertCandidate.alert);
-      setNotice(`Local monitored alert: ${symbol}`);
-    }
-  }
   function sortPinnedDashboardTokens(tokens: DashboardMonitoredToken[] = []) {
     return tokens
       .slice()

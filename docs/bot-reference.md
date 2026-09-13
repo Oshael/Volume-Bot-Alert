@@ -951,6 +951,9 @@ Os planejadores backend de Solana e Robinhood não emitem mais novos alertas pad
 (FDV 5m). Price Surge, Surge Continuation, HVNC, alertas Meteora e Custom continuam ativos. Durante
 a aposentadoria em cortes, contratos de leitura histórica, configurações persistidas e rearm de
 estado legado permanecem compatíveis, mas não podem reativar emissão desses quatro tipos.
+O frontend também não avalia localmente Volume 5m ou MCap 5m e rejeita os quatro tipos aposentados
+antes de qualquer notificação do navegador ou reprodução de áudio. A ingestão realtime, a
+atualização live de tokens e a renderização do histórico não são afetadas por esse bloqueio.
 
 A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
 (`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de

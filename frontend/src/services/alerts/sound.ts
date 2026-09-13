@@ -1,6 +1,7 @@
 import type { AlertEntry } from '../../state/app-state';
 import { getAlertImpactTier, isHvncAlert } from './impact-tier';
 import { loadCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
+import { isRetiredStandardAlert } from './retired-standard-alerts';
 
 const DEFAULT_ALERT_SOUND_VOLUME = 0.05;
 
@@ -12,18 +13,6 @@ type ToneStep = {
 };
 
 const ALERT_PATTERNS: Partial<Record<AlertEntry['kind'], ToneStep[]>> = {
-  'monitored-vol': [
-    { frequency: 523.25, durationMs: 110 },
-    { frequency: 659.25, durationMs: 140 },
-  ],
-  'monitored-mcap': [
-    { frequency: 440, durationMs: 120 },
-    { frequency: 587.33, durationMs: 160 },
-  ],
-  'monitored-fdv': [
-    { frequency: 440, durationMs: 120 },
-    { frequency: 587.33, durationMs: 160 },
-  ],
   hvnc: [
     { frequency: 523.25, durationMs: 90 },
     { frequency: 659.25, durationMs: 90 },
@@ -63,9 +52,6 @@ let audioContext: AudioContext | null = null;
 const activeCustomAudioElements = new Set<HTMLAudioElement>();
 
 const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
-  'monitored-vol': 'sound-vol-enabled',
-  'monitored-mcap': 'sound-mcap-enabled',
-  'monitored-fdv': 'sound-mcap-enabled',
   hvnc: 'sound-hvnc-enabled',
   'meteora-surge': 'sound-meteora-surge-enabled',
   'gmgn-claim-signal': 'sound-gmgn-claim-signal-enabled',
@@ -246,7 +232,9 @@ function shouldSkipAlertSound(
   alert: AlertEntry,
   options?: { enabled?: boolean; configs?: Record<string, string | number> },
 ) {
-  if (alert.kind === 'admin-token-review' || options?.enabled === false) {
+  if (alert.kind === 'admin-token-review'
+    || isRetiredStandardAlert(alert)
+    || options?.enabled === false) {
     return true;
   }
 

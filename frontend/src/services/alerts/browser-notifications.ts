@@ -4,6 +4,7 @@ import {
   resolveChainScopedConfigValue,
 } from '../../utils/token-chain';
 import { formatClaimFee } from './claim-fee-format';
+import { isRetiredStandardAlert } from './retired-standard-alerts';
 
 const STORAGE_KEY_PREFIX = 'trendscope_browser_notifications_v1';
 const DEFAULT_ICON_URL = '/favicon.png';
@@ -389,6 +390,9 @@ export function formatBrowserNotificationContent(
 }
 
 export function maybeNotifyAlert(alert: AlertEntry, options: BrowserNotificationOptions = {}) {
+  if (isRetiredStandardAlert(alert)) {
+    return false;
+  }
   if (options.enabled !== true || getBrowserNotificationStatus() !== 'granted') {
     return false;
   }

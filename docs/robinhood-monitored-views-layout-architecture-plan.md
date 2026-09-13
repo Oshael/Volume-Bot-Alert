@@ -609,6 +609,8 @@ Execute the retirement through these bounded cuts:
   for later retirement cuts.
 - **R2 — frontend local emission retirement:** remove local evaluation, notification and sound paths for the four retired
   alert types without changing realtime ingestion, WebSocket subscriptions or live token updates.
+  **Completed:** local Volume/MCap evaluation is removed and historical events for all four retired types are rejected
+  before browser notification or audio side effects; realtime ingestion and historical rendering remain intact.
 - **R3 — active configuration surfaces:** remove the retired types from active profiles, Telegram menus and Bot Settings so
   users cannot create or enable them through supported configuration flows.
 - **R4 — dead runtime contracts:** remove reset/publication/state branches that no longer have active consumers, while

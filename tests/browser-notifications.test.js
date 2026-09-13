@@ -205,29 +205,53 @@ describe('browser notification service', () => {
       document: documentState,
     });
 
-    assert.equal(service.maybeNotifyAlert(buildAlert(), { enabled: true }), true);
-    assert.equal(service.maybeNotifyAlert(buildAlert(), { enabled: true }), false);
+    const activeAlert = buildAlert({ kind: 'hvnc', label: 'HVNC' });
+    assert.equal(service.maybeNotifyAlert(activeAlert, { enabled: true }), true);
+    assert.equal(service.maybeNotifyAlert(activeAlert, { enabled: true }), false);
     assert.equal(Notification.instances.length, 1);
-    assert.equal(Notification.instances[0].title, 'VOL alert: SOL');
+    assert.equal(Notification.instances[0].title, 'HVNC: SOL');
 
     Notification.instances[0].onclick();
     assert.equal(focusCount, 1);
     assert.deepEqual(navigationTargets, ['/alerts/So11111111111111111111111111111111111111112']);
 
     service.resetBrowserNotificationSession();
-    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'alert-2' }), {
+    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'alert-2', kind: 'hvnc' }), {
       enabled: true,
-      configs: { 'alert-vol-enabled': 'off' },
+      configs: { 'alert-hvnc-enabled': 'off' },
     }), false);
     assert.equal(Notification.instances.length, 1);
 
     service.resetBrowserNotificationSession();
     documentState.hidden = false;
-    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'visible-1' }), { enabled: true }), false);
-    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'visible-2' }), {
+    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'visible-1', kind: 'hvnc' }), { enabled: true }), false);
+    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'visible-2', kind: 'hvnc' }), {
       enabled: true,
       notifyWhenVisible: true,
     }), true);
+  });
+
+  it('never creates browser notifications for retired standard alerts', () => {
+    const Notification = createNotificationMock('granted');
+    const service = loadBrowserNotificationModule({
+      window: {
+        isSecureContext: true,
+        localStorage: createLocalStorage(),
+        Notification,
+      },
+      document: { hidden: true },
+    });
+    const retired = [
+      buildAlert({ id: 'vol', kind: 'monitored-vol', ruleKey: 'monitored-vol' }),
+      buildAlert({ id: 'gmgn', kind: 'monitored-vol', ruleKey: 'gmgn-vol-1m' }),
+      buildAlert({ id: 'mcap', kind: 'monitored-mcap', ruleKey: 'monitored-mcap' }),
+      buildAlert({ id: 'fdv', kind: 'monitored-fdv', ruleKey: 'monitored-fdv' }),
+    ];
+
+    for (const alert of retired) {
+      assert.equal(service.maybeNotifyAlert(alert, { enabled: true }), false);
+    }
+    assert.equal(Notification.instances.length, 0);
   });
 
   it('uses chain-scoped alert toggles before the legacy fallback', () => {
@@ -241,17 +265,18 @@ describe('browser notification service', () => {
       document: { hidden: true },
     });
     const configs = {
-      'alert-vol-enabled': 'off',
-      'solana-alert-vol-enabled': 'on',
-      'robinhood-alert-vol-enabled': 'off',
+      'alert-hvnc-enabled': 'off',
+      'solana-alert-hvnc-enabled': 'on',
+      'robinhood-alert-hvnc-enabled': 'off',
     };
 
-    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'sol-scoped' }), {
+    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'sol-scoped', kind: 'hvnc' }), {
       enabled: true,
       configs,
     }), true);
     assert.equal(service.maybeNotifyAlert(buildAlert({
       id: 'rh-scoped',
+      kind: 'hvnc',
       chain: 'robinhood',
       address: '0xabcdef0123456789abcdef0123456789abcdef01',
     }), {
