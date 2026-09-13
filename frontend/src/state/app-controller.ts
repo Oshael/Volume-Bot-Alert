@@ -885,8 +885,6 @@ export type AppRenderRegion =
   | 'header'
   | 'toasts'
   | 'legacy'
-  | 'top-performers'
-  | 'manual'
   | 'recent'
   | 'old-week'
   | 'monitored'
@@ -1506,8 +1504,7 @@ export function createAppController(): AppController {
   const pendingAlertSparklineRequests = new Map<string, string>();
   const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
   const pendingPumpfunEmitRegions = new Set<AppRenderRegion>();
-  const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
-    manual: 'manual',
+  const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Partial<Record<CollapsibleSectionKey, AppRenderRegion>> = {
     recent: 'recent',
     oldWeek: 'old-week',
     monitored: 'monitored',
@@ -3588,7 +3585,7 @@ export function createAppController(): AppController {
     if (!isMockTradingEnabled(state)) {
       clearMockTradingState();
       setError('Mock trading is disabled');
-      emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      emit('header', 'overlay', 'recent', 'old-week', 'monitored');
       return null;
     }
     const token = state.session.token;
@@ -3649,7 +3646,7 @@ export function createAppController(): AppController {
       applyMockTradingPositions(positions);
       applyMockTradingTrades(trades);
       if (options?.emit) {
-        emit('legacy', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+        emit('legacy', 'recent', 'old-week', 'monitored', 'overlay');
       }
     } catch (error) {
       console.warn('[AppController] Failed to refresh mock trading state:', error instanceof Error ? error.message : error);
@@ -3751,7 +3748,7 @@ export function createAppController(): AppController {
     const optimisticSnapshot = captureOptimisticWatchlistTokenSnapshot(address);
     const nextWatchlist = buildOptimisticWatchlistToken(address, null);
     applyOptimisticWatchlistToken(address, nextWatchlist);
-    emit('manual', 'monitored', 'header');
+    emit('monitored', 'header');
 
     try {
       await syncWatchlistTokenToBackend('solana', address, null, token);
@@ -3860,7 +3857,7 @@ export function createAppController(): AppController {
       });
     } finally {
       floatingQuickBuyExecutionInFlight = false;
-      emit('header', 'overlay', 'manual', 'monitored');
+      emit('header', 'overlay', 'monitored');
     }
   }
 
@@ -3897,7 +3894,7 @@ export function createAppController(): AppController {
         monitoredDashboard.pinnedTokens,
       );
       await executeFloatingQuickBuyIfReady();
-      emit('manual', 'monitored', 'header');
+      emit('monitored', 'header');
     } catch (error) {
       updateFloatingQuickBuyState({
         status: 'waiting_market',
@@ -7793,7 +7790,7 @@ export function createAppController(): AppController {
   function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
     applyMonitoredDashboard(tokens, undefined, generatedAt ?? null, getCurrentPinnedMonitoredDashboardSnapshot());
     if (isLiveWorkspace()) {
-      emit('monitored', 'manual', 'recent', 'old-week', 'header');
+      emit('monitored', 'recent', 'old-week', 'header');
       return;
     }
     emit('recent', 'old-week', 'bid-zone', 'header');
@@ -7901,7 +7898,7 @@ export function createAppController(): AppController {
       nextSparklineRefreshAt = 0;
     }
     if (hasEntries) {
-      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
+      emit('monitored', 'recent', 'old-week');
     }
   }
 
@@ -8381,7 +8378,7 @@ export function createAppController(): AppController {
 
   function handleWorkspaceSparklineRefreshFailure(visibleIdentities: TokenIdentity[], error: unknown) {
     if (clearWorkspaceSparklineLoadingEntries(visibleIdentities)) {
-      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
+      emit('monitored', 'recent', 'old-week');
     }
 
     console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
@@ -8497,7 +8494,7 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
-    const historySparklineRegions: AppRenderRegion[] = ['top-performers', 'manual', 'monitored', 'recent', 'old-week'];
+    const historySparklineRegions: AppRenderRegion[] = ['monitored', 'recent', 'old-week'];
     if (state.ui.expandedSparklineAddress) {
       for (const region of historySparklineRegions) {
         deferredExpandedSparklineRenderRegions.add(region);
@@ -8953,11 +8950,10 @@ export function createAppController(): AppController {
     if (
       state.data.monitoredTokenIdentities.includes(identityKey)
       || state.data.pinnedMonitoredTokenIdentities.includes(identityKey)
+      || state.data.watchlistTokenIdentities.includes(identityKey)
     ) regions.add('monitored');
-    if (state.data.watchlistTokenIdentities.includes(identityKey)) regions.add('manual');
     if (state.data.recentTokenIdentities.includes(identityKey)) regions.add('recent');
     if (state.data.oldWeekTokenIdentities.includes(identityKey)) regions.add('old-week');
-    if (state.data.topPerformerIdentities.includes(identityKey)) regions.add('top-performers');
   }
 
   function flushLiveMarketBuckets() {
@@ -9585,7 +9581,7 @@ export function createAppController(): AppController {
     const pruned = pruneWorkspaceSparklineCache(visible);
     const loadingChanged = ensureWorkspaceSparklineLoadingEntries(loadingIdentities);
     if (pruned || loadingChanged) {
-      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
+      emit('monitored', 'recent', 'old-week');
     }
   }
 
@@ -9736,7 +9732,7 @@ export function createAppController(): AppController {
       );
     }
     state.data.sparklineByAddress = nextCache;
-    emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
+    emit('monitored', 'recent', 'old-week');
 
     console.warn(
       `[AppController] Failed to refresh ${batch.granularityMinutes}m workspace sparklines:`,
@@ -9902,7 +9898,7 @@ export function createAppController(): AppController {
     } else {
       clearHistorySparklineCache({ debugReason: 'range-change' });
     }
-    emit('manual', 'monitored', 'recent', 'old-week');
+    emit('monitored', 'recent', 'old-week');
     if (state.session.token) {
       void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller });
     }
@@ -10005,7 +10001,7 @@ export function createAppController(): AppController {
           return true;
         }
         applyDashboardTopPerformers(message.payload);
-        emit('top-performers', 'monitored', 'manual', 'header');
+        emit('monitored', 'header');
         return true;
       case 'sparkline-snapshot':
         applyHistorySparklinePayload(message.payload);
@@ -10154,7 +10150,7 @@ export function createAppController(): AppController {
     }
     const requestedChains = getReadySelectedChains('monitored');
     if (requestedChains.length === 0) {
-      emit('monitored', 'manual', 'top-performers');
+      emit('monitored');
       return;
     }
 
@@ -10214,7 +10210,7 @@ export function createAppController(): AppController {
         broadcastWorkspaceMonitoredSnapshot(monitoredSnapshot, null);
       }
       if (isLiveWorkspace()) {
-        emit('monitored', 'manual', 'recent', 'old-week', 'header');
+        emit('monitored', 'recent', 'old-week', 'header');
       } else if (isHistoryWorkspace()) {
         emit('recent', 'old-week', 'bid-zone', 'header');
       } else {
@@ -10385,7 +10381,6 @@ export function createAppController(): AppController {
       }
       applyDashboardTopPerformers(payload);
       broadcastLiveTopPerformersSnapshot(payload);
-      emit('top-performers');
     } catch (error) {
       if (requestRevision !== topPerformersRefreshRevision) {
         return;
@@ -10558,7 +10553,7 @@ export function createAppController(): AppController {
         );
         const next = getWorkspaceChainReadinessSignature();
         if (previous !== next) {
-          emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
+          emit('header', 'monitored', 'alerts', 'recent', 'old-week');
           rehydrateRecoveredChainCapabilities(previousReadiness, token);
         }
         recordReadinessApplied(payload.chainReadiness);
@@ -11657,7 +11652,7 @@ export function createAppController(): AppController {
 
   function emitMonitoredWorkspaceRegions() {
     if (isLiveWorkspace()) {
-      emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
+      emit('monitored', 'recent', 'old-week', 'alerts');
       return;
     }
     if (isHistoryWorkspace()) {
@@ -13288,7 +13283,7 @@ export function createAppController(): AppController {
     deriveAgeBuckets();
     state.runtime.monitoredRevision += 1;
     refreshMonitoredPanelCounts();
-    emit('monitored', 'manual', 'recent', 'old-week', 'header');
+    emit('monitored', 'recent', 'old-week', 'header');
   }
 
   function buildWatchlistMetadataBatchCacheCandidate(
@@ -13386,7 +13381,7 @@ export function createAppController(): AppController {
       });
       await watchlistMetadataBatchRefreshInFlight;
       if (options?.emitOnComplete !== false && state.session.token === token && isAuthenticatedSession()) {
-        emit('monitored', 'manual', 'recent', 'old-week', 'header');
+        emit('monitored', 'recent', 'old-week', 'header');
       }
       return;
     }
@@ -13491,7 +13486,7 @@ export function createAppController(): AppController {
     state.runtime.monitoredRevision += 1;
     refreshMonitoredPanelCounts();
     if (options?.emitOnComplete !== false) {
-      emit('monitored', 'manual', 'recent', 'old-week', 'header');
+      emit('monitored', 'recent', 'old-week', 'header');
     }
   }
 
@@ -14498,7 +14493,8 @@ export function createAppController(): AppController {
         deriveAgeBuckets({ forceOldWeekList: !state.ui.collapsed.oldWeek });
       }
       queueUiPrefsPersist();
-      emit(COLLAPSIBLE_SECTION_TO_RENDER_REGION[section]);
+      const renderRegion = COLLAPSIBLE_SECTION_TO_RENDER_REGION[section];
+      if (renderRegion) emit(renderRegion);
     },
     setAlertSearchQuery(query: string) {
       state.ui.alertSearchQuery = String(query || '');
@@ -14540,7 +14536,6 @@ export function createAppController(): AppController {
     },
     setWatchlistSearchQuery(query: string) {
       state.ui.watchlistSearchQuery = String(query || '');
-      emit('manual');
       if (state.session.token && isLiveWorkspace()) {
         void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-search' });
       }
@@ -14568,7 +14563,6 @@ export function createAppController(): AppController {
     setManualStarredOnly(enabled: boolean) {
       state.ui.manualStarredOnly = Boolean(enabled);
       queueUiPrefsPersist();
-      emit('manual');
       if (state.session.token && isLiveWorkspace()) {
         void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-starred' });
       }
@@ -14576,7 +14570,6 @@ export function createAppController(): AppController {
     setManualFolderDeleteWarningDismissed(enabled: boolean) {
       state.ui.manualFolderDeleteWarningDismissed = Boolean(enabled);
       queueUiPrefsPersist();
-      emit('manual');
     },
     setRecentStarredOnly(enabled: boolean) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });
@@ -14631,7 +14624,7 @@ export function createAppController(): AppController {
         void refreshMonitoredDashboard();
       }
       void refreshDashboardTopPerformers();
-      emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
+      emit('header', 'monitored', 'alerts', 'recent', 'old-week');
     },
     toggleSurfaceChain(
       surface: 'radarChains' | 'alertFeedChains' | 'browserNotificationChains',
@@ -14823,7 +14816,6 @@ export function createAppController(): AppController {
         normalizeBucketCriterion(mode, window),
       );
       queueUiPrefsPersist();
-      emit('manual');
       if (state.session.token && isLiveWorkspace()) {
         void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-sort' });
       }
@@ -14998,7 +14990,7 @@ export function createAppController(): AppController {
         state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals, chain);
       }
       queueUiPrefsPersist();
-      emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
+      emit('recent', 'old-week', 'monitored', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
     },
     setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
       const nextSpan = normalizeResizableLivePanelSpan(span);
@@ -15075,7 +15067,7 @@ export function createAppController(): AppController {
       } else {
         applyOptimisticWatchlistToken(address, buildOptimisticWatchlistToken(address, null, chain));
       }
-      emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
+      emit('recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
       try {
         if (wasWatchlisted) {
           await removeWatchlistTokenRequest(chain, address, token);
@@ -15089,7 +15081,7 @@ export function createAppController(): AppController {
       } catch (error) {
         revertOptimisticWatchlistToken(address, optimisticSnapshot);
         setError(error instanceof Error ? error.message : 'Failed to update Watchlist');
-        emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
+        emit('recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
       }
     },
     setSoundVolume(volume: number) {
@@ -15846,7 +15838,6 @@ export function createAppController(): AppController {
       setBusy(true);
       setError(null);
       setNotice('Creating Watchlist folder...');
-      emit('manual');
 
       try {
         await createManualTokenFolderRequest({ name }, token);
@@ -15856,7 +15847,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to create folder');
       } finally {
         setBusy(false);
-        emit('manual', 'header');
+        emit('header');
       }
     },
     async updateManualTokenFolder(folderId: number, input: { name?: string; sortOrder?: number }) {
@@ -15870,7 +15861,6 @@ export function createAppController(): AppController {
       setBusy(true);
       setError(null);
       setNotice('Updating Watchlist folder...');
-      emit('manual');
 
       try {
         await updateManualTokenFolderRequest(folderId, input, token);
@@ -15880,7 +15870,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to update folder');
       } finally {
         setBusy(false);
-        emit('manual', 'header');
+        emit('header');
       }
     },
     async deleteManualTokenFolder(folderId: number) {
@@ -15943,7 +15933,7 @@ export function createAppController(): AppController {
       state.bars.watchlist = state.data.watchlistTokenIdentities.length;
       deriveAgeBuckets();
       refreshMonitoredPanelCounts();
-      emit('manual', 'monitored', 'header');
+      emit('monitored', 'header');
 
       try {
         const result = await deleteManualTokenFolderRequest(folderId, token);
@@ -15983,7 +15973,7 @@ export function createAppController(): AppController {
           pendingManualFolderDeleteAddresses.delete(item);
         }
         setBusy(false);
-        emit('manual', 'monitored', 'header');
+        emit('monitored', 'header');
       }
     },
     async addManualTokenToFolder(
@@ -16001,14 +15991,12 @@ export function createAppController(): AppController {
       const normalizedAddress = String(address || '').trim();
       if (!normalizedAddress) {
         setError('Token address is required');
-        emit('manual');
         return;
       }
 
       if (!isValidTokenAddressFormat(normalizedAddress, chain)) {
         setError('Invalid token address format');
         setNotice(null);
-        emit('manual');
         return;
       }
 
@@ -16030,7 +16018,7 @@ export function createAppController(): AppController {
         sortOrder: 0,
         addedAt: null,
       });
-      emit('manual', 'monitored', 'header');
+      emit('monitored', 'header');
 
       try {
         const result = await addManualTokenToFolderRequest(
@@ -16038,12 +16026,12 @@ export function createAppController(): AppController {
         );
         upsertManualTokenFolderItem(result.item);
         void reloadConfigPreservingMonitoredSnapshot(token)
-          .then(() => emit('manual', 'monitored', 'header'))
+          .then(() => emit('monitored', 'header'))
           .catch(() => {
             void fetchManualTokenFolders(token)
               .then((payload) => {
                 applyManualTokenFolders(payload);
-                emit('manual', 'header');
+                emit('header');
               })
               .catch(() => {});
           });
@@ -16055,7 +16043,7 @@ export function createAppController(): AppController {
         setNotice(null);
       } finally {
         setBusy(false);
-        emit('manual', 'monitored', 'header');
+        emit('monitored', 'header');
       }
     },
     async removeManualTokenFromFolder(
@@ -16073,7 +16061,6 @@ export function createAppController(): AppController {
       setBusy(true);
       setError(null);
       setNotice('Removing Watchlist token...');
-      emit('manual');
 
       try {
         await removeManualTokenFromFolderRequest(folderId, chain, address, token);
@@ -16083,7 +16070,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to remove token');
       } finally {
         setBusy(false);
-        emit('manual', 'monitored', 'header');
+        emit('monitored', 'header');
       }
     },
     setManualVisibleFolderIds(folderIds: number[]) {
@@ -16097,7 +16084,6 @@ export function createAppController(): AppController {
         return;
       }
       state.ui.manualVisibleFolderIds = nextFolderIds;
-      emit('manual');
     },
     async addBlockedToken(
       address: string,
@@ -16211,7 +16197,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to remove token from backend blocklist');
       } finally {
         setBusy(false);
-        emit('overlay', 'monitored', 'manual', 'recent', 'old-week', 'header');
+        emit('overlay', 'monitored', 'recent', 'old-week', 'header');
       }
     },
     async refreshAdminTokenReviewAlerts() {
@@ -16262,14 +16248,14 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to resolve token review alert');
       } finally {
         setBusy(false);
-        emit('overlay', 'manual', 'recent', 'old-week', 'monitored', 'header', 'alerts');
+        emit('overlay', 'recent', 'old-week', 'monitored', 'header', 'alerts');
       }
     },
     async mockBuyToken(address: string) {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       if (!state.session.token || state.session.role !== 'admin') {
@@ -16289,7 +16275,7 @@ export function createAppController(): AppController {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       if (!state.session.token || state.session.role !== 'admin') {
@@ -16332,9 +16318,9 @@ export function createAppController(): AppController {
       state.ui.mockTradingHistoryOpen = false;
       state.ui.mockTradingPnlAddress = null;
       setError(null);
-      emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      emit('header', 'recent', 'old-week', 'monitored', 'overlay');
       await refreshMockTradingState({ emit: true });
-      emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      emit('header', 'recent', 'old-week', 'monitored', 'overlay');
     },
     async createMockTradingWallet(name: string) {
       const token = getMockTradingAdminToken();
@@ -16362,7 +16348,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to create mock trading wallet');
       } finally {
         setBusy(false);
-        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+        emit('header', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     async updateMockTradingWallet(walletId: number, name: string) {
@@ -16421,7 +16407,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to archive mock trading wallet');
       } finally {
         setBusy(false);
-        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+        emit('header', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     async setDefaultMockTradingWallet(walletId: number) {
@@ -16447,14 +16433,14 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to update default mock trading wallet');
       } finally {
         setBusy(false);
-        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+        emit('header', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     openMockTradingHistory() {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       if (state.session.role !== 'admin') {
@@ -16477,7 +16463,7 @@ export function createAppController(): AppController {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       if (state.session.role !== 'admin') {
@@ -16513,7 +16499,7 @@ export function createAppController(): AppController {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       const token = state.session.token;
@@ -16549,14 +16535,14 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to execute mock buy');
       } finally {
         setBusy(false);
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
       }
     },
     async submitMockTradingSell(address: string, percent: number) {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       const token = state.session.token;
@@ -16595,14 +16581,14 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to execute mock sell');
       } finally {
         setBusy(false);
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
       }
     },
     async submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number) {
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
         setError('Mock trading is disabled');
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
         return;
       }
       const token = state.session.token;
@@ -16639,7 +16625,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to create mock sell order');
       } finally {
         setBusy(false);
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
       }
     },
     async cancelMockTradingTakeProfitOrder(orderId: number) {
@@ -16667,7 +16653,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to cancel mock sell order');
       } finally {
         setBusy(false);
-        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        emit('header', 'overlay', 'recent', 'old-week', 'monitored');
       }
     },
     async armFloatingQuickBuy(address: string) {
@@ -16717,7 +16703,7 @@ export function createAppController(): AppController {
       };
       nextFloatingQuickBuyDashboardRefreshAt = 0;
       setError(null);
-      emit('overlay', 'manual', 'header');
+      emit('overlay', 'header');
 
       try {
         await addWatchlistTokenForFloatingQuickBuy(normalizedAddress, token);
@@ -16744,7 +16730,7 @@ export function createAppController(): AppController {
           message: null,
         });
       } finally {
-        emit('overlay', 'manual', 'monitored', 'header');
+        emit('overlay', 'monitored', 'header');
       }
     },
     cancelFloatingQuickBuy() {
@@ -16802,7 +16788,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to add mock trading cash');
       } finally {
         setBusy(false);
-        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+        emit('header', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     async resetMockTradingPortfolio() {
@@ -16830,7 +16816,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to reset mock trading portfolio');
       } finally {
         setBusy(false);
-        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+        emit('header', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     async removeBlockedToken(address: string, chain: TokenChain = 'solana') {
