@@ -93,7 +93,7 @@ function compareMonitoredCriterion(a: WatchlistTokenEntry, b: WatchlistTokenEntr
 }
 
 function isVisibleMonitoredTableToken(item: WatchlistTokenEntry) {
-  if (item._userManual || item._isPinnedMonitored) {
+  if (item._userWatchlist || item._isPinnedMonitored) {
     return true;
   }
 

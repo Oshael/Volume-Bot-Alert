@@ -5339,7 +5339,7 @@ export function createAppController(): AppController {
   }
 
   function isVisibleMonitoredToken(item: WatchlistTokenEntry) {
-    if (item._userManual) {
+    if (item._userWatchlist) {
       return true;
     }
 
@@ -6022,7 +6022,7 @@ export function createAppController(): AppController {
     context: ReturnType<typeof getRoutedEligibilityContext>,
     options: { preserveWithoutMcap?: boolean } = {},
   ) {
-    if (token._userManual || isBlocked(token.address, token.chain || 'solana') || context.recentDismissed.has(getTokenIdentityKey(token))) {
+    if (token._userWatchlist || isBlocked(token.address, token.chain || 'solana') || context.recentDismissed.has(getTokenIdentityKey(token))) {
       return false;
     }
     if (!(typeof token.createdAt === 'number' && token.createdAt > 0)) {
@@ -6047,7 +6047,7 @@ export function createAppController(): AppController {
     context: ReturnType<typeof getRoutedEligibilityContext>,
     options: { preserveWithoutMcap?: boolean } = {},
   ) {
-    if (token._userManual || isBlocked(token.address, token.chain || 'solana') || context.oldWeekDismissed.has(getTokenIdentityKey(token))) {
+    if (token._userWatchlist || isBlocked(token.address, token.chain || 'solana') || context.oldWeekDismissed.has(getTokenIdentityKey(token))) {
       return false;
     }
     if (!(typeof token.createdAt === 'number' && token.createdAt > 0)) {
@@ -6240,7 +6240,7 @@ export function createAppController(): AppController {
       if (!item) {
         return false;
       }
-      if (item._userManual) {
+      if (item._userWatchlist) {
         return true;
       }
 
@@ -6255,7 +6255,7 @@ export function createAppController(): AppController {
 
     state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((identityKey) => {
       const tracked = getTrackedTokenByIdentity(identityKey);
-      return Boolean(tracked?._userManual) || state.data.monitoredTokenIdentities.includes(identityKey);
+      return Boolean(tracked?._userWatchlist) || state.data.monitoredTokenIdentities.includes(identityKey);
     });
     refreshTrackedTokenStore();
     state.bars.manual = state.data.watchlistTokenIdentities.length;
@@ -7581,8 +7581,8 @@ export function createAppController(): AppController {
       lastSeenAt: firstDefinedTrackedValue(item.last_seen_at, null),
       ...buildManualHolderFields(item, chain),
       tickerPeers: firstDefinedTrackedValue(item.tickerPeers, existingItem?.tickerPeers, null),
-      manual: true,
-      _userManual: true,
+      watchlisted: true,
+      _userWatchlist: true,
       _isPinnedMonitored: false,
       pinnedSortOrder: null,
     };
@@ -7648,8 +7648,8 @@ export function createAppController(): AppController {
           ...existingItem,
           address: item.address,
           label: existingItem?.label ?? item.symbol ?? 'Pinned',
-          manual: false,
-          _userManual: false,
+          watchlisted: false,
+          _userWatchlist: false,
           _isPinnedMonitored: true,
           pinnedSortOrder: item.pinnedSortOrder ?? null,
         },
@@ -7687,8 +7687,8 @@ export function createAppController(): AppController {
           ...existingItem,
           address: item.address,
           label: existingItem?.label ?? item.symbol ?? 'Eligible',
-          manual: false,
-          _userManual: false,
+          watchlisted: false,
+          _userWatchlist: false,
           _isPinnedMonitored: false,
           pinnedSortOrder: null,
         },
@@ -11247,8 +11247,8 @@ export function createAppController(): AppController {
           chain: item.chain,
           address: item.address,
           label: existingItem?.label ?? item.symbol ?? 'Eligible',
-          manual: false,
-          _userManual: false,
+          watchlisted: false,
+          _userWatchlist: false,
           _isPinnedMonitored: false,
           pinnedSortOrder: null,
         },
@@ -11305,8 +11305,8 @@ export function createAppController(): AppController {
           chain: item.chain,
           address,
           label: existingItem?.label ?? item.symbol ?? 'Top performer',
-          manual: existingItem?.manual ?? false,
-          _userManual: existingItem?._userManual ?? false,
+          watchlisted: existingItem?.watchlisted ?? false,
+          _userWatchlist: existingItem?._userWatchlist ?? false,
         },
         coldRefreshDue: true,
       });
@@ -13019,8 +13019,8 @@ export function createAppController(): AppController {
       chain,
       address,
       label: label ?? existingTracked?.label ?? null,
-      manual: true,
-      _userManual: true,
+      watchlisted: true,
+      _userWatchlist: true,
     };
 
     return areTrackedTokensEquivalent(existingTracked, nextWatchlistDraft)
@@ -13069,8 +13069,8 @@ export function createAppController(): AppController {
     if (currentTracked) {
       replaceTrackedTokenReferences(address, {
         ...currentTracked,
-        manual: false,
-        _userManual: false,
+        watchlisted: false,
+        _userWatchlist: false,
       });
     }
     state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
@@ -13149,8 +13149,8 @@ export function createAppController(): AppController {
         ...currentTracked,
         address,
         label: currentTracked.label ?? dashboardItem.symbol ?? null,
-        manual: true,
-        _userManual: true,
+        watchlisted: true,
+        _userWatchlist: true,
       },
       coldRefreshDue: true,
     });
@@ -15786,8 +15786,8 @@ export function createAppController(): AppController {
         if (currentTracked) {
           replaceTrackedTokenReferences(item.address, {
             ...currentTracked,
-            manual: false,
-            _userManual: false,
+            watchlisted: false,
+            _userWatchlist: false,
           });
         }
       }

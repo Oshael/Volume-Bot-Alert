@@ -180,8 +180,8 @@ export interface WatchlistTokenEntry {
   launchpadId?: string | null;
   twitterUrl?: string | null;
   communityUrl?: string | null;
-  manual?: boolean;
-  _userManual?: boolean;
+  watchlisted?: boolean;
+  _userWatchlist?: boolean;
   createdAt?: number | null;
   catalogFirstSeenAt?: number | null;
   tokenAgeProvenance?: string | null;

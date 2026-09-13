@@ -48,7 +48,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
         renderedTokens.push(item);
         const wrapper = document.createElement('div');
         wrapper.innerHTML = renderTokenCard(item, state.ui.busy, {
-          mode: manualAddressSet.has(identityKey) || item._userManual ? 'manual' : recentAddressSet.has(identityKey) ? 'recent' : oldWeekAddressSet.has(identityKey) ? 'old-week' : 'monitored',
+          mode: manualAddressSet.has(identityKey) || item._userWatchlist ? 'manual' : recentAddressSet.has(identityKey) ? 'recent' : oldWeekAddressSet.has(identityKey) ? 'old-week' : 'monitored',
           isStarred: true,
           isAdmin: state.session.role === 'admin',
           enabledTradeTerminals: state.ui.enabledTradeTerminals,

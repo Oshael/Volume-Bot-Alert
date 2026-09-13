@@ -434,8 +434,11 @@ This product slice is split into bounded implementation cuts:
 - **4C2c — residual folder styling:** delete the folder-scoped CSS left unreachable by 4C2a and confirm that neutral
   folder data/routes remain untouched.
 - **4C3a — frontend token type:** remove the deprecated `ManualTokenEntry` alias and use `WatchlistTokenEntry` directly.
-- **4C3b — frontend runtime vocabulary:** rename remaining user-added-token state, capability, copy and log symbols while
-  retaining only explicit compatibility reads at persistence/API boundaries.
+- **4C3b1 — frontend token markers:** rename the internal user-added-token flags to Watchlist vocabulary while retaining
+  legacy input compatibility only at payload boundaries.
+- **4C3b2 — frontend state vocabulary:** rename remaining user-added-token counters, capability and local helper symbols.
+- **4C3b3 — frontend copy and logs:** replace remaining user-facing and diagnostic Manual Tokens vocabulary while keeping
+  neutral folder naming and explicit persisted compatibility keys intact.
 - **4C3c — backend runtime vocabulary:** rename user-added-token model/catalog symbols, comments and logs without changing
   neutral tables, folder routes or legacy source recognition.
 - **4C3d — canonical verification:** update affected tests and run a final scoped search proving that unrelated meanings of
