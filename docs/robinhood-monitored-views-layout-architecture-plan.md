@@ -591,6 +591,8 @@ diagrams and call the same preset resolver used by persisted preferences; they d
   canonical preset mutation.
 - **6G — responsive completion:** enforce Command Center's viewport guard, add compact responsive variants, consolidate
   obsolete span styling and cover preset selection, duplicate prevention, vertical resize and drag exchange in smoke tests.
+  When a live resize crosses below Command Center's supported width, persist `discovery_alerts` as the deterministic fallback
+  while retaining pane selections, order and heights for later choices.
 
 ### Slice 7: Alerts sparkline convergence
 

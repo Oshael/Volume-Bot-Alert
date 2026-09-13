@@ -101,7 +101,6 @@ type MockTradingBuyTicketDraft = {
 };
 
 type LiveResizablePanelKey = LivePanelPaneKey;
-type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
 
 type LivePanelHeightResizeDraft = {
   panelKey: LiveResizablePanelKey;
@@ -179,7 +178,6 @@ const APP_MONITORED_STACK_SELECTOR = '.monitored-stack';
 const LIVE_PANEL_DRAG_HANDLE_SELECTOR = '[data-live-panel-drag-handle="true"]';
 const LIVE_PANEL_RESIZE_FRAME_SELECTOR = '[data-live-panel-resize-frame="true"]';
 const LIVE_PANEL_RESIZE_ZONE_SELECTOR = '[data-live-panel-resize-zone]';
-const LIVE_PANEL_COLLAPSED_STACK_SELECTOR = '[data-live-panel-collapsed-stack="true"]';
 const APP_MONITORED_SLOT_SELECTOR = '[data-app-render-slot="monitored"]';
 const APP_MONITORED_SECONDARY_STACK_SELECTOR = '.monitored-secondary-stack';
 const APP_MONITORED_SECONDARY_SLOT_SELECTOR = '[data-app-render-slot="monitored-secondary"]';
@@ -369,6 +367,7 @@ export function renderAppShell(
   wireSectionCollapseToggles(root, controller);
   wireLivePanelReorder(root, controller);
   wireLivePanelResize(root, controller);
+  wireLivePanelViewportGuard(controller);
   wireFloatingQuickBuy(root);
   applyHoverState(root);
 }
@@ -557,94 +556,11 @@ function resetPumpfunLivePanelItem(element: HTMLElement) {
   delete element.dataset.resizable;
 }
 
-function resolveLivePanelHeights(state: AppState): Record<LiveResizablePanelKey, number> {
-  return {
-    primary: livePanelHeightResizeDraft?.panelKey === 'primary'
-      ? livePanelHeightResizeDraft.previewHeight
-      : state.ui.livePanelLayout.heights.primary,
-    secondary: livePanelHeightResizeDraft?.panelKey === 'secondary'
-      ? livePanelHeightResizeDraft.previewHeight
-      : state.ui.livePanelLayout.heights.secondary,
-    alerts: livePanelHeightResizeDraft?.panelKey === 'alerts'
-      ? livePanelHeightResizeDraft.previewHeight
-      : state.ui.livePanelLayout.heights.alerts,
-  };
-}
-
-function applyActiveLivePanelResizeState(renderFrame: AppRenderFrame) {
-  if (!livePanelHeightResizeDraft) {
-    return;
-  }
-
-  livePanelHeightResizeDraft.item.dataset.resizing = 'true';
-  renderFrame.frame.classList.add('live-panel-resize-active');
-}
-
-function syncLegacyLivePanelComposition(
-  renderFrame: AppRenderFrame,
-  state: AppState,
-  livePanelItems: Record<LiveWorkspacePanelKey, HTMLElement>,
-  hiddenItems: HTMLElement[],
-  primarySpan: 1 | 2,
-  alertsSpan: 1 | 2,
-) {
-  const resolvedOrder = getOrderedVisibleLivePanelRegions(state.ui.livePanelLayout)
-    .flatMap((region): LiveWorkspacePanelKey[] => (
-      region.pane === 'primary' ? ['monitored'] : region.pane === 'alerts' ? ['alerts'] : []
-    ));
-  const spanMap = new Map<LiveWorkspacePanelKey, 1 | 2 | 3>([
-    ['monitored', primarySpan],
-    ['alerts', alertsSpan],
-  ]);
-  const heightMap = resolveLivePanelHeights(state);
-
-  livePanelItems.monitored.dataset.span = String(primarySpan);
-  livePanelItems.alerts.dataset.span = String(alertsSpan);
-  applyLivePanelHeight(livePanelItems.monitored, 'primary', heightMap.primary);
-  applyLivePanelHeight(livePanelItems.alerts, 'alerts', heightMap.alerts);
-  syncAlertsPanelLayoutPreset(livePanelItems.alerts, alertsSpan);
-
-  const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(resolvedOrder, spanMap, state);
-  if (collapsedStackLayout) {
-    const stack = getOrCreateLivePanelCollapsedStack(renderFrame.panels);
-    syncElementChildOrder(
-      stack,
-      collapsedStackLayout.stackKeys.map((panelKey) => livePanelItems[panelKey]),
-    );
-    syncElementChildOrder(renderFrame.panels, [
-      ...(collapsedStackLayout.placeStackBefore
-        ? [stack, livePanelItems[collapsedStackLayout.mainKey]]
-        : [livePanelItems[collapsedStackLayout.mainKey], stack]),
-      ...hiddenItems,
-      renderFrame.pumpfunSlot,
-    ]);
-  } else {
-    flattenLivePanelCollapsedStack(renderFrame.panels);
-    syncElementChildOrder(renderFrame.panels, [
-      ...resolvedOrder.map((panelKey) => livePanelItems[panelKey]),
-      ...hiddenItems,
-      renderFrame.pumpfunSlot,
-    ]);
-  }
-
-  applyActiveLivePanelResizeState(renderFrame);
-  syncLivePanelDragHandle(livePanelItems.monitored, 'primary', true);
-  syncLivePanelDragHandle(livePanelItems.alerts, 'alerts', true);
-  syncLivePanelResizeFrame(livePanelItems.monitored, 'primary', true);
-  syncLivePanelResizeFrame(livePanelItems.alerts, 'alerts', true);
-}
-
 function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   renderFrame.panels.dataset.workspace = state.ui.workspace;
 
   const monitoredItem = renderFrame.monitoredStack;
   const secondaryItem = renderFrame.monitoredSecondaryStack;
-  const livePanelItems = {
-    monitored: monitoredItem,
-    pumpfun: renderFrame.pumpfunSlot,
-    alerts: renderFrame.alertsSlot,
-  };
-
   resetLivePanelItem(monitoredItem, 'monitored');
   resetLivePanelItem(secondaryItem, 'monitored');
   resetLivePanelItem(renderFrame.alertsSlot, 'alerts');
@@ -655,8 +571,6 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   for (const item of [monitoredItem, secondaryItem, renderFrame.alertsSlot]) {
     delete item.dataset.centered;
   }
-  flattenLivePanelCollapsedStack(renderFrame.panels);
-
   if (state.ui.workspace !== 'live') {
     delete renderFrame.panels.dataset.layoutPreset;
     delete renderFrame.panels.dataset.layoutColumns;
@@ -697,26 +611,8 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   const primarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary')) as 1 | 2;
   const secondarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary')) as 1 | 2;
   const alertsSpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2;
-  const supportsLegacyManipulation = getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary') === 0
-    && regions.length === 2
-    && regions.every((region) => !region.centered)
-    && !livePanelReorderDraft;
   secondaryItem.dataset.span = String(secondarySpan);
   applyLivePanelHeight(secondaryItem, 'secondary', state.ui.livePanelLayout.heights.secondary);
-  if (supportsLegacyManipulation) {
-    syncLegacyLivePanelComposition(
-      renderFrame,
-      state,
-      livePanelItems,
-      hiddenItems,
-      primarySpan,
-      alertsSpan,
-    );
-    syncLivePanelDragHandle(secondaryItem, 'secondary', false);
-    syncLivePanelResizeFrame(secondaryItem, 'secondary', false);
-    return;
-  }
-
   monitoredItem.dataset.span = String(primarySpan);
   renderFrame.alertsSlot.dataset.span = String(alertsSpan);
   applyLivePanelHeight(monitoredItem, 'primary', state.ui.livePanelLayout.heights.primary);
@@ -902,7 +798,7 @@ function scheduleLivePanelHeightAutoScroll() {
   livePanelHeightAutoScrollFrame = window.requestAnimationFrame(tick);
 }
 
-function syncAlertsPanelLayoutPreset(alertsSlot: HTMLElement, span: 1 | 2 | 3) {
+function syncAlertsPanelLayoutPreset(alertsSlot: HTMLElement, span: 1 | 2) {
   const alertsPanel = alertsSlot.querySelector<HTMLElement>('.alerts-panel');
   if (!alertsPanel) {
     return;
@@ -1787,6 +1683,7 @@ let userMenusWired = false;
 let profileModalWired = false;
 let sectionCollapseWired = false;
 let livePanelResizeWired = false;
+let livePanelViewportGuardWired = false;
 let livePanelHeightResizeDraft: LivePanelHeightResizeDraft | null = null;
 let livePanelResizePendingDraft: LivePanelResizePendingDraft | null = null;
 let livePanelHeightAutoScrollFrame: number | null = null;
@@ -2130,80 +2027,6 @@ function findLivePanelsContainer(element: HTMLElement) {
   return element.closest<HTMLElement>(APP_PANELS_SELECTOR);
 }
 
-function getOrCreateLivePanelCollapsedStack(panels: HTMLElement) {
-  const existing = panels.querySelector<HTMLElement>(LIVE_PANEL_COLLAPSED_STACK_SELECTOR);
-  if (existing) {
-    return existing;
-  }
-
-  const stack = document.createElement('div');
-  stack.className = 'live-panel-collapsed-stack';
-  stack.dataset.livePanelCollapsedStack = 'true';
-  return stack;
-}
-
-function flattenLivePanelCollapsedStack(panels: HTMLElement) {
-  const stack = panels.querySelector<HTMLElement>(LIVE_PANEL_COLLAPSED_STACK_SELECTOR);
-  if (!stack) {
-    return;
-  }
-
-  while (stack.firstElementChild) {
-    panels.insertBefore(stack.firstElementChild, stack);
-  }
-  stack.remove();
-}
-
-function isLivePanelVisuallyCollapsed(panelKey: LiveWorkspacePanelKey, state: AppState) {
-  if (panelKey === 'alerts') {
-    return false;
-  }
-  return panelKey === 'monitored' && Boolean(state.ui.collapsed.monitored);
-}
-
-function resolveLivePanelCollapsedStackLayout(
-  order: LiveWorkspacePanelKey[],
-  spanMap: Map<LiveWorkspacePanelKey, 1 | 2 | 3>,
-  state: AppState,
-) {
-  const widePanels = order.filter((panelKey) => (spanMap.get(panelKey) ?? 1) === 2);
-  if (widePanels.length !== 1) {
-    return null;
-  }
-
-  const mainKey = widePanels[0];
-  const sideKeys = order.filter((panelKey) => panelKey !== mainKey);
-  if (sideKeys.length !== 2 || sideKeys.some((panelKey) => (spanMap.get(panelKey) ?? 1) !== 1)) {
-    return null;
-  }
-
-  const collapsedKeys = sideKeys.filter((panelKey) => isLivePanelVisuallyCollapsed(panelKey, state));
-  if (collapsedKeys.length === 0) {
-    return null;
-  }
-
-  const stackKeys = [...sideKeys].sort((left, right) => {
-    const leftCollapsed = isLivePanelVisuallyCollapsed(left, state);
-    const rightCollapsed = isLivePanelVisuallyCollapsed(right, state);
-    if (leftCollapsed === rightCollapsed) {
-      return sideKeys.indexOf(left) - sideKeys.indexOf(right);
-    }
-    return leftCollapsed ? 1 : -1;
-  });
-
-  const placements = simulateLivePanelPlacement(order, spanMap);
-  const mainPlacement = placements.get(mainKey);
-  if (!mainPlacement) {
-    return null;
-  }
-
-  return {
-    mainKey,
-    stackKeys,
-    placeStackBefore: mainPlacement.startCol > 0,
-  };
-}
-
 function getLivePanelOrderFromDom(panels: HTMLElement): LivePanelPaneKey[] {
   return getLivePanelItems(panels)
     .map((item) => item.dataset.paneKey)
@@ -2220,8 +2043,6 @@ function beginLivePanelReorder(item: HTMLElement, pointerId: number) {
   if (!(panels instanceof HTMLElement)) {
     return false;
   }
-
-  flattenLivePanelCollapsedStack(panels);
 
   item.setPointerCapture(pointerId);
   livePanelReorderDraft = {
@@ -2280,37 +2101,6 @@ function buildLivePanelReorderPreviewOrder(draft: LivePanelReorderDraft, clientX
   if (draggedIndex < 0 || targetIndex < 0) return null;
   [nextOrder[draggedIndex], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[draggedIndex]];
   return nextOrder;
-}
-
-function simulateLivePanelPlacement(
-  order: LiveWorkspacePanelKey[],
-  spanMap: Map<LiveWorkspacePanelKey, 1 | 2 | 3>,
-) {
-  const placements = new Map<LiveWorkspacePanelKey, { row: number; startCol: number; endCol: number }>();
-  let row = 0;
-  let col = 0;
-
-  for (const panelKey of order) {
-    const span = spanMap.get(panelKey) ?? 1;
-    if (col + span > 3) {
-      row += 1;
-      col = 0;
-    }
-
-    placements.set(panelKey, {
-      row,
-      startCol: col,
-      endCol: col + span,
-    });
-
-    col += span;
-    if (col >= 3) {
-      row += 1;
-      col = 0;
-    }
-  }
-
-  return placements;
 }
 
 function endLivePanelReorder(root: HTMLElement, controller: AppController, options?: { commit?: boolean }) {
@@ -2647,6 +2437,24 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
 
     clearPendingLivePanelResize(event.pointerId);
   });
+}
+
+function wireLivePanelViewportGuard(controller: AppController) {
+  if (livePanelViewportGuardWired) {
+    controller.enforceLivePanelViewport(window.innerWidth);
+    return;
+  }
+  livePanelViewportGuardWired = true;
+  let resizeFrame: number | null = null;
+  const enforce = () => {
+    resizeFrame = null;
+    controller.enforceLivePanelViewport(window.innerWidth);
+  };
+  window.addEventListener('resize', () => {
+    if (resizeFrame != null) window.cancelAnimationFrame(resizeFrame);
+    resizeFrame = window.requestAnimationFrame(enforce);
+  });
+  enforce();
 }
 
 function clampFloatingQuickBuyPosition(widget: HTMLElement, left: number, top: number) {

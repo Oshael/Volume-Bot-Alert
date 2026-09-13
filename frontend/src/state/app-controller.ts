@@ -91,6 +91,7 @@ import {
   type MonitoredViewId,
 } from '../utils/monitored-view';
 import {
+  getLivePanelPresetAvailability,
   getLivePanelPaneSpan,
   resolveLivePanelLayoutPreference,
   resolveMonitoredPaneSelection,
@@ -854,7 +855,8 @@ export interface AppController {
     chain: TokenChain,
     terminals: AppState['ui']['enabledTradeTerminals'],
   ): void;
-  setLivePanelPreset(preset: LivePanelPresetId): void;
+  setLivePanelPreset(preset: LivePanelPresetId, viewportWidth: number): void;
+  enforceLivePanelViewport(viewportWidth: number): void;
   setLivePanelHeight(pane: LivePanelPaneKey, height: number): void;
   setLivePanelOrder(order: LivePanelPaneKey[]): void;
   resetLivePanelLayout(): void;
@@ -13494,6 +13496,17 @@ export function createAppController(): AppController {
   installAlertDebugConsole();
   installSparklineDebugConsole();
 
+  function applyLivePanelPreset(preset: LivePanelPresetId, refreshReason: string) {
+    const next = resolveLivePanelLayoutPreference({ ...state.ui.livePanelLayout, preset });
+    if (next.preset === state.ui.livePanelLayout.preset) return false;
+    state.ui.livePanelLayout = next;
+    queueUiPrefsPersist();
+    emit('header', 'monitored', 'alerts');
+    void refreshActiveMonitoredViews(state.session.token);
+    refreshMonitoredSparklinesIfExpanded(refreshReason);
+    return true;
+  }
+
   return {
     state,
     subscribe(listener) {
@@ -14787,14 +14800,14 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit('recent', 'old-week', 'monitored', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
     },
-    setLivePanelPreset(preset: LivePanelPresetId) {
-      const next = resolveLivePanelLayoutPreference({ ...state.ui.livePanelLayout, preset });
-      if (next.preset === state.ui.livePanelLayout.preset) return;
-      state.ui.livePanelLayout = next;
-      queueUiPrefsPersist();
-      emit('header', 'monitored', 'alerts');
-      void refreshActiveMonitoredViews(state.session.token);
-      refreshMonitoredSparklinesIfExpanded('live-panel-preset');
+    setLivePanelPreset(preset: LivePanelPresetId, viewportWidth: number) {
+      if (!getLivePanelPresetAvailability(preset, viewportWidth).available) return;
+      applyLivePanelPreset(preset, 'live-panel-preset');
+    },
+    enforceLivePanelViewport(viewportWidth: number) {
+      const preset = state.ui.livePanelLayout.preset;
+      if (getLivePanelPresetAvailability(preset, viewportWidth).available) return;
+      applyLivePanelPreset('discovery_alerts', 'live-panel-responsive-fallback');
     },
     setLivePanelHeight(pane: LivePanelPaneKey, height: number) {
       const nextHeight = normalizeLivePanelHeight(height);

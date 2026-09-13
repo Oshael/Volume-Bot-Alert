@@ -1545,7 +1545,9 @@ persiste a ordem canônica; panes ocultas e a geometria do preset não são alte
 No workspace Live, o header oferece um seletor compacto com SVG próprio e miniaturas
 derivadas das definições canônicas dos cinco presets. A opção ativa é explícita e presets
 fora de sua largura mínima ficam desabilitados; a seleção usa a mesma mutação persistida
-de `uiPrefs.livePanelLayout`, sem estado de layout paralelo.
+de `uiPrefs.livePanelLayout`, sem estado de layout paralelo. `command_center` exige viewport
+de pelo menos 1440 px; ao cruzar esse limite para baixo, o controller aplica e persiste
+`discovery_alerts` como fallback seguro, preservando views, ordem e alturas armazenadas.
 Views duplicadas normalizam para
 `trending + watchlist`. O reader ainda
 migra o formato legado baseado em `monitored`/`pumpfun`/`alerts`; a saída persistida é

@@ -1330,7 +1330,7 @@ function bindLivePanelPresetPicker(section: HTMLElement, controller: AppControll
       const preset = button.dataset.preset as LivePanelPresetId;
       if (!LIVE_PANEL_PRESET_IDS.includes(preset) || button.disabled) return;
       close();
-      controller.setLivePanelPreset(preset);
+      controller.setLivePanelPreset(preset, window.innerWidth);
     });
   });
 }

@@ -1276,6 +1276,8 @@ test('composes the compare preset with two independent Monitored panes', async (
   await expect(secondary.locator('[data-monitored-pane="secondary"]')).toBeVisible();
   await expect(primary.getByRole('button', { name: 'Trending', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(secondary.getByRole('button', { name: 'Watchlist', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(primary.getByRole('button', { name: 'Watchlist', exact: true })).toBeDisabled();
+  await expect(secondary.getByRole('button', { name: 'Trending', exact: true })).toBeDisabled();
   await expect(panels.locator('[data-pane-key="alerts"] .alerts-panel')).toHaveCount(0);
   await expect(panels.locator('[data-live-panel-resize-zone="bottom"]')).toHaveCount(2);
   await expect(panels.locator('[data-live-panel-resize-zone="left"], [data-live-panel-resize-zone="right"]')).toHaveCount(0);
@@ -1322,6 +1324,41 @@ test('composes the compare preset with two independent Monitored panes', async (
   expect((await presetPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('alerts_focus');
   await expect(panels).toHaveAttribute('data-layout-preset', 'alerts_focus');
   await expect(page.getByRole('button', { name: /Current layout: Alerts Focus/ })).toBeVisible();
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('enforces the Command Center viewport guard after responsive changes', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+  const panels = page.locator('[data-app-render-slot="panels"]');
+  const pickerButton = page.getByRole('button', { name: /Choose workspace layout/ });
+  await pickerButton.click();
+  const commandCenter = page.getByRole('dialog', { name: 'Workspace layout presets' })
+    .getByRole('button', { name: 'Command Center' });
+  await expect(commandCenter).toBeEnabled();
+
+  const commandCenterPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
+  ));
+  await commandCenter.click();
+  expect((await commandCenterPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('command_center');
+  await expect(panels).toHaveAttribute('data-layout-preset', 'command_center');
+  await expect(panels.locator(':scope > .live-panel-item:not([hidden])')).toHaveCount(3);
+  await expect(panels.locator(':scope > .live-panel-item:not([hidden])[data-span="1"]')).toHaveCount(3);
+  await expect(panels).toHaveCSS('gap', '10px');
+
+  const fallbackPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH'
+      && new URL(request.url()).pathname === '/api/config/ui-prefs'
+      && request.postDataJSON().uiPrefs.livePanelLayout.preset === 'discovery_alerts'
+  ));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  expect((await fallbackPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('discovery_alerts');
+  await expect(panels).toHaveAttribute('data-layout-preset', 'discovery_alerts');
+  await page.getByRole('button', { name: /Choose workspace layout/ }).click();
+  await expect(page.getByRole('dialog', { name: 'Workspace layout presets' })
+    .getByRole('button', { name: 'Command Center' })).toBeDisabled();
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
