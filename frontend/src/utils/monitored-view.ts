@@ -17,6 +17,7 @@ export const DASHBOARD_TOKEN_VIEW_MAX_LIMIT = 40;
 export const DASHBOARD_TOKEN_VIEW_RELEASE_CHAINS = ['robinhood'] as const satisfies readonly TokenChain[];
 
 export type MonitoredViewId = typeof MONITORED_VIEW_IDS[number];
+export type MonitoredPaneKey = 'primary' | 'secondary';
 export type DashboardSystemTokenViewId = typeof DASHBOARD_SYSTEM_TOKEN_VIEW_IDS[number];
 export type MonitoredSystemViewStatus =
   | 'idle'

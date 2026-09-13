@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getPrimaryMonitoredViewTokens, getTokenSparkline, isTokenStarred, type AppState, type WatchlistTokenEntry, type MeteoraEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredPaneViewTokens, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type WatchlistTokenEntry, type MeteoraEntry } from '../../state/app-state';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
@@ -12,7 +12,7 @@ import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-s
 import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
 import { syncElementChildOrder } from '../../utils/dom-child-order';
 import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
-import { MONITORED_VIEW_IDS, type MonitoredViewId } from '../../utils/monitored-view';
+import { MONITORED_VIEW_IDS, type MonitoredPaneKey, type MonitoredViewId } from '../../utils/monitored-view';
 import { getLivePanelPaneSpan } from '../../utils/live-panel-layout';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
@@ -63,10 +63,15 @@ let monitoredFiltersDocumentBound = false;
 const monitoredSectionStructureKeys = new WeakMap<HTMLElement, string>();
 const monitoredRowStaticKeys = new WeakMap<HTMLElement, string>();
 
-export function renderMonitoredSection(state: AppState, controller: AppController) {
+export function renderMonitoredSection(
+  state: AppState,
+  controller: AppController,
+  pane: MonitoredPaneKey = 'primary',
+) {
   const section = document.createElement('section');
-  const view = resolveMonitoredSectionView(state);
+  const view = resolveMonitoredSectionView(state, pane);
   monitoredSectionStructureKeys.set(section, buildMonitoredStructureKey(state, view));
+  section.dataset.monitoredPane = pane;
   section.className = `panel legacy-panel monitored-panel monitored-multi-view${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
   if (view.capabilityNotice) {
     section.innerHTML = `
@@ -93,10 +98,15 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   return section;
 }
 
-export function patchMonitoredSection(slot: ParentNode, state: AppState, controller: AppController) {
+export function patchMonitoredSection(
+  slot: ParentNode,
+  state: AppState,
+  controller: AppController,
+  pane: MonitoredPaneKey = 'primary',
+) {
   const section = slot.querySelector<HTMLElement>(':scope > .monitored-panel');
-  const view = resolveMonitoredSectionView(state);
-  if (!section || monitoredSectionStructureKeys.get(section) !== buildMonitoredStructureKey(state, view)) {
+  const view = resolveMonitoredSectionView(state, pane);
+  if (!isCurrentMonitoredSection(section, state, view)) {
     return false;
   }
   if (view.capabilityNotice || view.isCollapsed) {
@@ -123,8 +133,8 @@ export function patchMonitoredSection(slot: ParentNode, state: AppState, control
     const identity = buildTokenIdentityKey(item.chain || 'solana', item.address);
     let currentRow = rowsByIdentity.get(identity);
     if (!currentRow) return false;
-    if (!patchMonitoredRow(currentRow, item, state, controller)) {
-      const replacement = buildMonitoredRowForState(item, state);
+    if (!patchMonitoredRow(currentRow, item, state, controller, pane)) {
+      const replacement = buildMonitoredRowForState(item, state, undefined, pane);
       const currentIndex = currentRows.indexOf(currentRow);
       currentRow.replaceWith(replacement);
       bindMonitoredRowControls(replacement, state, controller);
@@ -139,6 +149,15 @@ export function patchMonitoredSection(slot: ParentNode, state: AppState, control
   if (orderChanged) syncElementChildOrder(list, patchedRows);
   restoreMonitoredScrollAnchor(list, scrollAnchor);
   return true;
+}
+
+function isCurrentMonitoredSection(
+  section: HTMLElement | null,
+  state: AppState,
+  view: MonitoredSectionView,
+): section is HTMLElement {
+  return section != null
+    && monitoredSectionStructureKeys.get(section) === buildMonitoredStructureKey(state, view);
 }
 
 function getMonitoredScrollAnchor(list: HTMLElement, rows: HTMLElement[]) {
@@ -176,12 +195,15 @@ function buildMonitoredStructureKey(state: AppState, view: MonitoredSectionView)
   });
 }
 
-function resolveMonitoredSectionView(state: AppState) {
-  const activeView = state.ui.monitoredPrimaryPane.view;
+function resolveMonitoredSectionView(state: AppState, pane: MonitoredPaneKey) {
+  const paneState = pane === 'primary' ? state.ui.monitoredPrimaryPane : state.ui.monitoredSecondaryPane;
+  const otherPaneState = pane === 'primary' ? state.ui.monitoredSecondaryPane : state.ui.monitoredPrimaryPane;
+  const activeView = paneState.view;
   const systemView = activeView === 'watchlist' ? null : state.data.monitoredSystemViews[activeView];
-  const searchQuery = String(state.ui.monitoredPrimaryPane.searchQuery || '').trim().toLowerCase();
-  const filteredTracked = resolveMonitoredViewRows(getPrimaryMonitoredViewTokens(state), searchQuery);
+  const searchQuery = String(paneState.searchQuery || '').trim().toLowerCase();
+  const filteredTracked = resolveMonitoredViewRows(getMonitoredPaneViewTokens(state, pane), searchQuery);
   return {
+    pane,
     activeView,
     activeViewLabel: getMonitoredViewLabel(activeView),
     viewStatus: systemView?.status ?? 'ready',
@@ -195,7 +217,10 @@ function resolveMonitoredSectionView(state: AppState) {
     filteredSafePage: 0,
     pageItems: filteredTracked,
     sortClasses: resolveMonitoredSortClasses(state),
-    miniChartEnabled: getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1,
+    miniChartEnabled: getLivePanelPaneSpan(state.ui.livePanelLayout, pane) > 1,
+    disabledView: getLivePanelPaneSpan(state.ui.livePanelLayout, pane === 'primary' ? 'secondary' : 'primary') > 0
+      ? otherPaneState.view
+      : null,
     pinCount: state.data.pinnedMonitoredTokenIdentities.length,
     minMcap: resolveMonitoredFilterValue(state, 'monitored-mcap-min', 30000),
     maxMcap: resolveMonitoredFilterValue(state, 'monitored-view-mcap-max', 0),
@@ -251,11 +276,12 @@ function renderCollapsedMonitoredHeader(view: MonitoredSectionView) {
   `;
 }
 
-function renderMonitoredViewButtons(activeView: MonitoredViewId) {
+function renderMonitoredViewButtons(activeView: MonitoredViewId, disabledView: MonitoredViewId | null) {
   return `
     <div class="monitored-view-switch" role="group" aria-label="Monitored token view">
       ${MONITORED_VIEW_IDS.map((view) => `
         <button type="button" class="monitored-view-button${view === activeView ? ' active' : ''}"
+          ${view === disabledView ? 'disabled title="Already open in the other Monitored pane"' : ''}
           aria-pressed="${view === activeView}" data-action="set-monitored-view"
           data-monitored-view="${view}">${escapeHtml(getMonitoredViewLabel(view))}</button>
       `).join('')}
@@ -338,7 +364,7 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
     <div class="panel-header monitored-panel-header">
       ${MONITORED_PANEL_TITLE_MARKUP}
       <div class="panel-header-controls monitored-header-controls">
-        ${renderMonitoredViewButtons(view.activeView)}
+        ${renderMonitoredViewButtons(view.activeView, view.disabledView)}
         <div class="monitored-view-tools">
           <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
           <div class="compact-search ${view.searchQuery ? 'has-query open' : ''}">
@@ -386,12 +412,12 @@ function renderMonitoredRows(
   const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
   for (const item of view.pageItems) {
     const chain = item.chain || 'solana';
-    const miniChartEnabled = getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1
+    const miniChartEnabled = view.miniChartEnabled
       && state.data.chainReadiness[chain]?.capabilities.charts === true;
     monitoredList.append(buildMonitoredRowForState(item, state, {
       miniChartEnabled,
       mockSolUsdcRate,
-    }));
+    }, view.pane));
   }
 }
 
@@ -399,11 +425,12 @@ function buildMonitoredRowForState(
   item: WatchlistTokenEntry,
   state: AppState,
   resolved?: { miniChartEnabled: boolean; mockSolUsdcRate?: number },
+  pane: MonitoredPaneKey = 'primary',
 ) {
   const chain = item.chain || 'solana';
   const isSolana = chain === 'solana';
   const miniChartEnabled = resolved?.miniChartEnabled ?? (
-    getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1
+    getLivePanelPaneSpan(state.ui.livePanelLayout, pane) > 1
     && state.data.chainReadiness[chain]?.capabilities.charts === true
   );
   const mockTradingPosition = isSolana ? getMockTradingPositionView(state, item.address) : null;
@@ -432,9 +459,10 @@ function patchMonitoredRow(
   item: WatchlistTokenEntry,
   state: AppState,
   controller: AppController,
+  pane: MonitoredPaneKey,
 ) {
   const chain = item.chain || 'solana';
-  const miniChartEnabled = getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1
+  const miniChartEnabled = getLivePanelPaneSpan(state.ui.livePanelLayout, pane) > 1
     && state.data.chainReadiness[chain]?.capabilities.charts === true;
   const mockTradingPosition = chain === 'solana' ? getMockTradingPositionView(state, item.address) : null;
   if (monitoredRowStaticKeys.get(current) !== buildMonitoredStaticKey(
@@ -598,29 +626,31 @@ function bindMonitoredSectionControls(
   section: ParentNode,
   state: AppState,
   controller: AppController,
-  _view: MonitoredSectionView,
+  view: MonitoredSectionView,
 ) {
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="monitored-search"]');
   if (searchInput) {
-    searchInput.value = state.ui.monitoredPrimaryPane.searchQuery || '';
+    searchInput.value = view.searchQuery;
   }
   bindCompactSearch(section, {
     toggleAction: 'monitored-search-focus',
     inputAction: 'monitored-search',
   });
-  bindMonitoredViewButtons(section, controller);
+  bindMonitoredViewButtons(section, controller, view.pane);
   bindMonitoredCollapseToggle(section, controller);
-  bindMonitoredSearchInput(searchInput, controller);
+  bindMonitoredSearchInput(searchInput, controller, view.pane);
   bindMonitoredRowControls(section, state, controller);
   bindSparklineRangeControls(section, controller);
   bindMonitoredTickerPeerPanelClose(section);
   bindMonitoredPinControls(section, state, controller);
 }
 
-function bindMonitoredViewButtons(section: ParentNode, controller: AppController) {
+function bindMonitoredViewButtons(section: ParentNode, controller: AppController, pane: MonitoredPaneKey) {
   section.querySelectorAll<HTMLButtonElement>('[data-action="set-monitored-view"]').forEach((button) => {
     button.addEventListener('click', () => {
-      controller.setPrimaryMonitoredView(button.dataset.monitoredView as MonitoredViewId);
+      const view = button.dataset.monitoredView as MonitoredViewId;
+      if (pane === 'primary') controller.setPrimaryMonitoredView(view);
+      else controller.setSecondaryMonitoredView(view);
     });
   });
 }
@@ -1201,13 +1231,17 @@ function bindMonitoredCollapseToggle(section: ParentNode, controller: AppControl
   });
 }
 
-function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controller: AppController) {
+function bindMonitoredSearchInput(
+  searchInput: HTMLInputElement | null,
+  controller: AppController,
+  pane: MonitoredPaneKey,
+) {
   if (!searchInput) {
     return;
   }
 
   const syncSearchInput = (event: Event) => {
-    controller.setMonitoredSearchQuery((event.currentTarget as HTMLInputElement).value);
+    controller.setMonitoredPaneSearchQuery(pane, (event.currentTarget as HTMLInputElement).value);
   };
 
   searchInput.addEventListener('input', syncSearchInput);
@@ -1216,7 +1250,7 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   searchInput.addEventListener('keyup', syncSearchInput);
   searchInput.addEventListener('cut', (event) => {
     const input = event.currentTarget as HTMLInputElement;
-    window.setTimeout(() => controller.setMonitoredSearchQuery(input.value), 0);
+    window.setTimeout(() => controller.setMonitoredPaneSearchQuery(pane, input.value), 0);
   });
 }
 

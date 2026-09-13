@@ -1,4 +1,4 @@
-import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getMonitoredPaneViewTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveMonitoredTableRows, resolveMonitoredViewRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
@@ -820,6 +820,7 @@ export interface AppController {
   setAlertSearchQuery(query: string): void;
   setPrimaryMonitoredView(view: MonitoredViewId): void;
   setSecondaryMonitoredView(view: MonitoredViewId): void;
+  setMonitoredPaneSearchQuery(pane: 'primary' | 'secondary', query: string): void;
   setMonitoredSearchQuery(query: string): void;
   setRecentSearchQuery(query: string): void;
   setOldWeekSearchQuery(query: string): void;
@@ -1402,8 +1403,8 @@ export function createAppController(): AppController {
     pins: DashboardMonitoredPin[];
     chains: TokenChain[];
   } | null = null;
-  let monitoredSystemViewRefreshInFlight: { view: MonitoredViewId; revision: number } | null = null;
-  let monitoredSystemViewRefreshRevision = 0;
+  const monitoredSystemViewRefreshInFlight = new Map<MonitoredViewId, number>();
+  const monitoredSystemViewRefreshRevisions = new Map<MonitoredViewId, number>();
   let chainReadinessRefreshInFlight = false;
   let chainReadinessRefreshRequested = false;
   let mockTradingRefreshInFlight = false;
@@ -1964,6 +1965,7 @@ export function createAppController(): AppController {
     }
     const tokens = [
       ...getPrimaryMonitoredViewTokens(state),
+      ...getMonitoredPaneViewTokens(state, 'secondary'),
       ...getMonitoredTokens(state),
       ...getWatchlistTokens(state),
       ...getRecentTokens(state),
@@ -7845,19 +7847,34 @@ export function createAppController(): AppController {
     }
   }
 
-  function getVisibleMonitoredPageTokens() {
+  function getVisibleMonitoredPaneTokens(pane: 'primary' | 'secondary') {
+    const paneState = pane === 'primary' ? state.ui.monitoredPrimaryPane : state.ui.monitoredSecondaryPane;
     return resolveMonitoredViewRows(
-      getPrimaryMonitoredViewTokens(state),
-      state.ui.monitoredPrimaryPane.searchQuery,
+      getMonitoredPaneViewTokens(state, pane),
+      paneState.searchQuery,
     );
   }
 
-  function getVisibleMonitoredSparklineIdentities() {
-    if (getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') <= 1) {
-      return [];
-    }
+  function getVisibleMonitoredPageTokens() {
+    const seen = new Set<string>();
+    return (['primary', 'secondary'] as const).flatMap((pane) => (
+      getLivePanelPaneSpan(state.ui.livePanelLayout, pane) > 0
+        ? getVisibleMonitoredPaneTokens(pane)
+        : []
+    )).filter((token) => {
+      const identity = createLegacyCompatibleTokenIdentity(token.chain, token.address);
+      if (seen.has(identity.key)) return false;
+      seen.add(identity.key);
+      return true;
+    });
+  }
 
-    return getVisibleMonitoredPageTokens()
+  function getVisibleMonitoredSparklineIdentities() {
+    return (['primary', 'secondary'] as const).flatMap((pane) => (
+      getLivePanelPaneSpan(state.ui.livePanelLayout, pane) > 1
+        ? getVisibleMonitoredPaneTokens(pane)
+        : []
+    ))
       .map((item) => getChartCapableIdentity(item.chain, item.address))
       .filter((identity): identity is TokenIdentity => Boolean(identity));
   }
@@ -10070,7 +10087,7 @@ export function createAppController(): AppController {
         ),
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
-      void refreshPrimaryMonitoredView(token);
+      void refreshActiveMonitoredViews(token);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'monitored-poll' });
       void hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: isLiveWorkspace() });
       refreshMockTradingStateForMarketPoll();
@@ -10171,54 +10188,65 @@ export function createAppController(): AppController {
     syncWorkspaceMarketSubscriptions();
   }
 
-  function isPrimaryMonitoredViewRequestCurrent(
+  function isMonitoredViewRequestCurrent(
     revision: number,
     token: string,
     view: MonitoredViewId,
   ) {
-    return revision === monitoredSystemViewRefreshRevision
-      && state.session.token === token
-      && state.ui.monitoredPrimaryPane.view === view;
+    return revision === monitoredSystemViewRefreshRevisions.get(view)
+      && state.session.token === token;
   }
 
-  async function refreshPrimaryMonitoredView(
+  async function refreshMonitoredSystemView(
+    view: MonitoredViewId,
     token = state.session.token,
     options: { force?: boolean } = {},
   ) {
-    const request = resolveDashboardTokenViewRequest(state.ui.monitoredPrimaryPane.view);
+    const request = resolveDashboardTokenViewRequest(view);
     if (!token || !isLiveWorkspace() || !request) return;
-    const { view } = request;
-    if (!options.force && monitoredSystemViewRefreshInFlight?.view === view) return;
+    const systemView = request.view;
+    if (!options.force && monitoredSystemViewRefreshInFlight.has(systemView)) return;
 
-    const revision = monitoredSystemViewRefreshRevision + 1;
-    monitoredSystemViewRefreshRevision = revision;
-    monitoredSystemViewRefreshInFlight = { view, revision };
-    state.data.monitoredSystemViews[view] = {
-      ...state.data.monitoredSystemViews[view],
+    const revision = (monitoredSystemViewRefreshRevisions.get(systemView) || 0) + 1;
+    monitoredSystemViewRefreshRevisions.set(systemView, revision);
+    monitoredSystemViewRefreshInFlight.set(systemView, revision);
+    state.data.monitoredSystemViews[systemView] = {
+      ...state.data.monitoredSystemViews[systemView],
       status: 'loading',
       error: null,
     };
     emit('monitored');
 
     try {
-      const payload = await fetchDashboardTokenView(view, token, request.options);
-      if (!isPrimaryMonitoredViewRequestCurrent(revision, token, view)) return;
-      if (payload.view !== view) throw new Error('Monitored view response did not match the active view');
+      const payload = await fetchDashboardTokenView(systemView, token, request.options);
+      if (!isMonitoredViewRequestCurrent(revision, token, systemView)) return;
+      if (payload.view !== systemView) throw new Error('Monitored view response did not match the active view');
       applyDashboardTokenView(payload);
       emit('monitored');
     } catch (error) {
-      if (!isPrimaryMonitoredViewRequestCurrent(revision, token, view)) return;
-      state.data.monitoredSystemViews[view] = {
-        ...state.data.monitoredSystemViews[view],
+      if (!isMonitoredViewRequestCurrent(revision, token, systemView)) return;
+      state.data.monitoredSystemViews[systemView] = {
+        ...state.data.monitoredSystemViews[systemView],
         status: 'error',
         error: error instanceof Error ? error.message : 'Failed to load monitored view',
       };
       emit('monitored');
     } finally {
-      if (monitoredSystemViewRefreshInFlight?.revision === revision) {
-        monitoredSystemViewRefreshInFlight = null;
+      if (monitoredSystemViewRefreshInFlight.get(systemView) === revision) {
+        monitoredSystemViewRefreshInFlight.delete(systemView);
       }
     }
+  }
+
+  async function refreshActiveMonitoredViews(token = state.session.token) {
+    const activeViews = new Set<MonitoredViewId>();
+    if (getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 0) {
+      activeViews.add(state.ui.monitoredPrimaryPane.view);
+    }
+    if (getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary') > 0) {
+      activeViews.add(state.ui.monitoredSecondaryPane.view);
+    }
+    await Promise.all([...activeViews].map((view) => refreshMonitoredSystemView(view, token)));
   }
 
   function deferMonitoredDashboardPoll(delayMs: number) {
@@ -10993,6 +11021,7 @@ export function createAppController(): AppController {
     state.ui.alertSearchQuery = '';
     state.ui.monitoredSearchQuery = '';
     state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
+    state.ui.monitoredSecondaryPane = createAppState().ui.monitoredSecondaryPane;
     state.ui.recentSearchQuery = '';
     state.ui.oldWeekSearchQuery = '';
     state.ui.recentSearchPending = false;
@@ -12382,7 +12411,7 @@ export function createAppController(): AppController {
       }
       state.ui.monitoredLoadError = null;
       emitMonitoredWorkspaceRegions();
-      void refreshPrimaryMonitoredView(token);
+      void refreshActiveMonitoredViews(token);
     } catch (error) {
       state.ui.monitoredLoadError = error instanceof Error
         ? error.message : 'Failed to load monitored tokens';
@@ -14267,12 +14296,11 @@ export function createAppController(): AppController {
           isDashboardSystemTokenViewId(nextView)
           && state.data.monitoredSystemViews[nextView].status === 'idle'
         ) {
-          void refreshPrimaryMonitoredView(state.session.token, { force: true });
+          void refreshMonitoredSystemView(nextView, state.session.token, { force: true });
         }
         return;
       }
       if (!panes) return;
-      monitoredSystemViewRefreshRevision += 1;
       state.ui.monitoredPrimaryPane = {
         ...state.ui.monitoredPrimaryPane,
         view: nextView,
@@ -14285,7 +14313,7 @@ export function createAppController(): AppController {
       syncWorkspaceMarketSubscriptions();
       emit('monitored');
       if (isDashboardSystemTokenViewId(nextView)) {
-        void refreshPrimaryMonitoredView(state.session.token, { force: true });
+        void refreshMonitoredSystemView(nextView, state.session.token, { force: true });
       }
     },
     setSecondaryMonitoredView(view: MonitoredViewId) {
@@ -14299,16 +14327,36 @@ export function createAppController(): AppController {
       };
       state.ui.livePanelLayout.panes = panes;
       queueUiPrefsPersist();
+      syncWorkspaceMarketSubscriptions();
       emit('monitored');
+      if (isDashboardSystemTokenViewId(nextView)) {
+        void refreshMonitoredSystemView(nextView, state.session.token, { force: true });
+      }
+    },
+    setMonitoredPaneSearchQuery(pane: 'primary' | 'secondary', query: string) {
+      const searchQuery = String(query || '');
+      const paneState = pane === 'primary'
+        ? state.ui.monitoredPrimaryPane
+        : state.ui.monitoredSecondaryPane;
+      if (paneState.searchQuery === searchQuery) return;
+      paneState.searchQuery = searchQuery;
+      if (pane === 'primary') {
+        state.ui.monitoredSearchQuery = searchQuery;
+        state.ui.monitoredPage = 0;
+      }
+      syncWorkspaceMarketSubscriptions();
+      emit('monitored');
+      refreshMonitoredSparklinesIfExpanded(`monitored-${pane}-search`);
     },
     setMonitoredSearchQuery(query: string) {
       const searchQuery = String(query || '');
+      if (state.ui.monitoredPrimaryPane.searchQuery === searchQuery) return;
       state.ui.monitoredSearchQuery = searchQuery;
       state.ui.monitoredPrimaryPane.searchQuery = searchQuery;
       state.ui.monitoredPage = 0;
       syncWorkspaceMarketSubscriptions();
       emit('monitored');
-      refreshMonitoredSparklinesIfExpanded('monitored-search');
+      refreshMonitoredSparklinesIfExpanded('monitored-primary-search');
     },
     setRecentSearchQuery(query: string) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });
@@ -14745,6 +14793,7 @@ export function createAppController(): AppController {
       state.ui.livePanelLayout = next;
       queueUiPrefsPersist();
       emit('monitored', 'alerts');
+      void refreshActiveMonitoredViews(state.session.token);
       refreshMonitoredSparklinesIfExpanded('live-panel-preset');
     },
     setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
@@ -14758,6 +14807,7 @@ export function createAppController(): AppController {
       state.ui.livePanelLayout = next;
       queueUiPrefsPersist();
       emit('monitored', 'alerts');
+      void refreshActiveMonitoredViews(state.session.token);
       refreshMonitoredSparklinesIfExpanded('live-panel-span');
     },
     setLivePanelHeight(panel: 'monitored' | 'alerts', height: number) {

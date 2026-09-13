@@ -21,6 +21,7 @@ import {
   createMonitoredPaneState,
   createMonitoredSystemViewStates,
   type DashboardSystemTokenViewId,
+  type MonitoredPaneKey,
   type MonitoredPaneState,
   type MonitoredSystemViewState,
 } from '../utils/monitored-view';
@@ -1498,8 +1499,9 @@ export function getMonitoredTokens(state: AppState) {
   return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
-export function getPrimaryMonitoredViewTokens(state: AppState) {
-  const view = state.ui.monitoredPrimaryPane.view;
+export function getMonitoredPaneViewTokens(state: AppState, pane: MonitoredPaneKey) {
+  const paneState = pane === 'primary' ? state.ui.monitoredPrimaryPane : state.ui.monitoredSecondaryPane;
+  const view = paneState.view;
   const systemView = view === 'watchlist' ? null : state.data.monitoredSystemViews[view];
   const useTrendingCompatibility = view === 'trending'
     && systemView?.status !== 'ready'
@@ -1513,6 +1515,10 @@ export function getPrimaryMonitoredViewTokens(state: AppState) {
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is WatchlistTokenEntry => Boolean(item));
   return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
+}
+
+export function getPrimaryMonitoredViewTokens(state: AppState) {
+  return getMonitoredPaneViewTokens(state, 'primary');
 }
 
 export function getRecentTokens(state: AppState) {

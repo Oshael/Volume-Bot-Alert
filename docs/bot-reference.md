@@ -1522,9 +1522,11 @@ usa Robinhood como padrão e limita views de sistema a 40 tokens. Lifecycle perm
 dark até `ROBINHOOD_LIFECYCLE_READ_ENABLED=true` após o replay histórico aprovado.
 
 O frontend mantém seleção, busca e âncora de scroll independentes para as panes primária
-e secundária, que iniciam em `trending` e `watchlist`. Readiness, membership ordenada e metadata são isolados por system view.
-Watchlist resolve a membership local sem request de
-system view, e todos os resultados reutilizam o store canônico e seu merge realtime.
+e secundária, que iniciam em `trending` e `watchlist`. Readiness, membership ordenada e
+metadata são isolados por system view. Watchlist resolve a membership local sem request
+de system view, e todos os resultados reutilizam o store canônico e seu merge realtime.
+Quando ambas as panes estão visíveis, suas system views usam o mesmo cache e deduplicação
+por view, e as identidades visíveis das duas entram primeiro na assinatura realtime.
 A superfície exibe as quatro views em ordem canônica, preserva a ordenação do read-model,
 limita a renderização a 40 linhas e não oferece Filters, Page ou Per page. As antigas
 superfícies standalone Best Performance e Watchlist não são mais montadas, e o frontend

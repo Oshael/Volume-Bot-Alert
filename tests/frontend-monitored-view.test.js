@@ -20,15 +20,22 @@ describe('frontend monitored view contract', () => {
     assert.deepEqual(monitoredView.DASHBOARD_TOKEN_VIEW_RELEASE_CHAINS, ['robinhood']);
   });
 
-  it('creates isolated system-view readiness and a Trending primary pane', () => {
-    const pane = monitoredView.createMonitoredPaneState();
+  it('creates isolated system-view readiness and independent default panes', () => {
+    const primaryPane = monitoredView.createMonitoredPaneState();
+    const secondaryPane = monitoredView.createMonitoredPaneState('watchlist');
     const views = monitoredView.createMonitoredSystemViewStates();
 
-    assert.deepEqual(pane, {
+    assert.deepEqual(primaryPane, {
       view: 'trending',
       searchQuery: '',
       scrollAnchor: null,
     });
+    assert.deepEqual(secondaryPane, {
+      view: 'watchlist',
+      searchQuery: '',
+      scrollAnchor: null,
+    });
+    assert.notEqual(primaryPane, secondaryPane);
     assert.deepEqual(Object.keys(views), ['trending', 'migrated', 'pre_bonded']);
     assert.notEqual(views.trending, views.migrated);
     views.trending.tokenIdentities.push('robinhood:0xabc');
