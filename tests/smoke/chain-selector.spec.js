@@ -1298,8 +1298,9 @@ test('requests clipboard access once and detects copied contracts from ordinary 
   const shortcut = page.locator('[data-action="activate-clipboard-token"]');
   const permissionNotice = page.getByRole('status', { name: 'Clipboard detection permission' });
   await expect(permissionNotice).toBeVisible();
-  await expect(permissionNotice.locator('.workspace-clipboard-permission-copy')).toHaveCSS('font-family', /Satoshi/);
-  await expect(page.getByRole('searchbox', { name: 'Search tokens across all blockchains' })).toHaveCSS('font-family', /Satoshi/);
+  await expect(permissionNotice.locator('.workspace-clipboard-permission-copy small')).toHaveCSS('font-family', /Satoshi/);
+  await expect(permissionNotice.locator('.workspace-clipboard-permission-copy strong')).toHaveCSS('font-family', /Space Mono/);
+  await expect(page.getByRole('searchbox', { name: 'Search tokens across all blockchains' })).toHaveCSS('font-family', /Space Mono/);
   await expect(shortcut).toBeDisabled();
   expect(await page.evaluate(() => window.__clipboardReads)).toBe(0);
 
@@ -1387,7 +1388,7 @@ test('renders the bounded four-view Monitored surface without filter or paginati
   const viewTabs = monitored.getByRole('group', { name: 'Monitored token view' });
 
   await expect(viewTabs.getByRole('button')).toHaveText(['Trending', 'Migrated', 'Pre-bonded', 'Watchlist']);
-  await expect(viewTabs.getByRole('button').first()).toHaveCSS('font-family', /Satoshi/);
+  await expect(viewTabs.getByRole('button').first()).toHaveCSS('font-family', /Space Mono/);
   await expect(viewTabs.getByRole('button', { name: 'Trending' })).toHaveAttribute('aria-pressed', 'true');
   await expect(monitored.locator('.monitored-token-row')).toHaveCount(40);
   await expect(monitored.locator('[data-action="monitored-filters-toggle"]')).toHaveCount(0);
@@ -1481,6 +1482,8 @@ test('composes the compare preset with two independent Monitored panes', async (
   await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(3);
   const presetHeading = presetDialog.locator('.workspace-layout-preset-heading');
   await expect(presetHeading).toHaveCSS('display', 'flex');
+  await expect(presetHeading.locator('strong')).toHaveCSS('font-family', /Space Mono/);
+  await expect(presetHeading.locator('span')).toHaveCSS('font-family', /Satoshi/);
   const [headingTitleBox, headingCaptionBox] = await Promise.all([
     presetHeading.locator('strong').boundingBox(),
     presetHeading.locator('span').boundingBox(),
