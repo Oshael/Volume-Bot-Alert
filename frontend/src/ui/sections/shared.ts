@@ -262,7 +262,7 @@ function getSparklineRangePresetForScope(state: AppState, scope: SparklineRangeC
 
 function getSparklineRangeTooltip(scope: SparklineRangeControlScope) {
   if (scope === 'monitored') {
-    return 'Select the default range used to load sparklines for Monitored and Manual tokens.';
+    return 'Select the default range used to load sparklines for Monitored and Watchlist tokens.';
   }
   return `Select the default range used to load sparklines for ${scope === 'recent' ? 'Recent' : 'Old'} tokens.`;
 }
@@ -2032,7 +2032,7 @@ function renderRadarVolumeTrio(item: WatchlistTokenEntry, mode: 'manual' | 'rece
 }
 
 /**
- * Manual rows carry no rolling-window coverage, so the tint has to come from the
+ * Watchlist rows carry no rolling-window coverage, so the tint has to come from the
  * raw value there; radar rows only tint when coverage reports the value usable.
  */
 function resolveRadarChangeTone(

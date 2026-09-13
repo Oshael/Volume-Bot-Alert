@@ -878,7 +878,7 @@ function renderPublicLandingFeatureTiles() {
     {
       icon: 'watchlist' as const,
       title: 'Personal Watchlists',
-      body: 'Attach manual lists, blocklists, and workspace preferences directly to the account.',
+      body: 'Save Watchlist tokens, blocklists, and workspace preferences directly to the account.',
     },
     {
       icon: 'panels' as const,
@@ -1224,7 +1224,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
             <span aria-hidden="true">↺</span>
           </button>
           <div class="workspace-layout-reset-tooltip" role="tooltip">
-            ${escapeHtml('Reset the bot layout to the default visual setup for a new account. Manual tokens are not changed.')}
+            ${escapeHtml('Reset the bot layout to the default visual setup for a new account. Watchlist tokens are not changed.')}
           </div>
         </div>
         ${renderMockTradingHeaderSummary(state)}

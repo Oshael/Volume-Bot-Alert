@@ -13320,7 +13320,7 @@ export function createAppController(): AppController {
             includeMeteora,
             onResponse: (response) => recordSparklineDebug('http.response', {
               endpoint: 'monitored-metadata-batch',
-              source: 'manual-metadata-batch',
+              source: 'watchlist-metadata-batch',
               durationMs: Date.now() - startedAt,
               includeMeteora,
               addresses: summarizeSparklineDebugAddresses(chunkAddresses),
@@ -13381,14 +13381,14 @@ export function createAppController(): AppController {
 
     const startedAt = Date.now();
     recordSparklineDebug('metadata.fetch-start', {
-      source: 'manual-token-dashboard-attempt',
+      source: 'watchlist-token-dashboard-attempt',
       includeMeteora: true,
       addresses: summarizeSparklineDebugAddresses([address]),
     });
     const [dashboardItem] = await fetchMonitoredMetadataBatch([address], token, {
       onResponse: (response) => recordSparklineDebug('http.response', {
         endpoint: 'monitored-metadata-batch',
-        source: 'manual-token-dashboard-attempt',
+        source: 'watchlist-token-dashboard-attempt',
         durationMs: Date.now() - startedAt,
         addresses: summarizeSparklineDebugAddresses([address]),
         response,
@@ -14394,7 +14394,7 @@ export function createAppController(): AppController {
       state.ui.watchlistSearchQuery = String(query || '');
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-search' });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-search' });
       }
     },
     setRecentSearchQuery(query: string) {
@@ -14422,7 +14422,7 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-starred' });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-starred' });
       }
     },
     setManualFolderDeleteWarningDismissed(enabled: boolean) {
@@ -14677,7 +14677,7 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-sort' });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-sort' });
       }
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
@@ -15697,7 +15697,7 @@ export function createAppController(): AppController {
 
       setBusy(true);
       setError(null);
-      setNotice('Creating manual token folder...');
+      setNotice('Creating Watchlist folder...');
       emit('manual');
 
       try {
@@ -15721,7 +15721,7 @@ export function createAppController(): AppController {
 
       setBusy(true);
       setError(null);
-      setNotice('Updating manual token folder...');
+      setNotice('Updating Watchlist folder...');
       emit('manual');
 
       try {
@@ -15745,7 +15745,7 @@ export function createAppController(): AppController {
 
       setBusy(true);
       setError(null);
-      setNotice('Deleting manual token folder...');
+      setNotice('Deleting Watchlist folder...');
       const removedIdentities = [...new Map(state.data.manualTokenFolderItems
         .filter((item) => item.folderId === folderId)
         .map((item) => {
@@ -15806,7 +15806,7 @@ export function createAppController(): AppController {
         }
         await reloadConfigPreservingMonitoredSnapshot(token);
         const removedCount = result.removedTokens.length;
-        setNotice(removedCount > 0 ? `Folder deleted; ${removedCount} manual token(s) removed` : 'Folder deleted');
+        setNotice(removedCount > 0 ? `Folder deleted; ${removedCount} Watchlist token(s) removed` : 'Folder deleted');
       } catch (error) {
         pendingManualFolderDeleteIds.delete(folderId);
         for (const item of pendingRemovedAddresses) {
@@ -15924,7 +15924,7 @@ export function createAppController(): AppController {
 
       setBusy(true);
       setError(null);
-      setNotice('Removing manual token...');
+      setNotice('Removing Watchlist token...');
       emit('manual');
 
       try {
@@ -16556,7 +16556,7 @@ export function createAppController(): AppController {
         address: normalizedAddress,
         notionalSol: FLOATING_QUICK_BUY_NOTIONAL_SOL,
         status: 'tracking',
-        message: 'Adding token to Manual Tokens...',
+        message: 'Adding token to Watchlist...',
         error: null,
         armedAt: Date.now(),
         armedCycle: state.runtime.cycle,

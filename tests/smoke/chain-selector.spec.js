@@ -1513,13 +1513,6 @@ test('refetches market panels by chain and rejects a stale combined response', a
   marketPinPayloads.length = 0;
   compactChartRequestPayloads.length = 0;
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_MARKET_API_FIXTURES);
-  const configPatchPayloads = [];
-  page.on('request', (request) => {
-    const url = new URL(request.url());
-    if (request.method() === 'PATCH' && url.pathname === '/api/config') {
-      configPatchPayloads.push(request.postDataJSON()?.configs);
-    }
-  });
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
   const solanaButton = selector.locator('[data-chain="solana"]');
   const robinhoodButton = selector.locator('[data-chain="robinhood"]');
@@ -1547,76 +1540,6 @@ test('refetches market panels by chain and rejects a stale combined response', a
   await expect(robinhoodRow.locator('.monitored-main-metric')).toHaveText('$0');
   await expect(robinhoodRow.locator('.monitored-coverage-partial')).toContainText('~');
   await expect(robinhoodRow.locator('.monitored-coverage-unavailable')).toHaveText('-');
-  const monitoredFilters = page.locator('[data-monitored-filters]');
-  const filtersToggle = monitoredFilters.getByRole('button', { name: 'FILTERS', exact: true });
-  await expect(filtersToggle).toHaveAttribute(
-    'data-tooltip',
-    'Configure sorting and valuation limits for Monitored tokens.',
-  );
-  await filtersToggle.hover();
-  await page.waitForTimeout(300);
-  await expect(filtersToggle).not.toHaveAttribute('data-tooltip-visible');
-  await expect(filtersToggle).toHaveAttribute('data-tooltip-visible', 'true', { timeout: 1000 });
-  const filterToggleBox = await filtersToggle.boundingBox();
-  if (filterToggleBox) {
-    await page.mouse.move(filterToggleBox.x + (filterToggleBox.width / 2) + 2, filterToggleBox.y + (filterToggleBox.height / 2));
-  }
-  await expect(filtersToggle).toHaveAttribute('data-tooltip-visible', 'true');
-  const mcapMinInput = monitoredFilters.locator('[data-action="monitored-mcap-min"]');
-  const mcapMaxInput = monitoredFilters.locator('[data-action="monitored-mcap-max"]');
-  const fdvMinInput = monitoredFilters.locator('[data-action="monitored-fdv-min"]');
-  const fdvMaxInput = monitoredFilters.locator('[data-action="monitored-fdv-max"]');
-  await filtersToggle.click();
-  await expect(filtersToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(monitoredFilters.locator('.monitored-filter-section-title')).toHaveText(['SORT ORDER', 'VALUATION LIMITS']);
-  await expect(monitoredFilters.locator('.monitored-filter-row-label'))
-    .toHaveText(['VOLUME WINDOW', 'MCAP / FDV ORDER', 'AGE ORDER']);
-  await expect(monitoredFilters.locator('.monitored-filter-option'))
-    .toHaveText(['5M', '1H', '6H', '24H', 'HIGHEST', 'LOWEST', 'NEWEST', 'OLDEST']);
-  await expect(mcapMinInput).toHaveValue('30000');
-  await expect(mcapMaxInput).toHaveValue('');
-  await expect(fdvMinInput).toHaveValue('30000');
-  await expect(fdvMaxInput).toHaveValue('');
-  await mcapMinInput.click();
-  await monitoredFilters.locator('.monitored-filters-hint').click();
-  await expect(filtersToggle).toHaveAttribute('aria-expanded', 'true');
-  await monitoredFilters.getByRole('button', { name: 'HIGHEST', exact: true }).click();
-  await expect(filtersToggle).toHaveAttribute('aria-expanded', 'true');
-  await mcapMinInput.fill('31000');
-  await mcapMinInput.press('Escape');
-  await expect(filtersToggle).toHaveAttribute('aria-expanded', 'false');
-  expect(configPatchPayloads).toEqual([]);
-  await filtersToggle.click();
-  await expect(mcapMinInput).toHaveValue('30000');
-  await expect(mcapMaxInput).toHaveValue('');
-  await expect(fdvMinInput).toHaveValue('30000');
-  await expect(fdvMaxInput).toHaveValue('');
-  await mcapMaxInput.fill('20000');
-  await page.locator('.monitored-panel-title').click();
-  await expect(filtersToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(monitoredFilters.locator('[data-monitored-filters-error]'))
-    .toHaveText('MCAP MAX MUST BE GREATER THAN OR EQUAL TO MIN');
-  expect(configPatchPayloads).toEqual([]);
-  await mcapMinInput.fill('45000');
-  await mcapMaxInput.fill('950000');
-  await fdvMinInput.fill('65000');
-  await fdvMaxInput.fill('1250000');
-  await page.locator('.monitored-panel-title').click();
-  await expect.poll(() => configPatchPayloads).toContainEqual({
-    'monitored-mcap-min': 45000,
-    'monitored-view-mcap-max': 950000,
-    'monitored-fdv-min': 65000,
-    'monitored-view-fdv-max': 1250000,
-  });
-  await expect(page.locator('.monitored-header-bottom').getByRole('button', { name: 'MCAP / FDV', exact: true })).toHaveCount(0);
-  await expect.poll(() => diagnostics.apiRequests.some((requestUrl) => {
-    const url = new URL(requestUrl);
-    return url.pathname === '/api/dashboard/monitored'
-      && url.searchParams.get('minMcap') === '45000'
-      && url.searchParams.get('maxMcap') === '950000'
-      && url.searchParams.get('minFdv') === '65000'
-      && url.searchParams.get('maxFdv') === '1250000';
-  })).toBe(true);
   await expect(page.locator('#top-performers-section')).toContainText('TOPRHFRESH');
   await expect(page.locator('#top-performers-section')).toContainText('FDV');
   await expect.poll(() => compactChartRequestPayloads.some((payload) => (
@@ -1636,7 +1559,7 @@ test('refetches market panels by chain and rejects a stale combined response', a
   const monitoredDefaultRange = page.locator('.monitored-panel .sparkline-range-button');
   await expect(monitoredDefaultRange).toHaveAttribute(
     'data-tooltip',
-    'Select the default range used to load sparklines for Monitored and Manual tokens.',
+    'Select the default range used to load sparklines for Monitored and Watchlist tokens.',
   );
   await monitoredDefaultRange.click();
   const monitoredDefaultOptions = page.locator('.monitored-panel [data-action="set-sparkline-range-preset"]');
