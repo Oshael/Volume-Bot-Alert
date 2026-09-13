@@ -594,6 +594,26 @@ diagrams and call the same preset resolver used by persisted preferences; they d
   When a live resize crosses below Command Center's supported width, persist `discovery_alerts` as the deterministic fallback
   while retaining pane selections, order and heights for later choices.
 
+### Alert retirement prerequisite
+
+Before continuing the Alerts sparkline work, retire the standard threshold alerts **Volume 5m**, **GMGN Volume 1m**,
+**MCap 5m** and **FDV 5m** from both Solana and Robinhood. Preserve the remaining alert families, including Price Surge,
+Surge Continuation, HVNC, Meteora-specific alerts where applicable and Custom alerts. Existing persisted alerts and history
+remain readable during the transition; this work stops new creation without destructively deleting historical records.
+
+Execute the retirement through these bounded cuts:
+
+- **R1 — backend emission retirement:** stop Solana and Robinhood matchers/planners from producing new Volume 5m, GMGN
+  Volume 1m, MCap 5m or FDV 5m alerts, with focused regression coverage proving the remaining alert families still emit.
+- **R2 — frontend local emission retirement:** remove local evaluation, notification and sound paths for the four retired
+  alert types without changing realtime ingestion, WebSocket subscriptions or live token updates.
+- **R3 — active configuration surfaces:** remove the retired types from active profiles, Telegram menus and Bot Settings so
+  users cannot create or enable them through supported configuration flows.
+- **R4 — dead runtime contracts:** remove reset/publication/state branches that no longer have active consumers, while
+  retaining only compatibility code required to read historical alerts or legacy persisted settings safely.
+- **R5 — compatibility and final verification:** verify historical rendering, normalize legacy inputs to disabled state,
+  update operational documentation and run scoped dead-reference searches plus the applicable test/build/lint matrix.
+
 ### Slice 7: Alerts sparkline convergence
 
 Move compact cache ownership to token identity, share fetch deduplication/live merges, prioritize visible Alerts Focus
