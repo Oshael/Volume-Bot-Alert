@@ -11,6 +11,11 @@ import type {
   TokenValuationSnapshot,
   TokenValuationType,
 } from '../../utils/token-valuation';
+import {
+  buildDashboardTokenViewPath,
+  type DashboardSystemTokenViewId,
+  type DashboardTokenViewRequestOptions,
+} from '../../utils/monitored-view';
 
 export interface ReportMigratedTokenPayload {
   address: string;
@@ -189,6 +194,68 @@ export interface DashboardMonitoredPayload {
   page?: number;
   perPage?: number;
   hasMore?: boolean;
+}
+
+export type DashboardTokenViewStatus = 'ready' | 'syncing' | 'unavailable' | 'unsupported';
+
+export interface DashboardTokenViewToken extends DashboardMonitoredToken {
+  trendingRank?: number;
+  lifecycleRank?: number;
+  rankingVersion?: string;
+  scoreVersion?: string;
+  score?: number;
+  components?: {
+    volume24hPercentile: number;
+    acceleration5mPercentile: number;
+    priceChange1hPercentile: number;
+    priceChange6hPercentile: number;
+  };
+  lifecycle?: {
+    chain: TokenChain;
+    tokenAddress: string;
+    launchpadId: string;
+    status: 'migrated' | 'pre_bonded';
+    bondProgressBps: number | null;
+    curveAddress: string | null;
+    createdAt: string | null;
+    migratedAt: string | null;
+    lastEventAt: string;
+    evidenceSource: string;
+    evidenceBlockNumber: string;
+    evidenceBlockHash: string;
+    evidenceTransactionHash: string;
+    evidenceLogIndex: number;
+    version: string;
+  };
+}
+
+export interface DashboardTokenViewPayload {
+  view: DashboardSystemTokenViewId;
+  chains: TokenChain[];
+  limit: number;
+  asOf: string;
+  generatedAt: string;
+  rankingVersion: string;
+  scoreVersion?: string;
+  status: DashboardTokenViewStatus;
+  candidatesConsidered: number;
+  count: number;
+  chainStates: Partial<Record<TokenChain, {
+    status: DashboardTokenViewStatus;
+    capabilities: Partial<Record<DashboardSystemTokenViewId, boolean>>;
+  }>>;
+  tokens: DashboardTokenViewToken[];
+}
+
+export function fetchDashboardTokenView(
+  view: DashboardSystemTokenViewId,
+  token?: string | null,
+  options?: DashboardTokenViewRequestOptions,
+) {
+  return apiFetch<DashboardTokenViewPayload>(buildDashboardTokenViewPath(view, options), {
+    token,
+    rateLimitScope: 'dashboard',
+  });
 }
 
 export interface DashboardMonitoredPin {

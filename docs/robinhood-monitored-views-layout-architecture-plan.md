@@ -454,6 +454,15 @@ Preserve neutral tables and config/folder routes. Folder data stays dormant and 
 Remove standalone Best Performance/Manual Tokens rendering; add four view buttons and pane-local selection/search/scroll;
 remove pagination/filter controls; and keep reads and DOM work bounded.
 
+- **5A — frontend read boundary:** add the canonical four-view IDs plus a typed, bounded client for the existing Trending,
+  Migrated and Pre-bonded endpoint. Keep it dark; Watchlist continues to use authenticated local membership data.
+- **5B — pane view state:** add primary-pane selection and isolated request/readiness state, load only the active system view
+  and preserve the existing live token merge path without changing ingestion or subscriptions.
+- **5C — unified Monitored surface:** render the four linear view buttons and make Monitored own the selected view, search,
+  chart range, count and bounded rows. Remove Filters and visible pagination controls from this surface.
+- **5D — legacy surface retirement:** remove standalone Best Performance and Watchlist render slots plus their now-dead
+  presentation/controller code after the unified surface smoke coverage passes; preserve dormant folder storage and routes.
+
 ### Slice 6: fixed layouts
 
 Add presets and two pane slots, prevent duplicate views, remove horizontal resize, preserve bottom resize and drag exchange,
