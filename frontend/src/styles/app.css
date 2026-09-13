@@ -9592,13 +9592,6 @@ button,
   overflow: visible;
 }
 
-.manual-bar {
-  border-color: rgba(0, 212, 255, 0.42);
-  box-shadow:
-    0 0 0 1px rgba(0, 212, 255, 0.1) inset,
-    0 0 18px rgba(0, 212, 255, 0.06);
-}
-
 .chain-readiness-empty {
   display: flex;
   align-items: center;
@@ -9661,7 +9654,6 @@ TEMP_LEGACY_BAR_TITLE {
   font-weight: 700;
 }
 
-.legacy-bar-title.manual { color: var(--cyan); }
 .legacy-bar-title.recent { color: #00cc66; }
 .legacy-bar-title.old-week { color: #ff8c00; }
 
@@ -12353,10 +12345,6 @@ TEMP_LEGACY_BAR_TITLE {
   margin-top: 12px;
 }
 
-.manual-bar {
-  margin-bottom: 16px;
-}
-
 .recent-bar,
 .old-week-bar {
   margin-bottom: 12px;
@@ -12409,16 +12397,11 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 /* VISUAL SCALE OVERRIDES */
-.manual-bar .legacy-bar-title,
 .recent-bar .legacy-bar-title,
 .old-week-bar .legacy-bar-title {
   font-size: 11px !important;
 }
 
-.manual-bar .legacy-bar-note,
-.manual-bar .filter-label,
-.manual-bar .legacy-mini-field,
-.manual-bar .compact-inline,
 .recent-bar .legacy-bar-note,
 .recent-bar .filter-label,
 .recent-bar .legacy-mini-field,
@@ -12430,8 +12413,6 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 11px !important;
 }
 
-.manual-bar .legacy-mini-field input,
-.manual-bar .compact-inline input,
 .recent-bar .legacy-mini-field input,
 .recent-bar .compact-inline input,
 .old-week-bar .legacy-mini-field input,
@@ -12443,8 +12424,6 @@ TEMP_LEGACY_BAR_TITLE {
   border-width: 1.5px !important;
 }
 
-.manual-bar .old-filter-btn,
-.manual-bar .inline-icon,
 .recent-bar .old-filter-btn,
 .recent-bar .inline-icon,
 .old-week-bar .old-filter-btn,
@@ -12765,20 +12744,16 @@ TEMP_LEGACY_BAR_TITLE {
   background: rgba(0, 212, 255, 0.1) !important;
 }
 
-.manual-bar .token-table,
 .recent-bar .token-table,
 .old-week-bar .token-table {
   font-size: 12px !important;
 }
 
-.manual-bar .token-table thead tr,
 .recent-bar .token-table thead tr,
 .old-week-bar .token-table thead tr {
   font-size: 11px !important;
 }
 
-.manual-bar .token-table th,
-.manual-bar .token-table td,
 .recent-bar .token-table th,
 .recent-bar .token-table td,
 .old-week-bar .token-table th,
@@ -12786,14 +12761,9 @@ TEMP_LEGACY_BAR_TITLE {
   padding: 10px 12px !important;
 }
 
-.manual-bar .token-symbol,
 .recent-bar .token-symbol,
 .old-week-bar .token-symbol {
   font-size: 14px !important;
-}
-
-.manual-bar .token-symbol {
-  color: var(--cyan) !important;
 }
 
 .recent-bar .token-symbol {
@@ -12804,27 +12774,22 @@ TEMP_LEGACY_BAR_TITLE {
   color: #ff8c00 !important;
 }
 
-.manual-bar .token-table td,
 .recent-bar .token-table td,
 .old-week-bar .token-table td {
   color: #fff !important;
 }
 
-.manual-bar .inline-link,
 .recent-bar .inline-link,
 .old-week-bar .inline-link {
   font-size: 11px !important;
 }
 
-.manual-bar .token-subline,
 .recent-bar .token-subline,
 .old-week-bar .token-subline {
   font-size: 12px !important;
   max-width: 320px !important;
 }
 
-.manual-bar .token-table .token-avatar,
-.manual-bar .token-table .token-avatar.placeholder,
 .recent-bar .token-table .token-avatar,
 .recent-bar .token-table .token-avatar.placeholder,
 .old-week-bar .token-table .token-avatar,
@@ -12834,15 +12799,12 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 @media (min-width: 1500px) {
-  .manual-bar .sparkline-col,
   .recent-bar .sparkline-col,
   .old-week-bar .sparkline-col {
     width: clamp(180px, 20vw, 340px);
     min-width: clamp(180px, 20vw, 340px);
   }
 
-  .manual-bar .sparkline-wrap,
-  .manual-bar .token-sparkline,
   .recent-bar .sparkline-wrap,
   .recent-bar .token-sparkline,
   .old-week-bar .sparkline-wrap,
@@ -12851,14 +12813,12 @@ TEMP_LEGACY_BAR_TITLE {
     height: 64px;
   }
 
-  .manual-bar .sparkline-loading,
   .recent-bar .sparkline-loading,
   .old-week-bar .sparkline-loading {
     width: 100%;
     min-height: 64px;
   }
 
-  .manual-bar .token-sparkline-glow,
   .recent-bar .token-sparkline-glow,
   .old-week-bar .token-sparkline-glow {
     stroke-width: 2.7;
@@ -12866,16 +12826,12 @@ TEMP_LEGACY_BAR_TITLE {
     filter: blur(1.8px);
   }
 
-  .manual-bar .token-sparkline-line,
   .recent-bar .token-sparkline-line,
   .old-week-bar .token-sparkline-line {
     stroke-width: 1.15;
   }
 }
 
-.manual-bar .pct-pos,
-.manual-bar .pct-neg,
-.manual-bar .pct-neutral,
 .recent-bar .pct-pos,
 .recent-bar .pct-neg,
 .recent-bar .pct-neutral,
@@ -12885,7 +12841,6 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 12px !important;
 }
 
-.manual-bar .bucket-page-total,
 .recent-bar .bucket-page-total,
 .old-week-bar .bucket-page-total {
   font-size: 12px !important;
@@ -12902,7 +12857,6 @@ TEMP_LEGACY_BAR_TITLE {
 
 
 
-.manual-bar .inline-icon.starred-button,
 .recent-bar .inline-icon.starred-button,
 .old-week-bar .inline-icon.starred-button {
   min-width: 30px !important;
@@ -12913,14 +12867,12 @@ TEMP_LEGACY_BAR_TITLE {
   color: #ffcc00 !important;
 }
 
-.manual-bar .inline-icon.starred-button.active,
 .recent-bar .inline-icon.starred-button.active,
 .old-week-bar .inline-icon.starred-button.active {
   background: rgba(255, 204, 0, 0.12) !important;
   box-shadow: inset 0 0 0 1px rgba(255, 204, 0, 0.22);
 }
 
-.manual-bar .inline-icon.starred-button,
 .recent-bar .inline-icon.starred-button,
 .old-week-bar .inline-icon.starred-button {
   min-width: 24px !important;
@@ -12936,14 +12888,12 @@ TEMP_LEGACY_BAR_TITLE {
   color: #ffcc00 !important;
 }
 
-.manual-bar .inline-icon.starred-button.active,
 .recent-bar .inline-icon.starred-button.active,
 .old-week-bar .inline-icon.starred-button.active {
   background: rgba(255, 204, 0, 0.12) !important;
   box-shadow: inset 0 0 0 1px rgba(255, 204, 0, 0.22);
 }
 
-.manual-bar .inline-icon.copy-button,
 .recent-bar .inline-icon.copy-button,
 .old-week-bar .inline-icon.copy-button {
   min-height: 22px !important;
@@ -13171,7 +13121,6 @@ TEMP_LEGACY_BAR_TITLE {
   box-shadow: inset 0 0 0 1px rgba(255, 204, 0, 0.22);
 }
 
-.manual-bar .inline-icon,
 .recent-bar .inline-icon,
 .old-week-bar .inline-icon {
   min-height: unset !important;
@@ -13179,7 +13128,6 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: inherit !important;
 }
 
-.manual-bar .token-actions-inline .action-glyph,
 .recent-bar .token-actions-inline .action-glyph,
 .old-week-bar .token-actions-inline .action-glyph {
   width: 20px !important;
@@ -13189,20 +13137,9 @@ TEMP_LEGACY_BAR_TITLE {
   padding: 0 !important;
 }
 
-.manual-bar .token-actions-inline .copy-button,
 .recent-bar .token-actions-inline .copy-button,
 .old-week-bar .token-actions-inline .copy-button {
   font-size: 10px !important;
-}
-
-.manual-bar .muted-block {
-  margin: 12px 18px 18px;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(200, 216, 232, 0.58);
-  font-size: 14px;
 }
 
 .monitored-toolbar {
@@ -14168,7 +14105,6 @@ TEMP_LEGACY_BAR_TITLE {
   color: #fff !important;
 }
 
-.legacy-bar-title.manual,
 .legacy-bar-title.recent,
 .legacy-bar-title.old-week {
   font-weight: 900;
@@ -16348,7 +16284,6 @@ TEMP_LEGACY_BAR_TITLE {
   min-height: 0;
 }
 
-
 .token-table.manual tbody tr.forced-hover {
   background: rgba(0, 212, 255, 0.04);
 }
@@ -16481,23 +16416,19 @@ TEMP_LEGACY_BAR_TITLE {
 .old-week-bar .radar-table th,
 .old-week-bar .radar-table td,
 .recent-bar .radar-table th,
-.recent-bar .radar-table td,
-.manual-bar .radar-table th,
-.manual-bar .radar-table td {
+.recent-bar .radar-table td {
   padding: 10px 10px !important;
   vertical-align: middle;
   white-space: normal;
 }
 
 .old-week-bar .radar-table td.radar-trio-col,
-.recent-bar .radar-table td.radar-trio-col,
-.manual-bar .radar-table td.radar-trio-col {
+.recent-bar .radar-table td.radar-trio-col {
   padding: 10px 8px !important;
 }
 
 .old-week-bar .radar-table thead th,
-.recent-bar .radar-table thead th,
-.manual-bar .radar-table thead th {
+.recent-bar .radar-table thead th {
   white-space: nowrap;
 }
 
@@ -16541,8 +16472,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .old-week-bar .radar-subname,
-.recent-bar .radar-subname,
-.manual-bar .radar-subname {
+.recent-bar .radar-subname {
   flex: 0 1 auto;
   max-width: 100% !important;
   font-size: 11px !important;
@@ -16556,8 +16486,6 @@ TEMP_LEGACY_BAR_TITLE {
 
 /* Overrides the 38px the bars force on the legacy table avatars. Same
    specificity as that rule, so it wins by coming later in the sheet. */
-.manual-bar .radar-table .token-avatar,
-.manual-bar .radar-table .token-avatar.placeholder,
 .recent-bar .radar-table .token-avatar,
 .recent-bar .radar-table .token-avatar.placeholder,
 .old-week-bar .radar-table .token-avatar,
@@ -16707,11 +16635,7 @@ TEMP_LEGACY_BAR_TITLE {
 .recent-bar .radar-cell b .radar-coverage,
 .recent-bar .radar-cell b .pct-pos,
 .recent-bar .radar-cell b .pct-neg,
-.recent-bar .radar-cell b .pct-neutral,
-.manual-bar .radar-cell b .radar-coverage,
-.manual-bar .radar-cell b .pct-pos,
-.manual-bar .radar-cell b .pct-neg,
-.manual-bar .radar-cell b .pct-neutral {
+.recent-bar .radar-cell b .pct-neutral {
   font-size: 11px !important;
 }
 
@@ -16751,10 +16675,7 @@ TEMP_LEGACY_BAR_TITLE {
   .old-week-bar .radar-table td.radar-trio-col,
   .recent-bar .radar-table th,
   .recent-bar .radar-table td,
-  .recent-bar .radar-table td.radar-trio-col,
-  .manual-bar .radar-table th,
-  .manual-bar .radar-table td,
-  .manual-bar .radar-table td.radar-trio-col {
+  .recent-bar .radar-table td.radar-trio-col {
     padding: 8px 6px !important;
   }
 
@@ -16770,7 +16691,7 @@ TEMP_LEGACY_BAR_TITLE {
 /* ============================================================
    OLD TOKENS + RECENT toolbar — compact pass modelled on the 1A mockup.
    Geometry and typography only: palette, markup and behaviour
-   are untouched, and nothing here leaks into the manual bar.
+   are untouched, and nothing here leaks into other surfaces.
    ============================================================ */
 
 :is(.old-week-bar, .recent-bar) .recent-bar-controls {
