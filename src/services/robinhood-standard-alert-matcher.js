@@ -1,6 +1,6 @@
 const {
+  ACTIVE_STANDARD_RULE_KEYS,
   CHAIN,
-  STANDARD_RULE_KEYS,
   VALUATION_TYPE,
 } = require('./robinhood-standard-alert-contract');
 const standardAlertReset = require('./standard-alert-reset');
@@ -12,10 +12,6 @@ const {
   getStandardTransition,
 } = require('./standard-alert-transition');
 const { selectEnabledAlertProfilesForChain } = require('./chain-alert-profile');
-const {
-  isStandardAlertEmissionRetired,
-} = require('./standard-alert-emission-policy');
-const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_RULE_KEYS = Object.freeze([
   'recent-surge-1h', 'recent-surge-6h', 'old-week-surge-1h', 'old-week-surge-6h',
@@ -28,8 +24,6 @@ const RULE_SPECS = Object.freeze([
   ['old-week-surge-1h', 'oldWeekSurge1h', 'oldWeekSurge1hThresholdPct', '1h', 'oldWeekSurge'],
 ]);
 const ENABLED_FIELD_BY_RULE = Object.freeze({
-  'monitored-vol': 'monitoredVol',
-  'monitored-fdv': 'monitoredFdv',
   'recent-surge-1h': 'recentSurge1h',
   'recent-surge-6h': 'recentSurge6h',
   'old-week-surge-1h': 'oldWeekSurge1h',
@@ -80,37 +74,6 @@ function presence(profile) {
     hiddenSessionKey: profile.hiddenSessionKey || null,
   };
 }
-function monitoredCandidate(profile, signal, type) {
-  const isVolume = type === 'volume';
-  const window = isVolume ? signal.volume5m : signal.valuation.windows['5m'];
-  const enabled = isVolume
-    ? profile.ruleEnabled.monitoredVol
-    : profile.ruleEnabled.monitoredFdv;
-  const threshold = numberOrNull(isVolume ? profile.thresholdPct : profile.fdvThresholdPct) || 0;
-  const changePct = numberOrNull(window.changePct ?? window.fdvChangePct);
-  const fdvChangePct = Number(signal.valuation.windows['5m'].fdvChangePct);
-  const ageEligible = isVolume || signal.tokenAge.eligibility.minimum1h === true;
-  const invalid = [
-    !enabled, !ageEligible, window.coverage !== 'complete',
-    changePct == null, changePct < threshold,
-    isVolume && Number.isFinite(fdvChangePct) && fdvChangePct < 0,
-    !passesProfileFilters(profile, signal),
-  ];
-  if (invalid.some(Boolean)) return null;
-  const current = numberOrNull(isVolume ? window.currentUsd : signal.valuation.current.fdvUsd);
-  const previous = numberOrNull(isVolume ? window.baselineUsd : window.fdvUsd);
-  const ruleKey = isVolume ? 'monitored-vol' : 'monitored-fdv';
-  return Object.freeze({
-    ruleKey, kind: ruleKey, label: isVolume ? 'VOL' : 'FDV',
-    pct: changePct,
-    lastAlertedValue: current,
-    cooldownMs: STANDARD_ALERT_COOLDOWN_MS,
-    repeatStepPct: threshold,
-    fingerprint: `${ruleKey}:${previous}:${current}`,
-    ...presence(profile),
-    payload: payload(signal, isVolume ? { prevVolume5m: previous } : { prevFdv: previous }),
-  });
-}
 function surgeCandidate(profile, signal, spec) {
   const [ruleKey, enabledField, thresholdField, windowName, ageField] = spec;
   const window = signal.valuation.windows[windowName];
@@ -144,11 +107,7 @@ function surgeCandidate(profile, signal, spec) {
 }
 function buildCandidates(profile, signal) {
   if (isCatalogFdvExcluded(signal.valuation.current.fdvUsd)) return [];
-  return [
-    ...RULE_SPECS.map((spec) => surgeCandidate(profile, signal, spec)),
-    monitoredCandidate(profile, signal, 'volume'),
-    monitoredCandidate(profile, signal, 'fdv'),
-  ].filter((candidate) => candidate && !isStandardAlertEmissionRetired(candidate.ruleKey));
+  return RULE_SPECS.map((spec) => surgeCandidate(profile, signal, spec)).filter(Boolean);
 }
 function stateIndex(states = []) {
   return new Map(states.map((state) => [`${state.userId}:${state.ruleKey}`, state]));
@@ -165,9 +124,6 @@ function surgeThreshold(profile, ruleKey) {
 }
 function isPreparedStateExpired(ruleKey, state, nowMs) {
   if (!state) return false;
-  if (ruleKey === 'monitored-vol') {
-    return standardAlertReset.isMonitoredVolAnchorExpired({ ruleKey }, state, nowMs);
-  }
   const lastAlertedAtMs = timestampMs(state.lastAlertedAt);
   const cooldownActive = ruleKey.endsWith('-6h') && lastAlertedAtMs != null
     && nowMs - lastAlertedAtMs < 6 * 60 * 60 * 1000;
@@ -180,13 +136,8 @@ function prepareRuleState(profile, signal, ruleKey, state, nowMs) {
   if (isPreparedStateExpired(ruleKey, state, nowMs)) {
     return { state, changed: false, expired: true };
   }
-  let reset = { metadata: state.metadata || {}, changed: false };
-  if (ruleKey === 'monitored-vol' && ['triggered', 'rearmed'].includes(state.status)) {
-    reset = standardAlertReset.buildMonitoredVolColdMetadata(
-      state, signal.volume5m.currentUsd, nowMs,
-    );
-  } else if (SURGE_RULE_KEYS.includes(ruleKey) && state.status === 'rearmed') {
-    reset = standardAlertReset.buildSurgeResetMetadata({
+  const reset = SURGE_RULE_KEYS.includes(ruleKey) && state.status === 'rearmed'
+    ? standardAlertReset.buildSurgeResetMetadata({
       ruleKey, thresholdPct: surgeThreshold(profile, ruleKey), state, nowMs,
       observation: {
         valuation: signal.valuation.current.fdvUsd,
@@ -194,8 +145,8 @@ function prepareRuleState(profile, signal, ruleKey, state, nowMs) {
         priceChange6h: signal.valuation.windows['6h'].priceChangePct,
       },
       valuationKeys: ROBINHOOD_SURGE_VALUATION_KEYS,
-    });
-  }
+    })
+    : { metadata: state.metadata || {}, changed: false };
   const prepared = reset.changed ? { ...state, metadata: reset.metadata } : state;
   return {
     state: prepared,
@@ -278,7 +229,7 @@ function prepareProfileStates(profile, signal, indexedStates, nowMs) {
   const byRule = new Map();
   const effective = new Map(indexedStates);
   const prepared = new Map(indexedStates);
-  for (const ruleKey of STANDARD_RULE_KEYS) {
+  for (const ruleKey of ACTIVE_STANDARD_RULE_KEYS) {
     const key = `${profile.userId}:${ruleKey}`;
     const result = prepareRuleState(profile, signal, ruleKey, indexedStates.get(key) || null, nowMs);
     byRule.set(ruleKey, result);
@@ -307,7 +258,7 @@ function appendPrimaryPlan(plans, input) {
 
 function appendInactiveRulePlans(plans, input) {
   const { profile, qualified, states, nowMs } = input;
-  for (const ruleKey of STANDARD_RULE_KEYS) {
+  for (const ruleKey of ACTIVE_STANDARD_RULE_KEYS) {
     if (qualified.has(ruleKey) || !profile.ruleEnabled[ENABLED_FIELD_BY_RULE[ruleKey]]) continue;
     const prepared = states.byRule.get(ruleKey);
     if (SURGE_RULE_KEYS.includes(ruleKey)) {
@@ -357,7 +308,6 @@ function evaluateRobinhoodStandardSignal(input = {}) {
 }
 
 module.exports = {
-  STANDARD_ALERT_COOLDOWN_MS,
   evaluateRobinhoodStandardSignal,
-  __private: { buildCandidates, continuationPlan, monitoredCandidate, passesProfileFilters, surgeCandidate },
+  __private: { buildCandidates, continuationPlan, passesProfileFilters, surgeCandidate },
 };

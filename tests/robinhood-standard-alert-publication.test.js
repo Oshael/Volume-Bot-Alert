@@ -15,9 +15,10 @@ function signal() {
 
 function candidate(overrides = {}) {
   return {
-    ruleKey: 'monitored-fdv', kind: 'monitored-fdv', label: 'FDV',
-    pct: 100, lastAlertedValue: 200_000, cooldownMs: 60_000,
-    fingerprint: 'monitored-fdv:100000:200000', payload: { address: TOKEN, fdv: 200_000 },
+    ruleKey: 'old-week-surge-1h', kind: 'old-surge', label: 'PCHANGE 1H',
+    pct: 100, lastAlertedValue: 100, cooldownMs: 0,
+    fingerprint: 'old-week-surge-1h:100000:100',
+    payload: { address: TOKEN, fdv: 200_000, surgeWindow: '1H', thresholdPct: 50 },
     ...overrides,
   };
 }
@@ -83,10 +84,19 @@ describe('Robinhood standard alert publication', () => {
   });
 
   it('evaluates shadow output without authorization, transaction or state mutation', async () => {
+    let stateRuleKeys;
     const fixture = dependencies({
-      evaluateSignal: () => evaluation([{ action: 'emit', ruleKey: 'monitored-fdv', candidate: candidate() }]),
+      evaluateSignal: () => evaluation([{
+        action: 'emit', ruleKey: 'old-week-surge-1h', candidate: candidate(),
+      }]),
       issueAuthorization: () => { throw new Error('must stay blocked'); },
       db: { getClient: async () => { throw new Error('must not transact'); } },
+      userAlertRuleState: {
+        async listStatesByUsersForToken(input) {
+          stateRuleKeys = input.ruleKeys;
+          return [];
+        },
+      },
     });
     const publication = createRobinhoodStandardAlertPublication(fixture.deps);
     const result = await publication.consume({
@@ -95,6 +105,9 @@ describe('Robinhood standard alert publication', () => {
     assert.equal(result.status, 'shadow');
     assert.equal(result.plannedEmits, 1);
     assert.equal(result.persisted, 0);
+    assert.deepEqual(stateRuleKeys, [
+      'recent-surge-1h', 'recent-surge-6h', 'old-week-surge-1h', 'old-week-surge-6h',
+    ]);
     assert.deepEqual(fixture.calls, { events: 0, triggered: 0, rearmed: 0, published: 0 });
   });
 
@@ -108,7 +121,7 @@ describe('Robinhood standard alert publication', () => {
       return markTriggered(input, runner);
     };
     fixture.deps.evaluateSignal = () => evaluation([
-      { action: 'emit', ruleKey: 'monitored-fdv', candidate: candidate(), state: null },
+      { action: 'emit', ruleKey: 'old-week-surge-1h', candidate: candidate(), state: null },
     ]);
     fixture.deps.userAlertEvent.createEventOnce = async (intent, options) => {
       fixture.calls.events += 1;
@@ -122,10 +135,11 @@ describe('Robinhood standard alert publication', () => {
     });
     const replay = await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
     assert.equal(first.persisted, 1);
-    assert.equal(first.stateWrites, 1);
+    assert.equal(first.stateWrites, 2);
     assert.equal(first.commitToAlertLatencyMs, 125);
     assert.equal(replay.duplicates, 1);
     assert.equal(fixture.calls.triggered, 1);
+    assert.equal(fixture.calls.rearmed, 1);
     assert.equal(fixture.calls.published, 1);
     assert.equal(publication.getStatus().averageCommitToAlertLatencyMs, 125);
     assert.deepEqual(fixture.transaction, ['BEGIN', 'COMMIT', 'RELEASE', 'BEGIN', 'COMMIT', 'RELEASE']);
@@ -138,7 +152,7 @@ describe('Robinhood standard alert publication', () => {
     let capturedIntent;
     const fixture = dependencies({
       evaluateSignal: () => evaluation([
-        { action: 'emit', ruleKey: 'monitored-fdv', candidate: candidate(), state: null },
+        { action: 'emit', ruleKey: 'old-week-surge-1h', candidate: candidate(), state: null },
       ]),
       alertTickerPeers: {
         async buildTickerPeerSnapshotForAlert(input, options) {
@@ -161,14 +175,14 @@ describe('Robinhood standard alert publication', () => {
     assert.equal(capturedIntent.payload.tickerPeers, tickerPeers);
   });
 
-  it('renders monitored repeats against the persisted anchor and coalesces hidden dedupe', async () => {
+  it('preserves active candidate metrics and coalesces hidden dedupe', async () => {
     const fixture = dependencies();
     let intent;
     let triggeredInput;
-    fixture.deps.evaluateSignal = () => evaluation([{ action: 'emit', ruleKey: 'monitored-fdv',
-      state: { lastAlertedValue: 100_000, metadata: {} },
+    fixture.deps.evaluateSignal = () => evaluation([{ action: 'emit', ruleKey: 'old-week-surge-1h',
+      state: { lastAlertedValue: 80, metadata: {} },
       candidate: candidate({
-        lastAlertedValue: 200_000, pct: 33,
+        lastAlertedValue: 100, pct: 33,
         presenceMode: 'hidden', hiddenSessionKey: 'hidden:1',
         payload: { fdv: 200_000, prevFdv: 150_000 },
       }),
@@ -184,9 +198,9 @@ describe('Robinhood standard alert publication', () => {
     };
     const publication = createRobinhoodStandardAlertPublication(fixture.deps);
     await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
-    assert.equal(intent.dedupeKey, `7:monitored-fdv:${TOKEN}:hidden`);
-    assert.equal(intent.payload.prevFdv, 100_000);
-    assert.equal(intent.payload.pct, 100);
+    assert.equal(intent.dedupeKey, `7:old-week-surge-1h:${TOKEN}:hidden`);
+    assert.equal(intent.payload.prevFdv, 150_000);
+    assert.equal(intent.payload.pct, 33);
     assert.equal(triggeredInput.metadata.lastPresenceMode, 'hidden');
     assert.equal(triggeredInput.metadata.lastHiddenSessionKey, 'hidden:1');
   });
@@ -200,7 +214,7 @@ describe('Robinhood standard alert publication', () => {
           sessionStartedAt: '2026-07-19T18:00:00.000Z',
           payload: { fdv: 200_000, ageBucket: 'old-week', surgeWindow: '1H', thresholdPct: 50 },
         }), state: null },
-        { action: 'rearm', ruleKey: 'monitored-vol', candidate: null,
+        { action: 'rearm', ruleKey: 'recent-surge-1h', candidate: null,
           state: { status: 'triggered', cooldownUntil: '2026-07-19T18:01:00.000Z' } },
       ]),
     });
@@ -258,7 +272,7 @@ describe('Robinhood standard alert publication', () => {
   it('rolls back the event when its state transition fails and never publishes it', async () => {
     const fixture = dependencies({
       evaluateSignal: () => evaluation([
-        { action: 'emit', ruleKey: 'monitored-fdv', candidate: candidate(), state: null },
+        { action: 'emit', ruleKey: 'old-week-surge-1h', candidate: candidate(), state: null },
       ]),
     });
     fixture.deps.userAlertRuleState.markTriggered = async () => { throw new Error('state failed'); };

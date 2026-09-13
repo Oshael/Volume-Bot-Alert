@@ -245,7 +245,7 @@ describe('Robinhood standard alert matcher', () => {
     const foregroundAnchor = evaluate({ profiles: [configured], states: [state] });
     assert.equal(foregroundAnchor.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
   });
-  it('returns a rearm plan without mutating state when an enabled rule becomes cold', () => {
+  it('does not prepare or rearm retired state when a legacy rule becomes cold', () => {
     const state = {
       userId: 1, ruleKey: 'monitored-vol', status: 'triggered', rearmRequired: true,
       lastAlertedValue: 300, cooldownUntil: '2026-07-19T18:01:00.000Z',
@@ -254,7 +254,7 @@ describe('Robinhood standard alert matcher', () => {
     const result = evaluate({
       signal: blocked, profiles: [profile(1, { ruleEnabled: { monitoredVol: true } })], states: [state],
     });
-    assert.equal(result.evaluations[0].plans[0].action, 'rearm');
+    assert.equal(result.evaluations[0].plans.length, 0);
     assert.equal(state.status, 'triggered');
     const idle = { ...state, status: 'idle', rearmRequired: false, metadata: {} };
     const idleResult = evaluate({

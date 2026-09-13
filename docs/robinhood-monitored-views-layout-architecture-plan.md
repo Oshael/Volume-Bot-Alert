@@ -624,6 +624,9 @@ Execute the retirement through these bounded cuts:
     from active state preparation and remove their anchored-repeat publication branches. Keep database constraints, stored
     rows and historical feed/formatter contracts intact. Validate the matcher, publication and derived standard-alert sink,
     then run repository lint. Estimated change: 250–350 lines.
+    **Completed:** the Robinhood matcher constructs and prepares state only for active surge rules, publication loads only
+    those active state keys and the retired anchored-repeat payload rewrite is gone. The legacy rule catalog remains readable
+    for persisted rows and historical delivery contracts.
   - **R4b — Solana runtime cleanup:** remove retired Volume 5m, GMGN Volume 1m and MCap 5m candidate construction, their
     dedicated baseline loads, cold-reset/rearm work and anchored-repeat payload handling. Preserve Price Surge, Surge
     Continuation, HVNC, Meteora, Custom alerts and the active Telegram destination. Validate the matcher, profile evaluator,

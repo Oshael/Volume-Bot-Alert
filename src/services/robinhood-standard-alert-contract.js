@@ -9,6 +9,12 @@ const STANDARD_RULE_KEYS = Object.freeze([
   'old-week-surge-1h',
   'old-week-surge-6h',
 ]);
+const ACTIVE_STANDARD_RULE_KEYS = Object.freeze([
+  'recent-surge-1h',
+  'recent-surge-6h',
+  'old-week-surge-1h',
+  'old-week-surge-6h',
+]);
 const STANDARD_RULE_KINDS = Object.freeze({
   'monitored-vol': 'monitored-vol',
   [MONITORED_FDV_RULE_KEY]: MONITORED_FDV_RULE_KEY,
@@ -26,6 +32,7 @@ function isRobinhoodStandardRule(ruleKey, kind) {
 }
 
 module.exports = {
+  ACTIVE_STANDARD_RULE_KEYS,
   CHAIN,
   MONITORED_FDV_RULE_KEY,
   STANDARD_RULE_KEYS,

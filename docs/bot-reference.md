@@ -958,6 +958,10 @@ Os perfis efetivos forçam essas regras como desativadas mesmo quando existem op
 seus thresholds, toggles ou controles de som; os filtros de valuation da view Monitored continuam configuráveis na própria
 view. O Telegram cria e lista apenas regras ativas, rejeita callbacks desses tipos aposentados e ignora seus registros
 legados ao montar o perfil de avaliação, sem removê-los da persistência compatível.
+No runtime Robinhood, o matcher e a publicação consultam, preparam e gravam estado apenas para Price Surge e Surge
+Continuation. Os identificadores `monitored-vol` e `monitored-fdv` permanecem no catálogo legado exclusivamente para
+schemas, registros persistidos e leitura histórica; não participam mais da construção de candidatos, rearm ou payload de
+publicação.
 
 A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
 (`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de

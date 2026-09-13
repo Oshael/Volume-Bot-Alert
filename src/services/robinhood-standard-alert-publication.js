@@ -8,8 +8,8 @@ const {
   issueAutomaticAlertPublicationAuthorization,
 } = require('./automatic-alert-publication-guard');
 const {
+  ACTIVE_STANDARD_RULE_KEYS,
   CHAIN,
-  STANDARD_RULE_KEYS,
 } = require('./robinhood-standard-alert-contract');
 const {
   evaluateRobinhoodStandardSignal,
@@ -17,18 +17,11 @@ const {
 
 const SURGE_CONTINUATION_RULE_KEY = 'surge-continuation-6h';
 const MUTATING_ACTIONS = new Set(['emit', 'prime', 'rearm']);
-const ANCHORED_REPEAT_RULE_KEYS = new Set(['monitored-vol', 'monitored-fdv']);
 
 function cooldownUntil(candidate, triggeredAt) {
   const cooldownMs = Number(candidate?.cooldownMs);
   return Number.isFinite(cooldownMs) && cooldownMs > 0
     ? new Date(triggeredAt.getTime() + cooldownMs) : null;
-}
-
-function numberOrNull(value) {
-  if (value == null || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function buildEventPayload(plan, signal, tickerPeers = null) {
@@ -38,14 +31,6 @@ function buildEventPayload(plan, signal, tickerPeers = null) {
     label: candidate.label || null, pct: candidate.pct ?? null,
   };
   if (tickerPeers) eventPayload.tickerPeers = tickerPeers;
-  const anchor = numberOrNull(plan.state?.lastAlertedValue);
-  const current = numberOrNull(candidate.lastAlertedValue);
-  if (!ANCHORED_REPEAT_RULE_KEYS.has(plan.ruleKey) || !(anchor > 0) || current == null) {
-    return eventPayload;
-  }
-  eventPayload.pct = ((current - anchor) / anchor) * 100;
-  if (plan.ruleKey === 'monitored-vol') eventPayload.prevVolume5m = anchor;
-  if (plan.ruleKey === 'monitored-fdv') eventPayload.prevFdv = anchor;
   return eventPayload;
 }
 
@@ -270,7 +255,7 @@ function createRobinhoodStandardAlertPublication(options = {}) {
     for (const signal of signals) {
       const states = await dependencies.stateModel.listStatesByUsersForToken({
         userIds: profiles.map((profile) => profile.userId),
-        ruleKeys: STANDARD_RULE_KEYS, chain: CHAIN, tokenAddress: signal.address,
+        ruleKeys: ACTIVE_STANDARD_RULE_KEYS, chain: CHAIN, tokenAddress: signal.address,
       });
       evaluated.push({
         signal,
