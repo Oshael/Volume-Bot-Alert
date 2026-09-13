@@ -235,7 +235,7 @@ describe('gmgn catalog ingestion', () => {
     const tokenCatalogModel = createTokenCatalogStub();
     tokenCatalogModel.getByAddress = async (address) => ({
       address,
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligibility_state: 'dex-high',
       eligible_for_monitoring: true,
       last_pair_url: 'https://dexscreener.com/solana/cards-pair',
@@ -257,7 +257,7 @@ describe('gmgn catalog ingestion', () => {
       evaluationPayload = payload;
       return {
         address,
-        source: 'user-manual',
+        source: 'user-watchlist',
         eligible_for_monitoring: true,
         eligibility_state: payload.eligibilityState,
         last_mcap: payload.mcap,
@@ -1034,7 +1034,7 @@ describe('gmgn catalog ingestion', () => {
     const bucketWrites = [];
     catalog.getByAddress = async (address) => ({
       address,
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligibility_state: 'dex-normal',
       eligible_for_monitoring: true,
       last_pair_url: 'https://dexscreener.com/solana/testpair',
@@ -1362,7 +1362,7 @@ describe('gmgn catalog ingestion', () => {
           return { address: payload.address, source: payload.source };
         },
         async applyEvaluationResult(address, payload) {
-          return { address, source: 'user-manual', last_vol_5m: payload.vol5m };
+          return { address, source: 'user-watchlist', last_vol_5m: payload.vol5m };
         },
       },
       marketBucketModel: {
@@ -2554,7 +2554,7 @@ describe('gmgn catalog ingestion', () => {
     assert.match(result.summary.errorMessages[0], /GMGN security check failed/);
   });
 
-  it('does not auto-block manual tokens from GMGN junk guard', async () => {
+  it('does not auto-block Watchlist tokens from GMGN junk guard', async () => {
     let blockCalls = 0;
     let upsertCalls = 0;
 
@@ -2568,13 +2568,13 @@ describe('gmgn catalog ingestion', () => {
       },
       tokenCatalogModel: {
         async getByAddress(address) {
-          return { address, source: 'user-manual' };
+          return { address, source: 'user-watchlist' };
         },
         async upsertToken() {
           upsertCalls += 1;
         },
         async applyEvaluationResult(address, payload) {
-          return { address, source: 'user-manual', last_vol_5m: payload.vol5m };
+          return { address, source: 'user-watchlist', last_vol_5m: payload.vol5m };
         },
       },
       volumeBucketModel: { async upsertSnapshotBucket() { return {}; } },

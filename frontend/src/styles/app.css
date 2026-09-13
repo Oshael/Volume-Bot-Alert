@@ -480,7 +480,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .summary-box span,
 .summary-row span,
 .login-form label span,
-.manual-token-form label span,
 .monitor-config-form label span,
 .token-card span,
 .alert-card span,
@@ -520,7 +519,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .login-form,
-.manual-token-form,
 .monitor-config-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -534,13 +532,11 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .login-form label,
-.manual-token-form label,
 .monitor-config-form label {
   display: block;
 }
 
 .login-form input,
-.manual-token-form input,
 .monitor-config-form input {
   width: 100%;
   min-height: 44px;
@@ -990,8 +986,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   }
 
   .status-strip,
-  .login-form,
-  .manual-token-form {
+  .login-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1013,7 +1008,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
   .hero,
   .login-form,
-  .manual-token-form,
   .monitor-config-form,
   .bars-grid,
   .status-strip,

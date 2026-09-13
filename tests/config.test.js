@@ -459,7 +459,7 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs['mock-sol-usdc-rate'], 123.45);
   });
 
-  it('fully syncs configs, manual tokens, blocklist, starred tokens and resets omitted config keys to defaults', async () => {
+  it('fully syncs configs, Watchlist tokens, blocklist, starred tokens and resets omitted config keys to defaults', async () => {
     const response = await request(app)
       .put('/api/config')
       .set('Authorization', `Bearer ${userToken}`)
@@ -518,7 +518,7 @@ describe('Config routes', () => {
     assert.deepEqual(afterResponse.body.tokens, beforeResponse.body.tokens);
   });
 
-  it('supports manual token CRUD with address normalization', async () => {
+  it('supports Watchlist token CRUD with address normalization', async () => {
     const createResponse = await request(app)
       .post('/api/config/tokens')
       .set('Authorization', `Bearer ${userToken}`)
@@ -543,7 +543,7 @@ describe('Config routes', () => {
     assert.match(deleteResponse.body.message, /removed/i);
   });
 
-  it('reactivates soft-archived catalog rows when adding a manual token', async () => {
+  it('reactivates soft-archived catalog rows when adding a Watchlist token', async () => {
     const originalGetByAddress = tokenCatalog.getByAddress;
     const originalReactivateSoftArchivedToken = tokenCatalog.reactivateSoftArchivedToken;
     const originalUpsertToken = tokenCatalog.upsertToken;
@@ -642,13 +642,13 @@ describe('Config routes', () => {
       .send({ chain: 'robinhood', address: INVALID_ADDR });
     assert.equal(invalidResponse.status, 400);
 
-    const manualResponse = await request(app)
+    const watchlistResponse = await request(app)
       .post('/api/config/tokens')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ chain: 'robinhood', address: ROBINHOOD_ADDR_MIXED, label: 'RH manual' });
-    assert.equal(manualResponse.status, 201);
+      .send({ chain: 'robinhood', address: ROBINHOOD_ADDR_MIXED, label: 'RH watchlist' });
+    assert.equal(watchlistResponse.status, 201);
     assert.deepEqual(
-      { chain: manualResponse.body.token.chain, address: manualResponse.body.token.address },
+      { chain: watchlistResponse.body.token.chain, address: watchlistResponse.body.token.address },
       { chain: 'robinhood', address: ROBINHOOD_ADDR },
     );
 
@@ -960,7 +960,7 @@ describe('Config routes', () => {
       request(app)
         .post('/api/config/tokens')
         .set('Authorization', `Bearer ${userToken}`)
-        .send({ address: VALID_ADDR_1, label: 'Isolation manual' }),
+        .send({ address: VALID_ADDR_1, label: 'Isolation watchlist' }),
       request(app)
         .post('/api/config/blocklist')
         .set('Authorization', `Bearer ${userToken}`)

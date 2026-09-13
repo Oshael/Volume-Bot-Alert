@@ -3673,7 +3673,7 @@ export function createAppController(): AppController {
       executedAt: null,
       lastPriceUsd: null,
       lastMcap: null,
-      manualTracked: false,
+      watchlistTracked: false,
       buyAttempted: false,
     };
   }
@@ -16564,7 +16564,7 @@ export function createAppController(): AppController {
         executedAt: null,
         lastPriceUsd: null,
         lastMcap: null,
-        manualTracked: false,
+        watchlistTracked: false,
         buyAttempted: false,
       };
       nextFloatingQuickBuyDashboardRefreshAt = 0;
@@ -16581,7 +16581,7 @@ export function createAppController(): AppController {
         }
         updateFloatingQuickBuyState({
           status: 'waiting_market',
-          manualTracked: true,
+          watchlistTracked: true,
           message: 'Waiting for GMGN/catalog MCAP update',
           error: null,
         });

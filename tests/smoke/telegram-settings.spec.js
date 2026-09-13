@@ -14,7 +14,7 @@ const READY = {
     radar: true,
     monitored: true,
     topPerformers: true,
-    manualTokens: true,
+    watchlist: true,
     starred: true,
     blocklist: true,
     history: true,

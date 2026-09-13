@@ -534,7 +534,7 @@ export interface FloatingQuickBuyState {
   executedAt: number | null;
   lastPriceUsd: number | null;
   lastMcap: number | null;
-  manualTracked: boolean;
+  watchlistTracked: boolean;
   buyAttempted: boolean;
 }
 
@@ -1219,7 +1219,7 @@ export function createAppState(): AppState {
         executedAt: null,
         lastPriceUsd: null,
         lastMcap: null,
-        manualTracked: false,
+        watchlistTracked: false,
         buyAttempted: false,
       },
       floatingQuickBuyVisible: true,

@@ -11,6 +11,9 @@ describe('Watchlist backend compatibility', () => {
     const catalogApi = fs.readFileSync(path.join(root, 'services/api/catalog.ts'), 'utf8');
     const configApi = fs.readFileSync(path.join(root, 'services/api/config.ts'), 'utf8');
     const controller = fs.readFileSync(path.join(root, 'state/app-controller.ts'), 'utf8');
+    const appState = fs.readFileSync(path.join(root, 'state/app-state.ts'), 'utf8');
+    const appShell = fs.readFileSync(path.join(root, 'ui/app-shell.ts'), 'utf8');
+    const appStyles = fs.readFileSync(path.join(root, 'styles/app.css'), 'utf8');
     const toggle = controller.match(/async toggleWatchlistToken[\s\S]*?setSoundVolume/)?.[0] || '';
 
     assert.match(catalogApi, /\/api\/catalog\/watchlist-track/);
@@ -20,6 +23,10 @@ describe('Watchlist backend compatibility', () => {
     assert.match(toggle, /removeWatchlistTokenRequest/);
     assert.match(toggle, /syncWatchlistTokenToBackend/);
     assert.doesNotMatch(toggle, /StarredTokenRequest/);
+    assert.match(appState, /watchlistTracked: boolean/);
+    assert.match(appShell, /watchlistTracked: quickBuy\.watchlistTracked/);
+    assert.doesNotMatch(`${appState}\n${controller}\n${appShell}`, /manualTracked/);
+    assert.doesNotMatch(appStyles, /manual-token-form/);
   });
 
   it('normalizes legacy preferences and emits only canonical Watchlist keys', () => {

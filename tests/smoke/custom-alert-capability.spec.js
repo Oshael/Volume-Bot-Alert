@@ -17,7 +17,7 @@ function readiness(chain, customAlerts = true) {
     message: customAlerts ? `${chain} ready.` : `${chain} rollout blocked.`,
     capabilities: {
       alertFeed: true, radar: true, monitored: true, topPerformers: true,
-      manualTokens: true, starred: true, blocklist: true, history: true,
+      watchlist: true, starred: true, blocklist: true, history: true,
       customAlerts, charts: true, explorerLinks: true, tradeLinks: true,
       mockTrading: false, solanaNative: chain === 'solana',
     },

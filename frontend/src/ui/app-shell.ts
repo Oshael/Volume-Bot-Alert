@@ -1260,7 +1260,7 @@ function getFloatingQuickBuyRenderKey(state: AppState, isAccountSecurityRoute: b
     message: quickBuy.message,
     error: quickBuy.error,
     notionalSol: quickBuy.notionalSol,
-    manualTracked: quickBuy.manualTracked,
+    watchlistTracked: quickBuy.watchlistTracked,
     buyAttempted: quickBuy.buyAttempted,
     busy: state.ui.busy,
     walletId: state.ui.activeMockTradingWalletId,

@@ -12,7 +12,7 @@ const userAlertMatcher = require('../src/services/user-alert-matcher');
 const TOKEN_A = 'So11111111111111111111111111111111111111112';
 const TOKEN_B = 'So11111111111111111111111111111111111111113';
 
-function stubLiveManualAddress(value = true) {
+function stubLiveWatchlistAddress(value = true) {
   const originalHasUserWatchlistAddress = tokenCatalog.hasUserWatchlistAddress;
   const originalDemoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress;
   tokenCatalog.hasUserWatchlistAddress = async () => value;
@@ -120,7 +120,7 @@ describe('catalog worker drift compensation', () => {
     assert.equal(retryMs, 3 * 60 * 1000);
   });
 
-  it('identifies stale GMGN dex-unavailable zombies without catching manual or transient rows', () => {
+  it('identifies stale GMGN dex-unavailable zombies without catching Watchlist or transient rows', () => {
     assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
       source: 'gmgn',
       eligible_for_monitoring: true,
@@ -133,7 +133,7 @@ describe('catalog worker drift compensation', () => {
     }), true);
 
     assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligible_for_monitoring: true,
       monitor_priority: 'high',
       last_mcap: 122550,
@@ -377,38 +377,38 @@ describe('catalog worker drift compensation', () => {
     assert.ok(nextMs >= 10 * 60 * 1000, `expected existing low-dust cadence to remain slower than 3m, got ${nextMs}ms`);
   });
 
-  it('keeps manual tokens eligible even when volume24h is below 5k', () => {
+  it('keeps Watchlist tokens eligible even when volume24h is below 5k', () => {
     const now = Date.now();
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({
       marketCap: 65000,
       volume: { h24: 4200, h6: 18000 },
       priceChange: {},
     }, {
-      source: 'user-manual',
+      source: 'user-watchlist',
     });
 
     const nextMs = snapshot.nextEvaluationAt.getTime() - now;
     assert.equal(snapshot.monitorPriority, 'normal');
     assert.equal(snapshot.eligibleForMonitoring, true);
     assert.equal(snapshot.suppressedReason, null);
-    assert.ok(nextMs < 3 * 60 * 1000, `expected manual token to keep normal cadence, got ${nextMs}ms`);
+    assert.ok(nextMs < 3 * 60 * 1000, `expected Watchlist token to keep normal cadence, got ${nextMs}ms`);
   });
 
-  it('keeps low-mcap manual tokens on fast Dex cadence', () => {
+  it('keeps low-mcap Watchlist tokens on fast Dex cadence', () => {
     const now = Date.now();
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({
       marketCap: 9000,
       volume: { h24: 1000 },
       priceChange: {},
     }, {
-      source: 'user-manual',
+      source: 'user-watchlist',
     });
 
     const nextMs = snapshot.nextEvaluationAt.getTime() - now;
     assert.equal(snapshot.monitorPriority, 'low');
     assert.equal(snapshot.eligibleForMonitoring, true);
     assert.equal(snapshot.suppressedReason, null);
-    assert.ok(nextMs >= 15 * 1000 && nextMs < 20 * 1000, `expected fast manual low-mcap cadence, got ${nextMs}ms`);
+    assert.ok(nextMs >= 15 * 1000 && nextMs < 20 * 1000, `expected fast Watchlist low-mcap cadence, got ${nextMs}ms`);
   });
 
   it('fills young Dex 6h and 24h volume windows from shorter available volume', () => {
@@ -466,10 +466,10 @@ describe('catalog worker drift compensation', () => {
     assert.equal(catalogWorker.__private.getDexPriorityHint(token), 'low-activity');
   });
 
-  it('keeps only high and manual tokens during cooldown', () => {
+  it('keeps only high and Watchlist tokens during cooldown', () => {
     const ordered = catalogWorker.__private.prioritizeTokensForThrottle([
       { address: 'A', source: 'dexscreener-discovery', monitor_priority: 'normal', last_mcap: 60000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
-      { address: 'B', source: 'user-manual', monitor_priority: 'low', last_mcap: 9000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
+      { address: 'B', source: 'user-watchlist', monitor_priority: 'low', last_mcap: 9000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
       { address: 'C', source: 'dexscreener-discovery', monitor_priority: 'high', last_mcap: 200000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
     ], { mode: 'cooldown' }, 3);
 
@@ -481,7 +481,7 @@ describe('catalog worker drift compensation', () => {
       { address: 'A', source: 'dexscreener-discovery', monitor_priority: 'normal', last_mcap: 60000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
       { address: 'B', source: 'dexscreener-discovery', monitor_priority: 'low', last_mcap: 9000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
       { address: 'C', source: 'dexscreener-discovery', monitor_priority: 'low', last_mcap: 20000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
-      { address: 'D', source: 'user-manual', monitor_priority: 'low', last_mcap: 12000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
+      { address: 'D', source: 'user-watchlist', monitor_priority: 'low', last_mcap: 12000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },
     ], { mode: 'recovery', recoveryPhase: 'normal' }, 4);
 
     assert.deepEqual(ordered.map((item) => item.address), ['D', 'A']);
@@ -705,17 +705,17 @@ describe('catalog worker drift compensation', () => {
     assert.equal(nonExemptAssessment.shouldBlock, true);
   });
 
-  it('uses GMGN token info before Dex for manual pre-migration launchpad tokens', async () => {
+  it('uses GMGN token info before Dex for Watchlist pre-migration launchpad tokens', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
-    const restoreLiveManual = stubLiveManualAddress(true);
+    const restoreLiveWatchlist = stubLiveWatchlistAddress(true);
     const writes = [];
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligibility_state: 'pending',
       eligible_for_monitoring: false,
       monitor_priority: 'dormant',
@@ -803,20 +803,20 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
-      restoreLiveManual();
+      restoreLiveWatchlist();
     }
   });
 
-  it('lets Dex take over manual launchpad tokens after GMGN reports migration', async () => {
+  it('lets Dex take over Watchlist launchpad tokens after GMGN reports migration', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
-    const restoreLiveManual = stubLiveManualAddress(true);
+    const restoreLiveWatchlist = stubLiveWatchlistAddress(true);
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligibility_state: 'gmgn-low',
       eligible_for_monitoring: true,
       monitor_priority: 'normal',
@@ -874,20 +874,20 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
-      restoreLiveManual();
+      restoreLiveWatchlist();
     }
   });
 
-  it('does not call GMGN before Dex for migrated manual tokens with a Dex pair snapshot', async () => {
+  it('does not call GMGN before Dex for migrated Watchlist tokens with a Dex pair snapshot', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
-    const restoreLiveManual = stubLiveManualAddress(true);
+    const restoreLiveWatchlist = stubLiveWatchlistAddress(true);
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligibility_state: 'dex-low',
       eligible_for_monitoring: true,
       monitor_priority: 'low',
@@ -902,7 +902,7 @@ describe('catalog worker drift compensation', () => {
 
     catalogWorker.__private.setDefaultGmgnClientForTest({
       fetchTokenInfo: async () => {
-        throw new Error('GMGN should not be called before Dex for a Dex-confirmed manual token');
+        throw new Error('GMGN should not be called before Dex for a Dex-confirmed Watchlist token');
       },
     });
     dexscreener.getBestPair = () => ({
@@ -936,11 +936,11 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
-      restoreLiveManual();
+      restoreLiveWatchlist();
     }
   });
 
-  it('does not use GMGN for catalog rows that are no longer live manual tokens', async () => {
+  it('does not use GMGN for catalog rows that are no longer live Watchlist tokens', async () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalHasUserWatchlistAddress = tokenCatalog.hasUserWatchlistAddress;
     const originalDemoteFormerWatchlistAddress = tokenCatalog.demoteFormerWatchlistAddress;
@@ -948,7 +948,7 @@ describe('catalog worker drift compensation', () => {
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligibility_state: 'pending',
       eligible_for_monitoring: false,
       monitor_priority: 'dormant',
@@ -967,7 +967,7 @@ describe('catalog worker drift compensation', () => {
     };
     catalogWorker.__private.setDefaultGmgnClientForTest({
       fetchTokenInfo: async () => {
-        throw new Error('stale manual catalog rows must not call GMGN token info');
+        throw new Error('stale Watchlist catalog rows must not call GMGN token info');
       },
     });
     tokenCatalog.applyEvaluationResult = async (_address, payload) => {
@@ -989,17 +989,17 @@ describe('catalog worker drift compensation', () => {
     }
   });
 
-  it('keeps using GMGN for manual launchpad tokens after migration when Dex has no pair yet', async () => {
+  it('keeps using GMGN for Watchlist launchpad tokens after migration when Dex has no pair yet', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
-    const restoreLiveManual = stubLiveManualAddress(true);
+    const restoreLiveWatchlist = stubLiveWatchlistAddress(true);
     const writes = [];
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
-      source: 'user-manual',
+      source: 'user-watchlist',
       eligible_for_monitoring: true,
       monitor_priority: 'normal',
       last_mcap: 6400,
@@ -1077,7 +1077,7 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
-      restoreLiveManual();
+      restoreLiveWatchlist();
     }
   });
 
@@ -1402,7 +1402,7 @@ describe('catalog worker spam ticker auto-block', () => {
       { name: 'older than the age window', overrides: { ageMs: 11 * 60 * 1000 }, reason: 'age' },
       { name: 'unknown creation time', overrides: { pairCreatedAt: null }, reason: 'age' },
       { name: 'market cap under the floor', overrides: { marketCap: 499999 }, reason: 'mcap' },
-      { name: 'manual source', overrides: { token: { source: 'user-manual' } }, reason: 'trusted-source' },
+      { name: 'Watchlist source', overrides: { token: { source: 'user-watchlist' } }, reason: 'trusted-source' },
       { name: 'empty denylist', overrides: { options: { denylist: new Set() } }, reason: 'denylist-empty' },
     ];
 

@@ -375,7 +375,7 @@ describe('Catalog routes', () => {
       await tokenCatalog.upsertToken({
         address: VALID_ADDR,
         chain: 'solana',
-        source: 'user-manual',
+        source: 'user-watchlist',
         symbol: 'TRWUMP',
         mcap: 87260,
         isActiveMonitorCandidate: true,

@@ -31,7 +31,7 @@ function installClient() {
 }
 
 describe('chain-aware user token preferences', () => {
-  it('normalizes explicit Robinhood identity in manual token CRUD', async () => {
+  it('normalizes explicit Robinhood identity in Watchlist token CRUD', async () => {
     const calls = [];
     db.query = async (sql, params = []) => {
       calls.push({ sql: String(sql), params });
@@ -63,7 +63,7 @@ describe('chain-aware user token preferences', () => {
     await assert.rejects(userToken.add(3, EVM_MIXED), /Invalid solana token address/);
   });
 
-  it('replaces only the requested chain for manual tokens', async () => {
+  it('replaces only the requested chain for Watchlist tokens', async () => {
     const calls = installClient();
     await userToken.setAll(9, [{ address: EVM_MIXED, label: 'RH' }, SOLANA], 'robinhood');
 

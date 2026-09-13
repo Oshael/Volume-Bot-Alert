@@ -71,7 +71,7 @@ describe('Robinhood persistent workspace catalog reader', () => {
     assert.doesNotMatch(calls[0].sql, /\b(?:INSERT|UPDATE|DELETE)\b/);
   });
 
-  it('does not invent activity or valuation for a manual catalog identity', async () => {
+  it('does not invent activity or valuation for a legacy Watchlist catalog identity', async () => {
     const database = {
       async query() {
         return { rows: [catalogRow({
