@@ -652,6 +652,36 @@ Execute the retirement through these bounded cuts:
 Move compact cache ownership to token identity, share fetch deduplication/live merges, prioritize visible Alerts Focus
 identities and remove redundant per-alert series ownership after compatibility is proven.
 
+Execute this convergence through bounded cuts so the shared cache becomes authoritative before the legacy alert-owned
+series is removed:
+
+- **7A — identity cache and persistence contract:** move compact cache read/write/normalization rules into the focused
+  sparkline owner, define `(chain,address)` as the only canonical key and add a compatibility adapter that can hydrate
+  legacy `alert_sparklines` entries through their alert identity. Keep the current consumers unchanged while unit tests
+  prove chain isolation, duplicate-alert collapse, bounded normalization and deterministic legacy migration. Estimated
+  change: 250–350 lines.
+- **7B — Alerts consumer convergence:** render Alerts and seed the expanded chart from the shared identity cache, make the
+  existing alert history fetch write that cache and remove `alertSparklineById` from application state, alert pruning and
+  removed-token snapshots. Preserve legacy storage reads and a bounded canonical persisted subset until the unified fetch
+  path is proven. Validate duplicate alerts sharing one in-memory series plus frontend build and repository lint. Estimated
+  change: 300–450 lines.
+- **7C — shared fetch orchestration:** replace the alert-ID request queue with one chain-aware identity scheduler used by
+  Monitored and Alerts, deduplicate identical in-flight/history requests and retain the existing bounded batch, timeout,
+  freshness and retry rules. Keep `app-controller.ts` limited to collecting visible identities and applying results; put
+  selection and priority rules in the focused sparkline owner. Validate one request per identity/request shape, cross-chain
+  isolation, stale-session rejection and failure recovery. Estimated change: 350–500 lines.
+- **7D — visibility and Alerts Focus priority:** report only the rendered Alerts page plus visible Monitored rows to the
+  scheduler, lower hidden/off-screen work and put the visible Alerts identity set first when the active preset is Alerts
+  Focus. Preserve bounded periodic reconciliation for missed events without creating a polling discovery path. Validate
+  page/search changes, preset transitions, priority order and bounded work with focused unit and smoke coverage. Estimated
+  change: 250–400 lines.
+- **7E — realtime convergence and legacy cleanup:** make accepted committed `market:bucket` updates mutate the one compact
+  identity series and invalidate every visible consumer of that identity from the same revision, preserving sequence/block
+  ordering against late HTTP snapshots. Remove the legacy alert cache writer/key and remaining per-alert fetch residue only
+  after duplicate-fetch, shared-render and live-merge coverage passes; update the operational reference, run scoped
+  dead-reference searches and validate the frontend build, smoke coverage and repository lint. Estimated change: 250–400
+  lines.
+
 ### Slice 8: global discovery header
 
 Split this cross-cutting surface into bounded cuts: first add the chain-adapter search contract and exact-address resolver;
