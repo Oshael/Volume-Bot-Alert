@@ -106,6 +106,12 @@ describe('frontend fixed live-panel layout resolver', () => {
     }, { legacyMonitoredCollapsed: true });
 
     assert.equal(result.preset, 'alerts_focus');
+    assert.equal(layout.getLivePanelPaneSpan(result, 'alerts'), 3);
+    assert.deepEqual(plain(layout.getOrderedVisibleLivePanelRegions(result)), [
+      { pane: 'alerts', span: 3 },
+    ]);
+    assert.equal(layout.LIVE_PANEL_PRESET_IDS.includes('token_focus'), true);
+    assert.equal(layout.LIVE_PANEL_PRESET_IDS.includes('command_center'), true);
   });
 
   it('orders only regions visible in the selected preset', () => {

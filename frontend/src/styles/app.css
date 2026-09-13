@@ -1891,7 +1891,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .workspace-layout-preset-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(106px, 1fr));
+  grid-template-columns: repeat(3, minmax(148px, 1fr));
   gap: 6px;
   overflow-x: auto;
   padding: 2px;
@@ -11445,6 +11445,10 @@ TEMP_LEGACY_BAR_TITLE {
 
 .legacy-panels[data-workspace="live"] > .live-panel-item[data-span="2"] {
   grid-column: span 2;
+}
+
+.legacy-panels[data-workspace="live"] > .live-panel-item[data-span="3"] {
+  grid-column: span 3;
 }
 
 .legacy-panels[data-workspace="live"] > .live-panel-item[data-centered="true"] {

@@ -615,9 +615,9 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     if (region.centered) item.dataset.centered = 'true';
   }
 
-  const primarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary')) as 1 | 2;
-  const secondarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary')) as 1 | 2;
-  const alertsSpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2;
+  const primarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary')) as 1 | 2 | 3;
+  const secondarySpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'secondary')) as 1 | 2 | 3;
+  const alertsSpan = Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2 | 3;
   secondaryItem.dataset.span = String(secondarySpan);
   applyLivePanelHeight(secondaryItem, 'secondary', state.ui.livePanelLayout.heights.secondary);
   monitoredItem.dataset.span = String(primarySpan);
@@ -805,7 +805,7 @@ function scheduleLivePanelHeightAutoScroll() {
   livePanelHeightAutoScrollFrame = window.requestAnimationFrame(tick);
 }
 
-function syncAlertsPanelLayoutPreset(alertsSlot: HTMLElement, span: 1 | 2) {
+function syncAlertsPanelLayoutPreset(alertsSlot: HTMLElement, span: 1 | 2 | 3) {
   const alertsPanel = alertsSlot.querySelector<HTMLElement>('.alerts-panel');
   if (!alertsPanel) {
     return;

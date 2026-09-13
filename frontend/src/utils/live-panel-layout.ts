@@ -21,7 +21,7 @@ export type LivePanelPaneKey = typeof LIVE_PANEL_PANE_KEYS[number];
 
 export interface LivePanelPresetRegion {
   pane: LivePanelPaneKey;
-  span: 1 | 2;
+  span: 1 | 2 | 3;
   centered?: boolean;
 }
 
@@ -72,7 +72,7 @@ export const LIVE_PANEL_PRESETS: Readonly<Record<LivePanelPresetId, LivePanelPre
     id: 'alerts_focus',
     label: 'Alerts Focus',
     columns: 3,
-    regions: [{ pane: 'alerts', span: 2, centered: true }],
+    regions: [{ pane: 'alerts', span: 3 }],
     minViewportWidth: null,
   },
   token_focus: {
@@ -209,7 +209,7 @@ export function getOrderedVisibleLivePanelRegions(
 export function getLivePanelPaneSpan(
   layout: LivePanelLayoutPreference,
   pane: LivePanelPaneKey,
-): 0 | 1 | 2 {
+): 0 | 1 | 2 | 3 {
   return LIVE_PANEL_PRESETS[layout.preset].regions.find((item) => item.pane === pane)?.span ?? 0;
 }
 

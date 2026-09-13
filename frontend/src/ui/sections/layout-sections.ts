@@ -48,6 +48,11 @@ import { bindTelegramSettings, renderTelegramSettings } from './telegram-setting
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const DISCORD_COMMUNITY_URL = 'https://discord.gg/2pjQ5BVgNP';
 const X_PROFILE_URL = 'https://x.com/trendscope_pro';
+const LIVE_PANEL_PICKER_PRESET_IDS: readonly LivePanelPresetId[] = [
+  'discovery_alerts',
+  'compare',
+  'alerts_focus',
+];
 type ConfigurableChainFilterSurface = 'radarChains' | 'alertFeedChains' | 'browserNotificationChains';
 
 const CHAIN_FILTER_MENU_META: Record<ConfigurableChainFilterSurface, {
@@ -1236,7 +1241,7 @@ function renderLivePanelPresetPreview(definition: LivePanelPresetDefinition) {
 function renderLivePanelPresetPicker(state: AppState) {
   if (state.ui.workspace !== 'live') return '';
   const activePreset = state.ui.livePanelLayout.preset;
-  const options = LIVE_PANEL_PRESET_IDS.map((preset) => {
+  const options = LIVE_PANEL_PICKER_PRESET_IDS.map((preset) => {
     const definition = LIVE_PANEL_PRESETS[preset];
     const availability = getLivePanelPresetAvailability(preset, window.innerWidth);
     return `

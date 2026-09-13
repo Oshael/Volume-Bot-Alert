@@ -1459,7 +1459,7 @@ test('composes the compare preset with two independent Monitored panes', async (
   await pickerButton.click();
   const presetDialog = picker.getByRole('dialog', { name: 'Workspace layout presets' });
   await expect(presetDialog).toBeVisible();
-  await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(5);
+  await expect(presetDialog.locator('.workspace-layout-preview')).toHaveCount(3);
   const presetHeading = presetDialog.locator('.workspace-layout-preset-heading');
   await expect(presetHeading).toHaveCSS('display', 'flex');
   const [headingTitleBox, headingCaptionBox] = await Promise.all([
@@ -1473,10 +1473,10 @@ test('composes the compare preset with two independent Monitored panes', async (
     'Monitored + Alerts',
     'Doubble Monitored',
     'Alerts Focus',
-    'Monitored Focus',
-    'Command Center',
   ]);
-  await expect(presetDialog.locator('[class^="workspace-layout-preview-detail"]')).toHaveCount(36);
+  await expect(presetDialog.getByRole('button', { name: 'Monitored Focus' })).toHaveCount(0);
+  await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toHaveCount(0);
+  await expect(presetDialog.locator('[class^="workspace-layout-preview-detail"]')).toHaveCount(21);
   const optionTopEdges = await presetDialog.locator('.workspace-layout-preset-option').evaluateAll((options) => (
     options.map((option) => Math.round(option.getBoundingClientRect().top))
   ));
@@ -1485,7 +1485,6 @@ test('composes the compare preset with two independent Monitored panes', async (
     .toHaveAttribute('placeholder', 'Search contract, ticker or wallet');
   const compareOption = presetDialog.getByRole('button', { name: 'Doubble Monitored' });
   await expect(compareOption).toHaveAttribute('aria-pressed', 'true');
-  await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toBeDisabled();
   await compareOption.focus();
   await compareOption.hover();
   await pickerButton.evaluate((button) => { button.dataset.renderIdentity = 'stable-layout-picker'; });
@@ -1510,6 +1509,17 @@ test('composes the compare preset with two independent Monitored panes', async (
   await presetDialog.getByRole('button', { name: 'Alerts Focus' }).click();
   expect((await presetPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('alerts_focus');
   await expect(panels).toHaveAttribute('data-layout-preset', 'alerts_focus');
+  const alertsFocusPanel = panels.locator('[data-pane-key="alerts"]');
+  await expect(alertsFocusPanel).toHaveAttribute('data-span', '3');
+  await expect(alertsFocusPanel).not.toHaveAttribute('data-centered', 'true');
+  await expect(alertsFocusPanel).toHaveCSS('grid-column-start', 'span 3');
+  const [alertsFocusBox, panelsBox] = await Promise.all([
+    alertsFocusPanel.boundingBox(),
+    panels.boundingBox(),
+  ]);
+  expect(alertsFocusBox).not.toBeNull();
+  expect(panelsBox).not.toBeNull();
+  expect(Math.abs(alertsFocusBox.width - panelsBox.width)).toBeLessThan(2);
   await expect(page.getByRole('button', { name: /Current layout: Alerts Focus/ })).toBeVisible();
   await expect.poll(() => diagnostics.apiRequests.filter((url) => (
     new URL(url).pathname === '/api/catalog/sparklines'
@@ -1518,37 +1528,20 @@ test('composes the compare preset with two independent Monitored panes', async (
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('enforces the Command Center viewport guard after responsive changes', async ({ page }) => {
+test('keeps deferred layout presets out of the picker after responsive changes', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
-  const panels = page.locator('[data-app-render-slot="panels"]');
   const pickerButton = page.getByRole('button', { name: /Choose workspace layout/ });
   await pickerButton.click();
-  const commandCenter = page.getByRole('dialog', { name: 'Workspace layout presets' })
-    .getByRole('button', { name: 'Command Center' });
-  await expect(commandCenter).toBeEnabled();
+  const presetDialog = page.getByRole('dialog', { name: 'Workspace layout presets' });
+  await expect(presetDialog.locator('.workspace-layout-preset-option')).toHaveCount(3);
+  await expect(presetDialog.getByRole('button', { name: 'Monitored Focus' })).toHaveCount(0);
+  await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toHaveCount(0);
 
-  const commandCenterPatch = page.waitForRequest((request) => (
-    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
-  ));
-  await commandCenter.click();
-  expect((await commandCenterPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('command_center');
-  await expect(panels).toHaveAttribute('data-layout-preset', 'command_center');
-  await expect(panels.locator(':scope > .live-panel-item:not([hidden])')).toHaveCount(3);
-  await expect(panels.locator(':scope > .live-panel-item:not([hidden])[data-span="1"]')).toHaveCount(3);
-  await expect(panels).toHaveCSS('gap', '10px');
-
-  const fallbackPatch = page.waitForRequest((request) => (
-    request.method() === 'PATCH'
-      && new URL(request.url()).pathname === '/api/config/ui-prefs'
-      && request.postDataJSON().uiPrefs.livePanelLayout.preset === 'discovery_alerts'
-  ));
   await page.setViewportSize({ width: 1280, height: 900 });
-  expect((await fallbackPatch).postDataJSON().uiPrefs.livePanelLayout.preset).toBe('discovery_alerts');
-  await expect(panels).toHaveAttribute('data-layout-preset', 'discovery_alerts');
-  await page.getByRole('button', { name: /Choose workspace layout/ }).click();
-  await expect(page.getByRole('dialog', { name: 'Workspace layout presets' })
-    .getByRole('button', { name: 'Command Center' })).toBeDisabled();
+  await expect(presetDialog.locator('.workspace-layout-preset-option')).toHaveCount(3);
+  await expect(presetDialog.getByRole('button', { name: 'Monitored Focus' })).toHaveCount(0);
+  await expect(presetDialog.getByRole('button', { name: 'Command Center' })).toHaveCount(0);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
