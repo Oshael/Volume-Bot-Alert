@@ -1537,9 +1537,15 @@ export function getMonitoredTokens(state: AppState) {
 
 export function getPrimaryMonitoredViewTokens(state: AppState) {
   const view = state.ui.monitoredPrimaryPane.view;
+  const systemView = view === 'watchlist' ? null : state.data.monitoredSystemViews[view];
+  const useTrendingCompatibility = view === 'trending'
+    && systemView?.status !== 'ready'
+    && systemView?.tokenIdentities.length === 0;
   const identities = view === 'watchlist'
     ? state.data.watchlistTokenIdentities
-    : state.data.monitoredSystemViews[view].tokenIdentities;
+    : useTrendingCompatibility
+      ? state.data.monitoredTokenIdentities
+      : systemView?.tokenIdentities || [];
   return identities
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is WatchlistTokenEntry => Boolean(item));

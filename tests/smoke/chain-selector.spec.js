@@ -94,6 +94,23 @@ const SMOKE_CONFIG = {
   },
 };
 
+function tokenViewFixture(view, tokens = [], status = 'unavailable') {
+  return {
+    view,
+    chains: ['robinhood'],
+    limit: 40,
+    asOf: '2026-07-14T18:00:00.000Z',
+    generatedAt: '2026-07-14T18:00:00.000Z',
+    rankingVersion: view === 'trending' ? 'trending-v1' : 'lifecycle-v1',
+    scoreVersion: view === 'trending' ? 'trending-v1' : undefined,
+    status,
+    candidatesConsidered: tokens.length,
+    count: tokens.length,
+    chainStates: { robinhood: { status, capabilities: { [view]: status === 'ready' } } },
+    tokens,
+  };
+}
+
 const API_FIXTURES = {
   'GET /api/auth/me': {
     user: {
@@ -164,6 +181,9 @@ const API_FIXTURES = {
     cached: false,
     tokens: [],
   },
+  'GET /api/dashboard/token-views/trending': tokenViewFixture('trending'),
+  'GET /api/dashboard/token-views/migrated': tokenViewFixture('migrated'),
+  'GET /api/dashboard/token-views/pre_bonded': tokenViewFixture('pre_bonded'),
   'GET /api/dashboard/alert-events': {
     generatedAt: null,
     kind: null,
@@ -1252,6 +1272,38 @@ test('renders a flat Watchlist with search and sort controls only', async ({ pag
   await expect(watchlistSection.locator('[data-role="manual-token-form"]')).toHaveCount(0);
   await expect(page.locator('[data-action="manual-quick-add"]')).toHaveCount(0);
   await expect(watchlistSection.locator('[data-action="remove-manual"]')).toHaveCount(0);
+});
+
+test('renders the bounded four-view Monitored surface without filter or pagination controls', async ({ page }) => {
+  const trendingTokens = Array.from({ length: 45 }, (_, index) => ({
+    chain: 'robinhood',
+    address: `0x${(index + 1).toString(16).padStart(40, '0')}`,
+    symbol: `TREND${index + 1}`,
+    name: `Trending ${index + 1}`,
+    fdv: 100000 + index,
+    volume24h: 900000 - index,
+    trendingRank: index + 1,
+  }));
+  const diagnostics = await openAuthenticatedWorkspace(page, {
+    ...ROBINHOOD_API_FIXTURES,
+    'GET /api/dashboard/token-views/trending': tokenViewFixture('trending', trendingTokens, 'ready'),
+  });
+  const monitored = page.locator('.monitored-panel');
+  const viewTabs = monitored.getByRole('group', { name: 'Monitored token view' });
+
+  await expect(viewTabs.getByRole('button')).toHaveText(['Trending', 'Migrated', 'Pre-bonded', 'Watchlist']);
+  await expect(viewTabs.getByRole('button', { name: 'Trending' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(monitored.locator('.monitored-token-row')).toHaveCount(40);
+  await expect(monitored.locator('[data-action="monitored-filters-toggle"]')).toHaveCount(0);
+  await expect(monitored.locator('[data-action="monitored-per-page"]')).toHaveCount(0);
+  await expect(monitored.locator('[data-action="monitored-page-jump"]')).toHaveCount(0);
+  await expect(monitored.locator('[data-action="monitored-prev"], [data-action="monitored-next"]')).toHaveCount(0);
+
+  await viewTabs.getByRole('button', { name: 'Watchlist' }).click();
+  await expect(viewTabs.getByRole('button', { name: 'Watchlist' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(monitored).toContainText('WATCHSOL');
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
 });
 
 test('chain-scoped bot settings persist independent supported controls and roll back failures', async ({ page }) => {

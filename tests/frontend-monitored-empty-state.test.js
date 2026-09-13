@@ -17,12 +17,24 @@ describe('monitored empty-state content', () => {
 
     assert.equal(resolveMonitoredEmptyStateContent({
       loadError: null, hasSearchQuery: false,
-    }).text, 'No monitored tokens are available for the current filters.');
+    }).text, 'No tokens are available in Monitored.');
   });
 
   it('keeps the search-specific empty message when loading succeeded', () => {
     assert.equal(resolveMonitoredEmptyStateContent({
       loadError: null, hasSearchQuery: true,
     }).text, 'No monitored tokens match the current search.');
+  });
+
+  it('distinguishes loading, syncing and unavailable system views', () => {
+    assert.equal(resolveMonitoredEmptyStateContent({
+      loadError: null, hasSearchQuery: false, status: 'loading', viewLabel: 'Trending',
+    }).text, 'Loading Trending tokens...');
+    assert.equal(resolveMonitoredEmptyStateContent({
+      loadError: null, hasSearchQuery: false, status: 'syncing', viewLabel: 'Pre-bonded',
+    }).text, 'Pre-bonded data is syncing.');
+    assert.equal(resolveMonitoredEmptyStateContent({
+      loadError: null, hasSearchQuery: false, status: 'unsupported', viewLabel: 'Migrated',
+    }).text, 'Migrated is not available for the current release.');
   });
 });

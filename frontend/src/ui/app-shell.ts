@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getChainCapabilityNotice, getExpandedTokenSparkline, getWatchlistTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getExpandedTokenSparkline, getWatchlistTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderWatchlistSection } from './sections/manual-section';
@@ -7,7 +7,7 @@ import { patchMonitoredSection, renderMonitoredSection } from './sections/monito
 import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
 import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
-import { resolveWatchlistTableRows, resolveMonitoredTableRows } from '../utils/token-table';
+import { resolveWatchlistTableRows, resolveMonitoredViewRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
 import { buildTokenIdentityKey, type TokenChain } from '../utils/token-chain';
@@ -1440,27 +1440,27 @@ function getTopPerformersRenderKey(state: AppState) {
 
 function getMonitoredRenderKey(state: AppState) {
   const monitoredSpan = state.ui.livePanelLayout.spans.monitored;
-  const filteredMonitoredTokens = resolveMonitoredTableRows(getMonitoredTokens(state), {
-    searchQuery: state.ui.monitoredSearchQuery,
-    sortCriteria: state.ui.monitoredSorts,
-  });
-  const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
-  const totalPages = Math.max(1, Math.ceil(filteredMonitoredTokens.length / safePerPage));
-  const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
-  const pageItems = filteredMonitoredTokens.slice(safePage * safePerPage, safePage * safePerPage + safePerPage);
+  const pageItems = resolveMonitoredViewRows(
+    getPrimaryMonitoredViewTokens(state),
+    state.ui.monitoredPrimaryPane.searchQuery,
+  );
+  const activeView = state.ui.monitoredPrimaryPane.view;
+  const activeViewState = activeView === 'watchlist'
+    ? null
+    : state.data.monitoredSystemViews[activeView];
 
   return JSON.stringify({
-    capabilityNotice: getChainCapabilityNotice(state, 'monitored'),
     collapsed: state.ui.collapsed.monitored,
+    activeView,
+    activeViewStatus: activeViewState?.status,
+    activeViewGeneratedAt: activeViewState?.generatedAt,
+    activeViewError: activeViewState?.error,
     span: monitoredSpan,
     busy: state.ui.busy,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
-    search: state.ui.monitoredSearchQuery,
-    page: state.ui.monitoredPage,
-    perPage: state.ui.monitoredPerPage,
-    sorts: state.ui.monitoredSorts,
+    search: state.ui.monitoredPrimaryPane.searchQuery,
     sparklinePreset: state.ui.sparklineRange.monitoredPreset,
     monitoredQuickSparklineRanges: pageItems.map((token) => {
       const identity = buildTokenIdentityKey(token.chain || 'solana', token.address);
@@ -1468,13 +1468,6 @@ function getMonitoredRenderKey(state: AppState) {
     }),
     starred: state.data.watchlistTokenIdentities,
     pinned: state.data.pinnedMonitoredTokenIdentities,
-    loadError: state.ui.monitoredLoadError,
-    filters: [
-      state.data.configs['monitored-mcap-min'],
-      state.data.configs['monitored-view-mcap-max'],
-      state.data.configs['monitored-fdv-min'],
-      state.data.configs['monitored-view-fdv-max'],
-    ],
     tokens: pageItems.map(serializeMonitoredTokenForView),
     mockTrading: pageItems.map((token) => serializeMockTradingForView(state, token.address)),
     sparklines: monitoredSpan > 1

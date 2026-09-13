@@ -7,6 +7,8 @@ export type MonitoredEmptyStateContent = Readonly<{
 export function resolveMonitoredEmptyStateContent(input: {
   loadError: string | null;
   hasSearchQuery: boolean;
+  status?: 'idle' | 'loading' | 'ready' | 'syncing' | 'unavailable' | 'unsupported' | 'error';
+  viewLabel?: string;
 }): MonitoredEmptyStateContent {
   if (input.loadError) {
     return {
@@ -22,9 +24,30 @@ export function resolveMonitoredEmptyStateContent(input: {
       isError: false,
     };
   }
+  if (input.status === 'idle' || input.status === 'loading') {
+    return {
+      icon: '…',
+      text: `Loading ${input.viewLabel || 'Monitored'} tokens...`,
+      isError: false,
+    };
+  }
+  if (input.status === 'syncing') {
+    return {
+      icon: '↻',
+      text: `${input.viewLabel || 'Monitored'} data is syncing.`,
+      isError: false,
+    };
+  }
+  if (input.status === 'unavailable' || input.status === 'unsupported') {
+    return {
+      icon: '–',
+      text: `${input.viewLabel || 'Monitored'} is not available for the current release.`,
+      isError: false,
+    };
+  }
   return {
     icon: '?',
-    text: 'No monitored tokens are available for the current filters.',
+    text: `No tokens are available in ${input.viewLabel || 'Monitored'}.`,
     isError: false,
   };
 }

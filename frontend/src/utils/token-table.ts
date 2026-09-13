@@ -147,3 +147,12 @@ export function resolveMonitoredTableRows(
   }
   return regularTokens;
 }
+
+export function resolveMonitoredViewRows(
+  tokens: WatchlistTokenEntry[],
+  searchQuery = '',
+  limit = 40,
+) {
+  const safeLimit = Math.min(40, Math.max(1, Math.floor(limit) || 40));
+  return filterWatchlistTableTokens(tokens, { searchQuery }).slice(0, safeLimit);
+}

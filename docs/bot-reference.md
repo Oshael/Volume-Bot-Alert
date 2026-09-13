@@ -1525,6 +1525,9 @@ O frontend mantém seleção, busca e âncora de scroll na pane primária, que i
 `trending`. Readiness, membership ordenada e metadata são isolados por system view;
 somente a view ativa é buscada. Watchlist resolve a membership local sem request de
 system view, e todos os resultados reutilizam o store canônico e seu merge realtime.
+A superfície exibe as quatro views em ordem canônica, preserva a ordenação do read-model,
+limita a renderização a 40 linhas e não oferece Filters, Page ou Per page. Até a retirada
+legada, Trending conserva o snapshot antigo somente se o novo read-model ainda não estiver ready.
 
 Trending usa `scoreVersion=trending-v1`. O adapter lê um prefixo limitado aos 500 maiores
 volumes 24h e hidrata volume, price change, FDV, liquidez, cobertura e frescor pelos

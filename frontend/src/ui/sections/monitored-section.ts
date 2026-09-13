@@ -1,9 +1,9 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type WatchlistTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
+import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getPrimaryMonitoredViewTokens, getTokenSparkline, isTokenStarred, type AppState, type WatchlistTokenEntry, type MeteoraEntry } from '../../state/app-state';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
-import { resolveMonitoredTableRows } from '../../utils/token-table';
+import { resolveMonitoredTableRows, resolveMonitoredViewRows } from '../../utils/token-table';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { resolveCoveredMetric, resolveTokenValuation, type ResolvedCoveredMetric, type TokenMetricCoverage } from '../../utils/token-valuation';
 import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
@@ -12,6 +12,7 @@ import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-s
 import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
 import { syncElementChildOrder } from '../../utils/dom-child-order';
 import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
+import { MONITORED_VIEW_IDS, type MonitoredViewId } from '../../utils/monitored-view';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -65,7 +66,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const section = document.createElement('section');
   const view = resolveMonitoredSectionView(state);
   monitoredSectionStructureKeys.set(section, buildMonitoredStructureKey(state, view));
-  section.className = `panel legacy-panel monitored-panel${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
+  section.className = `panel legacy-panel monitored-panel monitored-multi-view${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
   if (view.capabilityNotice) {
     section.innerHTML = `
       <div class="panel-header monitored-panel-header">
@@ -77,7 +78,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
     return section;
   }
   section.innerHTML = view.isCollapsed
-    ? renderCollapsedMonitoredHeader(view.filteredTracked.length, view.pinCount)
+    ? renderCollapsedMonitoredHeader(view)
     : renderExpandedMonitoredMarkup(state, view);
 
   if (view.isCollapsed) {
@@ -160,17 +161,13 @@ function buildMonitoredStructureKey(state: AppState, view: MonitoredSectionView)
   return JSON.stringify({
     capabilityNotice: view.capabilityNotice,
     collapsed: view.isCollapsed,
+    activeView: view.activeView,
+    viewStatus: view.viewStatus,
     search: view.searchQuery,
     loadError: view.loadError,
-    perPage: view.safePerPage,
-    page: view.filteredSafePage,
-    totalPages: view.filteredTotalPages,
     totalItems: view.filteredTracked.length,
-    sorts: state.ui.monitoredSorts,
     sparklinePreset: state.ui.sparklineRange.monitoredPreset,
     miniChartEnabled: view.miniChartEnabled,
-    pinCount: view.pinCount,
-    filters: [view.minMcap, view.maxMcap, view.minFdv, view.maxFdv],
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
@@ -179,25 +176,23 @@ function buildMonitoredStructureKey(state: AppState, view: MonitoredSectionView)
 }
 
 function resolveMonitoredSectionView(state: AppState) {
-  const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
-  const searchQuery = String(state.ui.monitoredSearchQuery || '').trim().toLowerCase();
-  const filteredTracked = resolveMonitoredTableRows(getMonitoredTokens(state), {
-    searchQuery,
-    sortCriteria: state.ui.monitoredSorts,
-  });
-  const filteredTotalPages = Math.max(1, Math.ceil(filteredTracked.length / safePerPage));
-  const filteredSafePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), filteredTotalPages - 1);
-  const filteredPageStart = filteredSafePage * safePerPage;
+  const activeView = state.ui.monitoredPrimaryPane.view;
+  const systemView = activeView === 'watchlist' ? null : state.data.monitoredSystemViews[activeView];
+  const searchQuery = String(state.ui.monitoredPrimaryPane.searchQuery || '').trim().toLowerCase();
+  const filteredTracked = resolveMonitoredViewRows(getPrimaryMonitoredViewTokens(state), searchQuery);
   return {
-    capabilityNotice: getChainCapabilityNotice(state, 'monitored'),
+    activeView,
+    activeViewLabel: getMonitoredViewLabel(activeView),
+    viewStatus: systemView?.status ?? 'ready',
+    capabilityNotice: activeView === 'watchlist' ? getChainCapabilityNotice(state, 'watchlist') : null,
     isCollapsed: state.ui.collapsed.monitored,
     searchQuery,
-    loadError: state.ui.monitoredLoadError,
-    safePerPage,
+    loadError: systemView?.error ?? null,
+    safePerPage: 40,
     filteredTracked,
-    filteredTotalPages,
-    filteredSafePage,
-    pageItems: filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage),
+    filteredTotalPages: 1,
+    filteredSafePage: 0,
+    pageItems: filteredTracked,
     sortClasses: resolveMonitoredSortClasses(state),
     miniChartEnabled: state.ui.livePanelLayout.spans.monitored > 1,
     pinCount: state.data.pinnedMonitoredTokenIdentities.length,
@@ -232,7 +227,12 @@ function resolveMonitoredSortClasses(state: AppState) {
   };
 }
 
-function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
+function getMonitoredViewLabel(view: MonitoredViewId) {
+  if (view === 'pre_bonded') return 'Pre-bonded';
+  return view.charAt(0).toUpperCase() + view.slice(1);
+}
+
+function renderCollapsedMonitoredHeader(view: MonitoredSectionView) {
   return `
     <div class="panel-header monitored-panel-header">
       ${MONITORED_PANEL_TITLE_MARKUP}
@@ -240,9 +240,9 @@ function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
         <div class="monitored-header-top">
           <span class="monitored-token-pill-wrap">
             <span class="panel-header-label">TOKENS</span>
-            <span class="count monitored-token-count-pill">${count}</span>
+            <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
           </span>
-          ${renderMonitoredResetPinsButton(pinCount)}
+          <span class="monitored-active-view-label">${escapeHtml(view.activeViewLabel)}</span>
           <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Expand monitored tokens"><span class="compact-icon-glyph">+</span></button>
         </div>
       </div>
@@ -250,7 +250,25 @@ function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
   `;
 }
 
-function renderMonitoredFilters(view: MonitoredSectionView) {
+function renderMonitoredViewButtons(activeView: MonitoredViewId) {
+  return `
+    <div class="monitored-view-switch" role="group" aria-label="Monitored token view">
+      ${MONITORED_VIEW_IDS.map((view) => `
+        <button type="button" class="monitored-view-button${view === activeView ? ' active' : ''}"
+          aria-pressed="${view === activeView}" data-action="set-monitored-view"
+          data-monitored-view="${view}">${escapeHtml(getMonitoredViewLabel(view))}</button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderMonitoredViewStatus(view: MonitoredSectionView) {
+  if (view.viewStatus === 'ready') return '';
+  const label = view.viewStatus === 'error' ? 'RETRYING' : view.viewStatus.replace('_', ' ').toUpperCase();
+  return `<span class="monitored-view-status" data-status="${view.viewStatus}">${escapeHtml(label)}</span>`;
+}
+
+function _renderMonitoredFilters(view: MonitoredSectionView) {
   const sortClasses = view.sortClasses;
   const draft = monitoredFiltersOpen && monitoredFiltersDraft
     ? monitoredFiltersDraft
@@ -319,42 +337,19 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
     <div class="panel-header monitored-panel-header">
       ${MONITORED_PANEL_TITLE_MARKUP}
       <div class="panel-header-controls monitored-header-controls">
-        <div class="monitored-header-top">
-          ${renderMonitoredFilters(view)}
-          <span class="monitored-token-pill-wrap monitored-token-pill-wrap-top">
+        ${renderMonitoredViewButtons(view.activeView)}
+        <div class="monitored-view-tools">
+          <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
+          <div class="compact-search ${view.searchQuery ? 'has-query open' : ''}">
+            <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search ${escapeHtml(view.activeViewLabel)} tokens">&#128269;</button>
+            <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
+          </div>
+          ${view.miniChartEnabled ? renderSparklineRangeControl(state, 'monitored') : ''}
+          ${renderMonitoredViewStatus(view)}
+          <span class="monitored-token-pill-wrap">
             <span class="panel-header-label">TOKENS</span>
             <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
           </span>
-          ${renderMonitoredResetPinsButton(view.pinCount)}
-        </div>
-        <div class="monitored-header-bottom">
-          <div class="monitored-inline-pagination">
-            <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle monitored-inline-collapse" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
-            <div class="compact-search compact-search-fixed ${view.searchQuery ? 'has-query open' : ''}">
-              <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search monitored tokens">&#128269;</button>
-              <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
-            </div>
-            <div class="monitored-inline-controls">
-              ${view.miniChartEnabled ? renderSparklineRangeControl(state, 'monitored') : ''}
-              <label class="legacy-mini-field monitored-per-page-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
-              <label class="legacy-mini-field monitored-page-field">
-                PAGE
-                <span class="monitored-page-box">
-                  <input type="number" min="1" max="${view.filteredTotalPages}" step="1" data-action="monitored-page-jump" aria-label="Current monitored page" />
-                  <span class="monitored-page-separator" aria-hidden="true">/</span>
-                  <span class="bucket-page-total monitored-page-total">${view.filteredTotalPages}</span>
-                </span>
-              </label>
-              <div class="button-row compact bucket-footer-actions">
-                <button type="button" class="action-button small" data-action="monitored-prev" ${view.filteredSafePage === 0 ? 'disabled' : ''}>Prev</button>
-                <button type="button" class="action-button small" data-action="monitored-next" ${view.filteredSafePage >= view.filteredTotalPages - 1 ? 'disabled' : ''}>Next</button>
-              </div>
-              <span class="monitored-token-pill-wrap monitored-token-pill-wrap-inline">
-                <span class="panel-header-label">TOKENS</span>
-                <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
-              </span>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -362,7 +357,7 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
   `;
 }
 
-function renderMonitoredResetPinsButton(pinCount: number) {
+function _renderMonitoredResetPinsButton(pinCount: number) {
   if (pinCount < 2) return '';
   return `<button type="button" class="monitored-reset-pins" data-action="reset-monitored-pins" title="Reset all pinned tokens" aria-label="Reset all pinned tokens"><span aria-hidden="true">&#8634;</span> PINS</button>`;
 }
@@ -378,7 +373,12 @@ function renderMonitoredRows(
   }
 
   if (view.pageItems.length === 0) {
-    monitoredList.append(buildMonitoredEmptyState(view.loadError, Boolean(view.searchQuery)));
+    monitoredList.append(buildMonitoredEmptyState(
+      view.loadError,
+      Boolean(view.searchQuery),
+      view.viewStatus,
+      view.activeViewLabel,
+    ));
     return;
   }
 
@@ -574,8 +574,13 @@ function buildMonitoredStaticKey(
   ]);
 }
 
-function buildMonitoredEmptyState(loadError: string | null, hasSearchQuery: boolean) {
-  const content = resolveMonitoredEmptyStateContent({ loadError, hasSearchQuery });
+function buildMonitoredEmptyState(
+  loadError: string | null,
+  hasSearchQuery: boolean,
+  status: MonitoredSectionView['viewStatus'],
+  viewLabel: string,
+) {
+  const content = resolveMonitoredEmptyStateContent({ loadError, hasSearchQuery, status, viewLabel });
   const emptyState = document.createElement('div');
   emptyState.className = `empty-state${content.isError ? ' load-error' : ''}`;
   const emptyIcon = document.createElement('div');
@@ -592,33 +597,31 @@ function bindMonitoredSectionControls(
   section: ParentNode,
   state: AppState,
   controller: AppController,
-  view: MonitoredSectionView,
+  _view: MonitoredSectionView,
 ) {
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="monitored-search"]');
   if (searchInput) {
-    searchInput.value = state.ui.monitoredSearchQuery || '';
+    searchInput.value = state.ui.monitoredPrimaryPane.searchQuery || '';
   }
   bindCompactSearch(section, {
     toggleAction: 'monitored-search-focus',
     inputAction: 'monitored-search',
   });
-  const perPageInput = section.querySelector<HTMLInputElement>('[data-action="monitored-per-page"]');
-  if (perPageInput) {
-    perPageInput.value = String(view.safePerPage);
-  }
-  const pageJumpInput = section.querySelector<HTMLInputElement>('[data-action="monitored-page-jump"]');
-  if (pageJumpInput) {
-    pageJumpInput.value = String(view.filteredSafePage + 1);
-  }
+  bindMonitoredViewButtons(section, controller);
   bindMonitoredCollapseToggle(section, controller);
   bindMonitoredSearchInput(searchInput, controller);
   bindMonitoredRowControls(section, state, controller);
   bindSparklineRangeControls(section, controller);
-  bindMonitoredSortControls(section, controller);
-  bindPagedMonitoredControls(section, controller);
   bindMonitoredTickerPeerPanelClose(section);
   bindMonitoredPinControls(section, state, controller);
-  bindMonitoredFilters(section, controller, view);
+}
+
+function bindMonitoredViewButtons(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLButtonElement>('[data-action="set-monitored-view"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      controller.setPrimaryMonitoredView(button.dataset.monitoredView as MonitoredViewId);
+    });
+  });
 }
 
 function bindMonitoredRowControls(section: ParentNode, state: AppState, controller: AppController) {
@@ -654,7 +657,7 @@ function ensureMonitoredFiltersDocumentClose() {
   }, true);
 }
 
-function bindMonitoredFilters(
+function _bindMonitoredFilters(
   section: ParentNode,
   controller: AppController,
   view: MonitoredSectionView,

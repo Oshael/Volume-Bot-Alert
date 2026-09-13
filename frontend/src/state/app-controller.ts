@@ -1,5 +1,5 @@
 import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
-import { resolveWatchlistTableRows, resolveMonitoredTableRows } from '../utils/token-table';
+import { resolveWatchlistTableRows, resolveMonitoredTableRows, resolveMonitoredViewRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
   didEnabledChainCapabilityBecomeAvailable,
@@ -7950,15 +7950,10 @@ export function createAppController(): AppController {
   }
 
   function getVisibleMonitoredPageTokens() {
-    const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
-    const filteredTracked = resolveMonitoredTableRows(getMonitoredTokens(state), {
-      searchQuery: state.ui.monitoredSearchQuery,
-      sortCriteria: state.ui.monitoredSorts,
-    });
-    const totalPages = Math.max(1, Math.ceil(filteredTracked.length / safePerPage));
-    const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
-    const start = safePage * safePerPage;
-    return filteredTracked.slice(start, start + safePerPage);
+    return resolveMonitoredViewRows(
+      getPrimaryMonitoredViewTokens(state),
+      state.ui.monitoredPrimaryPane.searchQuery,
+    );
   }
 
   function getVisibleMonitoredSparklineIdentities() {
