@@ -74,23 +74,26 @@ describe('Robinhood standard alert matcher', () => {
     assert.equal(result.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
   });
 
-  it('evaluates volume thresholds independently per user', () => {
+  it('retires volume and FDV emission while preserving surge candidates', () => {
     const result = evaluate({ profiles: [
-      profile(1, { ruleEnabled: { monitoredVol: true }, thresholdPct: 100 }),
-      profile(2, { ruleEnabled: { monitoredVol: true }, thresholdPct: 250 }),
+      profile(1, { ruleEnabled: {
+        monitoredVol: true, monitoredFdv: true,
+        oldWeekSurge1h: true, oldWeekSurge6h: true,
+      } }),
     ] });
+
+    assert.deepEqual(
+      result.evaluations[0].candidates.map((candidate) => candidate.ruleKey),
+      ['old-week-surge-6h', 'old-week-surge-1h'],
+    );
     assert.equal(result.evaluations[0].plans[0].action, 'emit');
-    assert.equal(result.evaluations[0].plans[0].ruleKey, 'monitored-vol');
-    assert.deepEqual(result.evaluations[0].plans[0].candidate.payload, {
-      address: TOKEN, valuationType: 'fdv', fdv: 200_000,
-      volume5m: 300, volume1h: 1200, volume6h: 3400, volume24h: 5600,
-      tokenAgeMs: 10 * 24 * 60 * 60 * 1000,
-      tokenCreatedAt: Date.parse('2026-07-09T18:00:30.000Z'), prevVolume5m: 100,
-    });
-    assert.equal(result.evaluations[1].plans.length, 0);
+    assert.equal(result.evaluations[0].plans[0].ruleKey, 'old-week-surge-6h');
+    assert.equal(result.evaluations[0].plans.some((plan) => (
+      ['monitored-vol', 'monitored-fdv'].includes(plan.ruleKey) && plan.action === 'emit'
+    )), false);
   });
 
-  it('filters disabled chains and applies Robinhood-scoped standard settings', () => {
+  it('does not revive retired rules through Robinhood-scoped settings', () => {
     const result = evaluate({ profiles: [
       profile(1, {
         enabledChains: ['solana'],
@@ -114,10 +117,10 @@ describe('Robinhood standard alert matcher', () => {
     ] });
 
     assert.deepEqual(result.evaluations.map((evaluation) => evaluation.userId), [2]);
-    assert.equal(result.evaluations[0].plans[0].ruleKey, 'monitored-vol');
+    assert.equal(result.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
   });
 
-  it('uses the 5m FDV baseline and suppresses a replay against the persisted anchor', () => {
+  it('keeps retired FDV state compatible without emitting it', () => {
     const configured = profile(1, {
       ruleEnabled: { monitoredFdv: true }, fdvThresholdPct: 50,
     });
@@ -126,7 +129,7 @@ describe('Robinhood standard alert matcher', () => {
       lastAlertedValue: 200_000, cooldownUntil: '2026-07-19T17:59:00.000Z',
     };
     const replay = evaluate({ profiles: [configured], states: [previous] });
-    assert.equal(replay.evaluations[0].plans[0].action, 'suppress');
+    assert.equal(replay.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
     const changed = signal({
       valuation: {
         ...signal().valuation,
@@ -139,8 +142,7 @@ describe('Robinhood standard alert matcher', () => {
       },
     });
     const advanced = evaluate({ signal: changed, profiles: [configured], states: [previous] });
-    assert.equal(advanced.evaluations[0].plans[0].action, 'emit');
-    assert.equal(advanced.evaluations[0].plans[0].candidate.payload.prevFdv, 100_000);
+    assert.equal(advanced.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
   });
   it('primes an already-hot surge, then requires fresh activity before emitting', () => {
     const recent = signal({ tokenAge: { ...signal().tokenAge, eligibility: {
@@ -189,7 +191,7 @@ describe('Robinhood standard alert matcher', () => {
     assert.equal(evaluate({ profiles: [configured], states: [state] })
       .evaluations[0].plans[0].action, 'emit');
   });
-  it('expires the monitored volume anchor after 30 cold minutes', () => {
+  it('does not emit after a retired monitored-volume anchor expires', () => {
     const state = {
       userId: 1, ruleKey: 'monitored-vol', status: 'rearmed', rearmRequired: false,
       lastAlertedValue: 1_000,
@@ -198,8 +200,7 @@ describe('Robinhood standard alert matcher', () => {
     const result = evaluate({
       profiles: [profile(1, { ruleEnabled: { monitoredVol: true } })], states: [state],
     });
-    assert.equal(result.evaluations[0].plans[0].action, 'emit');
-    assert.equal(result.evaluations[0].plans[0].state, null);
+    assert.equal(result.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
   });
   it('tracks surge drawdown reset state against FDV', () => {
     const state = {
@@ -228,7 +229,7 @@ describe('Robinhood standard alert matcher', () => {
     assert.equal(result.evaluations[0].plans[0].action, 'emit');
     assert.equal(result.evaluations[0].plans[0].state, null);
   });
-  it('suppresses repeats while the user remains in hidden presence', () => {
+  it('does not emit retired FDV alerts in hidden or foreground presence', () => {
     const configured = profile(1, {
       presenceMode: 'hidden', hiddenSessionKey: 'hidden:1',
       ruleEnabled: { monitoredFdv: true },
@@ -239,10 +240,10 @@ describe('Robinhood standard alert matcher', () => {
       metadata: { lastPresenceMode: 'hidden', lastHiddenSessionKey: 'hidden:1' },
     };
     const hidden = evaluate({ profiles: [configured], states: [state] });
-    assert.equal(hidden.evaluations[0].plans[0].action, 'suppress');
+    assert.equal(hidden.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
     state.metadata.lastPresenceMode = 'foreground';
     const foregroundAnchor = evaluate({ profiles: [configured], states: [state] });
-    assert.equal(foregroundAnchor.evaluations[0].plans[0].action, 'emit');
+    assert.equal(foregroundAnchor.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
   });
   it('returns a rearm plan without mutating state when an enabled rule becomes cold', () => {
     const state = {

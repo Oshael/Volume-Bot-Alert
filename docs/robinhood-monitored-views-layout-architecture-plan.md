@@ -605,6 +605,8 @@ Execute the retirement through these bounded cuts:
 
 - **R1 — backend emission retirement:** stop Solana and Robinhood matchers/planners from producing new Volume 5m, GMGN
   Volume 1m, MCap 5m or FDV 5m alerts, with focused regression coverage proving the remaining alert families still emit.
+  **Completed:** both planners reject the retired rule keys through one shared policy; legacy state compatibility remains
+  for later retirement cuts.
 - **R2 — frontend local emission retirement:** remove local evaluation, notification and sound paths for the four retired
   alert types without changing realtime ingestion, WebSocket subscriptions or live token updates.
 - **R3 — active configuration surfaces:** remove the retired types from active profiles, Telegram menus and Bot Settings so

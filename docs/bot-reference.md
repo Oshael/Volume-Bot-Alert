@@ -946,6 +946,12 @@ eventos acima do limite de idade são descartados antes da query. Ativação de 
 Audit-only prevalece e nunca instancia esse sink. O Corte 6C não inicia os workers in-memory de
 catálogo live ou aggregates no processo derived; esse co-start continua pendente antes do cutover.
 
+Os planejadores backend de Solana e Robinhood não emitem mais novos alertas padrão `monitored-vol`
+(Volume 5m), `gmgn-vol-1m` (GMGN Volume 1m), `monitored-mcap` (MCap 5m) ou `monitored-fdv`
+(FDV 5m). Price Surge, Surge Continuation, HVNC, alertas Meteora e Custom continuam ativos. Durante
+a aposentadoria em cortes, contratos de leitura histórica, configurações persistidas e rearm de
+estado legado permanecem compatíveis, mas não podem reativar emissão desses quatro tipos.
+
 A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
 (`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de
 escrita (`upsertState`, chain-agnóstico). Tokens micro-cap ou FDV/mcap corrompido geravam

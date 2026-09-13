@@ -161,6 +161,54 @@ async function withGmgnVol1mAlertsEnabled(callback) {
 }
 
 describe('user alert matcher', () => {
+  it('retires standard threshold candidates while preserving HVNC', async () => {
+    await withGmgnVol1mAlertsEnabled(async () => {
+      const profile = createAlertProfile({
+        userId: 15,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: true, hvnc: true },
+        thresholdPct: 50,
+        mcapThresholdPct: 50,
+        minVol: 100,
+        minMcap: 100,
+        maxMcap: 0,
+        hvncMinVol: 100,
+      });
+      const tokenAfter = {
+        address: TOKEN_ADDRESS,
+        last_mcap: 300_000,
+        last_vol_5m: 18_000,
+        last_vol_24h: 350_000,
+        last_token_created_at_ms: Date.parse('2026-04-16T11:58:00.000Z'),
+      };
+      const signals = {
+        alertSource: 'gmgn',
+        ageMs: 2 * 60 * 1000,
+        passesHvncPrereqs: true,
+        hasVol1mBaseline: true,
+        vol1mChangePct: 100,
+        prevVolume1m: 100,
+        currentVolume1m: 200,
+        hasVol5mBaseline: true,
+        vol5mChangePct: 80,
+        prevVolume5m: 10_000,
+        currentVolume5m: 18_000,
+        hasMcapBaseline: true,
+        mcapAlertTokenAgeGatePassed: true,
+        mcapChangePct: 100,
+        prevMcap: 150_000,
+        currentMcap: 300_000,
+        currentVolume24h: 350_000,
+        volume24h: 350_000,
+        isMcapDeclining: false,
+      };
+
+      const decision = userAlertMatcher.__private.buildRuleCandidate(profile, tokenAfter, signals);
+
+      assert.deepEqual(decision.qualifiedRuleKeys, ['hvnc']);
+      assert.equal(decision.candidates[0].ruleKey, 'hvnc');
+    });
+  });
+
   it('loads a volume baseline for a Telegram-only signal profile', async () => {
     const context = createDeps();
     let volumeReads = 0;
@@ -375,7 +423,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('emits a monitored-vol event for active users who match the backend signal', async () => {
+  it('does not emit retired monitored-vol candidates', async () => {
     const profile = {
       userId: 15,
       ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
@@ -412,39 +460,30 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
 
     assert.equal(result.evaluatedProfiles, 1);
-    assert.equal(result.emitted, 1);
-    assert.equal(context.eventWrites.length, 1);
-    assert.equal(context.eventWrites[0].ruleKey, 'monitored-vol');
-    assert.equal(context.eventWrites[0].payload.label, 'VOL');
-    assert.equal(context.eventWrites[0].payload.prevVolume5m, 10000);
-    assert.equal(context.eventWrites[0].payload.volume5m, 18000);
-    assert.equal(context.eventWrites[0].payload.mcap, 300000);
-    assert.equal(context.triggeredWrites.length, 1);
-    assert.equal(context.triggeredWrites[0].lastAlertedPct, 80);
-    assert.deepEqual(context.transactionLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.triggeredWrites.length, 0);
+    assert.deepEqual(context.transactionLog, []);
   });
 
-  it('filters disabled chains and applies the Solana-scoped alert threshold', async () => {
+  it('filters disabled chains while preserving an active Solana HVNC profile', async () => {
     const context = createDeps({
       profiles: [{
         userId: 15,
         enabledChains: ['solana'],
-        ruleEnabled: { monitoredVol: false },
-        thresholdPct: 500,
+        ruleEnabled: { hvnc: false },
+        hvncMinVol: 500_000,
         alertConfigByChain: {
           solana: {
-            ruleEnabled: { monitoredVol: true },
-            thresholdPct: 50,
-            minVol: 8000,
-            minMcap: 30000,
-            maxMcap: 0,
+            ruleEnabled: { hvnc: true },
+            hvncMinVol: 300_000,
           },
         },
       }, {
         userId: 16,
         enabledChains: ['robinhood'],
-        ruleEnabled: { monitoredVol: true },
-        thresholdPct: 50,
+        ruleEnabled: { hvnc: true },
+        hvncMinVol: 300_000,
       }],
       volumeRows: [{
         token_address: TOKEN_ADDRESS,
@@ -457,7 +496,9 @@ describe('user alert matcher', () => {
       tokenAfter: {
         address: TOKEN_ADDRESS,
         last_vol_5m: 18000,
+        last_vol_24h: 350000,
         last_mcap: 300000,
+        last_token_created_at_ms: Date.parse('2026-04-16T11:58:00.000Z'),
       },
     }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
 
@@ -466,14 +507,11 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].userId, 15);
   });
 
-  it('persists ticker peer snapshots with emitted backend alerts', async () => {
+  it('persists ticker peer snapshots with remaining backend alerts', async () => {
     const profile = {
       userId: 17,
-      ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-      thresholdPct: 50,
-      minVol: 8000,
-      minMcap: 30000,
-      maxMcap: 0,
+      ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+      hvncMinVol: 300_000,
     };
     const context = createDeps({
       profiles: [profile],
@@ -521,6 +559,7 @@ describe('user alert matcher', () => {
         last_vol_5m: 18000,
         last_vol_24h: 350000,
         last_mcap: 300000,
+        last_token_created_at_ms: Date.parse('2026-04-16T11:58:00.000Z'),
       },
     }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
 
@@ -530,7 +569,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].payload.tickerPeers?.items?.[1]?.address, '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
   });
 
-  it('emits a separate GMGN 1m volume alert when the GMGN short window spikes', async () => {
+  it('does not emit retired GMGN 1m volume candidates even when the legacy gate is on', async () => {
     await withGmgnVol1mAlertsEnabled(async () => {
       const profile = {
         userId: 31,
@@ -569,19 +608,9 @@ describe('user alert matcher', () => {
         },
       }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
 
-      assert.equal(result.emitted, 1);
-      assert.equal(context.eventWrites.length, 1);
-      assert.equal(context.eventWrites[0].ruleKey, 'gmgn-vol-1m');
-      assert.equal(context.eventWrites[0].kind, 'monitored-vol');
-      assert.equal(context.eventWrites[0].payload.label, 'GMGN 1M');
-      assert.equal(context.eventWrites[0].payload.source, 'gmgn');
-      assert.equal(context.eventWrites[0].payload.gmgnInterval, '1m');
-      assert.equal(context.eventWrites[0].payload.prevVolume1m, 1000);
-      assert.equal(context.eventWrites[0].payload.volume1m, 1600);
-      assert.equal(context.eventWrites[0].payload.volume5m, 18000);
-      assert.equal(context.triggeredWrites[0].ruleKey, 'gmgn-vol-1m');
-      assert.equal(context.triggeredWrites[0].lastAlertedValue, 1600);
-      assert.equal(context.triggeredWrites[0].lastAlertedPct, 60);
+      assert.equal(result.emitted, 0);
+      assert.equal(context.eventWrites.length, 0);
+      assert.equal(context.triggeredWrites.length, 0);
     });
   });
 
@@ -636,7 +665,7 @@ describe('user alert matcher', () => {
     }
   });
 
-  it('can emit GMGN 1m and normal monitored-vol alerts from the same GMGN update', async () => {
+  it('does not emit either retired volume rule from the same GMGN update', async () => {
     await withGmgnVol1mAlertsEnabled(async () => {
       const profile = {
         userId: 32,
@@ -674,19 +703,13 @@ describe('user alert matcher', () => {
         },
       }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
 
-      assert.equal(result.emitted, 2);
-      assert.deepEqual(context.eventWrites.map((event) => event.ruleKey), [
-        'monitored-vol',
-        'gmgn-vol-1m',
-      ]);
-      assert.deepEqual(context.triggeredWrites.map((write) => write.ruleKey), [
-        'monitored-vol',
-        'gmgn-vol-1m',
-      ]);
+      assert.equal(result.emitted, 0);
+      assert.deepEqual(context.eventWrites, []);
+      assert.deepEqual(context.triggeredWrites, []);
     });
   });
 
-  it('suppresses GMGN 1m repeats until 1m volume beats the last alerted 1m volume by 50%', async () => {
+  it('does not evaluate retired GMGN 1m repeat candidates', async () => {
     await withGmgnVol1mAlertsEnabled(async () => {
       const context = createDeps({
         profiles: [{
@@ -735,12 +758,12 @@ describe('user alert matcher', () => {
       }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
 
       assert.equal(result.emitted, 0);
-      assert.equal(result.suppressed, 1);
+      assert.equal(result.suppressed, 0);
       assert.equal(context.eventWrites.length, 0);
     });
   });
 
-  it('suppresses monitored-vol retriggers until the next alert beats the last alerted volume by the user threshold', async () => {
+  it('does not evaluate retired monitored-volume retriggers', async () => {
     const context = createDeps({
       profiles: [{
         userId: 8,
@@ -779,12 +802,12 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
     assert.equal(context.transactionLog.length, 0);
   });
 
-  it('suppresses monitored-vol repeats when the current 5m volume did not advance and only the rolling baseline shrank', async () => {
+  it('does not evaluate retired monitored-volume repeats against a shrinking baseline', async () => {
     const context = createDeps({
       profiles: [{
         userId: 44,
@@ -823,11 +846,11 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T03:00:58.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('suppresses monitored-vol repeats when the absolute 5m volume only advances a little after cooldown', async () => {
+  it('does not evaluate retired monitored-volume repeats after cooldown', async () => {
     const context = createDeps({
       profiles: [{
         userId: 45,
@@ -866,11 +889,11 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T03:06:15.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('requires monitored-vol repeats to beat the last alerted volume by the user threshold, not just the rolling 5m baseline', async () => {
+  it('does not let legacy monitored-volume anchors restore emission', async () => {
     const context = createDeps({
       profiles: [{
         userId: 46,
@@ -909,7 +932,7 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T18:17:24.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
   });
 
@@ -959,7 +982,7 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites[0].metadata.monitoredVolColdMaxVolume5m, 5000);
   });
 
-  it('keeps the monitored-vol cold timer through a short hot blip before 30 minutes', async () => {
+  it('keeps legacy monitored-volume cold metadata without emitting', async () => {
     const context = createDeps({
       profiles: [{
         userId: 49,
@@ -1002,7 +1025,7 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T18:29:59.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
     assert.equal(context.rearmWrites.length, 1);
     assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:00:00.000Z');
@@ -1011,7 +1034,7 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites[0].metadata.monitoredVolColdInterruptedVolume5m, undefined);
   });
 
-  it('interrupts the monitored-vol cold reset after volume stays above 5k beyond the hot blip grace', async () => {
+  it('updates legacy monitored-volume reset metadata without emitting', async () => {
     const context = createDeps({
       profiles: [{
         userId: 52,
@@ -1056,7 +1079,7 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T18:21:01.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
     assert.equal(context.rearmWrites.length, 1);
     assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, undefined);
@@ -1115,7 +1138,7 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites[0].metadata.monitoredVolHotVolume5m, undefined);
   });
 
-  it('expires a rearmed monitored-vol anchor after 30 cold minutes so fresh volume can alert against the rolling baseline', async () => {
+  it('does not emit after a legacy monitored-volume anchor expires', async () => {
     const context = createDeps({
       profiles: [{
         userId: 50,
@@ -1157,14 +1180,11 @@ describe('user alert matcher', () => {
       },
     }, { now: '2026-04-17T19:00:00.000Z', deps: context.deps });
 
-    assert.equal(result.emitted, 1);
-    assert.equal(context.eventWrites.length, 1);
-    assert.equal(context.eventWrites[0].payload.prevVolume5m, 7000);
-    assert.equal(context.eventWrites[0].payload.volume5m, 24000);
-    assert.ok(Math.abs(context.eventWrites[0].payload.pct - 242.85714285714286) < 0.000001);
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
   });
 
-  it('does not expire monitored-vol anchors for tokens that have not rearmed yet', async () => {
+  it('does not evaluate a retired monitored-volume anchor that has not rearmed', async () => {
     const context = createDeps({
       profiles: [{
         userId: 51,
@@ -1207,11 +1227,11 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-17T19:00:00.000Z', deps: context.deps });
 
     assert.equal(result.emitted, 0);
-    assert.equal(result.suppressed, 1);
+    assert.equal(result.suppressed, 0);
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('emits monitored-vol repeats against the last alerted volume and renders that anchored comparison in the payload', async () => {
+  it('does not emit retired monitored-volume repeats against a legacy anchor', async () => {
     const context = createDeps({
       profiles: [{
         userId: 47,
@@ -1249,14 +1269,11 @@ describe('user alert matcher', () => {
       },
     }, { now: '2026-04-17T18:17:24.000Z', deps: context.deps });
 
-    assert.equal(result.emitted, 1);
-    assert.equal(context.eventWrites.length, 1);
-    assert.equal(context.eventWrites[0].payload.prevVolume5m, 16000);
-    assert.equal(context.eventWrites[0].payload.volume5m, 32000);
-    assert.equal(context.eventWrites[0].payload.pct, 100);
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
   });
 
-  it('preserves monitored-vol cooldown on rearm so a fast re-crossing cannot alert again within 60s', async () => {
+  it('preserves legacy monitored-volume cooldown metadata without re-emission', async () => {
     const cooldownUntil = '2026-04-16T12:01:00.000Z';
     const rearmContext = createDeps({
       profiles: [{
@@ -1337,11 +1354,11 @@ describe('user alert matcher', () => {
     }, { now: '2026-04-16T12:00:22.000Z', deps: suppressContext.deps });
 
     assert.equal(suppressResult.emitted, 0);
-    assert.equal(suppressResult.suppressed, 1);
+    assert.equal(suppressResult.suppressed, 0);
     assert.equal(suppressContext.eventWrites.length, 0);
   });
 
-  it('emits monitored-mcap alerts only after the token is old enough for the current frontend rule', async () => {
+  it('does not emit retired monitored-mcap candidates', async () => {
     const createdAt = Date.UTC(2026, 3, 16, 9, 0, 0);
     const context = createDeps({
       profiles: [{
@@ -1368,15 +1385,12 @@ describe('user alert matcher', () => {
       },
     }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
 
-    assert.equal(result.emitted, 1);
-    assert.equal(context.eventWrites[0].ruleKey, 'monitored-mcap');
-    assert.equal(context.eventWrites[0].payload.label, 'MCAP');
-    assert.equal(context.eventWrites[0].payload.prevMcap, 100000);
-    assert.equal(context.eventWrites[0].payload.mcap, 170000);
-    assert.equal(context.triggeredWrites[0].lastAlertedPct, 70);
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.triggeredWrites.length, 0);
   });
 
-  it('prefers the 1m market-cap bucket baseline over a stale tokenBefore catalog snapshot', async () => {
+  it('does not emit retired market-cap candidates from canonical bucket baselines', async () => {
     const createdAt = Date.UTC(2026, 3, 17, 16, 0, 0);
     const context = createDeps({
       profiles: [{
@@ -1410,11 +1424,8 @@ describe('user alert matcher', () => {
       },
     }, { now: '2026-04-17T19:25:08.000Z', deps: context.deps });
 
-    assert.equal(result.emitted, 1);
-    assert.equal(context.eventWrites.length, 1);
-    assert.equal(context.eventWrites[0].payload.prevMcap, 30100);
-    assert.equal(context.eventWrites[0].payload.mcap, 52231);
-    assert.equal(Math.round(context.eventWrites[0].payload.pct), 74);
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
   });
 
   it('rearms hvnc when the token no longer matches the single-fire gate', async () => {
@@ -1912,33 +1923,24 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].ruleKey, 'meteora-surge');
   });
 
-  it('matches multiple active users from a single signal computation for the same token update', async () => {
+  it('matches remaining HVNC profiles from a single signal computation', async () => {
     let buildSignalCalls = 0;
     const context = createDeps({
       profiles: [
         {
           userId: 1,
-          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-          thresholdPct: 50,
-          minVol: 8000,
-          minMcap: 30000,
-          maxMcap: 0,
+          ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+          hvncMinVol: 300_000,
         },
         {
           userId: 2,
-          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-          thresholdPct: 80,
-          minVol: 14000,
-          minMcap: 30000,
-          maxMcap: 0,
+          ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+          hvncMinVol: 300_000,
         },
         {
           userId: 3,
-          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-          thresholdPct: 90,
-          minVol: 10000,
-          minMcap: 30000,
-          maxMcap: 0,
+          ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+          hvncMinVol: 400_000,
         },
       ],
       tokenAlertSignalBuilder: {
@@ -1957,7 +1959,7 @@ describe('user alert matcher', () => {
             mcapChangePct: 20,
             isMcapDeclining: false,
             mcapAlertTokenAgeGatePassed: true,
-            passesHvncPrereqs: false,
+            passesHvncPrereqs: true,
             passesMeteoraPrereqs: false,
             meteoraChange1h: null,
             meteoraCurrentTvl: null,
@@ -2231,17 +2233,14 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('coalesces backend dedupe keys for hidden monitored alerts so repeated hidden emits do not fan out rows', async () => {
+  it('coalesces backend dedupe keys for remaining hidden HVNC alerts', async () => {
     const hiddenSessionKey = 'hidden:1713268800000';
     const profile = {
       userId: 72,
       presenceMode: 'hidden',
       hiddenSessionKey,
-      ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
-      thresholdPct: 50,
-      minVol: 8000,
-      minMcap: 30000,
-      maxMcap: 0,
+      ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+      hvncMinVol: 300_000,
     };
     const context = createDeps({
       profiles: [profile],
@@ -2263,6 +2262,7 @@ describe('user alert matcher', () => {
         last_vol_5m: 18000,
         last_vol_24h: 350000,
         last_mcap: 300000,
+        last_token_created_at_ms: Date.parse('2026-04-16T11:58:00.000Z'),
       },
     }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
 
@@ -2270,7 +2270,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 1);
     assert.equal(
       context.eventWrites[0].dedupeKey,
-      `72:monitored-vol:${TOKEN_ADDRESS}:hidden`
+      `72:hvnc:${TOKEN_ADDRESS}:hidden`
     );
   });
 

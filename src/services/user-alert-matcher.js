@@ -16,6 +16,9 @@ const { normalizeTokenChain } = require('../utils/token-identity');
 const standardAlertReset = require('./standard-alert-reset');
 const standardTransition = require('./standard-alert-transition');
 const {
+  isStandardAlertEmissionRetired,
+} = require('./standard-alert-emission-policy');
+const {
   createSolanaAlertProfileEvaluator,
 } = require('./solana-alert-profile-evaluator');
 const {
@@ -725,7 +728,9 @@ function buildRuleCandidate(profile, tokenAfter, signals) {
     candidates.push(buildMonitoredMcapCandidate(profile, shared, signals));
   }
 
-  const qualifiedCandidates = candidates.filter(Boolean);
+  const qualifiedCandidates = candidates
+    .filter(Boolean)
+    .filter((candidate) => !isStandardAlertEmissionRetired(candidate.ruleKey));
   return {
     candidate: qualifiedCandidates.find((candidate) => candidate.ruleKey !== GMGN_VOL_1M_RULE_KEY) || qualifiedCandidates[0] || null,
     candidates: buildLifecycleCandidates(qualifiedCandidates),

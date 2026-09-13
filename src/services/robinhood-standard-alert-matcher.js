@@ -12,6 +12,9 @@ const {
   getStandardTransition,
 } = require('./standard-alert-transition');
 const { selectEnabledAlertProfilesForChain } = require('./chain-alert-profile');
+const {
+  isStandardAlertEmissionRetired,
+} = require('./standard-alert-emission-policy');
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_RULE_KEYS = Object.freeze([
@@ -145,7 +148,7 @@ function buildCandidates(profile, signal) {
     ...RULE_SPECS.map((spec) => surgeCandidate(profile, signal, spec)),
     monitoredCandidate(profile, signal, 'volume'),
     monitoredCandidate(profile, signal, 'fdv'),
-  ].filter(Boolean);
+  ].filter((candidate) => candidate && !isStandardAlertEmissionRetired(candidate.ruleKey));
 }
 function stateIndex(states = []) {
   return new Map(states.map((state) => [`${state.userId}:${state.ruleKey}`, state]));
