@@ -581,8 +581,12 @@ diagrams and call the same preset resolver used by persisted preferences; they d
   logic.
 - **6D — shell composition:** add primary and secondary Monitored slots and compose visible regions exclusively from the
   fixed preset resolver.
-- **6E — allowed manipulation:** remove horizontal resize state/zones, preserve independent bottom-edge resize and allow
-  drag exchange only among panels visible in the active preset.
+- **6E1 — allowed resize:** remove horizontal resize state/zones and its free-span controller contract; preserve independent
+  bottom-edge resize for `primary`, `secondary` and `alerts`. Validate with repository lint at the 14-warning baseline,
+  frontend build and a focused vertical-resize smoke test.
+- **6E2 — canonical drag exchange:** allow drag exchange only among panes visible in the active preset and remove the legacy
+  free-placement/reorder machinery. Persist canonical pane order without changing preset geometry. Validate with repository
+  lint at the 14-warning baseline, frontend build and a focused drag-exchange smoke test.
 - **6F — preset picker:** add the compact authored monitor SVG and accessible popover whose schematic previews call the
   canonical preset mutation.
 - **6G — responsive completion:** enforce Command Center's viewport guard, add compact responsive variants, consolidate
