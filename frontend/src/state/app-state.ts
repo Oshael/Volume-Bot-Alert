@@ -41,12 +41,21 @@ export interface GlobalSearchState {
 export const createGlobalSearchState = (): GlobalSearchState => ({ query: '', status: 'idle', hits: [], error: null });
 
 export type ClipboardTokenStatus = 'idle' | 'reading' | 'resolving' | 'ready' | 'denied' | 'unavailable' | 'unsupported' | 'syncing' | 'error';
+export type ClipboardAccessStatus = 'checking' | 'prompt' | 'granted' | 'denied' | 'unavailable';
 export interface ClipboardTokenState {
   status: ClipboardTokenStatus;
+  accessStatus: ClipboardAccessStatus;
+  promptDismissed: boolean;
   hit: GlobalSearchHit | null;
   error: string | null;
 }
-export const createClipboardTokenState = (): ClipboardTokenState => ({ status: 'idle', hit: null, error: null });
+export const createClipboardTokenState = (): ClipboardTokenState => ({
+  status: 'idle',
+  accessStatus: 'checking',
+  promptDismissed: false,
+  hit: null,
+  error: null,
+});
 
 export interface AlertEntry {
   id: string;

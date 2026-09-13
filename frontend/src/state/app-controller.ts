@@ -742,7 +742,10 @@ export interface AppController {
   refreshTelegram(): Promise<void>;
   createTelegramLink(): Promise<void>;
   disconnectTelegram(): Promise<void>;
-  readClipboardToken(): Promise<void>;
+  initializeClipboardTokenAccess(): Promise<void>;
+  requestClipboardTokenAccess(): Promise<void>;
+  inspectClipboardToken(): Promise<void>;
+  dismissClipboardTokenPrompt(): void;
   clearClipboardToken(): void;
   setGlobalSearchQuery(query: string): void;
   clearGlobalSearch(): void;
@@ -13132,8 +13135,17 @@ export function createAppController(): AppController {
     async disconnectTelegram() {
       await telegramConnection.disconnect();
     },
-    async readClipboardToken() {
-      await clipboardToken.activate();
+    async initializeClipboardTokenAccess() {
+      await clipboardToken.initialize();
+    },
+    async requestClipboardTokenAccess() {
+      await clipboardToken.requestAccess();
+    },
+    async inspectClipboardToken() {
+      await clipboardToken.inspect();
+    },
+    dismissClipboardTokenPrompt() {
+      clipboardToken.dismissPrompt();
     },
     clearClipboardToken() {
       clipboardToken.reset();

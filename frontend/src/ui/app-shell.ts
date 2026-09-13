@@ -1080,6 +1080,8 @@ function getHeaderRenderKey(state: AppState) {
     state.ui.workspace,
     state.ui.livePanelLayout.preset,
     state.ui.clipboardToken.status,
+    state.ui.clipboardToken.accessStatus,
+    state.ui.clipboardToken.promptDismissed,
     state.ui.clipboardToken.error,
     state.ui.clipboardToken.hit
       ? `${state.ui.clipboardToken.hit.chain}:${state.ui.clipboardToken.hit.address}` : null,

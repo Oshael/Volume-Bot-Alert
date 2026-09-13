@@ -1485,8 +1485,13 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .workspace-clipboard-token:disabled {
-  cursor: wait;
+  cursor: default;
   opacity: 0.72;
+}
+
+.workspace-clipboard-token[data-state="reading"],
+.workspace-clipboard-token[data-state="resolving"] {
+  cursor: wait;
 }
 
 .workspace-clipboard-token[data-state="denied"],
@@ -1573,6 +1578,74 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .workspace-global-search input::placeholder {
   color: rgba(153, 174, 200, 0.62);
+}
+
+.workspace-clipboard-permission {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  width: min(390px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid rgba(0, 212, 255, 0.38);
+  border-radius: 10px;
+  background: rgba(6, 14, 24, 0.98);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+  color: #e7f7ff;
+}
+
+.workspace-clipboard-permission-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(0, 212, 255, 0.12);
+  color: #7edde9;
+}
+
+.workspace-clipboard-permission-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-clipboard-permission-copy strong {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.workspace-clipboard-permission-copy small {
+  color: rgba(171, 194, 218, 0.82);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.workspace-clipboard-permission button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(0, 212, 255, 0.46);
+  border-radius: 7px;
+  background: rgba(0, 212, 255, 0.13);
+  color: #baf4ff;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.workspace-clipboard-permission .workspace-clipboard-permission-dismiss {
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: rgba(171, 194, 218, 0.72);
+  font-size: 16px;
 }
 
 .workspace-global-search-results {

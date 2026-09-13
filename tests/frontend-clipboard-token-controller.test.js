@@ -13,11 +13,11 @@ const moduleRecord = { exports: {} };
 vm.runInNewContext(compiled.outputText, {
   module: moduleRecord, exports: moduleRecord.exports, AbortController,
   require: (id) => id.endsWith('app-state')
-    ? { createClipboardTokenState: () => ({ status: 'idle', hit: null, error: null }) }
+    ? { createClipboardTokenState: () => ({ status: 'idle', accessStatus: 'checking', promptDismissed: false, hit: null, error: null }) }
     : { fetchExactToken: async () => { throw new Error('Unexpected API call'); } },
 }, { filename: file });
 const { classifyClipboardTokenAddress, createClipboardTokenController } = moduleRecord.exports;
-const createState = () => ({ status: 'idle', hit: null, error: null });
+const createState = () => ({ status: 'idle', accessStatus: 'checking', promptDismissed: false, hit: null, error: null });
 const ADDRESS = `0x${'a'.repeat(40)}`;
 const SECOND_ADDRESS = `0x${'b'.repeat(40)}`;
 const SOLANA_ADDRESS = 'So11111111111111111111111111111111111111112';
@@ -43,12 +43,16 @@ describe('frontend clipboard token shortcut', () => {
     const state = createState();
     const controller = createClipboardTokenController({
       state, isAuthenticated: () => true, notify() {},
-      readPermission: async () => 'granted', readClipboard: async () => 'private unrelated note',
+      readPermission: async () => 'prompt', readClipboard: async () => 'private unrelated note',
       request: async () => { requests += 1; return exactPayload(ADDRESS); },
     });
-    await controller.activate();
+    await controller.initialize();
+    assert.equal(state.accessStatus, 'prompt');
+    await controller.requestAccess();
     assert.equal(requests, 0);
-    assert.deepEqual(state, createState());
+    assert.deepEqual(state, {
+      ...createState(), accessStatus: 'granted', promptDismissed: true,
+    });
   });
 
   it('treats denied and unavailable clipboard access as closed non-requesting states', async () => {
@@ -61,9 +65,10 @@ describe('frontend clipboard token shortcut', () => {
       readClipboard: async () => { reads += 1; return ADDRESS; },
       request: async () => { requests += 1; return exactPayload(ADDRESS); },
     });
-    await deniedController.activate();
-    await deniedController.activate();
+    await deniedController.initialize();
+    await deniedController.requestAccess();
     assert.equal(denied.status, 'denied');
+    assert.equal(denied.accessStatus, 'denied');
     assert.equal(reads, 0);
     assert.equal(requests, 0);
 
@@ -71,33 +76,36 @@ describe('frontend clipboard token shortcut', () => {
     const unavailableError = { name: 'NotSupportedError' };
     const unavailableController = createClipboardTokenController({
       state: unavailable, isAuthenticated: () => true, notify() {},
-      readPermission: async () => null,
+      isSupported: () => false,
       readClipboard: async () => { throw unavailableError; },
     });
-    await unavailableController.activate();
+    await unavailableController.initialize();
     assert.equal(unavailable.status, 'unavailable');
+    assert.equal(unavailable.accessStatus, 'unavailable');
   });
 
-  it('aborts stale exact resolutions and publishes only the latest clipboard identity', async () => {
+  it('detects new clipboard identities on site inspection without resolving the same contract twice', async () => {
     const state = createState();
-    const addresses = [ADDRESS, SECOND_ADDRESS];
+    let clipboardText = ADDRESS;
     const requests = [];
     const controller = createClipboardTokenController({
       state, isAuthenticated: () => true, notify() {}, readPermission: async () => 'granted',
-      readClipboard: async () => addresses.shift(),
-      request(address, token, signal) {
-        return new Promise((resolve) => requests.push({ address, token, signal, resolve }));
+      readClipboard: async () => clipboardText,
+      async request(address) {
+        requests.push(address);
+        return exactPayload(address);
       },
     });
 
-    const first = controller.activate();
-    await new Promise(setImmediate);
-    const second = controller.activate();
-    await new Promise(setImmediate);
-    assert.equal(requests[0].signal.aborted, true);
-    requests[0].resolve(exactPayload(ADDRESS));
-    requests[1].resolve(exactPayload(SECOND_ADDRESS));
-    await Promise.all([first, second]);
+    await controller.initialize();
+    await controller.inspect();
+    await controller.inspect();
+    assert.deepEqual(requests, [ADDRESS]);
+    assert.equal(state.hit.address, ADDRESS);
+
+    clipboardText = SECOND_ADDRESS;
+    await controller.inspect();
+    assert.deepEqual(requests, [ADDRESS, SECOND_ADDRESS]);
     assert.equal(state.status, 'ready');
     assert.equal(state.hit.address, SECOND_ADDRESS);
 

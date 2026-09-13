@@ -5,6 +5,7 @@ interface Options {
   state: ClipboardTokenState;
   isAuthenticated(): boolean;
   notify(): void;
+  isSupported?: () => boolean;
   readClipboard?: () => Promise<string>;
   readPermission?: () => Promise<PermissionState | null>;
   request?: typeof fetchExactToken;
@@ -60,8 +61,14 @@ export function createClipboardTokenController(options: Options) {
   const request = options.request || fetchExactToken;
   const readClipboard = options.readClipboard || defaultReadClipboard;
   const readPermission = options.readPermission || defaultReadPermission;
+  const isSupported = options.isSupported || (() => (
+    Boolean(options.readClipboard)
+    || (typeof navigator !== 'undefined' && Boolean(navigator.clipboard?.readText))
+  ));
   let active: AbortController | null = null;
+  let reading = false;
   let revision = 0;
+  let lastAddress: string | null = null;
 
   function owns(ownedRevision: number, controller?: AbortController) {
     return ownedRevision === revision && !controller?.signal.aborted;
@@ -75,49 +82,106 @@ export function createClipboardTokenController(options: Options) {
     options.notify();
   }
 
-  async function activate() {
+  function dismissPrompt() {
+    if (options.state.promptDismissed) return;
+    options.state.promptDismissed = true;
+    options.notify();
+  }
+
+  async function initialize() {
+    if (!options.isAuthenticated()) return;
+    if (!isSupported()) {
+      Object.assign(options.state, { accessStatus: 'unavailable', status: 'unavailable' });
+      options.notify();
+      return;
+    }
+    const permission = await readPermission();
+    const accessStatus = permission === 'granted' || permission === 'denied' ? permission : 'prompt';
+    Object.assign(options.state, {
+      accessStatus,
+      status: accessStatus === 'denied' ? 'denied' : 'idle',
+    });
+    options.notify();
+  }
+
+  async function canRead(allowPermissionPrompt: boolean) {
+    if (reading || !options.isAuthenticated()) return;
+    if (options.state.accessStatus === 'checking') await initialize();
+    if (options.state.accessStatus === 'denied' || options.state.accessStatus === 'unavailable') return;
+    return allowPermissionPrompt || options.state.accessStatus === 'granted';
+  }
+
+  async function applyAddress(address: string | null, accessChanged: boolean, ownedRevision: number) {
+    if (!address) {
+      const changed = accessChanged || Boolean(options.state.hit) || options.state.status !== 'idle';
+      lastAddress = null;
+      Object.assign(options.state, { hit: null, status: 'idle' });
+      return changed;
+    }
+    if (address === lastAddress && options.state.hit?.address === address) {
+      return accessChanged;
+    }
+
+    lastAddress = address;
+    options.state.status = 'resolving';
+    options.notify();
+    active = new AbortController();
+    const ownedController = active;
+    const payload: GlobalSearchPayload = await request(address, null, ownedController.signal);
+    if (!owns(ownedRevision, ownedController)) return false;
+    Object.assign(options.state, getResolvedState(payload));
+    return true;
+  }
+
+  function applyFailure(error: unknown) {
+    options.state.hit = null;
+    options.state.status = getFailureStatus(error);
+    if (options.state.status === 'denied' || options.state.status === 'unavailable') {
+      options.state.accessStatus = options.state.status;
+    }
+    options.state.error = options.state.status === 'error'
+      ? (error instanceof Error ? error.message : 'Clipboard token resolution failed') : null;
+  }
+
+  async function readAndResolve(allowPermissionPrompt: boolean) {
+    if (!await canRead(allowPermissionPrompt)) return;
+
+    reading = true;
+    let notifyOnFinish = false;
     const ownedRevision = ++revision;
     active?.abort();
     active = null;
-    Object.assign(options.state, { status: 'reading', hit: null, error: null });
-    options.notify();
-    if (!options.isAuthenticated()) return reset();
+    if (allowPermissionPrompt && !options.state.hit) {
+      Object.assign(options.state, { status: 'reading', error: null });
+      options.notify();
+    }
 
     try {
-      if (await readPermission() === 'denied') {
-        if (!owns(ownedRevision)) return;
-        options.state.status = 'denied';
-        options.notify();
-        return;
-      }
       const address = classifyClipboardTokenAddress(await readClipboard());
       if (!owns(ownedRevision)) return;
-      if (!address) {
-        options.state.status = 'idle';
-        options.notify();
-        return;
-      }
-
-      options.state.status = 'resolving';
-      options.notify();
-      active = new AbortController();
-      const ownedController = active;
-      const payload: GlobalSearchPayload = await request(address, null, ownedController.signal);
-      if (!owns(ownedRevision, ownedController)) return;
-      Object.assign(options.state, getResolvedState(payload));
+      const accessChanged = options.state.accessStatus !== 'granted' || !options.state.promptDismissed;
+      Object.assign(options.state, { accessStatus: 'granted', promptDismissed: true, error: null });
+      notifyOnFinish = await applyAddress(address, accessChanged, ownedRevision);
     } catch (error) {
       if (!owns(ownedRevision)) return;
-      options.state.hit = null;
-      options.state.status = getFailureStatus(error);
-      options.state.error = options.state.status === 'error'
-        ? (error instanceof Error ? error.message : 'Clipboard token resolution failed') : null;
+      notifyOnFinish = true;
+      applyFailure(error);
     } finally {
+      reading = false;
       if (ownedRevision === revision) {
         active = null;
-        options.notify();
+        if (notifyOnFinish) options.notify();
       }
     }
   }
 
-  return Object.freeze({ activate, reset });
+  async function requestAccess() {
+    await readAndResolve(true);
+  }
+
+  async function inspect() {
+    await readAndResolve(false);
+  }
+
+  return Object.freeze({ dismissPrompt, initialize, inspect, requestAccess, reset });
 }

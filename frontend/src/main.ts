@@ -738,6 +738,18 @@ root.addEventListener('pointerdown', (event) => {
   }
 });
 
+root.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement | null;
+  if (
+    latestState?.session.status !== 'authenticated'
+    || latestState.ui.clipboardToken.accessStatus !== 'granted'
+    || target?.closest('[data-action="activate-clipboard-token"], [data-action="request-clipboard-access"], [data-action="dismiss-clipboard-access"]')
+  ) {
+    return;
+  }
+  void controller.inspectClipboardToken();
+});
+
 const releaseRootPointerGesture = () => {
   if (!activeRootPointerGesture) return;
   activeRootPointerGesture = false;
@@ -929,6 +941,9 @@ controller.subscribe((state, dirtyRegions) => {
   const sessionJustBecameAuthenticated = previous.sessionStatus !== 'authenticated' && state.session.status === 'authenticated';
   const sessionJustBecameInactive = previous.sessionStatus === 'authenticated'
     && state.session.status !== 'authenticated';
+  if (sessionJustBecameAuthenticated) {
+    void controller.initializeClipboardTokenAccess();
+  }
   syncLivePresence(state);
   if (sessionJustBecameInactive) {
     stopAlertSoundPlayback();

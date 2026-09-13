@@ -1366,12 +1366,30 @@ function renderGlobalSearchClipboardContent(hit: AppState['ui']['clipboardToken'
   return `${avatar}<strong>${escapeHtml(hit.symbol || hit.name || 'Token')}</strong>`;
 }
 
+function renderClipboardPermissionNotice(state: AppState['ui']['clipboardToken'], searchOpen: boolean) {
+  if (searchOpen || state.promptDismissed || state.accessStatus === 'granted'
+    || state.accessStatus === 'checking' || state.accessStatus === 'unavailable') {
+    return '';
+  }
+  const denied = state.accessStatus === 'denied';
+  const message = denied
+    ? 'Clipboard access is blocked. Enable it in your browser site settings to detect copied contracts.'
+    : 'Allow clipboard access to detect copied token contracts whenever you click inside TrendScope.';
+  return `<aside class="workspace-clipboard-permission" role="status" aria-label="Clipboard detection permission">
+    <span class="workspace-clipboard-permission-icon" aria-hidden="true">${GLOBAL_SEARCH_CLIPBOARD_ICON}</span>
+    <span class="workspace-clipboard-permission-copy"><strong>Detect copied contracts</strong><small>${message}</small></span>
+    ${denied ? '' : '<button type="button" data-action="request-clipboard-access">Allow</button>'}
+    <button type="button" class="workspace-clipboard-permission-dismiss" data-action="dismiss-clipboard-access" aria-label="Dismiss clipboard permission notice">×</button>
+  </aside>`;
+}
+
 function renderGlobalSearch(state: AppState) {
   const search = state.ui.globalSearch;
   const clipboard = state.ui.clipboardToken;
   const clipboardHit = clipboard.hit;
   const clipboardTitle = {
-    idle: 'Read a token contract from clipboard', reading: 'Reading clipboard…',
+    idle: clipboard.accessStatus === 'granted' ? 'Copied token contracts appear here' : 'Clipboard detection is not enabled',
+    reading: 'Reading clipboard…',
     resolving: 'Resolving copied token…', ready: `Open ${clipboardHit?.symbol || 'copied token'} chart`,
     denied: 'Clipboard access denied', unavailable: 'Clipboard reading is unavailable',
     unsupported: 'Copied address is not supported yet', syncing: 'Copied token search is syncing',
@@ -1379,6 +1397,7 @@ function renderGlobalSearch(state: AppState) {
   }[clipboard.status];
   const clipboardContent = renderGlobalSearchClipboardContent(clipboardHit);
   const open = search.query.trim().length >= 2;
+  const permissionNotice = renderClipboardPermissionNotice(clipboard, open);
   const statusLabels = {
     debouncing: 'Waiting to search…', loading: 'Searching tokens…', empty: 'No matching token found.',
     syncing: 'Robinhood search is syncing.', unavailable: 'Token search is unavailable.',
@@ -1412,10 +1431,11 @@ function renderGlobalSearch(state: AppState) {
       <button type="button" class="workspace-clipboard-token${clipboardHit ? ' is-resolved' : ''}"
         data-action="activate-clipboard-token" data-state="${clipboard.status}"
         aria-label="${escapeHtml(clipboardTitle)}" title="${escapeHtml(clipboardTitle)}"
-        ${clipboard.status === 'reading' || clipboard.status === 'resolving' ? 'disabled' : ''}>
+        ${!clipboardHit || clipboard.status === 'reading' || clipboard.status === 'resolving' ? 'disabled' : ''}>
         ${clipboardContent}
       </button>
     </div>
+    ${permissionNotice}
     <div id="workspace-global-search-results" class="workspace-global-search-results" role="listbox" ${open ? '' : 'hidden'}>
       ${results || `<div class="workspace-global-search-status" role="status">${escapeHtml(fallback || 'Type at least 2 characters.')}</div>`}
     </div>
@@ -1436,12 +1456,14 @@ function bindGlobalSearch(section: HTMLElement, controller: AppController) {
   };
   clipboard?.addEventListener('click', () => {
     const hit = controller.state.ui.clipboardToken.hit;
-    if (!hit) {
-      void controller.readClipboardToken();
-      return;
-    }
+    if (!hit) return;
     controller.openExpandedSparkline(hit.destination.address, hit.destination.chain);
-    controller.clearClipboardToken();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="request-clipboard-access"]')?.addEventListener('click', () => {
+    void controller.requestClipboardTokenAccess();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="dismiss-clipboard-access"]')?.addEventListener('click', () => {
+    controller.dismissClipboardTokenPrompt();
   });
   input?.addEventListener('input', () => controller.setGlobalSearchQuery(input.value));
   input?.addEventListener('keydown', (event) => {

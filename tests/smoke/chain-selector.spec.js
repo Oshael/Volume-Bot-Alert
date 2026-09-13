@@ -1252,10 +1252,10 @@ test('searches all capable chains from the centered header and opens an exact to
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('resolves a clipboard token by gesture and keeps denial neutral without repeated reads', async ({ page }) => {
-  await page.addInitScript(({ address }) => {
-    window.__clipboardPermission = 'denied';
-    window.__clipboardText = address;
+test('requests clipboard access once and detects copied contracts from ordinary site clicks', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__clipboardPermission = 'prompt';
+    window.__clipboardText = 'private unrelated note';
     window.__clipboardReads = 0;
     Object.defineProperty(navigator, 'permissions', {
       configurable: true,
@@ -1263,9 +1263,13 @@ test('resolves a clipboard token by gesture and keeps denial neutral without rep
     });
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
-      value: { readText: async () => { window.__clipboardReads += 1; return window.__clipboardText; } },
+      value: { readText: async () => {
+        window.__clipboardReads += 1;
+        window.__clipboardPermission = 'granted';
+        return window.__clipboardText;
+      } },
     });
-  }, { address: ROBINHOOD_TOKEN });
+  });
   const fixtures = {
     ...ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
     'GET /api/search/global': (request) => {
@@ -1292,18 +1296,20 @@ test('resolves a clipboard token by gesture and keeps denial neutral without rep
   };
   const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
   const shortcut = page.locator('[data-action="activate-clipboard-token"]');
-  await shortcut.click();
-  await expect(shortcut).toHaveAttribute('data-state', 'denied');
-  await shortcut.click();
+  const permissionNotice = page.getByRole('status', { name: 'Clipboard detection permission' });
+  await expect(permissionNotice).toBeVisible();
+  await expect(shortcut).toBeDisabled();
   expect(await page.evaluate(() => window.__clipboardReads)).toBe(0);
-  const searchInput = page.getByRole('searchbox', { name: 'Search tokens across all blockchains' });
-  await searchInput.fill('h');
-  await expect(searchInput).toHaveValue('h');
-  await searchInput.fill('');
 
-  await page.evaluate(() => { window.__clipboardPermission = 'granted'; });
-  await shortcut.click();
+  await permissionNotice.getByRole('button', { name: 'Allow' }).click();
+  await expect(permissionNotice).toHaveCount(0);
+  expect(await page.evaluate(() => window.__clipboardReads)).toBe(1);
+  await expect(shortcut).toBeDisabled();
+
+  await page.evaluate((address) => { window.__clipboardText = address; }, ROBINHOOD_TOKEN);
+  await page.locator('.workspace-brand-title').click();
   await expect(shortcut).toHaveAttribute('data-state', 'ready');
+  await expect(shortcut).toBeEnabled();
   await expect(shortcut).toContainText('HOOD');
   await expect(shortcut.locator('img')).toHaveAttribute('src', 'https://assets.example.test/hood.png');
   const searchField = page.locator('.workspace-global-search-field');
@@ -1324,7 +1330,7 @@ test('resolves a clipboard token by gesture and keeps denial neutral without rep
   await shortcut.click();
   await expect(page).toHaveURL(`/alerts/robinhood/${ROBINHOOD_TOKEN}`);
   await expect(page.locator('[data-auth-modal="expanded-sparkline"]')).toBeVisible();
-  expect(await page.evaluate(() => window.__clipboardReads)).toBe(1);
+  expect(await page.evaluate(() => window.__clipboardReads)).toBe(2);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

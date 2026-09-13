@@ -1521,11 +1521,15 @@ No header autenticado, a busca fica centralizada em desktop e ocupa uma linha
 completa abaixo de 980 px. Resultados repetidos de ticker exibem chain e endereço;
 Enter abre o único resultado, setas percorrem múltiplas opções e a seleção abre o
 gráfico expandido sem alterar os filtros de chain do workspace.
-O atalho de clipboard imediatamente à esquerda da busca só lê após ativação explícita.
-Texto vazio, maior que 120 caracteres ou que não tenha formato de endereço suportado é
-descartado localmente antes de qualquer request. Um contrato resolvido mostra ticker,
-chain e imagem sanitizada até abrir o gráfico; negação de permissão, troca de sessão e
-resoluções substituídas não retêm o conteúdo copiado nem iniciam polling.
+O atalho de clipboard fica incorporado à extremidade direita da busca. Após autenticar,
+o frontend consulta a permissão e, quando necessário, mostra um aviso próprio; somente o
+botão `Allow` desse aviso aciona o prompt nativo do navegador. Depois da concessão, cada
+clique normal dentro do site fornece o gesto necessário para inspecionar silenciosamente
+o clipboard, sem polling. Texto vazio, maior que 120 caracteres ou sem formato de endereço
+suportado é descartado localmente antes de qualquer request, e a mesma identidade não é
+resolvida novamente. Um contrato reconhecido substitui o ícone por imagem e ticker
+clicáveis, que abrem o gráfico expandido; negação de permissão, troca de sessão e
+resoluções substituídas não retêm conteúdo copiado indevidamente.
 
 No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket` e a aplicação no
 estado marca `clientAppliedAt`. O console administrativo
