@@ -1,7 +1,7 @@
 const inputSessionModel = require('../models/telegram-input-session');
 const { normalizeTelegramId } = require('./telegram-link-service');
 const {
-  RULE_CONTRACTS,
+  ACTIVE_RULE_CONTRACTS,
   settingFieldSpec,
   validateRuleSettings,
 } = require('./telegram-alert-rule-contracts');
@@ -53,7 +53,7 @@ function requireTelegramUserId(value) {
 }
 
 function requireEditPayload(input) {
-  const contract = RULE_CONTRACTS[input?.chain]?.[input?.ruleKey];
+  const contract = ACTIVE_RULE_CONTRACTS[input?.chain]?.[input?.ruleKey];
   if (!contract || input.field === 'defaultsVersion' || !contract.fields.includes(input.field)) {
     throw new TypeError('Unsupported Telegram rule setting field');
   }

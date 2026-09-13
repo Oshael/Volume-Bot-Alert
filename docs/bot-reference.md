@@ -966,6 +966,8 @@ No runtime Solana, `monitored-vol`, `gmgn-vol-1m` e `monitored-mcap` também nã
 dedicados e não executam rearm, cold reset ou reescrita de payload por âncora. Price Surge, Surge Continuation, HVNC,
 Meteora, Custom alerts e o destino Telegram continuam ativos. As regras aposentadas permanecem aceitas somente nos
 contratos legados necessários para configurações persistidas e alertas históricos.
+Sessões de edição e mutações Telegram aceitam apenas regras do catálogo ativo e rejeitam payloads legados antes de ler ou
+alterar estado. Essa restrição não se aplica à leitura, formatação, replay ou renderização de alertas históricos.
 
 A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
 (`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de

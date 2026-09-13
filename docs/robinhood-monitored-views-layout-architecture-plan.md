@@ -643,6 +643,9 @@ Execute the retirement through these bounded cuts:
     are unchanged.
 - **R5 — compatibility and final verification:** verify historical rendering, normalize legacy inputs to disabled state,
   update operational documentation and run scoped dead-reference searches plus the applicable test/build/lint matrix.
+  **Completed:** effective dashboard and Telegram profiles keep legacy opt-ins disabled, and stale Telegram edit or mutation
+  inputs are rejected before state access. Historical feed, replay, chart markers, formatter and persisted compatibility
+  remain available and pass the final validation matrix.
 
 ### Slice 7: Alerts sparkline convergence
 

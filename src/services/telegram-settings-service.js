@@ -1,7 +1,10 @@
 const connectionModel = require('../models/telegram-connection');
 const profileModel = require('../models/telegram-alert-profile');
 const ruleSettingModel = require('../models/telegram-alert-rule-setting');
-const { buildDefaultRules } = require('./telegram-alert-rule-contracts');
+const {
+  ACTIVE_RULE_CONTRACTS,
+  buildDefaultRules,
+} = require('./telegram-alert-rule-contracts');
 
 class TelegramSettingsConflictError extends Error {
   constructor() {
@@ -57,6 +60,9 @@ function createTelegramSettingsService(options = {}) {
   }
 
   async function updateRule(userId, route) {
+    if (!ACTIVE_RULE_CONTRACTS[route.chain]?.[route.ruleKey]) {
+      throw new TypeError('Unsupported Telegram alert rule mutation');
+    }
     const profile = await requireProfile(userId, route.chain);
     const rule = await rules.findByProfileAndRule(profile.id, route.ruleKey);
     if (!rule) throw new TelegramSettingsConflictError();

@@ -20,7 +20,6 @@ function fixture(options = {}) {
       defaultsVersion: 1,
       thresholdPct: 50,
       cooldownMinutes: 1,
-      minVolumeUsd: 10_000,
     },
   };
   const service = createTelegramInputSessionService({
@@ -63,7 +62,7 @@ describe('Telegram input session service', () => {
       userId: 7,
       telegramUserId: 123n,
       chain: 'solana',
-      ruleKey: 'monitored-vol',
+      ruleKey: 'recent-surge-1h',
       field: 'thresholdPct',
       expectedVersion: 5,
     });
@@ -74,7 +73,7 @@ describe('Telegram input session service', () => {
       action: EDIT_RULE_SETTING,
       payload: {
         chain: 'solana',
-        ruleKey: 'monitored-vol',
+        ruleKey: 'recent-surge-1h',
         field: 'thresholdPct',
         expectedVersion: 5,
         languageCode: 'en',
@@ -89,7 +88,7 @@ describe('Telegram input session service', () => {
       userId: 7,
       telegramUserId: 123n,
       chain: 'solana',
-      ruleKey: 'monitored-vol',
+      ruleKey: 'recent-surge-1h',
       field: 'thresholdPct',
       expectedVersion: 5,
       languageCode: 'pt-BR',
@@ -101,7 +100,10 @@ describe('Telegram input session service', () => {
     const invalid = [
       { field: 'defaultsVersion' },
       { field: 'unknown' },
-      { ruleKey: 'monitored-fdv' },
+      { ruleKey: 'monitored-vol' },
+      { ruleKey: 'gmgn-vol-1m' },
+      { ruleKey: 'monitored-mcap' },
+      { chain: 'robinhood', ruleKey: 'monitored-fdv' },
       { telegramUserId: 'invalid' },
       { expectedVersion: 0 },
     ];
@@ -111,7 +113,7 @@ describe('Telegram input session service', () => {
         userId: 7,
         telegramUserId: '123',
         chain: 'solana',
-        ruleKey: 'monitored-vol',
+        ruleKey: 'recent-surge-1h',
         field: 'thresholdPct',
         expectedVersion: 5,
         ...override,
@@ -123,7 +125,7 @@ describe('Telegram input session service', () => {
   it('scopes reads and cancellation to both account and Telegram identity', async () => {
     const payload = {
       chain: 'robinhood',
-      ruleKey: 'monitored-fdv',
+      ruleKey: 'recent-surge-6h',
       field: 'cooldownMinutes',
       expectedVersion: 8,
     };
@@ -142,7 +144,7 @@ describe('Telegram input session service', () => {
   it('validates and applies a decimal reply while preserving optimistic versioning', async () => {
     const payload = {
       chain: 'solana',
-      ruleKey: 'monitored-vol',
+      ruleKey: 'recent-surge-1h',
       field: 'thresholdPct',
       expectedVersion: 5,
     };
@@ -158,7 +160,7 @@ describe('Telegram input session service', () => {
     assert.equal(apply[2].value, 75.5);
     assert.equal(apply[2].version, 5);
     assert.deepEqual(result.route, {
-      kind: 'rule', chain: 'solana', ruleKey: 'monitored-vol',
+      kind: 'rule', chain: 'solana', ruleKey: 'recent-surge-1h',
     });
     assert.equal(calls.at(-1)[0], 'clear');
   });
@@ -166,7 +168,7 @@ describe('Telegram input session service', () => {
   it('keeps the session for invalid input and clears it after a version conflict', async () => {
     const payload = {
       chain: 'solana',
-      ruleKey: 'monitored-vol',
+      ruleKey: 'recent-surge-1h',
       field: 'cooldownMinutes',
       expectedVersion: 5,
     };

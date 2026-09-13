@@ -171,6 +171,24 @@ describe('Telegram settings service', () => {
     });
   });
 
+  it('rejects legacy rule mutations before reading persisted state', async () => {
+    for (const [chain, ruleKey] of [
+      ['solana', 'monitored-vol'],
+      ['solana', 'gmgn-vol-1m'],
+      ['solana', 'monitored-mcap'],
+      ['robinhood', 'monitored-fdv'],
+    ]) {
+      const { calls, service } = fixture();
+      await assert.rejects(
+        () => service.apply(7, {
+          kind: 'toggle-rule', chain, ruleKey, version: 5,
+        }),
+        /Unsupported Telegram alert rule mutation/
+      );
+      assert.deepEqual(calls, []);
+    }
+  });
+
   it('surfaces missing rows and optimistic misses as stale-menu conflicts', async () => {
     for (const options of [{ profile: null }, { conflict: true }]) {
       const { service } = fixture(options);
