@@ -584,9 +584,6 @@ function getTokenImageFallbackClassName(image: HTMLImageElement) {
   if (image.classList.contains('tok-avatar')) {
     return 'tok-avatar-placeholder';
   }
-  if (image.classList.contains('top-performer-avatar')) {
-    return 'top-performer-avatar top-performer-avatar-placeholder';
-  }
   return 'token-avatar placeholder';
 }
 
@@ -607,7 +604,7 @@ function getTokenImageAddress(element: HTMLElement) {
 
 function recoverMissingPumpTokenImages(section: ParentNode) {
   const placeholders = section.querySelectorAll<HTMLElement>(
-    '.tok-avatar-placeholder, .alert-avatar-placeholder, .token-avatar.placeholder, .top-performer-avatar-placeholder',
+    '.tok-avatar-placeholder, .alert-avatar-placeholder, .token-avatar.placeholder',
   );
 
   for (const placeholder of placeholders) {
@@ -665,9 +662,6 @@ function getRecoveredTokenImageClassName(fallback: HTMLElement) {
   }
   if (fallback.classList.contains('tok-avatar-placeholder')) {
     return 'tok-avatar';
-  }
-  if (fallback.classList.contains('top-performer-avatar-placeholder')) {
-    return 'top-performer-avatar';
   }
   return 'token-avatar';
 }

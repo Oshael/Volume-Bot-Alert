@@ -82,8 +82,8 @@ async function openWorkspace(page, options = {}) {
         { chain: 'solana', address: SOL, symbol: 'SOLCUST', mcap: 500000 },
         { chain: 'robinhood', address: RH, symbol: 'RHCUST', fdv: 2500000, valuationType: 'fdv' },
       ], pinnedTokens: [], total: 2, page: 0, perPage: 30, hasMore: false };
-    } else if (key === 'GET /api/dashboard/top-performers') {
-      body = { tokens: [], count: 0 };
+    } else if (key === 'GET /api/dashboard/token-views/trending') {
+      body = { view: 'trending', chains: ['robinhood'], limit: 40, status: 'ready', tokens: [], count: 0 };
     } else if (key === 'GET /api/dashboard/alert-feeds') {
       body = { feeds: [], count: 0, mode: 'all' };
     } else if (key === 'GET /api/dashboard/custom-alert-rules') {

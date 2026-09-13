@@ -6,7 +6,6 @@ const SOLANA_TOP = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const SOLANA_BLOCKED = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6QXgB263vZyVfSRm';
 const ROBINHOOD_TOKEN = '0xabcdef0123456789abcdef0123456789abcdef01';
 const ROBINHOOD_POOL = '0xa70fc67c9f69da90b63a0e4c05d229954574e313';
-const ROBINHOOD_TOP = '0xabcdef0123456789abcdef0123456789abcdef02';
 const ROBINHOOD_WATCHLIST = '0xabcdef0123456789abcdef0123456789abcdef03';
 const ROBINHOOD_OLD = '0xabcdef0123456789abcdef0123456789abcdef04';
 const ROBINHOOD_DEV = `0x${'2'.repeat(40)}`;
@@ -61,7 +60,7 @@ const ROBINHOOD_MARKET_READINESS = {
   ...ROBINHOOD_READINESS,
   status: 'ready',
   blockers: ['alerts_disabled'],
-  message: 'Robinhood monitored and top-performer market data is ready.',
+  message: 'Robinhood market data is ready.',
   capabilities: {
     ...ROBINHOOD_READINESS.capabilities,
     monitored: true,
@@ -171,16 +170,6 @@ const API_FIXTURES = {
     perPage: 30,
     hasMore: false,
   },
-  'GET /api/dashboard/top-performers': {
-    generatedAt: null,
-    source: null,
-    ranking: null,
-    minMcap: null,
-    minVol24h: null,
-    count: 0,
-    cached: false,
-    tokens: [],
-  },
   'GET /api/dashboard/token-views/trending': tokenViewFixture('trending'),
   'GET /api/dashboard/token-views/migrated': tokenViewFixture('migrated'),
   'GET /api/dashboard/token-views/pre_bonded': tokenViewFixture('pre_bonded'),
@@ -269,23 +258,6 @@ const ROBINHOOD_API_FIXTURES = {
     page: 0,
     perPage: 30,
     hasMore: false,
-  },
-  'GET /api/dashboard/top-performers': {
-    generatedAt: '2026-07-14T18:00:00.000Z',
-    source: 'catalog',
-    ranking: 'performance',
-    count: 1,
-    cached: false,
-    tokens: [{
-      chain: 'solana',
-      address: SOLANA_TOP,
-      symbol: 'TOPSOL',
-      name: 'Top Solana',
-      performanceRank: 1,
-      mcap: 800000,
-      volume24h: 900000,
-      priceChange24h: 42,
-    }],
   },
   'POST /api/catalog/monitored-metadata-batch': {
     generatedAt: '2026-07-14T18:00:00.000Z',
@@ -423,17 +395,16 @@ function robinhoodTickerPeers(address, role = 'mcap_leader') {
 }
 
 function marketToken(chain, symbol) {
-  const isTop = symbol.startsWith('TOP');
   return chain === 'robinhood'
     ? {
         chain,
-        address: isTop ? ROBINHOOD_TOP : ROBINHOOD_TOKEN,
+        address: ROBINHOOD_TOKEN,
         symbol,
         name: `${symbol} Robinhood`,
         launchpadId: 'pons',
         pairDexId: 'uniswap-v3',
         pairAddress: ROBINHOOD_POOL,
-        tickerPeers: robinhoodTickerPeers(isTop ? ROBINHOOD_TOP : ROBINHOOD_TOKEN),
+        tickerPeers: robinhoodTickerPeers(ROBINHOOD_TOKEN),
         fdv: 350000,
         valuationType: 'fdv',
         valuation: {
@@ -456,7 +427,7 @@ function marketToken(chain, symbol) {
       }
     : {
         chain,
-        address: isTop ? SOLANA_TOP : SOLANA_MONITORED,
+        address: SOLANA_MONITORED,
         symbol,
         name: `${symbol} Solana`,
         mcap: 400000,
@@ -468,7 +439,7 @@ function marketToken(chain, symbol) {
       };
 }
 
-async function buildMarketPanelFixture(request, panel) {
+async function buildMarketPanelFixture(request) {
   const requestUrl = new URL(request.url());
   const chains = requestUrl.searchParams.get('chains') || 'solana';
   const page = Number(requestUrl.searchParams.get('page')) || 0;
@@ -478,27 +449,14 @@ async function buildMarketPanelFixture(request, panel) {
   }
   const isRobinhoodOnly = chains === 'robinhood';
   const tokens = isRobinhoodOnly
-    ? [marketToken('robinhood', panel === 'top' ? 'TOPRHFRESH' : 'RHFRESH')]
+    ? [marketToken('robinhood', 'RHFRESH')]
     : chains === 'solana,robinhood'
       ? [
-          marketToken('solana', panel === 'top' ? 'TOPSOLSTALE' : 'SOLSTALE'),
-          marketToken('robinhood', panel === 'top' ? 'TOPRHSTALE' : 'RHSTALE'),
+          marketToken('solana', 'SOLSTALE'),
+          marketToken('robinhood', 'RHSTALE'),
         ]
-      : [marketToken('solana', panel === 'top' ? 'TOPSOL' : 'MONSOL')];
-  if (panel === 'top') {
-    return {
-      generatedAt: '2026-07-14T18:00:00.000Z',
-      source: 'chain_read_models',
-      ranking: 'performance',
-      count: tokens.length,
-      cached: false,
-      tokens: tokens.map((token, index) => ({
-        ...token,
-        performanceRank: index + 1,
-      })),
-    };
-  }
-  const pagedRobinhoodMonitored = panel === 'monitored' && isRobinhoodOnly;
+      : [marketToken('solana', 'MONSOL')];
+  const pagedRobinhoodMonitored = isRobinhoodOnly;
   return {
     generatedAt: snapshotAsOf,
     asOf: snapshotAsOf,
@@ -518,8 +476,7 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
     availableChains: ['solana', 'robinhood'],
     chainReadiness: ROBINHOOD_MARKET_CONFIG.chainReadiness,
   },
-  'GET /api/dashboard/monitored': (request) => buildMarketPanelFixture(request, 'monitored'),
-  'GET /api/dashboard/top-performers': (request) => buildMarketPanelFixture(request, 'top'),
+  'GET /api/dashboard/monitored': (request) => buildMarketPanelFixture(request),
   'PUT /api/dashboard/monitored-pins': (request) => {
     const payload = request.postDataJSON();
     marketPinPayloads.push(payload);
@@ -766,7 +723,7 @@ const ROBINHOOD_IDENTITY_BADGE_API_FIXTURES = {
     return { ...fixture, item: { ...fixture.item, oneMinuteAvailable: false } };
   },
   'GET /api/dashboard/monitored': async (request) => {
-    const fixture = await buildMarketPanelFixture(request, 'monitored');
+    const fixture = await buildMarketPanelFixture(request);
     return {
       ...fixture,
       tokens: fixture.tokens.map((token) => (

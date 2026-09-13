@@ -69,7 +69,9 @@ const FIXTURES = {
   'GET /api/dashboard/monitored': {
     tokens: [], pinnedTokens: [], total: 0, page: 0, perPage: 30, hasMore: false,
   },
-  'GET /api/dashboard/top-performers': { tokens: [], count: 0 },
+  'GET /api/dashboard/token-views/trending': {
+    view: 'trending', chains: ['solana'], limit: 40, status: 'ready', tokens: [], count: 0,
+  },
   'GET /api/dashboard/alert-feeds': { feeds: [], count: 0, mode: 'all' },
   'GET /api/dashboard/custom-alert-rules': { rules: [], count: 0 },
   'POST /api/catalog/sparklines': { items: [], count: 0 },
