@@ -205,3 +205,23 @@ export function getOrderedVisibleLivePanelRegions(
     return region ? [{ ...region }] : [];
   });
 }
+
+export function getLivePanelPaneSpan(
+  layout: LivePanelLayoutPreference,
+  pane: LivePanelPaneKey,
+): 0 | 1 | 2 {
+  return LIVE_PANEL_PRESETS[layout.preset].regions.find((item) => item.pane === pane)?.span ?? 0;
+}
+
+export function resolveMonitoredPaneSelection(
+  layout: LivePanelLayoutPreference,
+  pane: 'primary' | 'secondary',
+  view: MonitoredViewId,
+): LivePanelLayoutPreference['panes'] | null {
+  const ownKey = pane === 'primary' ? 'primaryView' : 'secondaryView';
+  const otherKey = pane === 'primary' ? 'secondaryView' : 'primaryView';
+  if (layout.panes[ownKey] === view) return null;
+  if (layout.panes[otherKey] !== view) return { ...layout.panes, [ownKey]: view };
+  if (pane === 'secondary' || getLivePanelPaneSpan(layout, 'secondary') > 0) return null;
+  return { primaryView: view, secondaryView: layout.panes.primaryView };
+}

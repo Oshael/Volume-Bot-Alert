@@ -131,4 +131,14 @@ describe('frontend fixed live-panel layout resolver', () => {
       reason: null,
     });
   });
+
+  it('swaps a hidden conflicting view but rejects duplicates between visible panes', () => {
+    const single = layout.resolveLivePanelLayoutPreference(null);
+    assert.deepEqual(plain(layout.resolveMonitoredPaneSelection(single, 'primary', 'watchlist')), {
+      primaryView: 'watchlist', secondaryView: 'trending',
+    });
+    const compare = { ...single, preset: 'compare' };
+    assert.equal(layout.resolveMonitoredPaneSelection(compare, 'primary', 'watchlist'), null);
+    assert.equal(layout.resolveMonitoredPaneSelection(compare, 'secondary', 'trending'), null);
+  });
 });

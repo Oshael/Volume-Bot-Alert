@@ -13,6 +13,7 @@ import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
 import { syncElementChildOrder } from '../../utils/dom-child-order';
 import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
 import { MONITORED_VIEW_IDS, type MonitoredViewId } from '../../utils/monitored-view';
+import { getLivePanelPaneSpan } from '../../utils/live-panel-layout';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -194,7 +195,7 @@ function resolveMonitoredSectionView(state: AppState) {
     filteredSafePage: 0,
     pageItems: filteredTracked,
     sortClasses: resolveMonitoredSortClasses(state),
-    miniChartEnabled: state.ui.livePanelLayout.spans.monitored > 1,
+    miniChartEnabled: getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1,
     pinCount: state.data.pinnedMonitoredTokenIdentities.length,
     minMcap: resolveMonitoredFilterValue(state, 'monitored-mcap-min', 30000),
     maxMcap: resolveMonitoredFilterValue(state, 'monitored-view-mcap-max', 0),
@@ -385,7 +386,7 @@ function renderMonitoredRows(
   const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
   for (const item of view.pageItems) {
     const chain = item.chain || 'solana';
-    const miniChartEnabled = state.ui.livePanelLayout.spans.monitored > 1
+    const miniChartEnabled = getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1
       && state.data.chainReadiness[chain]?.capabilities.charts === true;
     monitoredList.append(buildMonitoredRowForState(item, state, {
       miniChartEnabled,
@@ -402,7 +403,7 @@ function buildMonitoredRowForState(
   const chain = item.chain || 'solana';
   const isSolana = chain === 'solana';
   const miniChartEnabled = resolved?.miniChartEnabled ?? (
-    state.ui.livePanelLayout.spans.monitored > 1
+    getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1
     && state.data.chainReadiness[chain]?.capabilities.charts === true
   );
   const mockTradingPosition = isSolana ? getMockTradingPositionView(state, item.address) : null;
@@ -433,7 +434,7 @@ function patchMonitoredRow(
   controller: AppController,
 ) {
   const chain = item.chain || 'solana';
-  const miniChartEnabled = state.ui.livePanelLayout.spans.monitored > 1
+  const miniChartEnabled = getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') > 1
     && state.data.chainReadiness[chain]?.capabilities.charts === true;
   const mockTradingPosition = chain === 'solana' ? getMockTradingPositionView(state, item.address) : null;
   if (monitoredRowStaticKeys.get(current) !== buildMonitoredStaticKey(

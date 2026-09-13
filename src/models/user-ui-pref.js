@@ -17,6 +17,9 @@ const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'
 const ROBINHOOD_TRADE_TERMINAL_KEYS = ['axiom', 'gmgn', 'padre', 'fomo'];
 const TRADE_TERMINAL_CATALOG_VERSION = 2;
 const LIVE_PANEL_KEYS = ['monitored', 'pumpfun', 'alerts'];
+const LIVE_PANEL_PRESETS = ['discovery_alerts', 'compare', 'alerts_focus', 'token_focus', 'command_center'];
+const LIVE_PANEL_PANES = ['primary', 'secondary', 'alerts'];
+const MONITORED_VIEW_IDS = ['trending', 'migrated', 'pre_bonded', 'watchlist'];
 const LIVE_PANEL_SPANS = {
   monitored: [1, 2, 3],
   pumpfun: [1],
@@ -103,14 +106,15 @@ const DEFAULT_UI_PREFS = {
   enabledRobinhoodTradeTerminals: [...ROBINHOOD_TRADE_TERMINAL_KEYS],
   tradeTerminalCatalogVersion: TRADE_TERMINAL_CATALOG_VERSION,
   livePanelLayout: {
-    order: [...LIVE_PANEL_KEYS],
-    spans: {
-      monitored: 2,
-      pumpfun: 1,
-      alerts: 1,
+    preset: 'discovery_alerts',
+    order: [...LIVE_PANEL_PANES],
+    panes: {
+      primaryView: 'trending',
+      secondaryView: 'watchlist',
     },
     heights: {
-      monitored: LIVE_PANEL_DEFAULT_HEIGHT,
+      primary: LIVE_PANEL_DEFAULT_HEIGHT,
+      secondary: LIVE_PANEL_DEFAULT_HEIGHT,
       alerts: LIVE_PANEL_DEFAULT_HEIGHT,
     },
   },
@@ -538,14 +542,14 @@ function normalizeLivePanelOrder(input) {
   return next;
 }
 
-function validateLivePanelHeights(key, value) {
+function validateLivePanelHeights(key, value, panelKeys = ['monitored', 'alerts']) {
   const sourceHeights = value == null ? {} : value;
   if (!sourceHeights || typeof sourceHeights !== 'object' || Array.isArray(sourceHeights)) {
     return { valid: false, error: `${key}.heights must be an object` };
   }
 
   const heights = {};
-  for (const panelKey of ['monitored', 'alerts']) {
+  for (const panelKey of panelKeys) {
     const rawHeight = sourceHeights[panelKey] ?? LIVE_PANEL_DEFAULT_HEIGHT;
     const numeric = Math.round(Number(rawHeight));
     if (!Number.isFinite(numeric) || numeric < 1 || numeric > LIVE_PANEL_MAX_HEIGHT) {
@@ -560,7 +564,7 @@ function validateLivePanelHeights(key, value) {
   return { valid: true, value: heights };
 }
 
-function validateLivePanelLayout(key, value) {
+function validateLegacyLivePanelLayout(key, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { valid: false, error: `${key} must be an object` };
   }
@@ -601,6 +605,79 @@ function validateLivePanelLayout(key, value) {
       heights: heights.value,
     },
   };
+}
+
+function normalizeLivePanelPaneOrder(value) {
+  const order = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (LIVE_PANEL_PANES.includes(item) && !order.includes(item)) order.push(item);
+  }
+  for (const pane of LIVE_PANEL_PANES) {
+    if (!order.includes(pane)) order.push(pane);
+  }
+  return order;
+}
+
+function validateCanonicalLivePanelLayout(key, value) {
+  if (!LIVE_PANEL_PRESETS.includes(value.preset)) {
+    return { valid: false, error: `${key}.preset contains an unsupported preset` };
+  }
+  if (!value.panes || typeof value.panes !== 'object' || Array.isArray(value.panes)) {
+    return { valid: false, error: `${key}.panes must be an object` };
+  }
+  const primaryView = value.panes.primaryView;
+  const secondaryView = value.panes.secondaryView;
+  if (!MONITORED_VIEW_IDS.includes(primaryView) || !MONITORED_VIEW_IDS.includes(secondaryView)) {
+    return { valid: false, error: `${key}.panes contains an unsupported Monitored view` };
+  }
+  const panes = primaryView === secondaryView
+    ? { primaryView: 'trending', secondaryView: 'watchlist' }
+    : { primaryView, secondaryView };
+  const heights = validateLivePanelHeights(key, value.heights, LIVE_PANEL_PANES);
+  if (!heights.valid) return heights;
+  return {
+    valid: true,
+    value: {
+      preset: value.preset,
+      order: normalizeLivePanelPaneOrder(value.order),
+      panes,
+      heights: heights.value,
+    },
+  };
+}
+
+function migrateLegacyLivePanelLayout(value, legacyMonitoredCollapsed = false) {
+  const legacy = validateLegacyLivePanelLayout('livePanelLayout', value);
+  if (!legacy.valid) return legacy;
+  const old = legacy.value;
+  const mappedOrder = old.order
+    .filter((panel) => panel !== 'pumpfun')
+    .map((panel) => panel === 'monitored' ? 'primary' : panel);
+  const monitoredHeight = old.heights.monitored;
+  return {
+    valid: true,
+    value: {
+      preset: legacyMonitoredCollapsed && old.spans.alerts === 2
+        ? 'alerts_focus'
+        : 'discovery_alerts',
+      order: normalizeLivePanelPaneOrder(mappedOrder),
+      panes: { primaryView: 'trending', secondaryView: 'watchlist' },
+      heights: {
+        primary: monitoredHeight,
+        secondary: monitoredHeight,
+        alerts: old.heights.alerts,
+      },
+    },
+  };
+}
+
+function validateLivePanelLayout(key, value, options = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key} must be an object` };
+  }
+  return Object.hasOwn(value, 'preset') || Object.hasOwn(value, 'panes')
+    ? validateCanonicalLivePanelLayout(key, value)
+    : migrateLegacyLivePanelLayout(value, options.legacyMonitoredCollapsed);
 }
 
 function normalizedStoredValue(result, fallback) {
@@ -700,7 +777,9 @@ function normalizePrefs(raw) {
   );
   defaults.tradeTerminalCatalogVersion = TRADE_TERMINAL_CATALOG_VERSION;
   defaults.livePanelLayout = normalizedStoredValue(
-    validateLivePanelLayout('livePanelLayout', source.livePanelLayout),
+    validateLivePanelLayout('livePanelLayout', source.livePanelLayout, {
+      legacyMonitoredCollapsed: defaults.collapsed.monitored,
+    }),
     defaults.livePanelLayout,
   );
   return defaults;

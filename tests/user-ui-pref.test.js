@@ -9,7 +9,6 @@ describe('user-ui-pref', () => {
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);
     assert.deepEqual(prefs.enabledRobinhoodTradeTerminals, ['axiom', 'gmgn', 'padre', 'fomo']);
     assert.equal(prefs.tradeTerminalCatalogVersion, 2);
-    assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
     assert.equal(prefs.expandedSparklineGranularityMinutes, 5);
     assert.equal(prefs.expandedSparklineTimeZone, 'browser');
     assert.deepEqual(prefs.chainFilters, {
@@ -30,23 +29,24 @@ describe('user-ui-pref', () => {
     });
   });
 
-  it('defaults new live layouts with monitored spanning two thirds', () => {
+  it('defaults live layouts to Discovery + Alerts with distinct pane views', () => {
     const prefs = userUiPref.normalizePrefs({});
     assert.deepEqual(prefs.livePanelLayout, {
-      order: ['monitored', 'pumpfun', 'alerts'],
-      spans: {
-        monitored: 2,
-        pumpfun: 1,
-        alerts: 1,
+      preset: 'discovery_alerts',
+      order: ['primary', 'secondary', 'alerts'],
+      panes: {
+        primaryView: 'trending',
+        secondaryView: 'watchlist',
       },
       heights: {
-        monitored: 620,
+        primary: 620,
+        secondary: 620,
         alerts: 620,
       },
     });
   });
 
-  it('preserves legacy live layout choices while defaulting missing heights', () => {
+  it('migrates legacy live layout choices into the fixed preset contract', () => {
     const prefs = userUiPref.normalizePrefs({
       livePanelLayout: {
         order: ['alerts', 'monitored', 'pumpfun'],
@@ -59,30 +59,44 @@ describe('user-ui-pref', () => {
     });
 
     assert.deepEqual(prefs.livePanelLayout, {
-      order: ['alerts', 'monitored', 'pumpfun'],
-      spans: {
-        monitored: 3,
-        pumpfun: 1,
-        alerts: 2,
+      preset: 'discovery_alerts',
+      order: ['alerts', 'primary', 'secondary'],
+      panes: {
+        primaryView: 'trending',
+        secondaryView: 'watchlist',
       },
       heights: {
-        monitored: 620,
+        primary: 620,
+        secondary: 620,
         alerts: 620,
       },
     });
   });
 
+  it('migrates collapsed legacy Monitored with wide Alerts to Alerts Focus', () => {
+    const prefs = userUiPref.normalizePrefs({
+      collapsed: { monitored: true },
+      livePanelLayout: {
+        order: ['monitored', 'alerts', 'pumpfun'],
+        spans: { monitored: 1, pumpfun: 1, alerts: 2 },
+      },
+    });
+
+    assert.equal(prefs.livePanelLayout.preset, 'alerts_focus');
+  });
+
   it('validates persisted live panel heights', () => {
     const validation = userUiPref.validatePatch({
       livePanelLayout: {
-        order: ['monitored', 'pumpfun', 'alerts'],
-        spans: {
-          monitored: 2,
-          pumpfun: 1,
-          alerts: 1,
+        preset: 'compare',
+        order: ['secondary', 'primary', 'alerts'],
+        panes: {
+          primaryView: 'migrated',
+          secondaryView: 'pre_bonded',
         },
         heights: {
-          monitored: 840.4,
+          primary: 840.4,
+          secondary: 760,
           alerts: 1320,
         },
       },
@@ -90,7 +104,8 @@ describe('user-ui-pref', () => {
 
     assert.equal(validation.valid, true);
     assert.deepEqual(validation.prefs.livePanelLayout.heights, {
-      monitored: 840,
+      primary: 840,
+      secondary: 760,
       alerts: 1320,
     });
   });
@@ -98,34 +113,50 @@ describe('user-ui-pref', () => {
   it('rejects unsafe live panel heights', () => {
     const validation = userUiPref.validatePatch({
       livePanelLayout: {
-        order: ['monitored', 'pumpfun', 'alerts'],
-        spans: {
-          monitored: 2,
-          pumpfun: 1,
-          alerts: 1,
+        preset: 'compare',
+        order: ['primary', 'secondary', 'alerts'],
+        panes: {
+          primaryView: 'trending',
+          secondaryView: 'watchlist',
         },
         heights: {
-          monitored: 0,
+          primary: 0,
+          secondary: 620,
           alerts: 620,
         },
       },
     });
 
     assert.equal(validation.valid, false);
-    assert.ok(validation.errors.includes('livePanelLayout.heights.monitored must be between 1 and 100000'));
+    assert.ok(validation.errors.includes('livePanelLayout.heights.primary must be between 1 and 100000'));
+  });
+
+  it('repairs duplicate canonical pane views before persistence', () => {
+    const validation = userUiPref.validatePatch({
+      livePanelLayout: {
+        preset: 'command_center',
+        order: ['primary', 'secondary', 'alerts'],
+        panes: { primaryView: 'migrated', secondaryView: 'migrated' },
+        heights: { primary: 620, secondary: 620, alerts: 620 },
+      },
+    });
+
+    assert.equal(validation.valid, true);
+    assert.deepEqual(validation.prefs.livePanelLayout.panes, {
+      primaryView: 'trending',
+      secondaryView: 'watchlist',
+    });
   });
 
   it('accepts a filtered trade terminal selection', () => {
     const validation = userUiPref.validatePatch({
       enabledTradeTerminals: ['bullx', 'gmgn'],
       enabledRobinhoodTradeTerminals: ['gmgn', 'fomo'],
-      manualFolderDeleteWarningDismissed: true,
     });
 
     assert.equal(validation.valid, true);
     assert.deepEqual(validation.prefs.enabledTradeTerminals, ['bullx', 'gmgn']);
     assert.deepEqual(validation.prefs.enabledRobinhoodTradeTerminals, ['gmgn', 'fomo']);
-    assert.equal(validation.prefs.manualFolderDeleteWarningDismissed, true);
   });
 
   it('enables FOMO once for legacy terminal preferences while preserving later opt-outs', () => {

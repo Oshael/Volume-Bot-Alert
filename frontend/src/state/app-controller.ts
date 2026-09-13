@@ -90,6 +90,12 @@ import {
   resolveDashboardTokenViewRequest,
   type MonitoredViewId,
 } from '../utils/monitored-view';
+import {
+  getLivePanelPaneSpan,
+  resolveLivePanelLayoutPreference,
+  resolveMonitoredPaneSelection,
+  type LivePanelPresetId,
+} from '../utils/live-panel-layout';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
@@ -813,6 +819,7 @@ export interface AppController {
   toggleSectionCollapsed(section: CollapsibleSectionKey): void;
   setAlertSearchQuery(query: string): void;
   setPrimaryMonitoredView(view: MonitoredViewId): void;
+  setSecondaryMonitoredView(view: MonitoredViewId): void;
   setMonitoredSearchQuery(query: string): void;
   setRecentSearchQuery(query: string): void;
   setOldWeekSearchQuery(query: string): void;
@@ -845,6 +852,7 @@ export interface AppController {
     chain: TokenChain,
     terminals: AppState['ui']['enabledTradeTerminals'],
   ): void;
+  setLivePanelPreset(preset: LivePanelPresetId): void;
   setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
   setLivePanelHeight(panel: 'monitored' | 'alerts', height: number): void;
   setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>): void;
@@ -4439,61 +4447,11 @@ export function createAppController(): AppController {
     return next.length > 0 ? next : [...defaults];
   }
 
-  function normalizeLivePanelOrder(input: unknown): AppState['ui']['livePanelLayout']['order'] {
-    const defaults = getDefaultLivePanelLayout().order;
-    const order: AppState['ui']['livePanelLayout']['order'] = [];
-    const seen = new Set<AppState['ui']['livePanelLayout']['order'][number]>();
-
-    for (const item of Array.isArray(input) ? input : []) {
-      if (item !== 'monitored' && item !== 'pumpfun' && item !== 'alerts') {
-        continue;
-      }
-      if (seen.has(item)) {
-        continue;
-      }
-      seen.add(item);
-      order.push(item);
-    }
-
-    for (const panelKey of defaults) {
-      if (!seen.has(panelKey)) {
-        order.push(panelKey);
-      }
-    }
-
-    return order;
-  }
-
-  function normalizeResizableLivePanelSpan(input: unknown): 1 | 2 | 3 {
-    const span = Number(input);
-    return span === 2 || span === 3 ? span : 1;
-  }
-
   function normalizeLivePanelHeight(input: unknown, fallback = 620) {
     const height = Math.round(Number(input));
     return Number.isFinite(height)
       ? Math.min(100000, Math.max(1, height))
       : fallback;
-  }
-
-  function normalizeLivePanelLayout(input: unknown): AppState['ui']['livePanelLayout'] {
-    const source = input && typeof input === 'object' && !Array.isArray(input)
-      ? input as Partial<UiPrefsPayload['livePanelLayout']>
-      : null;
-    const defaults = getDefaultLivePanelLayout();
-    const monitoredSpan = Number(source?.spans?.monitored);
-    return {
-      order: normalizeLivePanelOrder(source?.order),
-      spans: {
-        monitored: normalizeResizableLivePanelSpan(monitoredSpan),
-        pumpfun: 1,
-        alerts: normalizeResizableLivePanelSpan(source?.spans?.alerts),
-      },
-      heights: {
-        monitored: normalizeLivePanelHeight(source?.heights?.monitored, defaults.heights.monitored),
-        alerts: normalizeLivePanelHeight(source?.heights?.alerts, defaults.heights.alerts),
-      },
-    };
   }
 
   function applyExpandedSparklineUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
@@ -4633,14 +4591,15 @@ export function createAppController(): AppController {
       enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
       enabledRobinhoodTradeTerminals: [...state.ui.enabledRobinhoodTradeTerminals],
       livePanelLayout: {
+        preset: state.ui.livePanelLayout.preset,
         order: [...state.ui.livePanelLayout.order],
-        spans: {
-          monitored: state.ui.livePanelLayout.spans.monitored,
-          pumpfun: 1,
-          alerts: state.ui.livePanelLayout.spans.alerts,
+        panes: {
+          primaryView: state.ui.monitoredPrimaryPane.view,
+          secondaryView: state.ui.monitoredSecondaryPane.view,
         },
         heights: {
-          monitored: state.ui.livePanelLayout.heights.monitored,
+          primary: state.ui.livePanelLayout.heights.primary,
+          secondary: state.ui.livePanelLayout.heights.secondary,
           alerts: state.ui.livePanelLayout.heights.alerts,
         },
       },
@@ -5009,7 +4968,17 @@ export function createAppController(): AppController {
       uiPrefs?.enabledRobinhoodTradeTerminals,
       'robinhood',
     );
-    state.ui.livePanelLayout = normalizeLivePanelLayout(uiPrefs?.livePanelLayout);
+    state.ui.livePanelLayout = resolveLivePanelLayoutPreference(uiPrefs?.livePanelLayout, {
+      legacyMonitoredCollapsed: Boolean(uiPrefs?.collapsed?.monitored),
+    });
+    state.ui.monitoredPrimaryPane = {
+      ...state.ui.monitoredPrimaryPane,
+      view: state.ui.livePanelLayout.panes.primaryView,
+    };
+    state.ui.monitoredSecondaryPane = {
+      ...state.ui.monitoredSecondaryPane,
+      view: state.ui.livePanelLayout.panes.secondaryView,
+    };
     syncRoutedPagination();
   }
 
@@ -7884,7 +7853,7 @@ export function createAppController(): AppController {
   }
 
   function getVisibleMonitoredSparklineIdentities() {
-    if (state.ui.livePanelLayout.spans.monitored <= 1) {
+    if (getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') <= 1) {
       return [];
     }
 
@@ -9799,7 +9768,11 @@ export function createAppController(): AppController {
   }
 
   function refreshMonitoredSparklinesIfExpanded(caller = 'monitored-expanded') {
-    if (state.ui.livePanelLayout.spans.monitored <= 1 || !state.session.token || !isLiveWorkspace()) {
+    if (
+      getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary') <= 1
+      || !state.session.token
+      || !isLiveWorkspace()
+    ) {
       return;
     }
     void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller });
@@ -11049,6 +11022,8 @@ export function createAppController(): AppController {
     state.ui.recentSorts = getDefaultBucketSorts('recent');
     state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
     state.ui.monitoredSorts = getDefaultMonitoredSorts();
+    state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
+    state.ui.monitoredSecondaryPane = createAppState().ui.monitoredSecondaryPane;
     state.ui.livePanelLayout = getDefaultLivePanelLayout();
     if (uiPrefsPersistTimer) {
       clearTimeout(uiPrefsPersistTimer);
@@ -14286,6 +14261,7 @@ export function createAppController(): AppController {
     },
     setPrimaryMonitoredView(view: MonitoredViewId) {
       const nextView = normalizeMonitoredViewId(view);
+      const panes = resolveMonitoredPaneSelection(state.ui.livePanelLayout, 'primary', nextView);
       if (state.ui.monitoredPrimaryPane.view === nextView) {
         if (
           isDashboardSystemTokenViewId(nextView)
@@ -14295,18 +14271,35 @@ export function createAppController(): AppController {
         }
         return;
       }
+      if (!panes) return;
       monitoredSystemViewRefreshRevision += 1;
       state.ui.monitoredPrimaryPane = {
         ...state.ui.monitoredPrimaryPane,
         view: nextView,
         scrollAnchor: null,
       };
+      state.ui.monitoredSecondaryPane.view = panes.secondaryView;
+      state.ui.livePanelLayout.panes = panes;
       state.ui.monitoredPage = 0;
+      queueUiPrefsPersist();
       syncWorkspaceMarketSubscriptions();
       emit('monitored');
       if (isDashboardSystemTokenViewId(nextView)) {
         void refreshPrimaryMonitoredView(state.session.token, { force: true });
       }
+    },
+    setSecondaryMonitoredView(view: MonitoredViewId) {
+      const nextView = normalizeMonitoredViewId(view, 'watchlist');
+      const panes = resolveMonitoredPaneSelection(state.ui.livePanelLayout, 'secondary', nextView);
+      if (!panes) return;
+      state.ui.monitoredSecondaryPane = {
+        ...state.ui.monitoredSecondaryPane,
+        view: nextView,
+        scrollAnchor: null,
+      };
+      state.ui.livePanelLayout.panes = panes;
+      queueUiPrefsPersist();
+      emit('monitored');
     },
     setMonitoredSearchQuery(query: string) {
       const searchQuery = String(query || '');
@@ -14746,29 +14739,42 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit('recent', 'old-week', 'monitored', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
     },
-    setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
-      const nextSpan = normalizeResizableLivePanelSpan(span);
-      if (state.ui.livePanelLayout.spans[panel] === nextSpan) {
-        return;
-      }
-      state.ui.livePanelLayout.spans[panel] = nextSpan;
+    setLivePanelPreset(preset: LivePanelPresetId) {
+      const next = resolveLivePanelLayoutPreference({ ...state.ui.livePanelLayout, preset });
+      if (next.preset === state.ui.livePanelLayout.preset) return;
+      state.ui.livePanelLayout = next;
       queueUiPrefsPersist();
-      emit(panel);
-      if (panel === 'monitored' && nextSpan > 1) {
-        refreshMonitoredSparklinesIfExpanded('live-panel-span');
-      }
+      emit('monitored', 'alerts');
+      refreshMonitoredSparklinesIfExpanded('live-panel-preset');
+    },
+    setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
+      const preset = panel === 'alerts' && span > 1
+        ? 'alerts_focus'
+        : panel === 'monitored' && span === 3
+          ? 'token_focus'
+          : 'discovery_alerts';
+      const next = resolveLivePanelLayoutPreference({ ...state.ui.livePanelLayout, preset });
+      if (next.preset === state.ui.livePanelLayout.preset) return;
+      state.ui.livePanelLayout = next;
+      queueUiPrefsPersist();
+      emit('monitored', 'alerts');
+      refreshMonitoredSparklinesIfExpanded('live-panel-span');
     },
     setLivePanelHeight(panel: 'monitored' | 'alerts', height: number) {
       const nextHeight = normalizeLivePanelHeight(height);
-      if (state.ui.livePanelLayout.heights[panel] === nextHeight) {
+      const pane = panel === 'monitored' ? 'primary' : 'alerts';
+      if (state.ui.livePanelLayout.heights[pane] === nextHeight) {
         return;
       }
-      state.ui.livePanelLayout.heights[panel] = nextHeight;
+      state.ui.livePanelLayout.heights[pane] = nextHeight;
       queueUiPrefsPersist();
       emit(panel);
     },
     setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>) {
-      const nextOrder = normalizeLivePanelOrder(order);
+      const nextOrder = resolveLivePanelLayoutPreference({
+        ...state.ui.livePanelLayout,
+        order: order.flatMap((panel) => panel === 'monitored' ? ['primary'] : panel === 'alerts' ? ['alerts'] : []),
+      }).order;
       const currentOrder = state.ui.livePanelLayout.order;
       if (currentOrder.length === nextOrder.length && currentOrder.every((item, index) => item === nextOrder[index])) {
         return;
@@ -14782,19 +14788,18 @@ export function createAppController(): AppController {
       const current = state.ui.livePanelLayout;
       const isDefaultOrder = current.order.length === defaults.order.length
         && current.order.every((item, index) => item === defaults.order[index]);
-      const isDefaultSpans = current.spans.monitored === defaults.spans.monitored
-        && current.spans.pumpfun === defaults.spans.pumpfun
-        && current.spans.alerts === defaults.spans.alerts;
-      const isDefaultHeights = current.heights.monitored === defaults.heights.monitored
+      const isDefaultPreset = current.preset === defaults.preset;
+      const isDefaultPanes = current.panes.primaryView === defaults.panes.primaryView
+        && current.panes.secondaryView === defaults.panes.secondaryView;
+      const isDefaultHeights = current.heights.primary === defaults.heights.primary
+        && current.heights.secondary === defaults.heights.secondary
         && current.heights.alerts === defaults.heights.alerts;
-      if (isDefaultOrder && isDefaultSpans && isDefaultHeights) {
+      if (isDefaultOrder && isDefaultPreset && isDefaultPanes && isDefaultHeights) {
         return;
       }
-      state.ui.livePanelLayout = {
-        order: [...defaults.order],
-        spans: { ...defaults.spans },
-        heights: { ...defaults.heights },
-      };
+      state.ui.livePanelLayout = resolveLivePanelLayoutPreference(defaults);
+      state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
+      state.ui.monitoredSecondaryPane = createAppState().ui.monitoredSecondaryPane;
       queueUiPrefsPersist();
       emit('monitored', 'pumpfun', 'alerts');
     },

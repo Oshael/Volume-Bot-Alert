@@ -24,6 +24,10 @@ import {
   type MonitoredPaneState,
   type MonitoredSystemViewState,
 } from '../utils/monitored-view';
+import {
+  resolveLivePanelLayoutPreference,
+  type LivePanelLayoutPreference,
+} from '../utils/live-panel-layout';
 
 export interface AlertEntry {
   id: string;
@@ -298,21 +302,7 @@ export interface MonitoredSortCriterion {
   window: MonitoredSortWindow;
 }
 
-export type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
-export type LiveWorkspacePanelSpan = 1 | 2 | 3;
-
-export interface LivePanelLayout {
-  order: LiveWorkspacePanelKey[];
-  spans: {
-    monitored: LiveWorkspacePanelSpan;
-    pumpfun: 1;
-    alerts: LiveWorkspacePanelSpan;
-  };
-  heights: {
-    monitored: number;
-    alerts: number;
-  };
-}
+export type LivePanelLayout = LivePanelLayoutPreference;
 
 export interface PumpVolumePoint {
   usd: number;
@@ -934,6 +924,7 @@ export interface AppState {
     monitoredSearchQuery: string;
     monitoredLoadError: string | null;
     monitoredPrimaryPane: MonitoredPaneState;
+    monitoredSecondaryPane: MonitoredPaneState;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
     recentSearchPending: boolean;
@@ -1183,6 +1174,7 @@ export function createAppState(): AppState {
       monitoredSearchQuery: '',
       monitoredLoadError: null,
       monitoredPrimaryPane: createMonitoredPaneState(),
+      monitoredSecondaryPane: createMonitoredPaneState('watchlist'),
       recentSearchQuery: '',
       oldWeekSearchQuery: '',
       recentSearchPending: false,
@@ -1243,18 +1235,7 @@ export function createAppState(): AppState {
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
       enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'],
       enabledRobinhoodTradeTerminals: ['axiom', 'gmgn', 'padre', 'fomo'],
-      livePanelLayout: {
-        order: ['monitored', 'pumpfun', 'alerts'],
-        spans: {
-          monitored: 2,
-          pumpfun: 1,
-          alerts: 1,
-        },
-        heights: {
-          monitored: 620,
-          alerts: 620,
-        },
-      },
+      livePanelLayout: resolveLivePanelLayoutPreference(null),
       soundEnabled: true,
       soundVolume: 0.05,
       browserNotifications: {

@@ -10,6 +10,10 @@ import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
 import { buildTokenIdentityKey, type TokenChain } from '../utils/token-chain';
 import { syncElementChildOrder } from '../utils/dom-child-order';
+import {
+  getLivePanelPaneSpan,
+  getOrderedVisibleLivePanelRegions,
+} from '../utils/live-panel-layout';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -535,7 +539,7 @@ function resolveLivePanelHeights(state: AppState): Record<LiveResizablePanelKey,
   return {
     monitored: livePanelHeightResizeDraft?.panelKey === 'monitored'
       ? livePanelHeightResizeDraft.previewHeight
-      : state.ui.livePanelLayout.heights.monitored,
+      : state.ui.livePanelLayout.heights.primary,
     alerts: livePanelHeightResizeDraft?.panelKey === 'alerts'
       ? livePanelHeightResizeDraft.previewHeight
       : state.ui.livePanelLayout.heights.alerts,
@@ -581,15 +585,19 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     return;
   }
 
+  const resolvedOrder = getOrderedVisibleLivePanelRegions(state.ui.livePanelLayout)
+    .flatMap((region): LiveWorkspacePanelKey[] => (
+      region.pane === 'primary' ? ['monitored'] : region.pane === 'alerts' ? ['alerts'] : []
+    ));
   const previewOrder = (livePanelReorderDraft?.previewOrder
     ?? livePanelResizeDraft?.previewOrder
-    ?? state.ui.livePanelLayout.order).filter((panelKey) => panelKey !== 'pumpfun');
+    ?? resolvedOrder).filter((panelKey) => panelKey !== 'pumpfun');
   const monitoredSpan = livePanelResizeDraft?.panelKey === 'monitored'
     ? livePanelResizeDraft.previewSpan
-    : state.ui.livePanelLayout.spans.monitored;
+    : Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary')) as 1 | 2;
   const alertsSpan = livePanelResizeDraft?.panelKey === 'alerts'
     ? livePanelResizeDraft.previewSpan
-    : state.ui.livePanelLayout.spans.alerts;
+    : Math.max(1, getLivePanelPaneSpan(state.ui.livePanelLayout, 'alerts')) as 1 | 2;
   const spanMap = new Map<LiveWorkspacePanelKey, 1 | 2 | 3>([
     ['monitored', monitoredSpan],
     ['alerts', alertsSpan],
@@ -1309,7 +1317,7 @@ function getLegacyRenderKey(state: AppState) {
 }
 
 function getMonitoredRenderKey(state: AppState) {
-  const monitoredSpan = state.ui.livePanelLayout.spans.monitored;
+  const monitoredSpan = getLivePanelPaneSpan(state.ui.livePanelLayout, 'primary');
   const pageItems = resolveMonitoredViewRows(
     getPrimaryMonitoredViewTokens(state),
     state.ui.monitoredPrimaryPane.searchQuery,

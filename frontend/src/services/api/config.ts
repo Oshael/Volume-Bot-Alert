@@ -7,6 +7,7 @@ import {
   type WorkspaceChainReadinessPayloadMap,
 } from '../../utils/token-chain';
 import type { DashboardMonitoredToken } from './catalog';
+import type { LivePanelLayoutPreference } from '../../utils/live-panel-layout';
 
 export interface AddressItem {
   chain?: TokenChain;
@@ -99,21 +100,7 @@ export interface MonitoredSortCriterionPayload {
 }
 
 export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre' | 'fomo';
-export type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
-export type LiveWorkspacePanelSpan = 1 | 2 | 3;
-
-export interface LivePanelLayoutPayload {
-  order: LiveWorkspacePanelKey[];
-  spans: {
-    monitored: LiveWorkspacePanelSpan;
-    pumpfun: 1;
-    alerts: LiveWorkspacePanelSpan;
-  };
-  heights: {
-    monitored: number;
-    alerts: number;
-  };
-}
+export type LivePanelLayoutPayload = LivePanelLayoutPreference;
 
 export interface UiPrefsPayload {
   collapsed: {
