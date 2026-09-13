@@ -113,12 +113,12 @@ import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
   clearRecentRemovalLogStorage,
   clearOldWeekRemovalLogStorage,
-  loadAlertSparklineCache,
   loadAlerts,
+  loadCompactSparklineCache,
   loadDismissedOldWeek,
   loadDismissedRecent,
-  saveAlertSparklineCache,
   saveAlerts,
+  saveCompactSparklineCache,
   saveDismissedOldWeek,
   saveDismissedRecent,
 } from '../utils/bar-storage';
@@ -5006,27 +5006,6 @@ export function createAppController(): AppController {
     );
   }
 
-  function pruneAlertSparklineCache() {
-    const activeAlertIds = getActiveAlertIdSet();
-    const nextCache: Record<string, TokenSparklineEntry> = {};
-    let changed = false;
-
-    for (const [alertId, entry] of Object.entries(state.data.alertSparklineById)) {
-      if (!activeAlertIds.has(alertId)) {
-        changed = true;
-        continue;
-      }
-      nextCache[alertId] = entry;
-    }
-
-    if (!changed && Object.keys(nextCache).length === Object.keys(state.data.alertSparklineById).length) {
-      return false;
-    }
-
-    state.data.alertSparklineById = nextCache;
-    return true;
-  }
-
   function flushAlertsPersist() {
     if (alertsPersistTimer) {
       clearTimeout(alertsPersistTimer);
@@ -5036,11 +5015,11 @@ export function createAppController(): AppController {
     const scope = alertsPersistScope ?? getStorageScope();
     alertsPersistScope = null;
     saveAlerts(scope, state.data.alerts);
-    saveAlertSparklineCache(scope, state.data.alertSparklineById);
+    saveCompactSparklineCache(scope, state.data.sparklineByAddress);
     recordAlertDebug('persist.flush', {
       scope,
       saved: summarizeAlertDebug(),
-      sparklineCacheCount: Object.keys(state.data.alertSparklineById).length,
+      sparklineCacheCount: Object.keys(state.data.sparklineByAddress).length,
     });
   }
 
@@ -5079,8 +5058,7 @@ export function createAppController(): AppController {
     clearRecentRemovalLogStorage(scope);
     clearOldWeekRemovalLogStorage(scope);
     state.data.alerts = loadAlerts(scope);
-    state.data.alertSparklineById = loadAlertSparklineCache(scope);
-    pruneAlertSparklineCache();
+    state.data.sparklineByAddress = loadCompactSparklineCache(scope, state.data.alerts);
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision = state.data.alerts.length > 0 ? 1 : 0;
     state.panels.alerts = state.data.alerts.length;
@@ -5089,7 +5067,7 @@ export function createAppController(): AppController {
     recordAlertMutationDebug('hydrate.local-storage', beforeAlerts, {
       scope,
       loaded: summarizeAlertDebug(state.data.alerts),
-      sparklineCacheCount: Object.keys(state.data.alertSparklineById).length,
+      sparklineCacheCount: Object.keys(state.data.sparklineByAddress).length,
     });
   }
 
@@ -5101,7 +5079,6 @@ export function createAppController(): AppController {
   }
 
   function syncAlertState() {
-    pruneAlertSparklineCache();
     syncAlertPagination();
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision += 1;
@@ -5138,12 +5115,6 @@ export function createAppController(): AppController {
       removedAlerts: state.data.alerts
         .filter((item) => item.address === address)
         .map((item) => ({ ...item })),
-      removedAlertSparklines: Object.fromEntries(
-        state.data.alerts
-          .filter((item) => item.address === address)
-          .map((item) => [item.id, state.data.alertSparklineById[item.id]])
-          .filter((entry): entry is [string, TokenSparklineEntry] => Boolean(entry[0] && entry[1])),
-      ),
       wasDismissedRecent: state.data.dismissedRecentIdentities.includes(getTrackedTokenKey(address)),
       wasDismissedOldWeek: state.data.dismissedOldWeekIdentities.includes(getTrackedTokenKey(address)),
       wasStarred: state.data.starredTokenIdentities.includes(identityKey),
@@ -5200,11 +5171,6 @@ export function createAppController(): AppController {
       }
     }
 
-    for (const [alertId, entry] of Object.entries(snapshot.removedAlertSparklines || {})) {
-      if (!state.data.alertSparklineById[alertId]) {
-        state.data.alertSparklineById[alertId] = entry;
-      }
-    }
     syncAlertState();
     recordAlertMutationDebug('restore.removed-token-snapshot', beforeAlerts, {
       address,
@@ -7997,7 +7963,7 @@ export function createAppController(): AppController {
     entry: TokenSparklineEntry,
   ) {
     cache[identity.key] = entry;
-    if (identity.chain === 'solana') cache[identity.address] = entry;
+    if (identity.chain === 'solana') delete cache[identity.address];
   }
 
   function deleteWorkspaceSparklineCacheEntry(
@@ -8813,27 +8779,26 @@ export function createAppController(): AppController {
     };
   }
 
-  function seedExpandedSparklineFromAlert(
-    alertId: string,
+  function seedExpandedSparklineFromCompactCache(
     address: string,
     chain: TokenChain = 'solana',
   ) {
-    const normalized = String(address || '').trim();
-    const alertSparkline = state.data.alertSparklineById[String(alertId || '').trim()];
-    if (!normalized || !hasRenderableSparklineSeries(alertSparkline)) {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    const compactSparkline = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
+    if (!hasRenderableSparklineSeries(compactSparkline)) {
       return null;
     }
 
-    const cacheKey = getExpandedSparklineCacheKey(normalized, undefined, chain);
+    const cacheKey = getExpandedSparklineCacheKey(identity.address, undefined, identity.chain);
     const existing = state.data.expandedSparklineByAddress[cacheKey];
     if (isExpandedSparklineCacheFresh(existing)) {
       return existing;
     }
 
     const seed = {
-      ...alertSparkline,
-      chain,
-      address: normalized,
+      ...compactSparkline,
+      chain: identity.chain,
+      address: identity.address,
       loading: false,
     } satisfies TokenSparklineEntry;
     state.data.expandedSparklineByAddress = {
@@ -9074,6 +9039,7 @@ export function createAppController(): AppController {
     }
 
     return {
+      chain: item?.chain || 'solana',
       address,
       pairAddress: toOptionalSparklineString(item?.pairAddress),
       bucketCount: resolveSparklineCount(item?.bucketCount, 0),
@@ -9110,8 +9076,8 @@ export function createAppController(): AppController {
     batch: ReturnType<typeof getPendingAlertSparklineBatches>[number];
     payload: TokenSparklinesPayload;
   }>) {
-    const activeAlertIds = getActiveAlertIdSet();
-    const nextCache = { ...state.data.alertSparklineById };
+    const activeAlertsById = new Map(state.data.alerts.map((alert) => [alert.id, alert]));
+    const nextCache = { ...state.data.sparklineByAddress };
     let changed = false;
 
     for (const { batch, payload } of batchedPayloads) {
@@ -9123,12 +9089,26 @@ export function createAppController(): AppController {
 
         const alertIds = batch.alertIdsByAddress.get(normalized.address) || [];
         for (const alertId of alertIds) {
-          if (!activeAlertIds.has(alertId)) {
+          const alert = activeAlertsById.get(alertId);
+          if (!alert) {
             continue;
           }
 
-          nextCache[alertId] = normalized;
-          changed = changed || didAlertSparklineEntryChange(state.data.alertSparklineById[alertId], normalized);
+          const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
+          if (identity.chain !== normalized.chain || identity.address !== normalized.address) {
+            continue;
+          }
+          const nextEntry = {
+            ...normalized,
+            chain: identity.chain,
+            address: identity.address,
+          } satisfies TokenSparklineEntry;
+          const previous = readWorkspaceSparklineCacheEntry(nextCache, identity);
+          if (!didAlertSparklineEntryChange(previous, nextEntry)) {
+            continue;
+          }
+          writeWorkspaceSparklineCacheEntry(nextCache, identity, nextEntry);
+          changed = true;
         }
       }
     }
@@ -9137,7 +9117,7 @@ export function createAppController(): AppController {
       return;
     }
 
-    state.data.alertSparklineById = nextCache;
+    state.data.sparklineByAddress = nextCache;
     state.runtime.alertRevision += 1;
     scheduleAlertsPersist();
     emit('alerts');
@@ -9233,7 +9213,8 @@ export function createAppController(): AppController {
 
   function queueMissingAlertSparklineRefresh() {
     for (const alert of state.data.alerts) {
-      const entry = state.data.alertSparklineById[alert.id];
+      const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
+      const entry = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
       const series = Array.isArray(entry?.series) ? entry.series : [];
       if (series.length >= 2) {
         continue;
@@ -10820,7 +10801,6 @@ export function createAppController(): AppController {
       meteoraByAddress: {},
       sparklineByAddress: {},
       expandedSparklineByAddress: {},
-      alertSparklineById: {},
       mockTradingWallets: [],
       mockTradingSummary: null,
       mockTradingPositionsByAddress: {},
@@ -13998,7 +13978,7 @@ export function createAppController(): AppController {
 
       restorePreferredExpandedSparklineGranularityForAddress(identity.address, identity.chain);
       if (identity.chain === 'solana') void refreshCustomAlertRules().catch(() => {});
-      const seed = seedExpandedSparklineFromAlert(alertId, identity.address, identity.chain);
+      const seed = seedExpandedSparklineFromCompactCache(identity.address, identity.chain);
 
       if (state.ui.expandedSparklineAddress && (
         state.ui.expandedSparklineAddress !== identity.address

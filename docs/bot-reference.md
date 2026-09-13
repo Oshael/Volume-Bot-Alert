@@ -1481,12 +1481,16 @@ Chains visíveis:
 Por isso a VPS1 mantém flags de rollout/readiness Robinhood mesmo com
 `RUN_BACKGROUND_JOBS=false`.
 
-As sparklines do workspace preservam a última série renderizável quando um
-refresh do mesmo range/resolução falha ou retorna temporariamente vazio. A
-entrada preservada recebe apenas o novo instante de refresh, evitando apagar o
-gráfico ou iniciar retries agressivos; mudanças reais de range/resolução não
-reutilizam a série anterior. Eventos `market:bucket` atualizam métricas e candles
-em realtime; se um snapshot HTTP iniciado antes terminar depois, os candles
+As sparklines compactas de Monitored e Alerts compartilham um único cache por
+`(chain,address)`; IDs de alerta não possuem séries próprias. O navegador persiste
+um subconjunto canônico limitado e, durante a transição, converte o antigo
+`alert_sparklines` por meio da identidade do alerta sem voltar a gravá-lo. O cache
+preserva a última série renderizável quando um refresh do mesmo range/resolução
+falha ou retorna temporariamente vazio. A entrada preservada recebe apenas o novo
+instante de refresh, evitando apagar o gráfico ou iniciar retries agressivos;
+mudanças reais de range/resolução não reutilizam a série anterior. Eventos
+`market:bucket` atualizam métricas e candles em realtime; se um snapshot HTTP
+iniciado antes terminar depois, os candles
 realtime posteriores ao corte do snapshot são mesclados novamente para impedir
 rollback visual. Quando uma chain selecionada recupera as capacidades `monitored`
 ou `charts`, o controller força imediatamente a reidratação do dashboard e das

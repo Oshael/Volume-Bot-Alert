@@ -893,7 +893,6 @@ export interface AppState {
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
     expandedSparklineByAddress: Record<string, TokenSparklineEntry>;
-    alertSparklineById: Record<string, TokenSparklineEntry>;
     mockTradingWallets: MockTradingWalletEntry[];
     mockTradingSummary: MockTradingSummaryEntry | null;
     mockTradingPositionsByAddress: Record<string, MockTradingPositionEntry>;
@@ -1143,7 +1142,6 @@ export function createAppState(): AppState {
       meteoraByAddress: {},
       sparklineByAddress: {},
       expandedSparklineByAddress: {},
-      alertSparklineById: {},
       mockTradingWallets: [],
       mockTradingSummary: null,
       mockTradingPositionsByAddress: {},

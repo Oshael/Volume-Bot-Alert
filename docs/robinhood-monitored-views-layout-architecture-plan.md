@@ -667,6 +667,8 @@ series is removed:
   removed-token snapshots. Preserve legacy storage reads and a bounded canonical persisted subset until the unified fetch
   path is proven. Validate duplicate alerts sharing one in-memory series plus frontend build and repository lint. Estimated
   change: 300–450 lines.
+  **Completed:** Alerts, hover and expanded-chart seeding now read the shared identity cache; alert history writes and
+  canonical persistence use that same owner, while legacy alert-ID storage remains read-only for migration.
 - **7C — shared fetch orchestration:** replace the alert-ID request queue with one chain-aware identity scheduler used by
   Monitored and Alerts, deduplicate identical in-flight/history requests and retain the existing bounded batch, timeout,
   freshness and retry rules. Keep `app-controller.ts` limited to collecting visible identities and applying results; put

@@ -1515,7 +1515,7 @@ function getMockTradingPnlOverlaySnapshot(state: AppState) {
   }
 
   const trades = state.data.mockTradingTradesByAddress[address] || [];
-  const sparkline = state.data.sparklineByAddress[address] || null;
+  const sparkline = getTokenSparkline(state, address);
   const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
   return {
     address,

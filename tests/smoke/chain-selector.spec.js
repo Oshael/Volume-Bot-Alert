@@ -1605,6 +1605,61 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('shares one compact sparkline identity across duplicate token alerts', async ({ page }) => {
+  const duplicateEvents = [201, 202].map((id) => ({
+    id,
+    chain: 'solana',
+    kind: 'hvnc',
+    ruleKey: 'hvnc',
+    address: SOLANA_MONITORED,
+    symbol: 'SHARED',
+    mcap: 300000,
+    volume24h: 500000,
+    isHvnc: true,
+    label: 'HVNC',
+    triggeredAt: `2026-07-14T17:${id === 201 ? '58' : '59'}:00.000Z`,
+  }));
+  const diagnostics = await openAuthenticatedWorkspace(page, {
+    ...API_FIXTURES,
+    'GET /api/dashboard/alert-feeds': {
+      generatedAt: '2026-07-14T18:00:00.000Z',
+      mode: 'all',
+      count: duplicateEvents.length,
+      feeds: [{ ruleKey: 'hvnc', kind: 'hvnc', count: duplicateEvents.length, events: duplicateEvents }],
+    },
+    'POST /api/catalog/sparklines': (request) => {
+      const payload = request.postDataJSON();
+      const identities = Array.isArray(payload.identities) ? payload.identities : [];
+      return {
+        generatedAt: '2026-07-14T18:00:00.000Z',
+        chains: ['solana'],
+        hours: payload.hours,
+        points: payload.points,
+        granularityMinutes: payload.granularityMinutes,
+        count: identities.length,
+        items: identities.map((identity) => ({
+          ...identity,
+          valuationType: 'market-cap',
+          series: [250000, 300000],
+        })),
+      };
+    },
+  });
+  const identityKey = `solana:${SOLANA_MONITORED}`;
+  const alertCharts = page.locator('article.alert-row .sparkline-wrap');
+
+  await expect(alertCharts).toHaveCount(2);
+  expect(await alertCharts.evaluateAll((charts) => (
+    charts.map((chart) => chart.getAttribute('data-sparkline-key'))
+  ))).toEqual([identityKey, identityKey]);
+  await expect.poll(async () => page.evaluate((storageKey) => {
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
+    return Object.keys(stored);
+  }, 'frontend_vite:smoke@example.test:compact_sparklines')).toEqual([identityKey]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('rehydrates Robinhood market panels immediately when readiness recovers', async ({ page }) => {
   test.setTimeout(40_000);
   compactChartRequestPayloads.length = 0;

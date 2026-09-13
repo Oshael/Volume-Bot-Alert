@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type WatchlistTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type WatchlistTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge, resolveTokenAgeMs } from './shared';
@@ -90,7 +90,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   syncSearchInput(view, searchQuery);
   syncPaginationControls(view, pagination.safePage, pagination.totalPages);
   reconcileAlertRows(view, displayedAlerts, visibleAlerts, state, renderNow, cardEffectsEnabled);
-  bindSparklineHover(view.section, state.data.alertSparklineById, { controller });
+  bindSparklineHover(view.section, state.data.sparklineByAddress, { controller });
   bindTokenImagePreview(view.section);
   view.count.textContent = String(pinnedReviewAlerts.length + filteredAlerts.length);
 
@@ -1489,7 +1489,7 @@ function reconcileAlertRows(
   for (const alert of filteredAlerts) {
     const fxState = getOrCreateAlertFxState(view, alert, renderNow);
     const isStarred = isTokenStarred(state, alert.address, alert.chain);
-    const sparkline = state.data.alertSparklineById[alert.id] || null;
+    const sparkline = getTokenSparkline(state, alert.address, alert.chain);
     const enabledTradeTerminals = alert.chain === 'robinhood'
       ? state.ui.enabledRobinhoodTradeTerminals
       : state.ui.enabledTradeTerminals;
@@ -2216,7 +2216,7 @@ function buildAlertRowContent(
   const content = document.createElement('div');
   content.className = 'alert-content-v68';
 
-  const chart = buildAlertSparklineBlock(alert.id, alert.address, sparkline);
+  const chart = buildAlertSparklineBlock(alert.chain, alert.address, sparkline);
   const side = document.createElement('div');
   side.className = 'alert-side-v68';
   side.append(buildAlertHeadline(alert, topClass));
@@ -2373,13 +2373,13 @@ function buildAdminReviewAlertRowContent(
   return grid;
 }
 
-function buildAlertSparklineBlock(alertId: string, address: string, sparkline: TokenSparklineEntry | null) {
+function buildAlertSparklineBlock(chain: TokenChain, address: string, sparkline: TokenSparklineEntry | null) {
   const chart = document.createElement('div');
   chart.className = 'alert-chart-v1';
   chart.innerHTML = renderSparklineFigure(sparkline, address, {
     areaFill: true,
     expandable: true,
-    lookupKey: alertId,
+    lookupKey: createLegacyCompatibleTokenIdentity(chain, address).key,
     variant: 'alert',
   });
   return chart;

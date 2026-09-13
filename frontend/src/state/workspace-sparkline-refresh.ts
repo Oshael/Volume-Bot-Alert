@@ -70,7 +70,7 @@ export type WorkspaceSparklineMergeValue = WorkspaceSparklineCacheValue & {
   loading?: boolean;
 };
 
-export type CompactSparklineCacheEntry = WorkspaceSparklineMergeValue & {
+export type CompactSparklineCacheEntry = Omit<WorkspaceSparklineMergeValue, 'candles'> & {
   chain: TokenChain;
   address: string;
   pairAddress?: string | null;
