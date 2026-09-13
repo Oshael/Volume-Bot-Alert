@@ -720,6 +720,9 @@ destination are implemented and tested.
   choices with chain/address identity, and open the selected token in its expanded chart. Keep Alerts/Monitor controls
   immediately to the right, preserve keyboard and narrow-screen usability, and cover the assembled flow with focused smoke
   validation. Estimated change: 220–320 lines.
+  **Completed:** the header now keeps search centered on desktop and full-width below 980 px, exposes duplicate ticker hits
+  with chain/address identity, supports keyboard selection and opens the exact selected token in the chain-aware expanded
+  chart without changing workspace chain filters.
 - **8C — clipboard token shortcut:** add gesture/permission-driven clipboard classification and exact-token resolution,
   with ephemeral resolved state, denial-safe behavior and no polling or unrelated clipboard retention.
 

@@ -1517,6 +1517,10 @@ evitam varredura do catálogo a cada tecla e deve preceder a ativação da busca
 header. O frontend já cancela a requisição anterior e só aceita a resposta da
 revisão mais recente após debounce de 250 ms. Readiness Robinhood pode produzir
 `syncing` ou `unavailable`, e cada resposta expõe disponibilidade por chain e tipo.
+No header autenticado, a busca fica centralizada em desktop e ocupa uma linha
+completa abaixo de 980 px. Resultados repetidos de ticker exibem chain e endereço;
+Enter abre o único resultado, setas percorrem múltiplas opções e a seleção abre o
+gráfico expandido sem alterar os filtros de chain do workspace.
 
 No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket` e a aplicação no
 estado marca `clientAppliedAt`. O console administrativo

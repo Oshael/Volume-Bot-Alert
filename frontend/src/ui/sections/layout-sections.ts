@@ -1325,6 +1325,81 @@ function bindLivePanelPresetPicker(section: HTMLElement, controller: AppControll
   });
 }
 
+function renderGlobalSearch(state: AppState) {
+  const search = state.ui.globalSearch;
+  const open = search.query.trim().length >= 2;
+  const statusLabels = {
+    debouncing: 'Waiting to search…', loading: 'Searching tokens…', empty: 'No matching token found.',
+    syncing: 'Robinhood search is syncing.', unavailable: 'Token search is unavailable.',
+    unsupported: 'This search is not supported yet.', error: search.error || 'Global search failed.',
+  } as const;
+  const results = search.hits.map((hit) => {
+    const title = hit.symbol || hit.name || 'Token';
+    const name = hit.name && hit.name !== title ? `<span>${escapeHtml(hit.name)}</span>` : '';
+    const imageUrl = sanitizeOptionalHttpUrl(hit.imageUrl);
+    const avatar = imageUrl
+      ? `<img src="${escapeHtml(imageUrl)}" alt="" />`
+      : `<span>${escapeHtml(title.slice(0, 2).toUpperCase())}</span>`;
+    const address = `${hit.address.slice(0, 6)}…${hit.address.slice(-4)}`;
+    return `<button type="button" class="workspace-global-search-result" role="option"
+      data-action="open-global-search-result" data-chain="${escapeHtml(hit.destination.chain)}"
+      data-address="${escapeHtml(hit.destination.address)}"
+      aria-label="Open ${escapeHtml(title)} chart on ${escapeHtml(getTokenChainTitle(hit.chain))}">
+      <span class="workspace-global-search-avatar">${avatar}</span>
+      <span class="workspace-global-search-copy"><strong>${escapeHtml(title)}</strong>${name}</span>
+      <span class="workspace-global-search-identity">${escapeHtml(getTokenChainTitle(hit.chain))}<small>${escapeHtml(address)}</small></span>
+    </button>`;
+  }).join('');
+  const fallback = statusLabels[search.status as keyof typeof statusLabels];
+  return `<div class="workspace-global-search" role="search" data-state="${search.status}">
+    <label class="workspace-global-search-field">
+      <span class="workspace-global-search-icon" aria-hidden="true">⌕</span>
+      <input type="search" value="${escapeHtml(search.query)}" maxlength="120" autocomplete="off" spellcheck="false"
+        data-action="global-search-input" data-search-input="global" placeholder="Search ticker, name or contract"
+        aria-label="Search tokens across all blockchains" aria-autocomplete="list"
+        aria-controls="workspace-global-search-results" aria-expanded="${open}" />
+    </label>
+    <div id="workspace-global-search-results" class="workspace-global-search-results" role="listbox" ${open ? '' : 'hidden'}>
+      ${results || `<div class="workspace-global-search-status" role="status">${escapeHtml(fallback || 'Type at least 2 characters.')}</div>`}
+    </div>
+  </div>`;
+}
+
+function bindGlobalSearch(section: HTMLElement, controller: AppController) {
+  const input = section.querySelector<HTMLInputElement>('[data-action="global-search-input"]');
+  const results = section.querySelector<HTMLElement>('.workspace-global-search-results');
+  const buttons = () => [...(results?.querySelectorAll<HTMLButtonElement>('[data-action="open-global-search-result"]') || [])];
+  const open = (button: HTMLButtonElement) => {
+    const address = button.dataset.address;
+    const chain = button.dataset.chain as TokenChain | undefined;
+    if (!address || !chain) return;
+    controller.openExpandedSparkline(address, chain);
+    controller.clearGlobalSearch();
+  };
+  input?.addEventListener('input', () => controller.setGlobalSearchQuery(input.value));
+  input?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      controller.clearGlobalSearch();
+    } else if (event.key === 'ArrowDown' && buttons()[0]) {
+      event.preventDefault();
+      buttons()[0].focus();
+    } else if (event.key === 'Enter' && buttons().length === 1) {
+      event.preventDefault();
+      open(buttons()[0]);
+    }
+  });
+  buttons().forEach((button, index, all) => {
+    button.addEventListener('click', () => open(button));
+    button.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') controller.clearGlobalSearch();
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      all[(index + (event.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length].focus();
+    });
+  });
+}
+
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-topbar workspace-topbar';
@@ -1342,6 +1417,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
         </div>
       </div>
       ${renderLivePanelPresetPicker(state)}
+      ${renderGlobalSearch(state)}
       <div class="workspace-route-group">
         <div class="workspace-route-nav" aria-label="Workspace navigation">
           <a href="${getWorkspaceHref('live')}" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</a>
@@ -1387,6 +1463,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.querySelector<HTMLElement>('[data-role="user-avatar"]')!.textContent = avatarLabel;
   mountWorkspaceChainSelector(section, state, controller);
   bindLivePanelPresetPicker(section, controller);
+  bindGlobalSearch(section, controller);
   section.querySelector<HTMLAnchorElement>('[data-action="open-workspace-live"]')?.addEventListener('click', (event) => {
     if (!isPlainPrimaryClick(event)) {
       return;

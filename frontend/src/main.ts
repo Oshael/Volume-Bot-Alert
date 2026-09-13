@@ -174,6 +174,11 @@ function isEditingInteractiveField() {
   return Boolean(active.closest('#app'));
 }
 
+function isEditingGlobalSearch() {
+  return document.activeElement instanceof HTMLInputElement
+    && document.activeElement.matches('[data-action="global-search-input"]');
+}
+
 function syncAudioSideEffects(state: AppState) {
   for (const alert of state.data.alerts) {
     if (playedAlertIds.has(alert.id) || pendingAlertSoundIds.has(alert.id)) {
@@ -855,6 +860,16 @@ function buildDeferredRegionsAfterImmediateOverlay(dirtyRegions: ReadonlySet<App
   return deferred.size > 0 ? deferred : null;
 }
 
+function buildDeferredRegionsAfterImmediateHeader(dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  if (dirtyRegions.has('all')) {
+    return new Set<AppRenderRegion>(['all']);
+  }
+
+  const deferred = new Set<AppRenderRegion>(dirtyRegions);
+  deferred.delete('header');
+  return deferred.size > 0 ? deferred : null;
+}
+
 function primePlayedAlertsOnAuthentication(state: AppState, sessionJustBecameAuthenticated: boolean) {
   if (!sessionJustBecameAuthenticated) {
     return;
@@ -952,6 +967,15 @@ controller.subscribe((state, dirtyRegions) => {
   }
 
   if (shouldQueueRenderDuringInteraction()) {
+    if (isEditingGlobalSearch() && (dirtyRegions.has('all') || dirtyRegions.has('header'))) {
+      performRender(state, new Set<AppRenderRegion>(['header']));
+      const deferredRegions = buildDeferredRegionsAfterImmediateHeader(dirtyRegions);
+      if (deferredRegions) {
+        queuePendingRenderState(state, deferredRegions);
+      }
+      return;
+    }
+
     if (includesOverlayRegion(dirtyRegions) && !isEditingInteractiveField()) {
       performRender(state, new Set<AppRenderRegion>(['overlay']));
       const deferredRegions = buildDeferredRegionsAfterImmediateOverlay(dirtyRegions);

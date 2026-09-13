@@ -1124,12 +1124,13 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   await expect(solana).toBeDisabled();
   await expect(solana).toHaveAttribute('title', /Solana is the only selected blockchain/);
 
-  await expect(topbar.locator(':scope > *')).toHaveCount(5);
+  await expect(topbar.locator(':scope > *')).toHaveCount(6);
   await expect(topbar.locator(':scope > *').nth(0)).toHaveClass(/workspace-brand/);
   await expect(topbar.locator(':scope > *').nth(1)).toHaveClass(/workspace-chain-selector/);
   await expect(topbar.locator(':scope > *').nth(2)).toHaveClass(/workspace-layout-picker/);
-  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-route-group/);
-  await expect(topbar.locator(':scope > *').nth(4)).toHaveClass(/workspace-account-area/);
+  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-global-search/);
+  await expect(topbar.locator(':scope > *').nth(4)).toHaveClass(/workspace-route-group/);
+  await expect(topbar.locator(':scope > *').nth(5)).toHaveClass(/workspace-account-area/);
 
   await page.getByRole('button', { name: 'Open user menu' }).click();
   await page.getByRole('button', { name: 'Bot Settings' }).click();
@@ -1199,6 +1200,58 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('searches all capable chains from the centered header and opens an exact token identity', async ({ page }) => {
+  const duplicateAddress = `0x${'3'.repeat(40)}`;
+  const fixtures = {
+    ...ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
+    'GET /api/search/global': (request) => {
+      const url = new URL(request.url());
+      expect(url.searchParams.get('q')).toBe('hood');
+      expect(url.searchParams.get('limit')).toBe('10');
+      return {
+        query: 'hood', status: 'ready', count: 2,
+        chainStates: { robinhood: { kinds: { token: 'ready', wallet: 'unsupported' } } },
+        hits: [ROBINHOOD_TOKEN, duplicateAddress].map((address, index) => ({
+          kind: 'token', chain: 'robinhood', address, symbol: 'HOOD',
+          name: index === 0 ? 'Robin Hood One' : 'Robin Hood Two', imageUrl: null,
+          destination: { type: 'expanded-chart', chain: 'robinhood', address },
+          match: 'exact_ticker',
+        })),
+      };
+    },
+    'GET /api/callouts/events': {
+      from: '2026-07-12T12:00:00.000Z', to: '2026-07-15T12:00:00.000Z',
+      events: [], hasMore: false, nextCursor: null,
+    },
+    'GET /api/callouts/profile-wallet-buys': {
+      status: 'ready', actions: [], hasMore: false,
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+  const search = page.getByRole('search');
+  const input = search.getByRole('searchbox', { name: 'Search tokens across all blockchains' });
+  const centers = await search.evaluate((element) => {
+    const searchRect = element.getBoundingClientRect();
+    const topbarRect = element.closest('.workspace-topbar-inner').getBoundingClientRect();
+    return { search: searchRect.left + searchRect.width / 2, topbar: topbarRect.left + topbarRect.width / 2 };
+  });
+  expect(Math.abs(centers.search - centers.topbar)).toBeLessThanOrEqual(1);
+
+  await input.fill('hood');
+  const results = search.getByRole('option');
+  await expect(results).toHaveCount(2);
+  await expect(results.nth(0)).toContainText('Robinhood Chain');
+  await expect(results.nth(0)).toContainText('0xabcd…ef01');
+  await expect(results.nth(1)).toContainText('0x3333…3333');
+  await results.nth(0).click();
+  await expect(page).toHaveURL(`/alerts/robinhood/${ROBINHOOD_TOKEN}`);
+  await expect(page.locator('[data-auth-modal="expanded-sparkline"]')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Filter workspace by blockchain' })
+    .locator('[data-chain="robinhood"]')).toHaveAttribute('aria-pressed', 'false');
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('uses the confirmed full-width scrollable selector below 980px', async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 900 });
   const diagnostics = await openAuthenticatedWorkspace(page);
@@ -1217,10 +1270,13 @@ test('uses the confirmed full-width scrollable selector below 980px', async ({ p
         - Number.parseFloat(styles.paddingLeft)
         - Number.parseFloat(styles.paddingRight),
       selectorWidth: selectorRect?.width ?? 0,
+      overflow: element.scrollWidth - element.clientWidth,
     };
   });
   expect(dimensions.selectorWidth).toBeGreaterThan(0);
   expect(Math.abs(dimensions.topbarContentWidth - dimensions.selectorWidth)).toBeLessThanOrEqual(2);
+  await expect(page.getByRole('search')).toHaveCSS('width', `${dimensions.topbarContentWidth}px`);
+  expect(dimensions.overflow).toBeLessThanOrEqual(1);
   await expect(page.locator('.workspace-route-group')).toBeVisible();
   await expect(page.locator('.workspace-userbar')).toBeVisible();
 
