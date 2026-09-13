@@ -1459,7 +1459,7 @@ function normalizeEnabledTradeTerminals(input?: TradeTerminalKey[] | null) {
   return next.length > 0 ? next : [...DEFAULT_TRADE_TERMINALS];
 }
 
-export function bindBucketSortControls(section: ParentNode, controller: AppController, mode: 'manual' | 'recent' | 'old-week') {
+export function bindBucketSortControls(section: ParentNode, controller: AppController, mode: 'recent' | 'old-week') {
   section.querySelectorAll<HTMLButtonElement>('[data-sort-mode]').forEach((button) => {
     button.addEventListener('click', () => {
       const sortMode = button.dataset.sortMode as BucketSortMode | undefined;
@@ -1471,8 +1471,7 @@ export function bindBucketSortControls(section: ParentNode, controller: AppContr
         wrap.classList.remove('open');
       }
 
-      if (mode === 'manual') controller.setWatchlistSort(sortMode, sortWindow);
-      else if (mode === 'recent') controller.setRecentSort(sortMode, sortWindow);
+      if (mode === 'recent') controller.setRecentSort(sortMode, sortWindow);
       else controller.setOldWeekSort(sortMode, sortWindow);
     });
   });

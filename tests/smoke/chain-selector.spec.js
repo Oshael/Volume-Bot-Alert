@@ -1608,18 +1608,16 @@ test('refetches market panels by chain and rejects a stale combined response', a
 
   const marketRequests = diagnostics.apiRequests
     .map((requestUrl) => new URL(requestUrl))
-    .filter((url) => (
-      url.pathname === '/api/dashboard/monitored'
-      || url.pathname === '/api/dashboard/top-performers'
-    ));
-  for (const path of ['/api/dashboard/monitored', '/api/dashboard/top-performers']) {
-    const robinhoodRequest = marketRequests.find((url) => (
-      url.pathname === path && url.searchParams.get('chains') === 'robinhood'
-    ));
-    expect(robinhoodRequest).toBeTruthy();
-    expect(robinhoodRequest.searchParams.get('minMcap')).toBe('30000');
-    expect(robinhoodRequest.searchParams.get('minFdv')).toBe('30000');
-  }
+    .filter((url) => url.pathname === '/api/dashboard/monitored');
+  const robinhoodRequest = marketRequests.find((url) => (
+    url.searchParams.get('chains') === 'robinhood'
+  ));
+  expect(robinhoodRequest).toBeTruthy();
+  expect(robinhoodRequest.searchParams.get('minMcap')).toBe('30000');
+  expect(robinhoodRequest.searchParams.get('minFdv')).toBe('30000');
+  expect(diagnostics.apiRequests.some((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/dashboard/top-performers'
+  ))).toBe(false);
   const robinhoodMonitoredPages = marketRequests.filter((url) => (
     url.pathname === '/api/dashboard/monitored'
       && url.searchParams.get('chains') === 'robinhood'

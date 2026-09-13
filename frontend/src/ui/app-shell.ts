@@ -2008,9 +2008,8 @@ function wireSectionCollapseToggles(root: HTMLElement, controller: AppController
   }, true);
 }
 
-function isCollapsibleSectionKey(value: string | null | undefined): value is 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun' {
-  return value === 'manual'
-    || value === 'recent'
+function isCollapsibleSectionKey(value: string | null | undefined): value is 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun' {
+  return value === 'recent'
     || value === 'oldWeek'
     || value === 'monitored'
     || value === 'bidZone'

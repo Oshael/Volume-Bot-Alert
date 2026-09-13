@@ -117,7 +117,7 @@ export interface LivePanelLayoutPayload {
 
 export interface UiPrefsPayload {
   collapsed: {
-    watchlist: boolean;
+    watchlist?: boolean;
     /** @deprecated rollout-only input compatibility */
     manual?: boolean;
     recent: boolean;
@@ -136,7 +136,7 @@ export interface UiPrefsPayload {
   monitoredPerPage: number;
   recentPerPage: number;
   oldWeekPerPage: number;
-  watchlistSorts: BucketSortCriterionPayload[];
+  watchlistSorts?: BucketSortCriterionPayload[];
   /** @deprecated rollout-only input compatibility */
   manualSorts?: BucketSortCriterionPayload[];
   recentSorts: BucketSortCriterionPayload[];

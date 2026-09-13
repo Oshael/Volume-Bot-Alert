@@ -1527,8 +1527,9 @@ somente a view ativa é buscada. Watchlist resolve a membership local sem reques
 system view, e todos os resultados reutilizam o store canônico e seu merge realtime.
 A superfície exibe as quatro views em ordem canônica, preserva a ordenação do read-model,
 limita a renderização a 40 linhas e não oferece Filters, Page ou Per page. As antigas
-superfícies standalone Best Performance e Watchlist não são mais montadas. Enquanto o controller
-legado ainda fornece seu snapshot, Trending o usa somente se o novo read-model ainda não estiver ready.
+superfícies standalone Best Performance e Watchlist não são mais montadas, e o frontend
+não consulta nem sincroniza snapshots de Top Performance. Trending usa a lista canônica
+de Monitored somente como compatibilidade enquanto seu novo read-model ainda não estiver ready.
 
 Trending usa `scoreVersion=trending-v1`. O adapter lê um prefixo limitado aos 500 maiores
 volumes 24h e hidrata volume, price change, FDV, liquidez, cobertura e frescor pelos

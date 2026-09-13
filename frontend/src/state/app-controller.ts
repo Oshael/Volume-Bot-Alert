@@ -1,5 +1,5 @@
 import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
-import { resolveWatchlistTableRows, resolveMonitoredTableRows, resolveMonitoredViewRows } from '../utils/token-table';
+import { resolveMonitoredTableRows, resolveMonitoredViewRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
   didEnabledChainCapabilityBecomeAvailable,
@@ -83,7 +83,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTokenView, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackWatchlistToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTokenViewPayload, type DashboardTokenViewToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTokenView, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackWatchlistToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTokenViewPayload, type DashboardTokenViewToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import {
   isDashboardSystemTokenViewId,
   normalizeMonitoredViewId,
@@ -326,7 +326,6 @@ const EXPANDED_CHART_TIME_ZONES = [
 const EXPANDED_CHART_DEFAULT_TIME_ZONE = 'browser';
 const EXPANDED_SPARKLINE_ONE_MINUTE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
-const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_CACHE_MAX_ENTRIES = 300;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_AGE_5M_MAX_MS = 72 * 60 * 60 * 1000;
@@ -431,14 +430,6 @@ type HistorySyncBidZoneSnapshotMessage = {
   ts: number;
 };
 
-type HistorySyncTopPerformersSnapshotMessage = {
-  type: 'top-performers-snapshot';
-  tabId: string;
-  workspace: WorkspaceView;
-  payload: DashboardTopPerformersPayload;
-  ts: number;
-};
-
 type HistorySyncSparklineSnapshotMessage = {
   type: 'sparkline-snapshot';
   tabId: string;
@@ -460,7 +451,6 @@ type HistorySyncMessage =
   | HistorySyncMonitoredSnapshotMessage
   | HistorySyncBootstrapSnapshotMessage
   | HistorySyncBidZoneSnapshotMessage
-  | HistorySyncTopPerformersSnapshotMessage
   | HistorySyncSparklineSnapshotMessage
   | HistorySyncMarketTickerSnapshotMessage;
 
@@ -824,11 +814,8 @@ export interface AppController {
   setAlertSearchQuery(query: string): void;
   setPrimaryMonitoredView(view: MonitoredViewId): void;
   setMonitoredSearchQuery(query: string): void;
-  setWatchlistSearchQuery(query: string): void;
   setRecentSearchQuery(query: string): void;
   setOldWeekSearchQuery(query: string): void;
-  setManualStarredOnly(enabled: boolean): void;
-  setManualFolderDeleteWarningDismissed(enabled: boolean): void;
   setRecentStarredOnly(enabled: boolean): void;
   setOldWeekStarredOnly(enabled: boolean): void;
   toggleEnabledChain(chain: TokenChain): void;
@@ -847,7 +834,6 @@ export interface AppController {
   setTokenSparklineRangePreset(address: string, preset: SparklineRangePreset, chain?: TokenChain): void;
   resetTokenSparklineRangeDays(address: string, chain?: TokenChain): void;
   setMonitoredTokenSparklineRangeHours(address: string, hours: number, chain?: TokenChain): void;
-  setWatchlistSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean): void;
@@ -1408,8 +1394,6 @@ export function createAppController(): AppController {
     pins: DashboardMonitoredPin[];
     chains: TokenChain[];
   } | null = null;
-  const topPerformersRefreshKeysInFlight = new Set<string>();
-  let topPerformersRefreshRevision = 0;
   let monitoredSystemViewRefreshInFlight: { view: MonitoredViewId; revision: number } | null = null;
   let monitoredSystemViewRefreshRevision = 0;
   let chainReadinessRefreshInFlight = false;
@@ -1504,7 +1488,7 @@ export function createAppController(): AppController {
   const pendingAlertSparklineRequests = new Map<string, string>();
   const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
   const pendingPumpfunEmitRegions = new Set<AppRenderRegion>();
-  const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Partial<Record<CollapsibleSectionKey, AppRenderRegion>> = {
+  const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
     recent: 'recent',
     oldWeek: 'old-week',
     monitored: 'monitored',
@@ -2001,7 +1985,6 @@ export function createAppController(): AppController {
       ...state.data.pinnedMonitoredTokenIdentities,
       ...Object.values(state.data.monitoredSystemViews).flatMap((view) => view.tokenIdentities),
       ...state.data.watchlistTokenIdentities,
-      ...state.data.topPerformerIdentities,
       ...state.data.recentTokenIdentities,
       ...state.data.oldWeekTokenIdentities,
     ]);
@@ -4340,7 +4323,6 @@ export function createAppController(): AppController {
 
   function getDefaultCollapsedSections() {
     return {
-      manual: false,
       recent: false,
       oldWeek: false,
       monitored: false,
@@ -4363,7 +4345,7 @@ export function createAppController(): AppController {
 
   function normalizeBucketSorts(
     input: unknown,
-    scope: 'manual' | 'recent' | 'old-week',
+    scope: 'recent' | 'old-week',
   ): BucketSortCriterion[] {
     const defaults = getDefaultBucketSorts(scope);
     if (!Array.isArray(input)) {
@@ -4621,7 +4603,6 @@ export function createAppController(): AppController {
   function buildUiPrefsPayload(): UiPrefsPayload {
     return {
       collapsed: {
-        watchlist: Boolean(state.ui.collapsed.manual),
         recent: Boolean(state.ui.collapsed.recent),
         oldWeek: Boolean(state.ui.collapsed.oldWeek),
         monitored: Boolean(state.ui.collapsed.monitored),
@@ -4634,7 +4615,6 @@ export function createAppController(): AppController {
       monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
       recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
       oldWeekPerPage: normalizeUiPerPage(state.ui.oldWeekPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
-      watchlistSorts: [...state.ui.watchlistSorts],
       recentSorts: [...state.ui.recentSorts],
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
@@ -4683,11 +4663,6 @@ export function createAppController(): AppController {
       maxMcap: Math.max(0, getConfigNumber('monitored-view-mcap-max', 0)),
       maxFdv: Math.max(0, getConfigNumber('monitored-view-fdv-max', 0)),
     };
-  }
-
-  function getMonitoredMinimumValuationFilters() {
-    const { minMcap, minFdv } = getMonitoredValuationFilters();
-    return { minMcap, minFdv };
   }
 
   function isConfigEnabled(key: string, fallback = true, chain: TokenChain = 'solana') {
@@ -4991,7 +4966,6 @@ export function createAppController(): AppController {
     const collapsed = uiPrefs?.collapsed || defaults;
     state.ui.collapsed = {
       ...defaults,
-      manual: Boolean('watchlist' in collapsed ? collapsed.watchlist : collapsed.manual),
       recent: Boolean(collapsed.recent),
       oldWeek: Boolean(collapsed.oldWeek),
       monitored: Boolean(collapsed.monitored),
@@ -5013,10 +4987,6 @@ export function createAppController(): AppController {
   }
 
   function applySortUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
-    state.ui.watchlistSorts = normalizeBucketSorts(
-      uiPrefs?.watchlistSorts ?? uiPrefs?.manualSorts,
-      'manual',
-    );
     state.ui.recentSorts = normalizeBucketSorts(uiPrefs?.recentSorts, 'recent');
     state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
@@ -5024,8 +4994,6 @@ export function createAppController(): AppController {
 
   function applyUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
     applyCollapsedUiPreferences(uiPrefs);
-    state.ui.manualStarredOnly = Boolean(uiPrefs?.manualStarredOnly);
-    state.ui.manualFolderDeleteWarningDismissed = Boolean(uiPrefs?.manualFolderDeleteWarningDismissed);
     state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
     state.ui.oldWeekStarredOnly = Boolean(uiPrefs?.oldWeekStarredOnly);
     state.ui.chainFilters = normalizeChainFilterPreferences(
@@ -5380,10 +5348,7 @@ export function createAppController(): AppController {
     return window === 'lowest' ? 'lowest' : 'highest';
   }
 
-  function getDefaultBucketSorts(scope: 'manual' | 'recent' | 'old-week'): BucketSortCriterion[] {
-    if (scope === 'manual') {
-      return [{ mode: 'mcap', window: 'highest' }];
-    }
+  function getDefaultBucketSorts(_scope: 'recent' | 'old-week'): BucketSortCriterion[] {
     return [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }];
   }
 
@@ -6215,7 +6180,6 @@ export function createAppController(): AppController {
     state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((item) => !blockedIdentities.has(item));
     state.data.recentTokenIdentities = state.data.recentTokenIdentities.filter((item) => !blockedIdentities.has(item));
     state.data.oldWeekTokenIdentities = state.data.oldWeekTokenIdentities.filter((item) => !blockedIdentities.has(item));
-    state.data.topPerformerIdentities = state.data.topPerformerIdentities.filter((item) => !blockedIdentities.has(item));
     refreshTrackedTokenStore();
     state.data.pumpTokens = state.data.pumpTokens.filter((item) => !blocked.has(item.mint));
     state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => !blocked.has(item.mint));
@@ -7730,7 +7694,6 @@ export function createAppController(): AppController {
       item,
     ]));
     const retainedIdentities = new Set([
-      ...state.data.topPerformerIdentities,
       ...state.data.recentTokenIdentities,
       ...state.data.oldWeekTokenIdentities,
     ]);
@@ -7913,39 +7876,6 @@ export function createAppController(): AppController {
     }
   }
 
-  function getVisibleManualSparklineIdentities() {
-    const selected: TokenIdentity[] = [];
-    const seen = new Set<string>();
-    for (const identityKey of state.data.topPerformerIdentities) {
-      const identity = parseTokenIdentityKey(identityKey);
-      if (
-        state.data.chainReadiness[identity.chain]?.capabilities.charts !== true
-        || seen.has(identity.key)
-      ) {
-        continue;
-      }
-      seen.add(identity.key);
-      selected.push(identity);
-    }
-
-    for (const item of resolveWatchlistTableRows(getWatchlistTokens(state), {
-      starredOnly: state.ui.manualStarredOnly,
-      starredTokens: state.data.watchlistTokenIdentities,
-      searchQuery: state.ui.watchlistSearchQuery,
-      sortCriteria: state.ui.watchlistSorts,
-    })
-      .slice(0, SPARKLINE_VISIBLE_LIMIT_MANUAL)) {
-      const identity = getChartCapableIdentity(item.chain, item.address);
-      if (!identity || seen.has(identity.key)) {
-        continue;
-      }
-      seen.add(identity.key);
-      selected.push(identity);
-    }
-
-    return selected;
-  }
-
   function getVisibleMonitoredPageTokens() {
     return resolveMonitoredViewRows(
       getPrimaryMonitoredViewTokens(state),
@@ -8053,13 +7983,6 @@ export function createAppController(): AppController {
       const selected: Array<{ identity: TokenIdentity; scope: SparklineRangeScope }> = [];
       const seen = new Set<string>();
       for (const identity of getVisibleMonitoredSparklineIdentities()) {
-        if (seen.has(identity.key)) {
-          continue;
-        }
-        seen.add(identity.key);
-        selected.push({ identity, scope: 'monitored' });
-      }
-      for (const identity of getVisibleManualSparklineIdentities()) {
         if (seen.has(identity.key)) {
           continue;
         }
@@ -9919,20 +9842,6 @@ export function createAppController(): AppController {
     });
   }
 
-  function broadcastLiveTopPerformersSnapshot(payload: DashboardTopPerformersPayload) {
-    if (!isLiveWorkspace() || !isWorkspacePollingLeader()) {
-      return;
-    }
-
-    postHistorySyncMessage({
-      type: 'top-performers-snapshot',
-      tabId: historySyncTabId,
-      workspace: state.ui.workspace,
-      payload,
-      ts: Date.now(),
-    });
-  }
-
   function broadcastHistoryBootstrapSnapshot(
     payload: HistoryBootstrapPayload,
     requestPayload: HistoryBootstrapRequestPayload,
@@ -9995,13 +9904,6 @@ export function createAppController(): AppController {
         return true;
       case 'bid-zone-snapshot':
         applyBidZonePayload(message.payload);
-        return true;
-      case 'top-performers-snapshot':
-        if (!isLiveWorkspace()) {
-          return true;
-        }
-        applyDashboardTopPerformers(message.payload);
-        emit('monitored', 'header');
         return true;
       case 'sparkline-snapshot':
         applyHistorySparklinePayload(message.payload);
@@ -10196,7 +10098,6 @@ export function createAppController(): AppController {
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
       void refreshPrimaryMonitoredView(token);
-      void refreshDashboardTopPerformers(token);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'monitored-poll' });
       void hydrateWatchlistTokensMetadataBatch(token, watchlistTokens, { emitOnComplete: isLiveWorkspace() });
       refreshMockTradingStateForMarketPoll();
@@ -10344,53 +10245,6 @@ export function createAppController(): AppController {
       if (monitoredSystemViewRefreshInFlight?.revision === revision) {
         monitoredSystemViewRefreshInFlight = null;
       }
-    }
-  }
-
-  async function refreshDashboardTopPerformers(token = state.session.token) {
-    const requestedChains = getReadySelectedChains('topPerformers');
-    const requestKey = buildChainRequestKey(requestedChains);
-    if (
-      !token
-      || requestedChains.length === 0
-      || topPerformersRefreshKeysInFlight.has(requestKey)
-      || !isLiveWorkspace()
-    ) {
-      return;
-    }
-
-    const requestRevision = topPerformersRefreshRevision + 1;
-    topPerformersRefreshRevision = requestRevision;
-    topPerformersRefreshKeysInFlight.add(requestKey);
-    try {
-      const payload = await measureRuntimePerfAsync(
-        'api.dashboard.top-performers',
-        isRuntimePerfDebugActive(),
-        { workspace: state.ui.workspace },
-        () => fetchDashboardTopPerformers(token, {
-          chains: requestedChains,
-          ...getMonitoredMinimumValuationFilters(),
-        }),
-      );
-      if (
-        requestRevision !== topPerformersRefreshRevision
-        || state.session.token !== token
-        || requestKey !== buildChainRequestKey(getReadySelectedChains('topPerformers'))
-      ) {
-        return;
-      }
-      applyDashboardTopPerformers(payload);
-      broadcastLiveTopPerformersSnapshot(payload);
-    } catch (error) {
-      if (requestRevision !== topPerformersRefreshRevision) {
-        return;
-      }
-      if (isApiRateLimitBackoffError(error)) {
-        return;
-      }
-      console.warn('[AppController] Failed to refresh dashboard top performers:', error instanceof Error ? error.message : error);
-    } finally {
-      topPerformersRefreshKeysInFlight.delete(requestKey);
     }
   }
 
@@ -11124,9 +10978,6 @@ export function createAppController(): AppController {
       manualTokenFolderItems: [],
       recentTokenIdentities: [],
       oldWeekTokenIdentities: [],
-      topPerformerIdentities: [],
-      topPerformersGeneratedAt: null,
-      topPerformersRanking: null,
       marketTicker: { generatedAt: null, stale: false, items: [] },
       dismissedRecentIdentities: [],
       dismissedOldWeekIdentities: [],
@@ -11169,7 +11020,6 @@ export function createAppController(): AppController {
     state.ui.alertSearchQuery = '';
     state.ui.monitoredSearchQuery = '';
     state.ui.monitoredPrimaryPane = createAppState().ui.monitoredPrimaryPane;
-    state.ui.watchlistSearchQuery = '';
     state.ui.recentSearchQuery = '';
     state.ui.oldWeekSearchQuery = '';
     state.ui.recentSearchPending = false;
@@ -11181,7 +11031,6 @@ export function createAppController(): AppController {
     state.ui.floatingQuickBuyVisible = true;
     state.ui.mockTradingHistoryOpen = false;
     state.ui.mockTradingPnlAddress = null;
-    state.ui.manualStarredOnly = false;
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
     state.ui.alertPage = 0;
@@ -11197,7 +11046,6 @@ export function createAppController(): AppController {
     state.ui.monitoredPerPage = 30;
     state.ui.recentPerPage = ROUTED_BUCKET_DEFAULT_PER_PAGE;
     state.ui.oldWeekPerPage = ROUTED_BUCKET_DEFAULT_PER_PAGE;
-    state.ui.watchlistSorts = getDefaultBucketSorts('manual');
     state.ui.recentSorts = getDefaultBucketSorts('recent');
     state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
     state.ui.monitoredSorts = getDefaultMonitoredSorts();
@@ -11374,70 +11222,6 @@ export function createAppController(): AppController {
     }
 
     applyPersistedFrontendAlertFlags(state.data.trackedTokensByIdentity);
-  }
-
-  function clearTopPerformerFlags(identities: string[]) {
-    for (const identityKey of identities) {
-      const existingItem = getTrackedTokenByIdentity(identityKey);
-      if (!existingItem?._isTopPerformer) {
-        continue;
-      }
-      const nextItem = {
-        ...existingItem,
-        _isTopPerformer: false,
-        performanceRank: null,
-        performanceScore: null,
-      };
-      replaceTrackedTokenReferences(existingItem.address, nextItem);
-    }
-  }
-
-  function applyDashboardTopPerformers(payload: DashboardTopPerformersPayload) {
-    const blocked = new Set(state.data.blocklist.map((item) => (
-      getTrackedTokenKey(item.address, item.chain || 'solana')
-    )));
-    const previousIdentities = state.data.topPerformerIdentities;
-    const nextIdentities: string[] = [];
-    const seen = new Set<string>();
-
-    clearTopPerformerFlags(previousIdentities);
-
-    for (const item of payload.tokens || []) {
-      const address = String(item.address || '').trim();
-      if (!address) continue;
-      const identityKey = getTrackedTokenKey(address, item.chain);
-      if (blocked.has(identityKey) || seen.has(identityKey)) {
-        continue;
-      }
-      seen.add(identityKey);
-      nextIdentities.push(identityKey);
-
-      const existingItem = getOptionalTrackedToken(address, item.chain);
-      const mergedItem = mergeTrackedDashboardFields({
-        existingItem,
-        dashboardItem: item,
-        base: {
-          ...existingItem,
-          chain: item.chain,
-          address,
-          label: existingItem?.label ?? item.symbol ?? 'Top performer',
-          watchlisted: existingItem?.watchlisted ?? false,
-          _userWatchlist: existingItem?._userWatchlist ?? false,
-        },
-        coldRefreshDue: true,
-      });
-      replaceTrackedTokenReferences(address, {
-        ...selectMergedTrackedToken(existingItem, mergedItem),
-        _isTopPerformer: true,
-        performanceRank: item.performanceRank ?? nextIdentities.length,
-        performanceScore: item.performanceScore ?? null,
-      });
-    }
-
-    state.data.topPerformerIdentities = nextIdentities;
-    state.data.topPerformersGeneratedAt = payload.generatedAt ?? null;
-    state.data.topPerformersRanking = payload.ranking ?? null;
-    refreshTrackedTokenStore();
   }
 
   function buildCurrentMonitoredMeteoraSnapshot(address: string) {
@@ -12624,7 +12408,6 @@ export function createAppController(): AppController {
       state.ui.monitoredLoadError = null;
       emitMonitoredWorkspaceRegions();
       void refreshPrimaryMonitoredView(token);
-      void refreshDashboardTopPerformers(token);
     } catch (error) {
       state.ui.monitoredLoadError = error instanceof Error
         ? error.message : 'Failed to load monitored tokens';
@@ -14534,12 +14317,6 @@ export function createAppController(): AppController {
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-search');
     },
-    setWatchlistSearchQuery(query: string) {
-      state.ui.watchlistSearchQuery = String(query || '');
-      if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-search' });
-      }
-    },
     setRecentSearchQuery(query: string) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });
       state.ui.recentSearchQuery = String(query || '');
@@ -14559,17 +14336,6 @@ export function createAppController(): AppController {
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
       }
-    },
-    setManualStarredOnly(enabled: boolean) {
-      state.ui.manualStarredOnly = Boolean(enabled);
-      queueUiPrefsPersist();
-      if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-starred' });
-      }
-    },
-    setManualFolderDeleteWarningDismissed(enabled: boolean) {
-      state.ui.manualFolderDeleteWarningDismissed = Boolean(enabled);
-      queueUiPrefsPersist();
     },
     setRecentStarredOnly(enabled: boolean) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });
@@ -14606,7 +14372,6 @@ export function createAppController(): AppController {
       state.ui.chainFilters = next;
       monitoredBootstrapHydrationRevision += 1;
       nextMonitoredFullHydrationAt = 0;
-      topPerformersRefreshRevision += 1;
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
       } else {
@@ -14623,7 +14388,6 @@ export function createAppController(): AppController {
       } else {
         void refreshMonitoredDashboard();
       }
-      void refreshDashboardTopPerformers();
       emit('header', 'monitored', 'alerts', 'recent', 'old-week');
     },
     toggleSurfaceChain(
@@ -14809,16 +14573,6 @@ export function createAppController(): AppController {
         [identity.key]: safeHours,
       };
       refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'monitored-token-range-hours');
-    },
-    setWatchlistSort(mode: BucketSortMode, window?: BucketSortWindow) {
-      state.ui.watchlistSorts = toggleSortCriterion(
-        state.ui.watchlistSorts,
-        normalizeBucketCriterion(mode, window),
-      );
-      queueUiPrefsPersist();
-      if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'watchlist-sort' });
-      }
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });

@@ -259,9 +259,6 @@ export interface WatchlistTokenEntry {
   _liveActivitySwaps?: number | null;
   _isRecentRouted?: boolean;
   _isOldWeekRouted?: boolean;
-  _isTopPerformer?: boolean;
-  performanceRank?: number | null;
-  performanceScore?: number | null;
   meteora?: WatchlistTokenMeteoraEntry | null;
   tickerPeers?: AlertEntry['tickerPeers'];
   _isPinnedMonitored?: boolean;
@@ -631,7 +628,7 @@ export interface PumpToastEntry {
   volTotal?: number | null;
 }
 
-export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun';
+export type CollapsibleSectionKey = 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
 export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre' | 'fomo';
 export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'token-review-alerts' | 'change-password';
@@ -890,9 +887,6 @@ export interface AppState {
     manualTokenFolderItems: ManualTokenFolderItemEntry[];
     recentTokenIdentities: string[];
     oldWeekTokenIdentities: string[];
-    topPerformerIdentities: string[];
-    topPerformersGeneratedAt: string | null;
-    topPerformersRanking: string | null;
     marketTicker: {
       generatedAt: string | null;
       stale: boolean;
@@ -940,7 +934,6 @@ export interface AppState {
     monitoredSearchQuery: string;
     monitoredLoadError: string | null;
     monitoredPrimaryPane: MonitoredPaneState;
-    watchlistSearchQuery: string;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
     recentSearchPending: boolean;
@@ -966,8 +959,6 @@ export interface AppState {
     floatingQuickBuyVisible: boolean;
     mockTradingHistoryOpen: boolean;
     mockTradingPnlAddress: string | null;
-    manualStarredOnly: boolean;
-    manualFolderDeleteWarningDismissed: boolean;
     manualVisibleFolderIds: number[];
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
@@ -979,7 +970,6 @@ export interface AppState {
     monitoredPerPage: number;
     recentPerPage: number;
     oldWeekPerPage: number;
-    watchlistSorts: BucketSortCriterion[];
     recentSorts: BucketSortCriterion[];
     oldWeekSorts: BucketSortCriterion[];
     monitoredSorts: MonitoredSortCriterion[];
@@ -1150,9 +1140,6 @@ export function createAppState(): AppState {
       manualTokenFolderItems: [],
       recentTokenIdentities: [],
       oldWeekTokenIdentities: [],
-      topPerformerIdentities: [],
-      topPerformersGeneratedAt: null,
-      topPerformersRanking: null,
       marketTicker: { generatedAt: null, stale: false, items: [] },
       dismissedRecentIdentities: [],
       dismissedOldWeekIdentities: [],
@@ -1196,7 +1183,6 @@ export function createAppState(): AppState {
       monitoredSearchQuery: '',
       monitoredLoadError: null,
       monitoredPrimaryPane: createMonitoredPaneState(),
-      watchlistSearchQuery: '',
       recentSearchQuery: '',
       oldWeekSearchQuery: '',
       recentSearchPending: false,
@@ -1236,8 +1222,6 @@ export function createAppState(): AppState {
       floatingQuickBuyVisible: true,
       mockTradingHistoryOpen: false,
       mockTradingPnlAddress: null,
-      manualStarredOnly: false,
-      manualFolderDeleteWarningDismissed: false,
       manualVisibleFolderIds: [],
       recentStarredOnly: false,
       oldWeekStarredOnly: false,
@@ -1254,7 +1238,6 @@ export function createAppState(): AppState {
       monitoredPerPage: 30,
       recentPerPage: 15,
       oldWeekPerPage: 15,
-      watchlistSorts: [{ mode: 'mcap', window: 'highest' }],
       recentSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
@@ -1280,7 +1263,6 @@ export function createAppState(): AppState {
         notifyWhenVisible: false,
       },
       collapsed: {
-        manual: false,
         recent: false,
         oldWeek: false,
         monitored: false,
@@ -1571,13 +1553,6 @@ function getRoutedTokensByIdentity(state: AppState, identityKeys: string[]) {
     }
   });
   return filterItemsByChainSelection(tokens, state.ui.chainFilters, 'radarChains');
-}
-
-export function getTopPerformerTokens(state: AppState) {
-  const tokens = state.data.topPerformerIdentities
-    .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
-    .filter((item): item is WatchlistTokenEntry => Boolean(item));
-  return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
 export function isTokenStarred(
