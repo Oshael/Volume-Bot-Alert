@@ -618,6 +618,20 @@ Execute the retirement through these bounded cuts:
   rows during evaluation.
 - **R4 — dead runtime contracts:** remove reset/publication/state branches that no longer have active consumers, while
   retaining only compatibility code required to read historical alerts or legacy persisted settings safely.
+  Execute this cleanup through three sub-cuts so each implementation remains below the repository's 500-line slice limit:
+
+  - **R4a — Robinhood runtime cleanup:** stop constructing the retired Volume 5m and FDV 5m candidates, exclude their keys
+    from active state preparation and remove their anchored-repeat publication branches. Keep database constraints, stored
+    rows and historical feed/formatter contracts intact. Validate the matcher, publication and derived standard-alert sink,
+    then run repository lint. Estimated change: 250–350 lines.
+  - **R4b — Solana runtime cleanup:** remove retired Volume 5m, GMGN Volume 1m and MCap 5m candidate construction, their
+    dedicated baseline loads, cold-reset/rearm work and anchored-repeat payload handling. Preserve Price Surge, Surge
+    Continuation, HVNC, Meteora, Custom alerts and the active Telegram destination. Validate the matcher, profile evaluator,
+    Telegram planner/destination and repository lint. Estimated change: 400–500 lines.
+  - **R4c — shared runtime residue:** remove the temporary emission-retirement shim and test-only private exports only after
+    R4a/R4b leave them without runtime consumers, consolidate obsolete negative-path tests and run scoped dead-reference
+    searches. Historical feed, replay, chart-marker, formatter, schema and persisted-configuration compatibility remains for
+    R5. Validate the surviving alert families plus repository lint. Estimated change: 100–180 lines.
 - **R5 — compatibility and final verification:** verify historical rendering, normalize legacy inputs to disabled state,
   update operational documentation and run scoped dead-reference searches plus the applicable test/build/lint matrix.
 
