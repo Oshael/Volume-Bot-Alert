@@ -1327,6 +1327,24 @@ function bindLivePanelPresetPicker(section: HTMLElement, controller: AppControll
 
 function renderGlobalSearch(state: AppState) {
   const search = state.ui.globalSearch;
+  const clipboard = state.ui.clipboardToken;
+  const clipboardHit = clipboard.hit;
+  const clipboardTitle = {
+    idle: 'Read a token contract from clipboard', reading: 'Reading clipboard…',
+    resolving: 'Resolving copied token…', ready: `Open ${clipboardHit?.symbol || 'copied token'} chart`,
+    denied: 'Clipboard access denied', unavailable: 'Clipboard reading is unavailable',
+    unsupported: 'Copied address is not supported yet', syncing: 'Copied token search is syncing',
+    error: clipboard.error || 'Clipboard token resolution failed',
+  }[clipboard.status];
+  const clipboardImage = sanitizeOptionalHttpUrl(clipboardHit?.imageUrl);
+  const clipboardIcon = `<svg class="workspace-clipboard-token-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="6" y="5" width="12" height="16" rx="2"></rect><path d="M9 5V3h6v2M9 9h6M9 13h6"></path>
+  </svg>`;
+  const clipboardContent = clipboardHit
+    ? `${clipboardImage ? `<img src="${escapeHtml(clipboardImage)}" alt="" />` : clipboardIcon}
+      <strong>${escapeHtml(clipboardHit.symbol || clipboardHit.name || 'Token')}</strong>
+      <small>${escapeHtml(getTokenChainTitle(clipboardHit.chain))}</small>`
+    : clipboardIcon;
   const open = search.query.trim().length >= 2;
   const statusLabels = {
     debouncing: 'Waiting to search…', loading: 'Searching tokens…', empty: 'No matching token found.',
@@ -1352,6 +1370,12 @@ function renderGlobalSearch(state: AppState) {
   }).join('');
   const fallback = statusLabels[search.status as keyof typeof statusLabels];
   return `<div class="workspace-global-search" role="search" data-state="${search.status}">
+    <button type="button" class="workspace-clipboard-token${clipboardHit ? ' is-resolved' : ''}"
+      data-action="activate-clipboard-token" data-state="${clipboard.status}"
+      aria-label="${escapeHtml(clipboardTitle)}" title="${escapeHtml(clipboardTitle)}"
+      ${clipboard.status === 'reading' || clipboard.status === 'resolving' ? 'disabled' : ''}>
+      ${clipboardContent}
+    </button>
     <label class="workspace-global-search-field">
       <span class="workspace-global-search-icon" aria-hidden="true">⌕</span>
       <input type="search" value="${escapeHtml(search.query)}" maxlength="120" autocomplete="off" spellcheck="false"
@@ -1366,6 +1390,7 @@ function renderGlobalSearch(state: AppState) {
 }
 
 function bindGlobalSearch(section: HTMLElement, controller: AppController) {
+  const clipboard = section.querySelector<HTMLButtonElement>('[data-action="activate-clipboard-token"]');
   const input = section.querySelector<HTMLInputElement>('[data-action="global-search-input"]');
   const results = section.querySelector<HTMLElement>('.workspace-global-search-results');
   const buttons = () => [...(results?.querySelectorAll<HTMLButtonElement>('[data-action="open-global-search-result"]') || [])];
@@ -1376,6 +1401,15 @@ function bindGlobalSearch(section: HTMLElement, controller: AppController) {
     controller.openExpandedSparkline(address, chain);
     controller.clearGlobalSearch();
   };
+  clipboard?.addEventListener('click', () => {
+    const hit = controller.state.ui.clipboardToken.hit;
+    if (!hit) {
+      void controller.readClipboardToken();
+      return;
+    }
+    controller.openExpandedSparkline(hit.destination.address, hit.destination.chain);
+    controller.clearClipboardToken();
+  });
   input?.addEventListener('input', () => controller.setGlobalSearchQuery(input.value));
   input?.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {

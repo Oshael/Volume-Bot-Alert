@@ -1072,6 +1072,10 @@ function getHeaderRenderKey(state: AppState) {
     state.runtime.monitoredFreshnessLabel,
     state.ui.workspace,
     state.ui.livePanelLayout.preset,
+    state.ui.clipboardToken.status,
+    state.ui.clipboardToken.error,
+    state.ui.clipboardToken.hit
+      ? `${state.ui.clipboardToken.hit.chain}:${state.ui.clipboardToken.hit.address}` : null,
     state.ui.globalSearch.query,
     state.ui.globalSearch.status,
     state.ui.globalSearch.error,

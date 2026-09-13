@@ -40,6 +40,14 @@ export interface GlobalSearchState {
 }
 export const createGlobalSearchState = (): GlobalSearchState => ({ query: '', status: 'idle', hits: [], error: null });
 
+export type ClipboardTokenStatus = 'idle' | 'reading' | 'resolving' | 'ready' | 'denied' | 'unavailable' | 'unsupported' | 'syncing' | 'error';
+export interface ClipboardTokenState {
+  status: ClipboardTokenStatus;
+  hit: GlobalSearchHit | null;
+  error: string | null;
+}
+export const createClipboardTokenState = (): ClipboardTokenState => ({ status: 'idle', hit: null, error: null });
+
 export interface AlertEntry {
   id: string;
   backendEventId?: number | null;
@@ -930,6 +938,7 @@ export interface AppState {
     pendingLoginOtpChallengeToken: string | null;
     pendingLoginOtpEmailHint: string | null;
     blockTokenWarning: BlockTokenWarningState | null;
+    clipboardToken: ClipboardTokenState;
     globalSearch: GlobalSearchState;
     alertSearchQuery: string;
     monitoredSearchQuery: string;
@@ -1180,6 +1189,7 @@ export function createAppState(): AppState {
       pendingLoginOtpChallengeToken: null,
       pendingLoginOtpEmailHint: null,
       blockTokenWarning: null,
+      clipboardToken: createClipboardTokenState(),
       globalSearch: createGlobalSearchState(),
       alertSearchQuery: '',
       monitoredSearchQuery: '',

@@ -725,6 +725,9 @@ destination are implemented and tested.
   chart without changing workspace chain filters.
 - **8C — clipboard token shortcut:** add gesture/permission-driven clipboard classification and exact-token resolution,
   with ephemeral resolved state, denial-safe behavior and no polling or unrelated clipboard retention.
+  **Completed:** the compact shortcut reads only on activation, rejects unrelated clipboard text locally, resolves the exact token
+  through global search and expands to the resolved ticker/chain before opening its chart. Denial stays retry-safe without
+  repeated reads, superseded resolutions are cancelled and session reset discards all ephemeral clipboard-token state.
 
 ### Slice 9: rollout and cleanup
 

@@ -1459,6 +1459,81 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   transform: translateX(-50%);
 }
 
+.workspace-clipboard-token {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 6px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 34px;
+  height: 34px;
+  max-width: 140px;
+  padding: 0 6px;
+  border: 1px solid rgba(93, 130, 169, 0.46);
+  border-radius: 9px;
+  background: rgba(7, 14, 23, 0.94);
+  color: rgba(159, 225, 246, 0.88);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-clipboard-token:hover,
+.workspace-clipboard-token:focus-visible,
+.workspace-clipboard-token.is-resolved {
+  border-color: rgba(0, 212, 255, 0.62);
+  background: rgba(0, 212, 255, 0.13);
+  outline: none;
+}
+
+.workspace-clipboard-token:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.workspace-clipboard-token[data-state="denied"],
+.workspace-clipboard-token[data-state="unavailable"],
+.workspace-clipboard-token[data-state="error"] {
+  border-color: rgba(255, 200, 87, 0.4);
+  color: #ffc857;
+}
+
+.workspace-clipboard-token img {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.workspace-clipboard-token strong {
+  overflow: hidden;
+  max-width: 68px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-clipboard-token small {
+  overflow: hidden;
+  max-width: 54px;
+  color: rgba(164, 184, 208, 0.78);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-clipboard-token-icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
 .workspace-global-search-field {
   display: flex;
   align-items: center;
@@ -11145,6 +11220,13 @@ TEMP_LEGACY_BAR_TITLE {
     left: auto;
     width: 100%;
     transform: none;
+  }
+
+  .workspace-clipboard-token {
+    position: relative;
+    top: auto;
+    right: auto;
+    margin-bottom: 6px;
   }
 
   .workspace-layout-preset-popover {

@@ -1252,6 +1252,74 @@ test('searches all capable chains from the centered header and opens an exact to
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('resolves a clipboard token by gesture and keeps denial neutral without repeated reads', async ({ page }) => {
+  await page.addInitScript(({ address }) => {
+    window.__clipboardPermission = 'denied';
+    window.__clipboardText = address;
+    window.__clipboardReads = 0;
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: async () => ({ state: window.__clipboardPermission }) },
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: async () => { window.__clipboardReads += 1; return window.__clipboardText; } },
+    });
+  }, { address: ROBINHOOD_TOKEN });
+  const fixtures = {
+    ...ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
+    'GET /api/search/global': (request) => {
+      const url = new URL(request.url());
+      expect(url.searchParams.get('q')).toBe(ROBINHOOD_TOKEN);
+      expect(url.searchParams.get('kinds')).toBe('token');
+      expect(url.searchParams.get('limit')).toBe('1');
+      return {
+        query: ROBINHOOD_TOKEN, status: 'ready', count: 1,
+        chainStates: { robinhood: { kinds: { token: 'ready' } } },
+        hits: [{
+          kind: 'token', chain: 'robinhood', address: ROBINHOOD_TOKEN, symbol: 'HOOD',
+          name: 'Robin Hood', imageUrl: null,
+          destination: { type: 'expanded-chart', chain: 'robinhood', address: ROBINHOOD_TOKEN },
+          match: 'exact_address',
+        }],
+      };
+    },
+    'GET /api/callouts/events': {
+      from: '2026-07-12T12:00:00.000Z', to: '2026-07-15T12:00:00.000Z',
+      events: [], hasMore: false, nextCursor: null,
+    },
+    'GET /api/callouts/profile-wallet-buys': { status: 'ready', actions: [], hasMore: false },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+  const shortcut = page.locator('[data-action="activate-clipboard-token"]');
+  await shortcut.click();
+  await expect(shortcut).toHaveAttribute('data-state', 'denied');
+  await shortcut.click();
+  expect(await page.evaluate(() => window.__clipboardReads)).toBe(0);
+  const searchInput = page.getByRole('searchbox', { name: 'Search tokens across all blockchains' });
+  await searchInput.fill('h');
+  await expect(searchInput).toHaveValue('h');
+  await searchInput.fill('');
+
+  await page.evaluate(() => { window.__clipboardPermission = 'granted'; });
+  await shortcut.click();
+  await expect(shortcut).toHaveAttribute('data-state', 'ready');
+  await expect(shortcut).toContainText('HOOD');
+  await expect(shortcut).toContainText('Robinhood Chain');
+  const leftControlGap = await page.evaluate(() => {
+    const picker = document.querySelector('.workspace-layout-picker')?.getBoundingClientRect();
+    const clipboard = document.querySelector('.workspace-clipboard-token')?.getBoundingClientRect();
+    return picker && clipboard ? clipboard.left - picker.right : -1;
+  });
+  expect(leftControlGap).toBeGreaterThanOrEqual(4);
+  await shortcut.click();
+  await expect(page).toHaveURL(`/alerts/robinhood/${ROBINHOOD_TOKEN}`);
+  await expect(page.locator('[data-auth-modal="expanded-sparkline"]')).toBeVisible();
+  expect(await page.evaluate(() => window.__clipboardReads)).toBe(1);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('uses the confirmed full-width scrollable selector below 980px', async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 900 });
   const diagnostics = await openAuthenticatedWorkspace(page);

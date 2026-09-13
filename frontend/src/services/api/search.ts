@@ -24,3 +24,8 @@ export function fetchGlobalSearch(query: string, token: string | null, signal?: 
   const params = new URLSearchParams({ q: query, kinds: 'token,wallet', limit: '10' });
   return apiFetch<GlobalSearchPayload>(`/api/search/global?${params}`, { token, signal });
 }
+
+export function fetchExactToken(query: string, token: string | null, signal?: AbortSignal) {
+  const params = new URLSearchParams({ q: query, kinds: 'token', limit: '1' });
+  return apiFetch<GlobalSearchPayload>(`/api/search/global?${params}`, { token, signal });
+}

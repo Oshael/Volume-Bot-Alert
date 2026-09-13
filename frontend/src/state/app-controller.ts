@@ -199,6 +199,7 @@ import {
 } from '../services/alerts/browser-notifications';
 import { createTelegramConnectionController } from './telegram-connection-controller';
 import { createGlobalSearchController } from './global-search-controller';
+import { createClipboardTokenController } from './clipboard-token-controller';
 import {
   connectSolanaWallet,
   getSolanaNetworkLabel,
@@ -741,6 +742,8 @@ export interface AppController {
   refreshTelegram(): Promise<void>;
   createTelegramLink(): Promise<void>;
   disconnectTelegram(): Promise<void>;
+  readClipboardToken(): Promise<void>;
+  clearClipboardToken(): void;
   setGlobalSearchQuery(query: string): void;
   clearGlobalSearch(): void;
   updateAccountProfile(username: string, email: string, password: string, confirmPassword: string): Promise<void>;
@@ -3482,6 +3485,11 @@ export function createAppController(): AppController {
   });
   const globalSearch = createGlobalSearchController({
     state: state.ui.globalSearch,
+    isAuthenticated: () => state.session.status === 'authenticated',
+    notify: () => emit('header'),
+  });
+  const clipboardToken = createClipboardTokenController({
+    state: state.ui.clipboardToken,
     isAuthenticated: () => state.session.status === 'authenticated',
     notify: () => emit('header'),
   });
@@ -10461,6 +10469,7 @@ export function createAppController(): AppController {
     state.session.accessDaysRemaining = null;
     state.session.accessReason = null;
     telegramConnection.reset();
+    clipboardToken.reset();
     globalSearch.reset();
     state.session.tokenTier = null;
     state.session.tokenDiscountPercent = 0;
@@ -13122,6 +13131,12 @@ export function createAppController(): AppController {
     },
     async disconnectTelegram() {
       await telegramConnection.disconnect();
+    },
+    async readClipboardToken() {
+      await clipboardToken.activate();
+    },
+    clearClipboardToken() {
+      clipboardToken.reset();
     },
     setGlobalSearchQuery(query: string) {
       globalSearch.setQuery(query);
