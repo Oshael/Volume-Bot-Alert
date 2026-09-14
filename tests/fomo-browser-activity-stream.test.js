@@ -5,6 +5,8 @@ const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const {
   createFomoBrowserActivityStream,
+  fomoApiRequestCategory,
+  fomoPageRoute,
   isFomoWebSocketUrl,
   normalizeCdpEndpoint,
   resetFomoBrowserPage,
@@ -47,6 +49,69 @@ test('Fomo browser stream classifies only Fomo WebSocket URLs', () => {
   assert.equal(isFomoWebSocketUrl('wss://prod-api.fomo.family/ws'), true);
   assert.equal(isFomoWebSocketUrl('wss://example.com/ws'), false);
   assert.equal(isFomoWebSocketUrl('https://prod-api.fomo.family/ws'), false);
+  assert.equal(fomoPageRoute(FOMO_PAGE_URL), 'token');
+  assert.equal(fomoPageRoute('https://fomo.family/alerts/private-id'), 'alerts');
+  assert.equal(fomoPageRoute('https://example.com/private-id'), 'other');
+  assert.equal(fomoApiRequestCategory(
+    'https://prod-api.fomo.family/v2/users?private=value', 'POST',
+  ), 'user_bootstrap');
+  assert.equal(fomoApiRequestCategory(
+    'https://prod-api.fomo.family/trades/private-id', 'GET',
+  ), 'trade_detail');
+  assert.equal(fomoApiRequestCategory('https://example.com/private-id'), null);
+});
+
+test('Fomo browser stream exposes sanitized outbound subscription and request state', async () => {
+  const fixture = fakeBrowser('https://fomo.family/alerts/private-id');
+  const stream = createFomoBrowserActivityStream({
+    connectOverCDP: async () => fixture.browser,
+  });
+
+  stream.start();
+  await nextTurn();
+  fixture.session.emit('Network.webSocketCreated', {
+    requestId: 'ws-private', url: 'wss://prod-api.fomo.family/ws/private',
+  });
+  fixture.session.emit('Network.webSocketFrameSent', {
+    requestId: 'ws-private',
+    response: { opcode: 1, payloadData: JSON.stringify({
+      type: 'challengeResponse', jwt: 'secret-jwt',
+    }) },
+  });
+  fixture.session.emit('Network.webSocketFrameSent', {
+    requestId: 'ws-private',
+    response: { opcode: 1, payloadData: JSON.stringify({
+      type: 'subscribe', topicType: 'trading_activity', topicId: 'not-a-uuid-private',
+    }) },
+  });
+  fixture.session.emit('Network.webSocketFrameReceived', {
+    requestId: 'ws-private',
+    response: { opcode: 1, payloadData: JSON.stringify({ type: 'challengeAccepted' }) },
+  });
+  fixture.session.emit('Network.requestWillBeSent', {
+    requestId: 'api-private', request: {
+      url: 'https://prod-api.fomo.family/feed/tradingActivity?secret=value', method: 'GET',
+      headers: { Authorization: 'Bearer secret-jwt' },
+    },
+  });
+
+  const status = stream.getStatus();
+  assert.equal(status.pageRoute, 'alerts');
+  assert.deepEqual(status.sentFrameTypes, { challengeresponse: 1, subscribe: 1 });
+  assert.deepEqual(status.sentFrameTopics, { unknown: 1, trading_activity: 1 });
+  assert.deepEqual(status.subscribeTopicIdFormats, { non_uuid: 1 });
+  assert.equal(status.fomoAuthResponses, 1);
+  assert.equal(status.fomoAuthAcceptances, 1);
+  assert.equal(status.activeAuthenticatedWebSockets, 1);
+  assert.equal(status.tradingActivitySubscribeFrames, 1);
+  assert.equal(status.activeTradingActivitySubscriptions, 1);
+  assert.deepEqual(status.fomoApiRequestCategories, { trading_activity_feed: 1 });
+  assert.equal(status.lastFomoApiRequestCategory, 'trading_activity_feed');
+  const serialized = JSON.stringify(status);
+  assert.equal(serialized.includes('secret-jwt'), false);
+  assert.equal(serialized.includes('not-a-uuid-private'), false);
+  assert.equal(serialized.includes('secret=value'), false);
+  await stream.stop();
 });
 
 test('Fomo browser stream buckets unknown frame labels without exposing them', async () => {

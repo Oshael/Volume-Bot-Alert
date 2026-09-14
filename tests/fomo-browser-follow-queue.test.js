@@ -142,6 +142,29 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   await api.close();
 });
 
+test('Fomo browser API preserves observed auth source when identity times out', async () => {
+  const cdp = new EventEmitter();
+  cdp.send = async () => ({});
+  cdp.detach = async () => {};
+  const page = new EventEmitter();
+  page.url = () => 'https://fomo.family/alerts';
+  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  page.context = () => context;
+  page.reload = async () => {
+    cdp.emit('Network.webSocketFrameSent', {
+      response: { payloadData: JSON.stringify({ type: 'challengeResponse', jwt: 'ws-token' }) },
+    });
+  };
+  const browser = { contexts: () => [context] };
+
+  await assert.rejects(
+    createFomoBrowserApi({ connectOverCDP: async () => browser, authWaitMs: 1 }),
+    (error) => error.code === 'FOMO_FOLLOW_PROFILE_TIMEOUT'
+      && error.fomoDiagnostics?.authSource === 'websocket_challenge'
+      && error.fomoDiagnostics?.identitySource === null,
+  );
+});
+
 test('Fomo follow queue plans a dry-run without writing to the account', async () => {
   const fixture = apiFixture({ following: [A] });
   const queue = createFomoBrowserFollowQueue({
@@ -556,6 +579,7 @@ test('Fomo follow keeps its durable pause when Telegram delivery fails', async (
 test('Fomo follow queue persists timeouts and does not attempt a write', async () => {
   const saved = [];
   const timeout = Object.assign(new Error('timeout'), { code: 'FOMO_FOLLOW_AUTH_TIMEOUT' });
+  timeout.fomoDiagnostics = { authSource: 'websocket_challenge', identitySource: null };
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A],
     createBrowserApi: async () => { throw timeout; },
@@ -568,6 +592,8 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_AUTH_TIMEOUT');
   assert.equal(queue.getStatus().lastFailureCode, 'FOMO_FOLLOW_AUTH_TIMEOUT');
   assert.equal(queue.getStatus().lastFailurePhase, 'browser_auth');
+  assert.equal(queue.getStatus().lastAuthSource, 'websocket_challenge');
+  assert.equal(queue.getStatus().lastIdentitySource, null);
   assert.notEqual(queue.getStatus().lastFailureAt, null);
   assert.equal(saved.length, 1);
 });

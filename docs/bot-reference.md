@@ -2026,6 +2026,19 @@ stream vivo, contrato incompatível e callout efetivamente normalizado. Thesis
 rejeitadas são agrupadas em `calloutRejectionReasons` usando somente motivos
 fixos de campo ausente; nenhum payload é persistido na lease.
 
+O diagnóstico de contrato do browser também separa o transporte funcional em
+etapas. `pageRoute` informa apenas a categoria da rota (`home`, `token`,
+`alerts`, `profile` ou `other`). Frames enviados são contados por tipos e tópicos
+fixos em `sentFrameTypes` e `sentFrameTopics`; `subscribeTopicIdFormats` registra
+somente `missing`, `uuid` ou `non_uuid`. `fomoAuthResponses`,
+`fomoAuthAcceptances` e `activeAuthenticatedWebSockets` confirmam o handshake,
+enquanto `tradingActivitySubscribeFrames` e
+`activeTradingActivitySubscriptions` confirmam separadamente a assinatura do
+feed. Requests da aba são agrupados em `fomoApiRequestCategories`, sem URL,
+query, headers ou corpo. A fila preserva `lastAuthSource` mesmo quando a captura
+de identidade expira antes de criar a API, permitindo distinguir autenticação
+observada de descoberta do usuário.
+
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por

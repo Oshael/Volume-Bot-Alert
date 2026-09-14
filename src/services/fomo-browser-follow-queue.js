@@ -261,7 +261,9 @@ async function createFomoBrowserApi(options = {}) {
     cdp.off('Network.loadingFinished', inspectLoadingFinished);
     cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
     await detachSession(cdp);
-    throw error;
+    const failure = error instanceof Error ? error : new Error('Fomo browser API capture failed');
+    failure.fomoDiagnostics = { authSource, identitySource };
+    throw failure;
   }
   cdp.off('Network.requestWillBeSent', inspectRequest);
   cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
@@ -513,8 +515,12 @@ function createFomoBrowserFollowQueue(options = {}) {
 
   function recordApiReady(api) {
     status.lastApiReadyAt = new Date(now()).toISOString();
-    status.lastAuthSource = api.diagnostics?.authSource || null;
-    status.lastIdentitySource = api.diagnostics?.identitySource || null;
+    recordApiDiagnostics(api.diagnostics);
+  }
+
+  function recordApiDiagnostics(diagnostics) {
+    status.lastAuthSource = diagnostics?.authSource || status.lastAuthSource;
+    status.lastIdentitySource = diagnostics?.identitySource || status.lastIdentitySource;
   }
 
   function recordFollowPlan(plan) {
@@ -571,6 +577,7 @@ function createFomoBrowserFollowQueue(options = {}) {
       status.phase = 'follow_write';
       await writePending(api, plan.userId, plan.pending);
     } catch (error) {
+      recordApiDiagnostics(error?.fomoDiagnostics);
       await handleRunError(error);
     } finally {
       await closeApi(api);
