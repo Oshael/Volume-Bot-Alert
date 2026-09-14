@@ -129,6 +129,32 @@ function normalizeFomoActivityItem(item) {
   return normalizeFomoCallout({ type: 'data', topicType: 'trading_activity', payload: item });
 }
 
+function calloutRejectionReason(frame, callout) {
+  if (callout || !isTradingActivityThesis(frame)) return null;
+  const event = frame.payload;
+  const comment = event.comment || {};
+  if (!firstText(event.id, comment.id)) return 'missing_event_id';
+  if (!firstText(event.userId, comment.userId)) return 'missing_user_id';
+  if (!firstText(event.tokenAddress, comment.tokenAddress)) return 'missing_token_address';
+  if (!firstText(comment.comment, event.thesis)) return 'missing_thesis_text';
+  return 'unsupported_shape';
+}
+
+function describeFomoFrame(safe) {
+  const topic = firstText(
+    Array.isArray(safe) ? safe[0] : null,
+    safe?.topicType, safe?.topic, safe?.channel, safe?.stream,
+  );
+  const eventType = firstText(safe?.eventType, safe?.event, safe?.kind, safe?.type);
+  const eventPayload = Array.isArray(safe) ? safe[1] : (safe?.payload ?? safe?.data);
+  const payloadType = firstText(eventPayload?.eventType, eventPayload?.kind, eventPayload?.type);
+  const labels = [topic, eventType].filter(Boolean).map((value) => value.toLowerCase());
+  return {
+    topic, eventType, payloadType,
+    tradingActivityCandidate: labels.some((value) => value.includes('trading_activity')),
+  };
+}
+
 function normalizeFomoFrame(raw, options = {}) {
   const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''), 'utf8');
   const fingerprint = createHash('sha256').update(bytes).digest('hex');
@@ -142,18 +168,15 @@ function normalizeFomoFrame(raw, options = {}) {
   }
 
   const safe = sanitizeFomoPayload(structured.payload);
-  const topic = firstText(Array.isArray(safe) ? safe[0] : null, safe?.topicType, safe?.topic, safe?.channel, safe?.stream);
-  const eventType = firstText(safe?.eventType, safe?.event, safe?.kind, safe?.type);
-  const labels = [topic, eventType].filter(Boolean).map((value) => value.toLowerCase());
+  const callout = normalizeFomoCallout(safe);
   return {
     frameKind: 'json',
     byteLength: bytes.length,
     fingerprint,
     protocolPrefix: structured.protocolPrefix,
-    topic,
-    eventType,
-    tradingActivityCandidate: labels.some((value) => value.includes('trading_activity')),
-    callout: normalizeFomoCallout(safe),
+    ...describeFomoFrame(safe),
+    callout,
+    calloutRejectionReason: calloutRejectionReason(safe, callout),
     payload: safe,
   };
 }

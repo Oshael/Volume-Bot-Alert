@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const {
   createFomoBrowserActivityStream,
+  isFomoWebSocketUrl,
   normalizeCdpEndpoint,
   resetFomoBrowserPage,
 } = require('../src/services/fomo-browser-activity-stream');
@@ -42,6 +43,30 @@ test('Fomo browser stream accepts only loopback CDP endpoints', () => {
   assert.throws(() => normalizeCdpEndpoint('http://user:pass@127.0.0.1:9222'), /credentials/);
 });
 
+test('Fomo browser stream classifies only Fomo WebSocket URLs', () => {
+  assert.equal(isFomoWebSocketUrl('wss://prod-api.fomo.family/ws'), true);
+  assert.equal(isFomoWebSocketUrl('wss://example.com/ws'), false);
+  assert.equal(isFomoWebSocketUrl('https://prod-api.fomo.family/ws'), false);
+});
+
+test('Fomo browser stream buckets unknown frame labels without exposing them', async () => {
+  const fixture = fakeBrowser();
+  const sensitiveLabel = '00000000-0000-4000-8000-000000000001';
+  const stream = createFomoBrowserActivityStream({
+    connectOverCDP: async () => fixture.browser,
+  });
+
+  stream.start();
+  await nextTurn();
+  fixture.session.emit('Network.webSocketFrameReceived', {
+    response: { opcode: 1, payloadData: JSON.stringify({ type: sensitiveLabel }) },
+  });
+  const serialized = JSON.stringify(stream.getStatus());
+  assert.equal(stream.getStatus().frameTypes.other, 1);
+  assert.equal(serialized.includes(sensitiveLabel), false);
+  await stream.stop();
+});
+
 test('Fomo browser stream captures thesis frames without closing the external Chrome', async () => {
   const fixture = fakeBrowser();
   const evidence = [];
@@ -61,7 +86,11 @@ test('Fomo browser stream captures thesis frames without closing the external Ch
   assert.deepEqual(fixture.commands, ['Network.enable']);
   assert.deepEqual(states, ['connecting', 'connected']);
 
+  fixture.session.emit('Network.webSocketCreated', {
+    requestId: 'ws-1', url: 'wss://prod-api.fomo.family/ws',
+  });
   fixture.session.emit('Network.webSocketFrameReceived', {
+    requestId: 'ws-1',
     response: {
       opcode: 1,
       payloadData: JSON.stringify({
@@ -74,15 +103,46 @@ test('Fomo browser stream captures thesis frames without closing the external Ch
     },
   });
   fixture.session.emit('Network.webSocketFrameReceived', {
+    requestId: 'ws-1',
     response: { opcode: 1, payloadData: JSON.stringify({ type: 'heartbeat' }) },
   });
+  fixture.session.emit('Network.webSocketFrameReceived', {
+    requestId: 'ws-1',
+    response: { opcode: 1, payloadData: JSON.stringify({ type: 'heartbeat' }) },
+  });
+  fixture.session.emit('Network.webSocketFrameReceived', {
+    requestId: 'ws-1',
+    response: { opcode: 1, payloadData: JSON.stringify({
+      type: 'data', topicType: 'trading_activity',
+      payload: { type: 'thesis', id: 'incomplete' },
+    }) },
+  });
+  fixture.session.emit('Network.webSocketFrameError', { requestId: 'ws-1' });
+  fixture.session.emit('Network.webSocketClosed', { requestId: 'ws-1' });
 
-  assert.equal(evidence.length, 1);
+  assert.equal(evidence.length, 2);
   assert.equal(evidence[0].callout.platformEventId, 'event-1');
-  assert.equal(stream.getStatus().frames, 2);
-  assert.equal(frames.length, 2);
-  assert.equal(frames[1].at, stream.getStatus().lastFrameAt);
+  assert.equal(evidence[1].callout, null);
+  assert.equal(evidence[1].calloutRejectionReason, 'missing_user_id');
+  assert.equal(stream.getStatus().frames, 4);
+  assert.equal(frames.length, 4);
+  assert.equal(frames[3].at, stream.getStatus().lastFrameAt);
+  assert.deepEqual(stream.getStatus().frameTypes, { data: 2, heartbeat: 2 });
+  assert.deepEqual(stream.getStatus().frameTopics, { trading_activity: 2, unknown: 2 });
+  assert.deepEqual(stream.getStatus().payloadTypes, { thesis: 2, unknown: 2 });
+  assert.equal(stream.getStatus().tradingActivityFrames, 2);
+  assert.equal(stream.getStatus().candidates, 2);
+  assert.equal(stream.getStatus().thesisFrames, 2);
+  assert.equal(stream.getStatus().unnormalizedThesisFrames, 1);
+  assert.deepEqual(stream.getStatus().calloutRejectionReasons, { missing_user_id: 1 });
   assert.equal(stream.getStatus().callouts, 1);
+  assert.equal(stream.getStatus().distinctFrameFingerprints, 3);
+  assert.equal(stream.getStatus().repeatedFrames, 1);
+  assert.equal(stream.getStatus().fomoWebSocketsCreated, 1);
+  assert.equal(stream.getStatus().fomoWebSocketsClosed, 1);
+  assert.equal(stream.getStatus().fomoWebSocketErrors, 1);
+  assert.equal(stream.getStatus().activeFomoWebSockets, 0);
+  assert.notEqual(stream.getStatus().lastCalloutAt, null);
   await stream.stop();
   assert.equal(browserCloseCalls, 0);
 });

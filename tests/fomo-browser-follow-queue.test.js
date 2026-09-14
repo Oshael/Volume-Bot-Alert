@@ -87,6 +87,9 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
 
   const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
   assert.equal(api.currentUserId, USER);
+  assert.deepEqual(api.diagnostics, {
+    authSource: 'http_request', identitySource: 'user_response',
+  });
   await api.request('/follows', { method: 'POST', body: { following_id: A } });
   assert.equal(evaluation.requestPath, '/follows');
   assert.equal(evaluation.auth.authorization, 'Bearer fixture-token');
@@ -127,6 +130,9 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
   await api.request('/v2/users/current/followingIds');
   assert.equal(api.currentUserId, USER);
+  assert.deepEqual(api.diagnostics, {
+    authSource: 'websocket_challenge', identitySource: 'websocket_subscribe',
+  });
   assert.equal(evaluation.auth.authorization, 'Bearer ws-token');
   assert.equal(evaluation.auth.supportedChains, undefined);
   evaluationError = Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
@@ -171,16 +177,23 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     enabled: true, followEnabled: true, dryRun: true, discoveryEnabled: true,
     activityDiscoveryEnabled: false, running: false,
     discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
+    followingSnapshotSize: 1, lastFollowingReadAt: queue.getStatus().lastFollowingReadAt,
+    followAttempts: 0, followFailures: 0, lastFollowHttpStatus: null,
+    lastFollowAttemptAt: null, lastFollowSuccessAt: null, lastFollowFailureAt: null,
     activityProfiles: 0, activityTradeLookups: 0, activityTradeLookupErrors: 0,
     activityDiscoveryErrors: 0, lastActivityDiscoveryAt: null,
     lastActivityDiscoveryErrorCode: null,
     persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
     profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
-    cycles: 1, intervalMs: 300_000, lastStartedAt: queue.getStatus().lastStartedAt,
+    cycles: 1, phase: 'idle', intervalMs: 300_000,
+    lastStartedAt: queue.getStatus().lastStartedAt,
     nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
     autoResumeMs: 300_000, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
     alertSentAt: null, alertErrors: 0, lastAlertErrorCode: null,
+    lastFailureCode: null, lastFailureAt: null, lastFailurePhase: null,
+    lastApiReadyAt: queue.getStatus().lastApiReadyAt,
+    lastAuthSource: null, lastIdentitySource: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
@@ -421,6 +434,10 @@ test('Fomo follow queue writes one allowlisted follow sequentially and idempoten
   });
   assert.equal(queue.getStatus().followed, 1);
   assert.equal(queue.getStatus().planned, 2);
+  assert.equal(queue.getStatus().followAttempts, 1);
+  assert.equal(queue.getStatus().followFailures, 0);
+  assert.equal(queue.getStatus().lastFollowHttpStatus, 200);
+  assert.notEqual(queue.getStatus().lastFollowSuccessAt, null);
 });
 
 test('Fomo follow queue durably pauses immediately on any failed account write', async () => {
@@ -441,6 +458,11 @@ test('Fomo follow queue durably pauses immediately on any failed account write',
   assert.equal(queue.getStatus().paused, true);
   assert.equal(queue.getStatus().pausePersisted, true);
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_500');
+  assert.equal(queue.getStatus().followAttempts, 1);
+  assert.equal(queue.getStatus().followFailures, 1);
+  assert.equal(queue.getStatus().lastFollowHttpStatus, 500);
+  assert.equal(queue.getStatus().lastFailurePhase, 'follow_write');
+  assert.equal(queue.getStatus().lastFailureCode, 'FOMO_FOLLOW_HTTP_500');
   assert.equal(scheduled.length, 1);
   assert.deepEqual(saved[0], {
     paused: true, pausedAt: queue.getStatus().pausedAt,
@@ -544,6 +566,9 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
   await queue.stop();
   assert.equal(queue.getStatus().paused, true);
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_AUTH_TIMEOUT');
+  assert.equal(queue.getStatus().lastFailureCode, 'FOMO_FOLLOW_AUTH_TIMEOUT');
+  assert.equal(queue.getStatus().lastFailurePhase, 'browser_auth');
+  assert.notEqual(queue.getStatus().lastFailureAt, null);
   assert.equal(saved.length, 1);
 });
 

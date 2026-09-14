@@ -87,6 +87,9 @@ test('measured Fomo thesis frame normalizes into a callout', () => {
 
   assert.equal(evidence.tradingActivityCandidate, true);
   assert.equal(evidence.topic, 'trading_activity');
+  assert.equal(evidence.eventType, 'data');
+  assert.equal(evidence.payloadType, 'thesis');
+  assert.equal(evidence.calloutRejectionReason, null);
   assert.deepEqual(evidence.callout, {
     platform: 'fomo',
     eventType: 'callout',

@@ -1958,6 +1958,16 @@ loop de escrita dentro do mesmo ciclo. `resumeAt`, `autoResumes` e
 `lastAutoResumedAt` expõem essa recuperação. A captura de callouts permanece
 independente.
 
+A telemetria da fila preserva a última falha mesmo depois do auto-resume em
+`lastFailureCode`, `lastFailureAt` e `lastFailurePhase`. `phase` distingue
+restauração do circuito, captura de autenticação, leitura do plano, discovery,
+persistência, escrita e cleanup. `lastAuthSource` e `lastIdentitySource` informam
+somente se a sessão foi observada por request HTTP ou frame WebSocket, nunca a
+credencial ou o UUID. `followAttempts`, `followFailures`,
+`lastFollowHttpStatus`, timestamps de tentativa/sucesso/falha,
+`followingSnapshotSize` e `lastFollowingReadAt` permitem separar tentativa HTTP
+aceita de confirmação pelo snapshot posterior de `followingIds`.
+
 Os alertas operacionais privados são opt-in por
 `FOMO_TELEGRAM_ALERTS_ENABLED=true`. Eles usam somente chamadas outbound
 `sendMessage` e não exigem webhook, username público nem ativar
@@ -1995,6 +2005,16 @@ processo inteiro do Chrome ou a porta CDP estiverem indisponíveis. Os nomes ant
 `FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS` permanecem aceitos como fallback.
 `crashReloads`, `crashReloadErrors`, `pageResets`, `pageResetErrors`,
 `lastCrashReloadAt` e `lastPageResetAt` tornam os caminhos observáveis.
+
+O stream também expõe diagnóstico agregado e limitado: contagens por `eventType`,
+tópico e tipo do payload usam um vocabulário operacional fixo; qualquer valor
+desconhecido entra em `other`. Contadores de WebSockets Fomo criados,
+encerrados, com erro e atualmente observados não guardam URL nem request ID.
+`tradingActivityFrames`, `thesisFrames`, `unnormalizedThesisFrames`, timestamps
+do último candidato/thesis/callout e fingerprints apenas contados distinguem
+stream vivo, contrato incompatível e callout efetivamente normalizado. Thesis
+rejeitadas são agrupadas em `calloutRejectionReasons` usando somente motivos
+fixos de campo ausente; nenhum payload é persistido na lease.
 
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros

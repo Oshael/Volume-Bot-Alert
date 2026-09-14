@@ -12,6 +12,13 @@ const DEFAULT_RELOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_PAGE_RESET_TIMEOUT_MS = 10_000;
 const CONNECT_FAILURES_BEFORE_PAGE_RESET = 2;
 const DEFAULT_FOMO_PAGE_URL = 'https://fomo.family/tokens/robinhood/0x39dbed3a2bd333467115de45665cc57f813c4571';
+const FRAME_TELEMETRY_LABELS = new Set([
+  'unknown', 'data', 'heartbeat', 'ping', 'pong', 'message', 'error',
+  'challenge', 'challengeaccepted', 'subscribe', 'trading_activity',
+  'thesis', 'callout', 'trade', 'buy', 'sell', 'comment',
+  'missing_event_id', 'missing_user_id', 'missing_token_address',
+  'missing_thesis_text', 'unsupported_shape',
+]);
 
 function positiveInteger(value, fallback, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -41,6 +48,26 @@ function isFomoUrl(value) {
 
 function isFomoPage(page) {
   return isFomoUrl(page.url());
+}
+
+function isFomoWebSocketUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'wss:'
+      && (url.hostname === 'fomo.family' || url.hostname.endsWith('.fomo.family'));
+  } catch {
+    return false;
+  }
+}
+
+function telemetryLabel(value) {
+  const label = String(value || 'unknown').trim().toLowerCase();
+  return FRAME_TELEMETRY_LABELS.has(label) ? label : 'other';
+}
+
+function incrementLabelCounter(target, value) {
+  const key = telemetryLabel(value);
+  target[key] = (target[key] || 0) + 1;
 }
 
 async function resetFomoBrowserPage(endpoint, options = {}) {
@@ -105,6 +132,8 @@ function createFomoBrowserActivityStream(options = {}) {
   let consecutiveConnectFailures = 0;
   let lastPageResetMs = null;
   let reconnectMs = baseReconnectMs;
+  const fomoWebSockets = new Set();
+  const frameFingerprints = new Set();
   const status = {
     connected: false,
     connects: 0,
@@ -115,6 +144,29 @@ function createFomoBrowserActivityStream(options = {}) {
     candidates: 0,
     callouts: 0,
     lastFrameAt: null,
+    lastTradingActivityAt: null,
+    lastThesisAt: null,
+    lastCalloutAt: null,
+    lastFrameType: null,
+    lastFrameTopic: null,
+    lastPayloadType: null,
+    frameTypes: {},
+    frameTopics: {},
+    payloadTypes: {},
+    calloutRejectionReasons: {},
+    tradingActivityFrames: 0,
+    thesisFrames: 0,
+    unnormalizedThesisFrames: 0,
+    distinctFrameFingerprints: 0,
+    repeatedFrames: 0,
+    webSocketsCreated: 0,
+    fomoWebSocketsCreated: 0,
+    fomoWebSocketsClosed: 0,
+    fomoWebSocketErrors: 0,
+    activeFomoWebSockets: 0,
+    lastFomoWebSocketCreatedAt: null,
+    lastFomoWebSocketClosedAt: null,
+    lastFomoWebSocketErrorAt: null,
     crashReloads: 0,
     crashReloadErrors: 0,
     lastCrashReloadAt: null,
@@ -126,8 +178,18 @@ function createFomoBrowserActivityStream(options = {}) {
     lastDetachErrorCode: null,
   };
 
+  function statusSnapshot() {
+    return {
+      ...status,
+      frameTypes: { ...status.frameTypes },
+      frameTopics: { ...status.frameTopics },
+      payloadTypes: { ...status.payloadTypes },
+      calloutRejectionReasons: { ...status.calloutRejectionReasons },
+    };
+  }
+
   function emitStatus(state, extra = {}) {
-    onStatus({ state, ...extra, metrics: { ...status } });
+    onStatus({ state, ...extra, metrics: statusSnapshot() });
   }
 
   function reportError(error, code) {
@@ -146,6 +208,28 @@ function createFomoBrowserActivityStream(options = {}) {
     reconnectMs = Math.min(reconnectMs * 2, MAX_RECONNECT_MS);
   }
 
+  function handleWebSocketCreated(event = {}) {
+    status.webSocketsCreated += 1;
+    if (!event.requestId || !isFomoWebSocketUrl(event.url)) return;
+    fomoWebSockets.add(event.requestId);
+    status.fomoWebSocketsCreated += 1;
+    status.activeFomoWebSockets = fomoWebSockets.size;
+    status.lastFomoWebSocketCreatedAt = new Date().toISOString();
+  }
+
+  function handleWebSocketClosed(event = {}) {
+    if (!fomoWebSockets.delete(event.requestId)) return;
+    status.fomoWebSocketsClosed += 1;
+    status.activeFomoWebSockets = fomoWebSockets.size;
+    status.lastFomoWebSocketClosedAt = new Date().toISOString();
+  }
+
+  function handleWebSocketFrameError(event = {}) {
+    if (!fomoWebSockets.has(event.requestId)) return;
+    status.fomoWebSocketErrors += 1;
+    status.lastFomoWebSocketErrorAt = new Date().toISOString();
+  }
+
   function handleFrame(event) {
     const payload = event?.response?.payloadData;
     if (typeof payload !== 'string') return;
@@ -153,11 +237,39 @@ function createFomoBrowserActivityStream(options = {}) {
     status.frames += 1;
     status.bytes += evidence.byteLength;
     status.lastFrameAt = new Date().toISOString();
+    status.lastFrameType = telemetryLabel(evidence.eventType);
+    status.lastFrameTopic = telemetryLabel(evidence.topic);
+    status.lastPayloadType = telemetryLabel(evidence.payloadType);
+    incrementLabelCounter(status.frameTypes, evidence.eventType);
+    incrementLabelCounter(status.frameTopics, evidence.topic);
+    incrementLabelCounter(status.payloadTypes, evidence.payloadType);
+    if (frameFingerprints.has(evidence.fingerprint)) status.repeatedFrames += 1;
+    else if (frameFingerprints.size < 256) {
+      frameFingerprints.add(evidence.fingerprint);
+      status.distinctFrameFingerprints = frameFingerprints.size;
+    }
     onFrame({ at: status.lastFrameAt });
     if (evidence.frameKind === 'json') status.jsonFrames += 1;
+    if (evidence.tradingActivityCandidate) {
+      status.tradingActivityFrames += 1;
+      status.lastTradingActivityAt = status.lastFrameAt;
+    }
+    if (evidence.payloadType === 'thesis') {
+      status.thesisFrames += 1;
+      status.lastThesisAt = status.lastFrameAt;
+      if (!evidence.callout) {
+        status.unnormalizedThesisFrames += 1;
+        incrementLabelCounter(
+          status.calloutRejectionReasons, evidence.calloutRejectionReason,
+        );
+      }
+    }
     if (!evidence.tradingActivityCandidate && !evidence.callout) return;
     status.candidates += 1;
-    if (evidence.callout) status.callouts += 1;
+    if (evidence.callout) {
+      status.callouts += 1;
+      status.lastCalloutAt = status.lastFrameAt;
+    }
     onEvidence(evidence);
   }
 
@@ -182,7 +294,12 @@ function createFomoBrowserActivityStream(options = {}) {
     attachedPage?.off?.('close', handleDisconnect);
     attachedPage?.off?.('crash', handlePageCrash);
     attachedBrowser?.off?.('disconnected', handleDisconnect);
+    attachedSession?.off?.('Network.webSocketCreated', handleWebSocketCreated);
+    attachedSession?.off?.('Network.webSocketClosed', handleWebSocketClosed);
+    attachedSession?.off?.('Network.webSocketFrameError', handleWebSocketFrameError);
     attachedSession?.off?.('Network.webSocketFrameReceived', handleFrame);
+    fomoWebSockets.clear();
+    status.activeFomoWebSockets = 0;
     const result = await detachSession(attachedSession);
     if (!result.ok) {
       status.detachErrors += 1;
@@ -253,6 +370,9 @@ function createFomoBrowserActivityStream(options = {}) {
       browser = connectedBrowser;
       page = fomoPage;
       session = cdpSession;
+      session.on('Network.webSocketCreated', handleWebSocketCreated);
+      session.on('Network.webSocketClosed', handleWebSocketClosed);
+      session.on('Network.webSocketFrameError', handleWebSocketFrameError);
       session.on('Network.webSocketFrameReceived', handleFrame);
       page.on('close', handleDisconnect);
       page.on('crash', handlePageCrash);
@@ -285,11 +405,12 @@ function createFomoBrowserActivityStream(options = {}) {
     await detach();
   }
 
-  return { start, stop, getStatus: () => ({ running, endpoint, ...status }) };
+  return { start, stop, getStatus: () => ({ running, endpoint, ...statusSnapshot() }) };
 }
 
 module.exports = {
   createFomoBrowserActivityStream,
+  isFomoWebSocketUrl,
   isFomoPage,
   normalizeCdpEndpoint,
   resetFomoBrowserPage,

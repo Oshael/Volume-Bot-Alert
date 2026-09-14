@@ -77,7 +77,7 @@ async function readFollowPlan(api, allowlistedIds, options = {}) {
   if (options.followEnabled === false) {
     return {
       userId, discovered: discoveredIds.length, discoveredProfiles,
-      pending: [], alreadyFollowed: 0,
+      pending: [], alreadyFollowed: 0, followingCount: null,
     };
   }
   const followingResponse = await api.request('/v2/users/current/followingIds');
@@ -88,6 +88,7 @@ async function readFollowPlan(api, allowlistedIds, options = {}) {
     discovered: discoveredIds.length, discoveredProfiles,
     pending: profileIds.filter((id) => !following.has(id)),
     alreadyFollowed: profileIds.filter((id) => following.has(id)).length,
+    followingCount: following.size,
   };
 }
 
@@ -141,6 +142,8 @@ async function createFomoBrowserApi(options = {}) {
   const cdp = await page.context().newCDPSession(page);
   let authSettled = false;
   let userSettled = false;
+  let authSource = null;
+  let identitySource = null;
   let timeout;
   let resolveAuthContext;
   let rejectAuthContext;
@@ -161,18 +164,20 @@ async function createFomoBrowserApi(options = {}) {
     if (authSettled && userSettled) clearTimeout(timeout);
   }
 
-  function settleAuthorization(authorization, supportedChains) {
+  function settleAuthorization(authorization, supportedChains, source) {
     if (authSettled) return;
     if (typeof authorization !== 'string' || !/^Bearer\s+\S+$/i.test(authorization)) return;
     authSettled = true;
+    authSource = source;
     resolveAuthContext({ authorization, supportedChains });
     clearCaptureTimeout();
   }
 
-  function settleCurrentUserId(userId) {
+  function settleCurrentUserId(userId, source) {
     const normalized = String(userId || '').trim();
     if (userSettled || !UUID.test(normalized)) return;
     userSettled = true;
+    identitySource = source;
     resolveCurrentUserId(normalized);
     clearCaptureTimeout();
   }
@@ -183,7 +188,7 @@ async function createFomoBrowserApi(options = {}) {
       .find(([name]) => name.toLowerCase() === 'authorization')?.[1];
     const supportedChains = entries
       .find(([name]) => name.toLowerCase() === 'x-supported-chains')?.[1];
-    settleAuthorization(authorization, supportedChains);
+    settleAuthorization(authorization, supportedChains, 'http_request');
   }
 
   function inspectRequest(event) {
@@ -205,10 +210,10 @@ async function createFomoBrowserApi(options = {}) {
     let frame;
     try { frame = JSON.parse(event?.response?.payloadData); } catch { return; }
     if (frame?.type === 'challengeResponse' && typeof frame.jwt === 'string') {
-      settleAuthorization(`Bearer ${frame.jwt}`);
+      settleAuthorization(`Bearer ${frame.jwt}`, undefined, 'websocket_challenge');
     }
     if (frame?.type === 'subscribe' && frame.topicType === 'trading_activity') {
-      settleCurrentUserId(frame.topicId);
+      settleCurrentUserId(frame.topicId, 'websocket_subscribe');
     }
   }
 
@@ -219,7 +224,7 @@ async function createFomoBrowserApi(options = {}) {
       const text = result.base64Encoded
         ? Buffer.from(result.body, 'base64').toString('utf8') : result.body;
       const body = JSON.parse(text);
-      settleCurrentUserId(body?.responseObject?.id);
+      settleCurrentUserId(body?.responseObject?.id, 'user_response');
     } catch {}
   }
 
@@ -265,6 +270,7 @@ async function createFomoBrowserApi(options = {}) {
 
   return {
     currentUserId,
+    diagnostics: { authSource, identitySource },
     async request(path, init = {}) {
       try {
         return await page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit, timeoutMs }) => {
@@ -332,19 +338,28 @@ function createFomoBrowserFollowQueue(options = {}) {
     activityTradeLookupErrors: 0, activityDiscoveryErrors: 0,
     lastActivityDiscoveryAt: null, lastActivityDiscoveryErrorCode: null,
     planned: 0, followed: 0, alreadyFollowed: 0,
+    followingSnapshotSize: null, lastFollowingReadAt: null,
+    followAttempts: 0, followFailures: 0, lastFollowHttpStatus: null,
+    lastFollowAttemptAt: null, lastFollowSuccessAt: null, lastFollowFailureAt: null,
     persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
     profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
-    cycles: 0, intervalMs, lastStartedAt: null, nextRunAt: null,
+    cycles: 0, phase: 'idle', intervalMs, lastStartedAt: null, nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
     autoResumeMs, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
+    lastFailureCode: null, lastFailureAt: null, lastFailurePhase: null,
+    lastApiReadyAt: null, lastAuthSource: null, lastIdentitySource: null,
     lastAlertErrorCode: null, completedAt: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
   };
 
   function fail(error, code) {
+    const failureCode = String(error?.code || code || 'FOMO_FOLLOW_ERROR');
     status.errors += 1;
-    status.lastErrorCode = String(error?.code || code || 'FOMO_FOLLOW_ERROR');
+    status.lastErrorCode = failureCode;
+    status.lastFailureCode = failureCode;
+    status.lastFailureAt = new Date(now()).toISOString();
+    status.lastFailurePhase = status.phase;
   }
 
   function pauseState() {
@@ -389,11 +404,27 @@ function createFomoBrowserFollowQueue(options = {}) {
   async function writePending(api, userId, pending) {
     for (const targetId of pending.slice(0, maxFollows)) {
       await wait(Math.round(delayMs * (0.8 + (random() * 0.4))));
-      const response = await api.request('/follows', {
-        method: 'POST', body: { user_id: userId, following_id: targetId },
-      });
+      status.followAttempts += 1;
+      status.lastFollowAttemptAt = new Date(now()).toISOString();
+      let response;
+      try {
+        response = await api.request('/follows', {
+          method: 'POST', body: { user_id: userId, following_id: targetId },
+        });
+      } catch (error) {
+        status.followFailures += 1;
+        status.lastFollowFailureAt = new Date(now()).toISOString();
+        throw error;
+      }
       const code = responseStatus(response);
-      if (code === 200) { status.followed += 1; continue; }
+      status.lastFollowHttpStatus = code || null;
+      if (code === 200) {
+        status.followed += 1;
+        status.lastFollowSuccessAt = new Date(now()).toISOString();
+        continue;
+      }
+      status.followFailures += 1;
+      status.lastFollowFailureAt = new Date(now()).toISOString();
       await pause(null, `FOMO_FOLLOW_HTTP_${code || 'UNKNOWN'}`);
       break;
     }
@@ -410,6 +441,9 @@ function createFomoBrowserFollowQueue(options = {}) {
     status.resumeAt = saved.resumeAt || (Number.isFinite(pausedAtMs)
       ? new Date(pausedAtMs + autoResumeMs).toISOString() : null);
     status.lastErrorCode = saved.lastErrorCode || 'FOMO_FOLLOW_PAUSED';
+    status.lastFailureCode ||= status.lastErrorCode;
+    status.lastFailureAt ||= status.pausedAt;
+    status.lastFailurePhase ||= 'restored_pause';
     status.alertSentAt = saved.alertSentAt || null;
     const resumeAtMs = Date.parse(status.resumeAt);
     if (Number.isFinite(resumeAtMs) && now() >= resumeAtMs) {
@@ -477,36 +511,69 @@ function createFomoBrowserFollowQueue(options = {}) {
     else fail(error, 'FOMO_PROFILE_DISCOVERY_ERROR');
   }
 
+  function recordApiReady(api) {
+    status.lastApiReadyAt = new Date(now()).toISOString();
+    status.lastAuthSource = api.diagnostics?.authSource || null;
+    status.lastIdentitySource = api.diagnostics?.identitySource || null;
+  }
+
+  function recordFollowPlan(plan) {
+    status.discovered = plan.discovered;
+    status.alreadyFollowed = plan.alreadyFollowed;
+    status.planned = plan.pending.length;
+    status.followingSnapshotSize = plan.followingCount;
+    if (plan.followingCount != null) status.lastFollowingReadAt = new Date(now()).toISOString();
+  }
+
+  async function closeApi(api) {
+    status.phase = 'cleanup';
+    const detachResult = await api?.close?.();
+    if (detachResult?.ok === false) {
+      status.cdpDetachErrors += 1;
+      if (detachResult.timedOut) status.cdpDetachTimeouts += 1;
+      status.lastCdpDetachErrorCode = detachResult.errorCode;
+    }
+    status.completedAt = new Date(now()).toISOString();
+    status.phase = 'idle';
+  }
+
+  function shouldRun() {
+    return enabled && (profileIds.length > 0 || discoveryEnabled || profilePersistence);
+  }
+
+  function shouldWriteFollows() {
+    return followEnabled && !status.paused && !dryRun;
+  }
+
   async function run() {
-    if (!enabled || (profileIds.length === 0 && !discoveryEnabled && !profilePersistence)) return;
+    if (!shouldRun()) return;
     let api;
     try {
+      status.phase = 'restore_pause';
       if (await restorePause()) return;
+      status.phase = 'browser_auth';
       api = await createBrowserApi({
         cdpEndpoint: options.cdpEndpoint,
         authWaitMs: options.authWaitMs,
         requestTimeoutMs: options.requestTimeoutMs,
       });
+      recordApiReady(api);
+      status.phase = 'follow_plan';
       const plan = await readFollowPlan(api, profileIds, {
         discoveryEnabled, discoveryLimit, followEnabled: followEnabled && !status.paused,
       });
-      status.discovered = plan.discovered;
-      status.alreadyFollowed = plan.alreadyFollowed;
-      status.planned = plan.pending.length;
+      recordFollowPlan(plan);
+      status.phase = 'activity_discovery';
       const activity = await discoverActivityProfiles(api);
+      status.phase = 'profile_persistence';
       await persistDiscoveredProfiles(plan.discoveredProfiles, activity);
-      if (!followEnabled || status.paused || dryRun) return;
+      if (!shouldWriteFollows()) return;
+      status.phase = 'follow_write';
       await writePending(api, plan.userId, plan.pending);
     } catch (error) {
       await handleRunError(error);
     } finally {
-      const detachResult = await api?.close?.();
-      if (detachResult?.ok === false) {
-        status.cdpDetachErrors += 1;
-        if (detachResult.timedOut) status.cdpDetachTimeouts += 1;
-        status.lastCdpDetachErrorCode = detachResult.errorCode;
-      }
-      status.completedAt = new Date().toISOString();
+      await closeApi(api);
     }
   }
 
