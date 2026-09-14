@@ -159,6 +159,7 @@ function normalizeEnrichmentOptions(input = {}) {
     limit: boundedInteger(input.limit, 100, 1, 1000),
     retryDelayMs: boundedInteger(input.retryDelayMs, 5000, 0, 604_800_000),
     maxAttempts: boundedInteger(input.maxAttempts, 5, 1, 100),
+    catalogRefreshMs: boundedInteger(input.catalogRefreshMs, 300_000, 1000, 3_600_000),
     rpcBatchSize: boundedInteger(input.rpcBatchSize, 100, 1, 100),
     rpcConcurrency: boundedInteger(input.rpcConcurrency, 1, 1, 8),
     prepareConcurrency: boundedInteger(input.prepareConcurrency, 16, 1, 64),
@@ -205,8 +206,11 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
   let repository = null;
   let v4LiquidityReader = null;
   let quoteReader = null;
+  let seedPools = null;
+  let catalogLoadedAt = 0;
   let chainValidated = false;
   let timestampProvider = 'drpc';
+  const now = deps.now || Date.now;
   return createLoopRuntime({
     ...deps,
     label: 'RobinhoodBackfillEnrichment',
@@ -231,6 +235,8 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
       v4LiquidityReader = (
         deps.v4LiquidityReaderFactory || createLiquidityHistoricalRangeRepository
       )();
+      seedPools = null;
+      catalogLoadedAt = 0;
       chainValidated = false;
     },
     async execute(options) {
@@ -243,7 +249,10 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
         }
         chainValidated = true;
       }
-      const seedPools = await repository.listActivePools();
+      if (seedPools == null || now() - catalogLoadedAt >= options.catalogRefreshMs) {
+        seedPools = await repository.listActivePools();
+        catalogLoadedAt = now();
+      }
       const adapter = (deps.adapterFactory || createRobinhoodBackfillEnrichmentAdapter)({
         seedPools,
         rpcClient,

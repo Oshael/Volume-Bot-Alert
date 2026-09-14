@@ -46,15 +46,17 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(calls[0].tokenLimit, 3);
   });
 
-  it('refreshes pools per batch while reusing the WETH quote reader', async () => {
+  it('caches pools for bounded batches while reusing the WETH quote reader', async () => {
     const clock = scheduler();
     const clientOptions = [];
     const adapters = [];
     const quoteReaders = [];
     const v4LiquidityReader = {};
     let poolLoads = 0;
+    let now = 0;
     const runtime = createRobinhoodBackfillEnrichmentRuntime({
       ...clock,
+      now: () => now,
       logger: { error() {} },
       clientFactory: (options) => {
         clientOptions.push(options);
@@ -85,6 +87,8 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(runtime.start({ enabled: true, drpcRpcUrl: 'ignored' }), false);
     await clock.pending.shift().callback();
     await clock.pending.shift().callback();
+    now = 300_000;
+    await clock.pending.shift().callback();
     await runtime.stop();
 
     assert.deepEqual(clientOptions[0].providers, [{
@@ -94,13 +98,14 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(adapters[0].rpcProvider, 'drpc');
     assert.equal(adapters[0].timestampProvider, 'drpc');
     assert.equal(adapters[0].seedPools[0].market_key, 'pool-1');
-    assert.equal(adapters[1].seedPools[0].market_key, 'pool-2');
+    assert.equal(adapters[1].seedPools[0].market_key, 'pool-1');
+    assert.equal(adapters[2].seedPools[0].market_key, 'pool-2');
     assert.equal(quoteReaders.length, 1);
     assert.equal(adapters[0].quoteReader, quoteReaders[0]);
     assert.equal(adapters[1].quoteReader, quoteReaders[0]);
     assert.equal(adapters[0].v4LiquidityReader, v4LiquidityReader);
     assert.equal(adapters[1].v4LiquidityReader, v4LiquidityReader);
-    assert.equal(runtime.getStatus().totals.runs, 2);
+    assert.equal(runtime.getStatus().totals.runs, 3);
     assert.equal(clock.cancelled.length, 1);
   });
 

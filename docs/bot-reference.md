@@ -349,6 +349,11 @@ Grupos existentes:
 | `robinhood-wallet-classification` | mantém as projeções e classificações de wallets; sob flags/leases separadas, também captura transfers ERC-20 e pode persistir `unified_transfer_v1` atomicamente após o handoff explícito |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
+O enrichment do `robinhood-backfill` mantém o catálogo de pools ativos em memória
+por 5 minutos por padrão, evitando uma leitura completa antes de cada lote. Ajuste
+essa janela com `ROBINHOOD_BACKFILL_ENRICHMENT_CATALOG_REFRESH_MS` entre 1 segundo
+e 1 hora; pools descobertos durante a execução tornam-se visíveis no refresh seguinte.
+
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
 `(chain, address)` de `chain = 'solana'`. Quarantine, soft archive e os conjuntos
 de proteção não podem selecionar nem atualizar linhas Robinhood com endereço
