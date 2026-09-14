@@ -5,7 +5,7 @@ const db = require('../models/db');
 
 const TABLE = 'robinhood_wallet_swap_realtime_outbox';
 const INDEX_NAMES = Object.freeze([
-  'idx_rh_wallet_swap_realtime_outbox_audit_claim',
+  'idx_rh_wallet_swap_realtime_outbox_audit_claim_ordered',
   'idx_rh_wallet_swap_realtime_outbox_audit_lease',
   'idx_rh_wallet_swap_realtime_outbox_audit_observed',
 ]);
@@ -48,10 +48,12 @@ const STATEMENTS = Object.freeze([
      END IF;
    END
    $constraints$`,
-  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rh_wallet_swap_realtime_outbox_audit_claim
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rh_wallet_swap_realtime_outbox_audit_claim_ordered
      ON ${TABLE}(
-       audit_next_attempt_at, block_number, transaction_index, log_index, event_kind
-     ) WHERE audit_status='pending'`,
+       block_number, transaction_index, log_index,
+       (CASE event_kind WHEN 'observed' THEN 0 WHEN 'finalized' THEN 1 ELSE 2 END),
+       audit_next_attempt_at
+     ) WHERE chain='robinhood' AND audit_status='pending'`,
   `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rh_wallet_swap_realtime_outbox_audit_lease
      ON ${TABLE}(audit_lease_until) WHERE audit_status='leased'`,
   `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rh_wallet_swap_realtime_outbox_audit_observed

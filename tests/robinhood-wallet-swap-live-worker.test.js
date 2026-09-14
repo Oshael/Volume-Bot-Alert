@@ -214,7 +214,10 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     const database = { query() {} };
     const outbox = {
       discardLegacyCovered: async () => 17,
-      advanceCompatibilityWatermark: async () => '200',
+      advanceCompatibilityWatermark: async () => {
+        execution.push('watermark');
+        return '200';
+      },
       readFinalizedBlock: async () => '200',
       reclaimExpired() {}, claimFinalized() {}, settle() {},
     };
@@ -227,6 +230,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       sourceMode: DURABLE_OUTBOX_SOURCE,
       outboxBatchSize: 300, outboxLeaseMs: 45000, outboxMaxAttempts: 7,
       realtimeAuditBatchSize: 900, realtimeAuditMaxBatchesPerTick: 4,
+      realtimeAuditStatementTimeoutMs: 7000,
       realtimeV2ObservedEnabled: true, realtimeV2ActivationBlock: '150',
     }, {
       database,
@@ -277,7 +281,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(publisherInput.repository, lifecycle);
     assert.equal(typeof publisherInput.publishRows, 'function');
     assert.deepEqual(auditInput.options, {
-      batchSize: 900, leaseMs: 45000, maxAttempts: 7,
+      batchSize: 900, leaseMs: 45000, maxAttempts: 7, claimTimeoutMs: 7000,
     });
     assert.deepEqual(runnerInput.options, {
       batchSize: 300, leaseMs: 45000, maxAttempts: 7,
@@ -288,7 +292,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(output.audit.status, 'error');
     assert.match(output.audit.error.message, /shadow unavailable/);
     assert.deepEqual(output.publication, { status: 'delivered', claimed: 2, delivered: 2 });
-    assert.deepEqual(execution, ['delivery', 'audit', 'publication']);
+    assert.deepEqual(execution, ['delivery', 'watermark', 'audit', 'publication']);
   });
 
   it('prioritizes the activation watermark then drains bounded historical audit batches', async () => {

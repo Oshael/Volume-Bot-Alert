@@ -64,6 +64,7 @@ describe('Robinhood wallet-swap realtime shadow audit', () => {
 
     assert.deepEqual(state.calls, ['reclaim', 'claim', 'settle']);
     assert.equal(state.getClaimInput().fromBlock, '123');
+    assert.equal(state.getClaimInput().claimTimeoutMs, 5000);
     assert.equal(state.getSettlement().audited.length, 3);
     assert.equal(state.getSettlement().retry.length, 0);
     assert.deepEqual(result, {

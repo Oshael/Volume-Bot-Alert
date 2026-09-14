@@ -89,16 +89,20 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     const owner = auditOwner(input.owner);
     const limit = positiveInt(input.limit, 'limit');
     const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const claimTimeoutMs = positiveInt(input.claimTimeoutMs ?? 5000, 'claimTimeoutMs');
     const fromBlock = input.fromBlock == null
       ? null : quantity(input.fromBlock, 'fromBlock');
-    const result = await database.query(
+    const execute = typeof database.queryWithStatementTimeout === 'function'
+      ? (sql, params) => database.queryWithStatementTimeout(sql, params, claimTimeoutMs)
+      : (sql, params) => database.query(sql, params);
+    const result = await execute(
       `WITH claimable AS MATERIALIZED (
          SELECT outbox.chain, outbox.transaction_hash, outbox.log_index,
                 outbox.block_hash, outbox.event_kind
            FROM robinhood_wallet_swap_realtime_outbox outbox
           WHERE outbox.chain='${CHAIN}' AND outbox.audit_status='pending'
             AND outbox.audit_next_attempt_at<=NOW()
-            AND ($4::bigint IS NULL OR outbox.block_number >= $4::bigint)
+            AND outbox.block_number >= COALESCE($4::bigint, 0)
             AND (outbox.event_kind='observed' OR EXISTS (
               SELECT 1 FROM robinhood_wallet_swap_realtime_outbox observed
                WHERE observed.chain=outbox.chain
@@ -109,7 +113,8 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
                  AND observed.audit_status='complete'
             ))
           ORDER BY outbox.block_number, outbox.transaction_index, outbox.log_index,
-                   CASE outbox.event_kind WHEN 'observed' THEN 0 ELSE 1 END
+                   CASE outbox.event_kind
+                     WHEN 'observed' THEN 0 WHEN 'finalized' THEN 1 ELSE 2 END
           LIMIT $2 FOR UPDATE OF outbox SKIP LOCKED
        )
        UPDATE robinhood_wallet_swap_realtime_outbox outbox

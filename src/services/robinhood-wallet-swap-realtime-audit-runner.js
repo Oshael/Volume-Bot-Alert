@@ -5,6 +5,7 @@ const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 300_000;
+const DEFAULT_CLAIM_TIMEOUT_MS = 5_000;
 const EVENT_CONTRACT = Object.freeze({
   observed: ['market:trade:observed', 'observed', 'observedAt'],
   finalized: ['market:trade:finalized', 'finalized', 'finalizedAt'],
@@ -80,6 +81,7 @@ function createRobinhoodWalletSwapRealtimeAuditRunner(deps = {}) {
   const batchSize = Number(options.batchSize) || DEFAULT_BATCH_SIZE;
   const leaseMs = Number(options.leaseMs) || DEFAULT_LEASE_MS;
   const maxAttempts = Number(options.maxAttempts) || DEFAULT_MAX_ATTEMPTS;
+  const claimTimeoutMs = Number(options.claimTimeoutMs) || DEFAULT_CLAIM_TIMEOUT_MS;
   const baseBackoffMs = Number(options.baseBackoffMs) || DEFAULT_BASE_BACKOFF_MS;
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
 
@@ -97,7 +99,8 @@ function createRobinhoodWalletSwapRealtimeAuditRunner(deps = {}) {
   async function runOnce(input = {}) {
     const reclaimed = await repository.reclaimExpiredAuditLeases();
     const rows = await repository.claimAudit({
-      owner, limit: batchSize, leaseMs, fromBlock: input.fromBlock ?? null,
+      owner, limit: batchSize, leaseMs, claimTimeoutMs,
+      fromBlock: input.fromBlock ?? null,
     });
     if (!rows.length) {
       return { status: 'idle', reclaimed, claimed: 0, audited: 0, retried: 0, blocked: 0 };

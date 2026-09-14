@@ -1911,6 +1911,12 @@ module.exports = {
     realtimeAuditMaxBatchesPerTick: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_MAX_BATCHES_PER_TICK, 1, 1, 20
     ),
+    realtimeAuditStatementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_STATEMENT_TIMEOUT_MS,
+      5000,
+      1000,
+      60_000
+    ),
     realtimeV2ObservedEnabled: parseBoolean(
       process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED, false
     ),

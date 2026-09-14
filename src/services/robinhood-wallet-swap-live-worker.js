@@ -91,6 +91,9 @@ function normalizeOptions(options = {}, env = process.env) {
     realtimeAuditMaxBatchesPerTick: boundedInteger(
       options.realtimeAuditMaxBatchesPerTick, 1, 1, 20
     ),
+    realtimeAuditStatementTimeoutMs: boundedInteger(
+      options.realtimeAuditStatementTimeoutMs, 5000, 1000, 60_000
+    ),
     realtimeV2ObservedEnabled: options.realtimeV2ObservedEnabled === true,
     realtimeV2ActivationBlock: optionalBlock(options.realtimeV2ActivationBlock),
     rpcOptions: options.rpcOptions || {},
@@ -176,6 +179,7 @@ async function buildRuntime(options, deps = {}) {
         batchSize: options.realtimeAuditBatchSize,
         leaseMs: options.outboxLeaseMs,
         maxAttempts: options.outboxMaxAttempts,
+        claimTimeoutMs: options.realtimeAuditStatementTimeoutMs,
       },
     });
     const publisherFactory = dependency(
@@ -197,6 +201,9 @@ async function buildRuntime(options, deps = {}) {
       legacyDiscarded,
       runOnce: async () => {
         const result = await runner.runOnce();
+        const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
+          result.throughBlock
+        );
         const audit = await drainAuditRunner(auditRunner, {
           activationBlock: options.realtimeV2ActivationBlock,
           maxBatches: options.realtimeAuditMaxBatchesPerTick,
@@ -205,9 +212,6 @@ async function buildRuntime(options, deps = {}) {
           observedEnabled: options.realtimeV2ObservedEnabled,
           activationBlock: options.realtimeV2ActivationBlock,
         });
-        const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
-          result.throughBlock
-        );
         return { ...result, completeThroughBlock, audit, publication };
       },
     };

@@ -767,9 +767,18 @@ default 200) e o worker pode executar de 1 a 20 claims por tick
 catch-up sem aumentar o lote que grava swaps/posições. O auditor valida
 envelope, identidade, contrato e campos econômicos básicos, mas não chama publisher nem
 altera o estado de publicação. Falha do shadow aparece em `lastAuditResult`/`auditErrors` e não
-interrompe a entrega finalizada existente, que sempre roda primeiro no tick. Não limpar essas
+interrompe a entrega finalizada existente: a entrega e seu watermark são confirmados primeiro, e
+o claim de auditoria tem deadline configurável por
+`ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_STATEMENT_TIMEOUT_MS` (default 5000). Não limpar essas
 linhas antes do corte de retenção. O status do wallet worker também expõe `promoted`;
 um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece reconciliação ociosa.
+
+Em instalações existentes, aplique `node src/utils/db-init-stage220.js` antes de reiniciar o
+`trendscope-worker@robinhood-wallet`. A Stage 220 constrói concorrentemente o índice parcial do
+audit claim na mesma ordem de bloco/transação/log usada pelo `LIMIT`, valida que ele está pronto e
+só então remove o índice antigo iniciado por `audit_next_attempt_at`. Isso evita ordenar todo o
+backlog pendente para reclamar um lote pequeno. O deadline permanece como contenção caso o plano
+de execução volte a degradar.
 
 O publisher v2 reclama somente linhas já aprovadas pelo auditor e é composto no runtime do grupo
 `robinhood-wallet`. Novos `observed` exigem

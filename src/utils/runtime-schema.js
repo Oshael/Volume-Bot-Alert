@@ -5880,13 +5880,6 @@ const SCHEMA_GROUPS = [
       ],
       indexes: [
         {
-          name: 'idx_rh_wallet_swap_realtime_outbox_audit_claim',
-          includes: [
-            'audit_next_attempt_at', 'block_number', 'transaction_index',
-            'log_index', 'event_kind',
-          ],
-        },
-        {
           name: 'idx_rh_wallet_swap_realtime_outbox_audit_lease',
           includes: ['audit_lease_until'],
         },
@@ -6084,6 +6077,21 @@ const SCHEMA_GROUPS = [
       indexes: [{
         name: 'idx_rh_pool_liquidity_refresh_queue_quarantine_recheck',
         includes: ['next_attempt_at', 'dirty_from_block', 'protocol', 'market_key', 'quarantined'],
+      }],
+    }],
+  },
+  {
+    key: 'stage220-robinhood-wallet-swap-audit-claim',
+    name: 'Stage 220 Robinhood wallet-swap ordered audit claim',
+    repair: 'node src/utils/db-init-stage220.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      indexes: [{
+        name: 'idx_rh_wallet_swap_realtime_outbox_audit_claim_ordered',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'event_kind',
+          'audit_next_attempt_at', 'robinhood', 'pending',
+        ],
       }],
     }],
   },
