@@ -48,15 +48,24 @@ const UPSERT_SQL = `INSERT INTO robinhood_market_buckets_agg (${AGGREGATE_COLUMN
     `robinhood_market_buckets_agg.${column} IS DISTINCT FROM EXCLUDED.${column}`
   )).join(' OR ')}
   RETURNING *`;
-const HOURLY_REFRESH_SQL = `WITH candidate_tokens AS MATERIALIZED (
+const HOURLY_REFRESH_SQL = `WITH requested_tokens AS MATERIALIZED (
+    SELECT DISTINCT token_address
+    FROM unnest(COALESCE($5::text[], ARRAY[]::text[])) AS token(token_address)
+  ),
+  candidate_tokens AS MATERIALIZED (
     SELECT token_address
-    FROM robinhood_market_buckets_1m
-    WHERE chain = 'robinhood'
-      AND bucket_ts >= $1::timestamptz
-      AND bucket_ts < $2::timestamptz
-      AND ($3::text IS NULL OR token_address > $3::text)
-      AND ($5::text IS NULL OR token_address = $5::text)
-    GROUP BY token_address
+    FROM (
+      SELECT token_address FROM requested_tokens
+      UNION ALL
+      SELECT token_address
+      FROM robinhood_market_buckets_1m
+      WHERE $5::text[] IS NULL
+        AND chain = 'robinhood'
+        AND bucket_ts >= $1::timestamptz
+        AND bucket_ts < $2::timestamptz
+      GROUP BY token_address
+    ) eligible_tokens
+    WHERE ($3::text IS NULL OR token_address > $3::text)
     ORDER BY token_address ASC
     LIMIT ($4::int + 1)
   ),
@@ -156,15 +165,24 @@ const HOURLY_REFRESH_SQL = `WITH candidate_tokens AS MATERIALIZED (
     (SELECT COUNT(*) FROM candidate_tokens) > $4::int AS has_more_tokens`;
 
 function buildAggregateRangeSql(source) {
-  return `WITH candidate_tokens AS MATERIALIZED (
+  return `WITH requested_tokens AS MATERIALIZED (
+      SELECT DISTINCT token_address
+      FROM unnest(COALESCE($6::text[], ARRAY[]::text[])) AS token(token_address)
+    ),
+    candidate_tokens AS MATERIALIZED (
       SELECT token_address
-      FROM ${source.table}
-      WHERE chain = 'robinhood'
-        AND bucket_ts >= $1::timestamptz
-        AND bucket_ts < $2::timestamptz
-        AND ($4::text IS NULL OR token_address > $4::text)
-        AND ($6::text IS NULL OR token_address = $6::text)
-      GROUP BY token_address
+      FROM (
+        SELECT token_address FROM requested_tokens
+        UNION ALL
+        SELECT token_address
+        FROM ${source.table}
+        WHERE $6::text[] IS NULL
+          AND chain = 'robinhood'
+          AND bucket_ts >= $1::timestamptz
+          AND bucket_ts < $2::timestamptz
+        GROUP BY token_address
+      ) eligible_tokens
+      WHERE ($4::text IS NULL OR token_address > $4::text)
       ORDER BY token_address ASC
       LIMIT ($5::int + 1)
     ),
@@ -372,19 +390,25 @@ function normalizeTokenPage(input) {
     ? null
     : String(input.afterToken).trim().toLowerCase();
   const tokenLimit = Number(input.tokenLimit);
-  const tokenAddress = input.tokenAddress == null
-    ? null
-    : String(input.tokenAddress).trim().toLowerCase();
+  const requestedTokens = input.tokenAddresses == null
+    ? (input.tokenAddress == null ? null : [input.tokenAddress])
+    : input.tokenAddresses;
   if (afterToken != null && !/^0x[0-9a-f]{40}$/.test(afterToken)) {
     throw new TypeError('afterToken is invalid');
   }
   if (!Number.isInteger(tokenLimit) || tokenLimit < 1 || tokenLimit > 1000) {
     throw new TypeError('tokenLimit must be between 1 and 1000');
   }
-  if (tokenAddress != null && !/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
-    throw new TypeError('tokenAddress is invalid');
+  if (requestedTokens != null && !Array.isArray(requestedTokens)) {
+    throw new TypeError('tokenAddresses must be an array');
   }
-  return { afterToken, tokenLimit, tokenAddress };
+  const tokenAddresses = requestedTokens == null ? null : [...new Set(
+    requestedTokens.map((value) => String(value).trim().toLowerCase())
+  )];
+  if (tokenAddresses?.some((value) => !/^0x[0-9a-f]{40}$/.test(value))) {
+    throw new TypeError('tokenAddresses contain an invalid address');
+  }
+  return { afterToken, tokenLimit, tokenAddresses };
 }
 
 function normalizeAggregateRange(input = {}) {
@@ -588,7 +612,7 @@ function createRobinhoodMarketAggregateRepository(database = db) {
   async function refreshHourlyRange(rawInput) {
     const input = normalizeHourlyRange(rawInput);
     const result = await database.query(HOURLY_REFRESH_SQL, [
-      input.from, input.to, input.afterToken, input.tokenLimit, input.tokenAddress,
+      input.from, input.to, input.afterToken, input.tokenLimit, input.tokenAddresses,
     ]);
     const counts = result.rows[0] || {};
     const identityConflicts = Number(counts.identity_conflicts || 0);
@@ -609,7 +633,7 @@ function createRobinhoodMarketAggregateRepository(database = db) {
     const sql = buildAggregateRangeSql(input.source);
     const result = await database.query(sql, [
       input.from, input.to, input.granularities, input.afterToken, input.tokenLimit,
-      input.tokenAddress,
+      input.tokenAddresses,
     ]);
     const counts = result.rows[0] || {};
     return {

@@ -4210,6 +4210,11 @@ discovery/scan
     -> buckets permanentes
 ```
 
+O consumidor da aggregation resolve no catálogo os tokens dos `market_key`
+reclamados no outbox e restringe todas as fases àquele conjunto. Ele não deve
+redescobrir todos os tokens varrendo as tabelas históricas a cada hora; alvo sem
+identidade de catálogo falha fechado e volta para retry.
+
 As tabelas de staging, ranges, watermarks e outbox existem para o trabalho
 continuar após restart sem escolher manualmente o último bloco.
 

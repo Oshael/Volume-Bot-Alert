@@ -53,17 +53,27 @@ function createOutboxRepository(database = db) {
          FROM candidates candidate
          WHERE (target.chain, target.transaction_hash, target.log_index)
            = (candidate.chain, candidate.transaction_hash, candidate.log_index)
-         RETURNING target.bucket_ts
+         RETURNING target.bucket_ts, target.protocol, target.market_key
        )
-       SELECT bucket_ts, COUNT(*)::int AS target_count
+       SELECT claimed.bucket_ts, COUNT(*)::int AS target_count,
+              ARRAY_AGG(DISTINCT registry.token_address ORDER BY registry.token_address)
+                FILTER (WHERE registry.token_address IS NOT NULL) AS token_addresses,
+              COUNT(*) FILTER (WHERE registry.market_key IS NULL)::int
+                AS missing_catalog_targets
        FROM claimed
-       GROUP BY bucket_ts
-       ORDER BY bucket_ts`,
+       LEFT JOIN robinhood_pool_registry registry
+         ON registry.chain = 'robinhood'
+        AND registry.protocol = claimed.protocol
+        AND registry.market_key = claimed.market_key
+       GROUP BY claimed.bucket_ts
+       ORDER BY claimed.bucket_ts`,
       [input.owner, input.leaseMs, input.claimLimit]
     );
     return result.rows.map((row) => ({
       bucketTs: new Date(row.bucket_ts).toISOString(),
       targetCount: Number(row.target_count),
+      tokenAddresses: row.token_addresses || [],
+      missingCatalogTargets: Number(row.missing_catalog_targets || 0),
     }));
   }
 
@@ -127,12 +137,16 @@ async function refreshPaged(refresh, input, tokenLimit) {
   return total;
 }
 
-async function aggregateHour(repository, bucketTs, tokenLimit) {
+async function aggregateHour(repository, bucketTs, tokenLimit, tokenAddresses) {
   const from = new Date(bucketTs);
   if (!Number.isFinite(from.getTime()) || from.getTime() % 3_600_000 !== 0) {
     throw new Error('Backfill aggregation bucket is not aligned to an hour');
   }
-  const range = { from: from.toISOString(), to: new Date(from.getTime() + 3_600_000).toISOString() };
+  const range = {
+    from: from.toISOString(),
+    to: new Date(from.getTime() + 3_600_000).toISOString(),
+    tokenAddresses,
+  };
   const fine = await refreshPaged(
     (input) => repository.refreshAggregateRange(input),
     { ...range, granularities: FINE_GRANULARITIES },
@@ -166,7 +180,12 @@ function createRobinhoodBackfillAggregationWorker(deps = {}) {
     const completedHours = [];
     try {
       for (const hour of hours) {
-        const counts = await aggregateHour(aggregates, hour.bucketTs, options.tokenLimit);
+        if (hour.missingCatalogTargets > 0 || hour.tokenAddresses.length === 0) {
+          throw new Error('Backfill aggregation target is missing its pool catalog identity');
+        }
+        const counts = await aggregateHour(
+          aggregates, hour.bucketTs, options.tokenLimit, hour.tokenAddresses
+        );
         const completed = await outbox.completeHour({
           owner: options.owner,
           bucketTs: hour.bucketTs,

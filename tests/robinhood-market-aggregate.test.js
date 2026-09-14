@@ -183,6 +183,7 @@ describe('Robinhood market aggregate repository', () => {
       null,
     ]);
     assert.match(calls[0].sql, /candidate_tokens[\s\S]*token_address > \$3/);
+    assert.match(calls[0].sql, /unnest\(COALESCE\(\$5::text\[\]/);
     assert.match(calls[0].sql, /LIMIT \(\$4::int \+ 1\)/);
     assert.match(calls[0].sql, /INSERT INTO robinhood_market_buckets_1h/);
     assert.match(calls[0].sql, /FROM robinhood_market_buckets_1m minute/);
@@ -275,6 +276,7 @@ describe('Robinhood market aggregate repository', () => {
       null,
     ]);
     assert.match(calls[0].sql, /source_window AS MATERIALIZED/);
+    assert.match(calls[0].sql, /unnest\(COALESCE\(\$6::text\[\]/);
     assert.match(calls[0].sql, /primary_markets AS MATERIALIZED/);
     assert.match(calls[0].sql, /INTERVAL '24 hours'/);
     assert.match(calls[0].sql, /activity\.volume_24h_usd DESC/);
