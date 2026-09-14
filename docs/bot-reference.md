@@ -2051,6 +2051,11 @@ terminados por `Network.loadingFailed`. Respostas `ExtraInfo` preservam apenas o
 status numérico. Motivo de falha, bloqueio e CORS é reduzido a categorias fixas;
 `errorText` e os enums originais do CDP nunca entram na telemetria.
 
+O request body enviado a `/v2/users` e frames recebidos `challengeAccepted` são
+inspecionados somente contra caminhos de identidade predefinidos. A telemetria
+guarda encoding, shapes, caminho reconhecido e formato `uuid`, `non_uuid` ou
+`missing`; valores, chaves livres, bodies e frames completos nunca são retidos.
+
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por

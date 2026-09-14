@@ -16,11 +16,32 @@ const USER_ID_CANDIDATES = Object.freeze([
   ['root_user_id', (body) => body?.userId],
   ['root_user_object_id', (body) => body?.user?.id],
   ['root_profile_id', (body) => body?.profile?.id],
+  ['root_profile_id_field', (body) => body?.profileId],
+  ['root_account_id', (body) => body?.account?.id],
+  ['root_account_id_field', (body) => body?.accountId],
+  ['data_id', (body) => body?.data?.id],
+  ['data_user_id', (body) => body?.data?.userId],
+  ['data_user_object_id', (body) => body?.data?.user?.id],
+  ['data_profile_id', (body) => body?.data?.profile?.id],
+  ['data_profile_id_field', (body) => body?.data?.profileId],
+  ['data_account_id', (body) => body?.data?.account?.id],
+  ['data_account_id_field', (body) => body?.data?.accountId],
+  ['payload_id', (body) => body?.payload?.id],
+  ['payload_user_id', (body) => body?.payload?.userId],
+  ['payload_user_object_id', (body) => body?.payload?.user?.id],
+  ['payload_profile_id', (body) => body?.payload?.profile?.id],
+  ['payload_profile_id_field', (body) => body?.payload?.profileId],
+  ['payload_account_id', (body) => body?.payload?.account?.id],
+  ['payload_account_id_field', (body) => body?.payload?.accountId],
+  ['root_user_id_snake', (body) => body?.user_id],
+  ['root_profile_id_snake', (body) => body?.profile_id],
+  ['root_account_id_snake', (body) => body?.account_id],
 ]);
 const BOOTSTRAP_COUNT_FIELDS = Object.freeze([
   'userBootstrapRequests', 'userBootstrapResponses', 'userBootstrapExtraInfoResponses',
   'userBootstrapLoadingFailures', 'userBootstrapBodyReads',
-  'userBootstrapBodyReadErrors', 'userBootstrapJsonErrors',
+  'userBootstrapBodyReadErrors', 'userBootstrapJsonErrors', 'userBootstrapRequestBodies',
+  'userBootstrapRequestBodyParseErrors', 'challengeAcceptedFrames',
 ]);
 const BOOTSTRAP_LAST_FIELDS = Object.freeze([
   'lastUserBootstrapHttpStatus', 'lastUserBootstrapExtraInfoStatus',
@@ -28,7 +49,12 @@ const BOOTSTRAP_LAST_FIELDS = Object.freeze([
   'lastUserBootstrapBlockedReason', 'lastUserBootstrapCorsError',
   'lastUserBootstrapCanceled', 'lastUserBootstrapBodyShape',
   'lastUserBootstrapResponseObjectShape', 'lastUserBootstrapIdentityPath',
-  'lastUserBootstrapIdentityFormat',
+  'lastUserBootstrapIdentityFormat', 'lastUserBootstrapRequestBodyEncoding',
+  'lastUserBootstrapRequestBodyShape', 'lastUserBootstrapRequestIdentityPath',
+  'lastUserBootstrapRequestIdentityFormat', 'lastChallengeAcceptedIdentityPath',
+  'lastChallengeAcceptedIdentityFormat', 'lastChallengeAcceptedDataShape',
+  'lastChallengeAcceptedPayloadShape', 'lastChallengeAcceptedUserShape',
+  'lastChallengeAcceptedProfileShape',
 ]);
 
 function valueShape(value) {
@@ -47,6 +73,22 @@ function inspectUserBootstrapBody(body) {
     firstPresent ||= candidate;
   }
   return firstPresent || { path: 'missing', format: 'missing', value: null };
+}
+
+function parseRequestBody(request = {}) {
+  const text = typeof request.postData === 'string' ? request.postData : '';
+  if (!text) return { encoding: 'missing', body: null, parseError: false };
+  try {
+    return { encoding: 'json', body: JSON.parse(text), parseError: false };
+  } catch {}
+  const contentType = Object.entries(request.headers || {})
+    .find(([name]) => name.toLowerCase() === 'content-type')?.[1];
+  if (String(contentType || '').toLowerCase().includes('application/x-www-form-urlencoded')) {
+    try {
+      return { encoding: 'form', body: Object.fromEntries(new URLSearchParams(text)), parseError: false };
+    } catch {}
+  }
+  return { encoding: 'other', body: null, parseError: true };
 }
 
 function loadingFailureCategory(event = {}) {
@@ -246,11 +288,18 @@ async function createFomoBrowserApi(options = {}) {
     userBootstrapExtraInfoResponses: 0, userBootstrapLoadingFailures: 0,
     userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
     userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
+    challengeAcceptedFrames: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
     lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
     lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
+    lastUserBootstrapRequestBodyEncoding: null, lastUserBootstrapRequestBodyShape: null,
+    lastUserBootstrapRequestIdentityPath: null, lastUserBootstrapRequestIdentityFormat: null,
+    lastChallengeAcceptedIdentityPath: null, lastChallengeAcceptedIdentityFormat: null,
+    lastChallengeAcceptedDataShape: null, lastChallengeAcceptedPayloadShape: null,
+    lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
   };
 
   function diagnosticsSnapshot() {
@@ -304,6 +353,15 @@ async function createFomoBrowserApi(options = {}) {
     if (event.request.method === 'POST' && url.pathname === '/v2/users') {
       userRequestIds.add(event.requestId);
       diagnostics.userBootstrapRequests += 1;
+      const parsed = parseRequestBody(event.request);
+      diagnostics.lastUserBootstrapRequestBodyEncoding = parsed.encoding;
+      if (parsed.encoding !== 'missing') diagnostics.userBootstrapRequestBodies += 1;
+      if (parsed.parseError) diagnostics.userBootstrapRequestBodyParseErrors += 1;
+      diagnostics.lastUserBootstrapRequestBodyShape = parsed.body === null
+        ? null : valueShape(parsed.body);
+      const identity = inspectUserBootstrapBody(parsed.body);
+      diagnostics.lastUserBootstrapRequestIdentityPath = identity.path;
+      diagnostics.lastUserBootstrapRequestIdentityFormat = identity.format;
     }
     inspectHeaders(event.request.headers);
   }
@@ -346,6 +404,20 @@ async function createFomoBrowserApi(options = {}) {
     }
   }
 
+  function inspectWebSocketFrameReceived(event) {
+    let frame;
+    try { frame = JSON.parse(event?.response?.payloadData); } catch { return; }
+    if (String(frame?.type || '').toLowerCase() !== 'challengeaccepted') return;
+    diagnostics.challengeAcceptedFrames += 1;
+    const identity = inspectUserBootstrapBody(frame);
+    diagnostics.lastChallengeAcceptedIdentityPath = identity.path;
+    diagnostics.lastChallengeAcceptedIdentityFormat = identity.format;
+    diagnostics.lastChallengeAcceptedDataShape = valueShape(frame.data);
+    diagnostics.lastChallengeAcceptedPayloadShape = valueShape(frame.payload);
+    diagnostics.lastChallengeAcceptedUserShape = valueShape(frame.user);
+    diagnostics.lastChallengeAcceptedProfileShape = valueShape(frame.profile);
+  }
+
   async function inspectLoadingFinished(event) {
     if (!userRequestIds.delete(event?.requestId)) return;
     try {
@@ -378,6 +450,7 @@ async function createFomoBrowserApi(options = {}) {
     cdp.off('Network.loadingFinished', inspectLoadingFinished);
     cdp.off('Network.loadingFailed', inspectLoadingFailed);
     cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
+    cdp.off('Network.webSocketFrameReceived', inspectWebSocketFrameReceived);
   }
 
   cdp.on('Network.requestWillBeSent', inspectRequest);
@@ -387,6 +460,7 @@ async function createFomoBrowserApi(options = {}) {
   cdp.on('Network.loadingFinished', inspectLoadingFinished);
   cdp.on('Network.loadingFailed', inspectLoadingFailed);
   cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
+  cdp.on('Network.webSocketFrameReceived', inspectWebSocketFrameReceived);
   await cdp.send('Network.enable');
   timeout = setTimeout(() => {
     if (!authSettled) {
@@ -504,11 +578,18 @@ function createFomoBrowserFollowQueue(options = {}) {
     userBootstrapExtraInfoResponses: 0, userBootstrapLoadingFailures: 0,
     userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
     userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
+    challengeAcceptedFrames: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
     lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
     lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
+    lastUserBootstrapRequestBodyEncoding: null, lastUserBootstrapRequestBodyShape: null,
+    lastUserBootstrapRequestIdentityPath: null, lastUserBootstrapRequestIdentityFormat: null,
+    lastChallengeAcceptedIdentityPath: null, lastChallengeAcceptedIdentityFormat: null,
+    lastChallengeAcceptedDataShape: null, lastChallengeAcceptedPayloadShape: null,
+    lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
     lastAlertErrorCode: null, completedAt: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
   };
