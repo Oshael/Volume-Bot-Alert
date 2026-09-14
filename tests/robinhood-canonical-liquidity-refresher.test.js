@@ -38,6 +38,7 @@ function fixture(overrides = {}, input = {}) {
         calls.push({ operation: 'complete', value });
         return { removed: true, requeued: false };
       },
+      async quarantine(value) { calls.push({ operation: 'quarantine', value }); return true; },
       async retry(value) { calls.push({ operation: 'retry', value }); return true; },
     },
     async valuePools(_deps, pools, anchorBlock, options) {
@@ -47,7 +48,7 @@ function fixture(overrides = {}, input = {}) {
         anchorBlock, affected: pools.length, saved: 1, failed: 1, timing: {},
         poolResults: pools.map((pool) => pool.marketKey.endsWith('failed') ? {
           protocol: pool.protocol, marketKey: pool.marketKey, status: 'failed',
-          error: { code: 'rpc_timeout', message: 'rpc down' },
+          error: overrides.failedError || { code: 'rpc_timeout', message: 'rpc down' },
         } : { protocol: pool.protocol, marketKey: pool.marketKey, status: 'completed' }),
       };
     },
@@ -89,7 +90,8 @@ describe('Robinhood canonical liquidity refresher', () => {
   it('does not claim work until the processing frontier is available', async () => {
     const { calls, refresher } = fixture({ anchorBlock: null });
     assert.deepEqual(await refresher.runOnce(), {
-      status: 'frontier_unavailable', reclaimed: 2, claimed: 0, completed: 0, retried: 0,
+      status: 'frontier_unavailable', reclaimed: 2, claimed: 0,
+      completed: 0, retried: 0, quarantined: 0,
     });
     assert.equal(calls.some((call) => call.operation === 'claim'), false);
   });
@@ -101,7 +103,7 @@ describe('Robinhood canonical liquidity refresher', () => {
     assert.deepEqual(await refresher.runOnce(), {
       status: 'frontier_lagging', anchorBlock: '100', captureBlock: '50100',
       lagBlocks: '50000', maxAnchorLagBlocks: 128,
-      reclaimed: 2, claimed: 0, completed: 0, retried: 0,
+      reclaimed: 2, claimed: 0, completed: 0, retried: 0, quarantined: 0,
     });
     assert.equal(calls.some((call) => call.operation === 'claim'), false);
   });
@@ -110,7 +112,7 @@ describe('Robinhood canonical liquidity refresher', () => {
     const { calls, refresher } = fixture({ rows: [] });
     assert.deepEqual(await refresher.runOnce(), {
       status: 'idle', anchorBlock: '200', reclaimed: 2,
-      claimed: 0, completed: 0, retried: 0,
+      claimed: 0, completed: 0, retried: 0, quarantined: 0,
     });
     assert.equal(calls.some((call) => call.operation === 'valuePools'), false);
   });
@@ -124,6 +126,25 @@ describe('Robinhood canonical liquidity refresher', () => {
     assert.equal(retries[0].value.retryMs, 5_000);
     assert.equal(retries[1].value.retryMs, 20_000);
     assert.equal(retries.every((call) => call.value.error === error), true);
+  });
+
+  it('quarantines deterministic missing decimals instead of retrying hot', async () => {
+    const failedError = {
+      code: 'liquidity_currency_decimals_unavailable',
+      message: 'pool currency decimals are unavailable',
+      details: { currencies: [{ role: 'token', address: `0x${'2'.repeat(40)}` }] },
+    };
+    const { calls, refresher } = fixture({ failedError }, { quarantineRecheckMs: 123_000 });
+    const result = await refresher.runOnce();
+    assert.equal(result.retried, 0);
+    assert.equal(result.quarantined, 1);
+    assert.equal(calls.some((call) => call.operation === 'retry'), false);
+    const quarantined = calls.find((call) => call.operation === 'quarantine');
+    assert.deepEqual(quarantined.value, {
+      owner: 'refresh-worker', protocol: 'uniswap-v3',
+      marketKey: 'robinhood:uniswap-v3:failed', generation: '2',
+      recheckMs: 123_000, error: failedError,
+    });
   });
 
   it('rejects incomplete dependencies and unsafe bounds', () => {

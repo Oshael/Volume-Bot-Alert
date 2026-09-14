@@ -35,7 +35,7 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
     scanner: { ...componentStatus(), totalRanges: 0, totalBlocks: 0,
       totalLogs: 0, totalAffected: 0, totalQueued: 0 },
     refresher: { ...componentStatus(), totalClaimed: 0,
-      totalCompleted: 0, totalRetried: 0 },
+      totalCompleted: 0, totalRetried: 0, totalQuarantined: 0 },
     publisher: { ...componentStatus(), enabled: publisherEnabled, listening: false,
       totalClaimed: 0, totalDelivered: 0, totalRetried: 0, totalBlocked: 0 },
   };
@@ -86,6 +86,7 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
       status.refresher.totalClaimed += refresh.claimed || 0;
       status.refresher.totalCompleted += refresh.completed || 0;
       status.refresher.totalRetried += refresh.retried || 0;
+      status.refresher.totalQuarantined += refresh.quarantined || 0;
     }
     if (publish) {
       status.publisher.totalClaimed += publish.claimed || 0;

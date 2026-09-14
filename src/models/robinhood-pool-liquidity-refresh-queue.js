@@ -4,6 +4,7 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
+const QUARANTINE_ERROR_CODE = 'liquidity_currency_decimals_unavailable';
 
 function quantity(value, label) {
   const normalized = String(value ?? '').trim();
@@ -28,7 +29,13 @@ function positiveInteger(value, label, maximum = Number.MAX_SAFE_INTEGER) {
 function retryError(value) {
   const code = String(value?.code || 'liquidity_refresh_error').trim().slice(0, 64);
   const message = String(value?.message || value || code).trim().slice(0, 500);
-  return { code: code || 'liquidity_refresh_error', message };
+  let details;
+  try {
+    const encoded = value?.details == null ? null : JSON.stringify(value.details);
+    if (encoded && encoded.length <= 4000) details = JSON.parse(encoded);
+  } catch (_) {}
+  return { code: code || 'liquidity_refresh_error', message,
+    ...(details == null ? {} : { details }) };
 }
 
 function owner(value) {
@@ -106,7 +113,11 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
            next_attempt_at=CASE
              WHEN robinhood_pool_liquidity_refresh_queue.status='pending' THEN NOW()
              ELSE robinhood_pool_liquidity_refresh_queue.next_attempt_at END,
-           last_error=NULL, updated_at=NOW()
+           last_error=CASE
+             WHEN robinhood_pool_liquidity_refresh_queue.status='quarantined'
+               THEN robinhood_pool_liquidity_refresh_queue.last_error
+             ELSE NULL END,
+           updated_at=NOW()
          RETURNING generation`,
         [JSON.stringify(candidates), fromBlock, checkpointBlock, checkpointHash, CHAIN]
       );
@@ -139,7 +150,8 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
       `WITH claimable AS (
          SELECT chain, protocol, market_key
            FROM robinhood_pool_liquidity_refresh_queue
-          WHERE chain=$1 AND status='pending' AND next_attempt_at<=NOW()
+          WHERE chain=$1 AND status IN ('pending', 'quarantined')
+            AND next_attempt_at<=NOW()
           ORDER BY dirty_from_block, protocol, market_key
           LIMIT $2 FOR UPDATE SKIP LOCKED
        ), leased AS (
@@ -210,6 +222,30 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
     return result.rowCount === 1;
   }
 
+  async function quarantine(input = {}) {
+    const protocol = pool(input, 0).protocol;
+    const marketKey = pool(input, 0).market_key;
+    const generation = positiveInteger(input.generation, 'generation');
+    const leaseOwner = owner(input.owner);
+    const recheckMs = positiveInteger(input.recheckMs, 'recheckMs', 2_592_000_000);
+    const error = retryError(input.error);
+    if (error.code !== QUARANTINE_ERROR_CODE) {
+      throw new Error(`unsupported liquidity quarantine reason: ${error.code}`);
+    }
+    const result = await database.query(
+      `UPDATE robinhood_pool_liquidity_refresh_queue
+          SET status='quarantined', lease_owner=NULL, lease_until=NULL,
+              next_attempt_at=NOW()+($6::bigint*INTERVAL '1 millisecond'),
+              last_error=$7::jsonb, updated_at=NOW()
+        WHERE chain=$1 AND protocol=$2 AND market_key=$3
+          AND status='leased' AND lease_owner=$4 AND lease_until>NOW()
+          AND generation>=$5`,
+      [CHAIN, protocol, marketKey, leaseOwner, generation, recheckMs,
+        JSON.stringify(error)]
+    );
+    return result.rowCount === 1;
+  }
+
   async function reclaimExpired() {
     const result = await database.query(
       `UPDATE robinhood_pool_liquidity_refresh_queue
@@ -219,7 +255,9 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
     return result.rowCount;
   }
 
-  return Object.freeze({ claim, commitScannedRange, complete, reclaimExpired, retry });
+  return Object.freeze({
+    claim, commitScannedRange, complete, quarantine, reclaimExpired, retry,
+  });
 }
 
-module.exports = { createRobinhoodPoolLiquidityRefreshQueue };
+module.exports = { QUARANTINE_ERROR_CODE, createRobinhoodPoolLiquidityRefreshQueue };

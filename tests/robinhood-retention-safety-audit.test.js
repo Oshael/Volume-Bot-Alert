@@ -21,6 +21,7 @@ function state(overrides = {}) {
     transfer_next_block: '980', transfer_checkpoint_block: '979',
     transfer_checkpoint_hash: hash, transfer_canonical_hash: hash,
     outbox_first_unsettled: null, liquidity_dirty_from_block: null,
+    liquidity_quarantined_count: '0',
     oldest_unapplied_holder_block: null,
     global_run_id: null, global_run_status: null, global_run_next_block: null,
     oldest_pending_deployment_mint_block: null,
@@ -71,6 +72,14 @@ describe('Robinhood retention safety audit', () => {
     assert.equal(report.chain_events.first_pending_liquidity_refresh_block, '700');
   });
 
+  it('reports quarantined pools without letting them constrain retention', () => {
+    const report = evaluate({ state: state({ liquidity_quarantined_count: '2' }),
+      chainRetentionBlocks: 100, holderRetentionBlocks: 200 });
+    assert.equal(report.chain_events.candidate_cutoff_block, '850');
+    assert.equal(report.chain_events.first_pending_liquidity_refresh_block, null);
+    assert.equal(report.chain_events.quarantined_liquidity_refreshes, '2');
+  });
+
   it('uses only a repeatable read-only database snapshot', async () => {
     const queries = [];
     const client = { async query(sql) {
@@ -92,6 +101,7 @@ describe('Robinhood retention safety audit', () => {
     assert.match(queries[0], /REPEATABLE READ READ ONLY/);
     assert.equal(queries[1], `SET LOCAL statement_timeout = '${DEFAULT_STATEMENT_TIMEOUT_MS}ms'`);
     assert.match(queries[3], /EXISTS[\s\S]+robinhood_token_deployment_outbox/);
+    assert.match(queries[2], /status<>'quarantined'/);
     assert.doesNotMatch(queries[3], /JOIN LATERAL|UNION ALL/);
     assert.equal(queries.at(-1), 'ROLLBACK');
     assert.equal(queries.some((sql) => /\b(DELETE|UPDATE|INSERT)\b/.test(sql)), false);

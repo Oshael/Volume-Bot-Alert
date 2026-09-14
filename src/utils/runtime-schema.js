@@ -6071,6 +6071,22 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage218-robinhood-liquidity-quarantine',
+    name: 'Stage 218 Robinhood liquidity quarantine',
+    repair: 'node src/utils/db-init-stage218.js',
+    tables: [{
+      table: 'robinhood_pool_liquidity_refresh_queue',
+      constraints: [{
+        name: 'rh_pool_liquidity_refresh_queue_lifecycle_check',
+        includes: ['quarantined', 'liquidity_currency_decimals_unavailable'],
+      }],
+      indexes: [{
+        name: 'idx_rh_pool_liquidity_refresh_queue_quarantine_recheck',
+        includes: ['next_attempt_at', 'dirty_from_block', 'protocol', 'market_key', 'quarantined'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

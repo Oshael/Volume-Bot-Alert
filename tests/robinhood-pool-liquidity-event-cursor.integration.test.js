@@ -7,6 +7,7 @@ const db = require('../src/models/db');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage148 = require('../src/utils/db-init-stage148');
 const stage197 = require('../src/utils/db-init-stage197');
+const stage218 = require('../src/utils/db-init-stage218');
 const {
   createRobinhoodPoolLiquidityEventCursorRepository,
 } = require('../src/models/robinhood-pool-liquidity-event-cursor');
@@ -44,6 +45,7 @@ describe('Robinhood liquidity event cursor persistence integration', () => {
     await stage148.init({ closePool: false });
     await stage197.init({ closePool: false });
     await stage197.init({ closePool: false });
+    await stage218.init({ closePool: false });
   });
 
   beforeEach(clearState);
@@ -173,5 +175,47 @@ describe('Robinhood liquidity event cursor persistence integration', () => {
     }), true);
     const newest = (await queue.claim({ owner: 'worker-2', limit: 1, leaseMs: 60_000 }))[0];
     assert.equal(newest.generation, '2');
+  });
+
+  it('quarantines only deterministic missing decimals and rechecks when due', async () => {
+    await insertPool();
+    const cursor = createRobinhoodPoolLiquidityEventCursorRepository({ database: db });
+    await cursor.initializeCursor({ startBlock: '100' });
+    const queue = createRobinhoodPoolLiquidityRefreshQueue({ database: db });
+    await queue.commitScannedRange({
+      fromBlock: '100', nextBlock: '101', safeHead: '100',
+      checkpoint: { number: '100', hash: HASH },
+      pools: [{ protocol: 'uniswap-v2', marketKey: MARKET }],
+    });
+    const claimed = (await queue.claim({ owner: 'worker-1', limit: 1, leaseMs: 60_000 }))[0];
+    const evidence = { anchor: { number: '100', hash: HASH },
+      currencies: [{ role: 'token', address: ADDRESS }] };
+    assert.equal(await queue.quarantine({
+      owner: 'worker-1', protocol: 'uniswap-v2', marketKey: MARKET,
+      generation: claimed.generation, recheckMs: 60_000,
+      error: { code: 'liquidity_currency_decimals_unavailable',
+        message: 'pool currency decimals are unavailable', details: evidence },
+    }), true);
+    const stored = (await db.query(
+      `SELECT status, lease_owner, lease_until, next_attempt_at, last_error
+         FROM robinhood_pool_liquidity_refresh_queue WHERE market_key=$1`, [MARKET]
+    )).rows[0];
+    assert.equal(stored.status, 'quarantined');
+    assert.equal(stored.lease_owner, null);
+    assert.equal(stored.lease_until, null);
+    assert.equal(stored.next_attempt_at > new Date(), true);
+    assert.deepEqual(stored.last_error.details, evidence);
+    assert.deepEqual(await queue.claim({ owner: 'worker-2', limit: 1, leaseMs: 60_000 }), []);
+    await db.query(
+      `UPDATE robinhood_pool_liquidity_refresh_queue
+          SET next_attempt_at=NOW() WHERE market_key=$1`, [MARKET]
+    );
+    assert.equal((await queue.claim({ owner: 'worker-2', limit: 1, leaseMs: 60_000 }))[0]
+      .status, 'leased');
+    await assert.rejects(queue.quarantine({
+      owner: 'worker-2', protocol: 'uniswap-v2', marketKey: MARKET,
+      generation: claimed.generation, recheckMs: 60_000,
+      error: { code: 'rpc_timeout', message: 'rpc down' },
+    }), /unsupported liquidity quarantine reason/);
   });
 });

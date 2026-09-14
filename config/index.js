@@ -1784,6 +1784,10 @@ module.exports = {
     retryMaxMs: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_LIQUIDITY_RETRY_MAX_MS, 60_000, 1, 86_400_000
     ),
+    quarantineRecheckMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_QUARANTINE_RECHECK_MS,
+      86_400_000, 60_000, 2_592_000_000
+    ),
     idlePollMs: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_LIQUIDITY_IDLE_POLL_MS, 1000, 100, 60_000
     ),

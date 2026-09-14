@@ -1,6 +1,9 @@
 'use strict';
 
 const { valuePoolsAtBlock } = require('./robinhood-pool-liquidity-events');
+const {
+  QUARANTINE_ERROR_CODE,
+} = require('../models/robinhood-pool-liquidity-refresh-queue');
 
 function integer(value, fallback, minimum, maximum) {
   const parsed = Number(value ?? fallback);
@@ -38,7 +41,8 @@ function retryDelay(attemptCount, baseMs, maximumMs) {
 function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
   if (!deps.reader || !deps.snapshotRepository?.resolveCanonicalAnchorWindow
     || !deps.refreshQueue?.claim || !deps.refreshQueue?.complete
-    || !deps.refreshQueue?.retry || !deps.refreshQueue?.reclaimExpired) {
+    || !deps.refreshQueue?.quarantine || !deps.refreshQueue?.retry
+    || !deps.refreshQueue?.reclaimExpired) {
     throw new Error('canonical liquidity refresher dependencies are required');
   }
   const options = {
@@ -48,6 +52,7 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
     concurrency: integer(input.concurrency, 10, 1, 20),
     retryBaseMs: integer(input.retryBaseMs, 5_000, 1, 3_600_000),
     retryMaxMs: integer(input.retryMaxMs, 60_000, 1, 86_400_000),
+    quarantineRecheckMs: integer(input.quarantineRecheckMs, 86_400_000, 60_000, 2_592_000_000),
     maxAnchorLagBlocks: integer(input.maxAnchorLagBlocks, 128, 0, 100_000),
   };
   if (options.retryMaxMs < options.retryBaseMs) {
@@ -56,33 +61,40 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
   const valuePools = deps.valuePools || valuePoolsAtBlock;
 
   async function reschedule(rows, errors) {
-    let retried = 0;
+    let retried = 0; let quarantined = 0;
     for (const row of rows) {
       const error = errors.get(`${row.protocol}:${row.market_key}`)
         || new Error('liquidity refresh result is missing');
-      const changed = await deps.refreshQueue.retry({
+      const quarantine = error?.code === QUARANTINE_ERROR_CODE;
+      const changed = await deps.refreshQueue[quarantine ? 'quarantine' : 'retry']({
         owner: options.owner,
         protocol: row.protocol,
         marketKey: row.market_key,
         generation: row.generation,
-        retryMs: retryDelay(row.attempt_count, options.retryBaseMs, options.retryMaxMs),
+        ...(quarantine
+          ? { recheckMs: options.quarantineRecheckMs }
+          : { retryMs: retryDelay(row.attempt_count, options.retryBaseMs, options.retryMaxMs) }),
         error,
       });
-      if (changed) retried += 1;
+      if (changed) {
+        if (quarantine) quarantined += 1;
+        else retried += 1;
+      }
     }
-    return retried;
+    return { retried, quarantined };
   }
 
   async function runOnce() {
     const reclaimed = await deps.refreshQueue.reclaimExpired();
     const window = await deps.snapshotRepository.resolveCanonicalAnchorWindow();
     if (window == null) return Object.freeze({
-      status: 'frontier_unavailable', reclaimed, claimed: 0, completed: 0, retried: 0,
+      status: 'frontier_unavailable', reclaimed, claimed: 0,
+      completed: 0, retried: 0, quarantined: 0,
     });
     if (BigInt(window.lagBlocks) > BigInt(options.maxAnchorLagBlocks)) {
       return Object.freeze({
         status: 'frontier_lagging', ...window, maxAnchorLagBlocks: options.maxAnchorLagBlocks,
-        reclaimed, claimed: 0, completed: 0, retried: 0,
+        reclaimed, claimed: 0, completed: 0, retried: 0, quarantined: 0,
       });
     }
     const anchorBlock = window.anchorBlock;
@@ -90,7 +102,8 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
       owner: options.owner, limit: options.limit, leaseMs: options.leaseMs,
     });
     if (!rows.length) return Object.freeze({
-      status: 'idle', anchorBlock, reclaimed, claimed: 0, completed: 0, retried: 0,
+      status: 'idle', anchorBlock, reclaimed, claimed: 0,
+      completed: 0, retried: 0, quarantined: 0,
     });
     let valuation;
     try {
@@ -124,10 +137,10 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
     const errors = new Map(valuation.poolResults
       .filter((result) => result.status === 'failed')
       .map((result) => [`${result.protocol}:${result.marketKey}`, result.error]));
-    const retried = await reschedule(failed, errors);
+    const settled = await reschedule(failed, errors);
     return Object.freeze({
       status: 'processed', anchorBlock: valuation.anchorBlock, reclaimed,
-      claimed: rows.length, completed, retried, valuation,
+      claimed: rows.length, completed, ...settled, valuation,
     });
   }
 

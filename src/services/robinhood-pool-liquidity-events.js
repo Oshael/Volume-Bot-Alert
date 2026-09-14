@@ -148,6 +148,7 @@ function poolResult(pool, status, error) {
   if (error) result.error = Object.freeze({
     code: String(error.code || 'liquidity_refresh_error'),
     message: String(error.message || error),
+    ...(error.details == null ? {} : { details: error.details }),
   });
   return Object.freeze(result);
 }

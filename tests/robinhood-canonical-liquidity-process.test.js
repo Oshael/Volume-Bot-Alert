@@ -11,7 +11,10 @@ function readyDatabase({ schema = true, leases = [] } = {}) {
     pool: {},
     async query(sql) {
       if (sql.includes('to_regclass')) {
-        return { rows: [{ refresh_queue: schema ? 'robinhood_pool_liquidity_refresh_queue' : null }] };
+        return { rows: [{
+          refresh_queue: schema ? 'robinhood_pool_liquidity_refresh_queue' : null,
+          quarantine_ready: schema,
+        }] };
       }
       if (sql.includes('FROM worker_leases')) return { rows: leases };
       throw new Error(`unexpected query: ${sql}`);
@@ -47,6 +50,15 @@ test('canonical liquidity startup gate excludes legacy and requires canonical au
   await assert.rejects(
     assertCanonicalReady(readyDatabase({ schema: false, leases: READY_LEASES })),
     (error) => error.code === 'canonical_liquidity_schema_missing'
+  );
+  const staleSchema = readyDatabase({ leases: READY_LEASES });
+  staleSchema.query = async (sql) => (sql.includes('to_regclass')
+    ? { rows: [{ refresh_queue: 'robinhood_pool_liquidity_refresh_queue',
+      quarantine_ready: false }] }
+    : { rows: READY_LEASES });
+  await assert.rejects(
+    assertCanonicalReady(staleSchema),
+    (error) => error.code === 'canonical_liquidity_quarantine_schema_missing'
   );
   await assert.rejects(assertCanonicalReady(readyDatabase({ leases: [
     ...READY_LEASES, { lease_key: 'robinhood-pool-liquidity-worker', metadata: {} },

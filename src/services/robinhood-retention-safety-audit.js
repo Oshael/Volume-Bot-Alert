@@ -121,6 +121,7 @@ function evaluate(input = {}) {
       }])),
       first_unsettled_outbox_block: text(outboxFirst),
       first_pending_liquidity_refresh_block: text(liquidityDirty),
+      quarantined_liquidity_refreshes: text(row.liquidity_quarantined_count),
       cascade_tables: ['robinhood_chain_domain_outbox',
         'robinhood_canonical_head_candidates', 'robinhood_chain_v3_balance_snapshots'],
     },
@@ -172,6 +173,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
                 transfer_hash.block_hash AS transfer_canonical_hash,
                 outbox.block_number AS outbox_first_unsettled,
                 refresh.dirty_from_block AS liquidity_dirty_from_block,
+                refresh.quarantined_count AS liquidity_quarantined_count,
                 pending.block_number AS oldest_unapplied_holder_block,
                 campaign.id AS global_run_id, campaign.status AS global_run_status,
                 campaign.next_block AS global_run_next_block,
@@ -199,8 +201,12 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              AND transfer_hash.canonical AND transfer_hash.block_number=transfer.checkpoint_block
            LEFT JOIN LATERAL (SELECT block_number FROM robinhood_chain_domain_outbox
              WHERE chain=$1 AND status<>'complete' ORDER BY block_number LIMIT 1) outbox ON TRUE
-           LEFT JOIN LATERAL (SELECT MIN(dirty_from_block) AS dirty_from_block
-             FROM robinhood_pool_liquidity_refresh_queue WHERE chain=$1) refresh ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT MIN(dirty_from_block) FILTER (WHERE status<>'quarantined')
+                      AS dirty_from_block,
+                    COUNT(*) FILTER (WHERE status='quarantined') AS quarantined_count
+             FROM robinhood_pool_liquidity_refresh_queue WHERE chain=$1
+           ) refresh ON TRUE
            LEFT JOIN LATERAL (SELECT block_number FROM robinhood_holder_transfer_journal
              WHERE chain=$1 AND applied=FALSE ORDER BY block_number LIMIT 1) pending ON TRUE
            LEFT JOIN LATERAL (SELECT id, status, next_block

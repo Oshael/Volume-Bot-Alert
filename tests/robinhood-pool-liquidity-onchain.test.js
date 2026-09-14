@@ -96,6 +96,45 @@ describe('Robinhood pool liquidity current-state reader', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('requires currency decimals but not total supply for liquidity valuation', async () => {
+    const reader = createRobinhoodPoolLiquidityOnchainReader(dependencies(
+      async () => words(2_000_000, 5_000_000, 1),
+      { metadataReader: {
+        async getMetadata(address) {
+          return { address, decimals: 6, totalSupplyRaw: null, usable: false,
+            status: 'unusable', errors: ['totalSupply_call_failed'] };
+        },
+        async getBalanceOf() { throw new Error('unexpected balance read'); },
+      } }
+    ));
+    assert.equal((await reader.valuePool(pool('uniswap-v2'), ANCHOR)).liquidityUsd, '10');
+  });
+
+  it('returns canonical evidence when currency decimals are unavailable', async () => {
+    const reader = createRobinhoodPoolLiquidityOnchainReader(dependencies(
+      async () => words(1),
+      { metadataReader: {
+        async getMetadata(address) {
+          if (address === ROBINHOOD_USDG) {
+            return { address, decimals: 6, usable: true, status: 'complete', errors: [] };
+          }
+          return { address, decimals: null, usable: false,
+            status: 'unusable', errors: ['decimals_call_failed'] };
+        },
+        async getBalanceOf() { throw new Error('unexpected balance read'); },
+      } }
+    ));
+    await assert.rejects(reader.valuePool(pool('uniswap-v2'), ANCHOR), (error) => {
+      assert.equal(error.code, 'liquidity_currency_decimals_unavailable');
+      assert.deepEqual(error.details, {
+        anchor: { number: ANCHOR.number, hash: ANCHOR.hash },
+        currencies: [{ role: 'token', address: TOKEN, status: 'unusable',
+          errors: ['decimals_call_failed'] }],
+      });
+      return true;
+    });
+  });
+
   it('anchors the WETH/USD quote to the same block as pool state', async () => {
     const quoteTags = [];
     const reader = createRobinhoodPoolLiquidityOnchainReader(dependencies(

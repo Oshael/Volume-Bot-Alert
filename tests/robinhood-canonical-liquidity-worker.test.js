@@ -22,7 +22,7 @@ test('canonical liquidity worker scans fairly and records component telemetry', 
     scanner: { async scanNextRange() { scans += 1; return scanResult(String(100 + scans * 10)); } },
     refresher: { async runOnce() {
       return {
-        status: 'processed', claimed: 4, completed: 3, retried: 1,
+        status: 'processed', claimed: 4, completed: 2, retried: 1, quarantined: 1,
         valuation: { saved: 3, poolResults: [{ marketKey: 'large-payload' }] },
       };
     } },
@@ -43,8 +43,8 @@ test('canonical liquidity worker scans fairly and records component telemetry', 
   }, { ranges: 2, blocks: 20, logs: 6, affected: 4, queued: 4 });
   assert.deepEqual({
     claimed: status.refresher.totalClaimed, completed: status.refresher.totalCompleted,
-    retried: status.refresher.totalRetried,
-  }, { claimed: 4, completed: 3, retried: 1 });
+    retried: status.refresher.totalRetried, quarantined: status.refresher.totalQuarantined,
+  }, { claimed: 4, completed: 2, retried: 1, quarantined: 1 });
   assert.deepEqual(status.refresher.lastResult.valuation, { saved: 3 });
   assert.deepEqual({
     claimed: status.publisher.totalClaimed, delivered: status.publisher.totalDelivered,

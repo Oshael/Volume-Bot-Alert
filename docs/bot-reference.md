@@ -1164,6 +1164,16 @@ iniciada antes do rewind não pode ressuscitar liquidez órfã. A fila permanece
 recovery, recalcula no ancestral recente com o mesmo node pruned após o `resume` e então segue a
 nova ramificação; não requer archive.
 
+A Stage 218 adiciona a quarentena durável `quarantined` à fila de refresh. Somente a falha
+determinística `liquidity_currency_decimals_unavailable` pode entrar nesse estado; erros RPC e
+demais falhas continuam no retry normal. A evidência preserva no `last_error` as currencies e o
+bloco/hash usado na leitura. Linhas em quarentena não limitam a retenção do journal porque a
+valoração corrente usa o estado on-chain e os ranges V4 materializados, não os eventos brutos
+antigos. Elas são reclamadas para nova verificação após
+`ROBINHOOD_CANONICAL_LIQUIDITY_QUARANTINE_RECHECK_MS` (default 24 horas) e saem normalmente da
+fila se `decimals()` passar a existir. O reader exige `decimals`, que é necessário para escalar os
+valores, mas não bloqueia liquidez apenas por `totalSupply()` ausente.
+
 Como V4 combina estado RPC e ranges materializados pelo processing, ambos precisam usar a mesma
 âncora. Antes de fazer claim, o refresher mede a distância entre o frontier do market processing e
 o checkpoint da captura. Acima de `ROBINHOOD_CANONICAL_LIQUIDITY_MAX_ANCHOR_LAG_BLOCKS` (default

@@ -63,11 +63,24 @@ function liquidityRpcOptions(options, base = config.robinhoodIngestionWorker) {
 async function assertCanonicalReady(database, options = {}) {
   const schema = await database.query(
     `SELECT to_regclass('public.robinhood_pool_liquidity_refresh_queue') AS refresh_queue,
-            to_regclass('public.robinhood_liquidity_realtime_outbox') AS realtime_outbox`
+            to_regclass('public.robinhood_liquidity_realtime_outbox') AS realtime_outbox,
+            EXISTS (
+              SELECT 1 FROM pg_constraint constraint_row
+               WHERE constraint_row.conrelid =
+                     to_regclass('public.robinhood_pool_liquidity_refresh_queue')
+                 AND constraint_row.conname =
+                     'rh_pool_liquidity_refresh_queue_lifecycle_check'
+                 AND pg_get_constraintdef(constraint_row.oid) LIKE '%quarantined%'
+            ) AS quarantine_ready`
   );
   if (!schema.rows[0]?.refresh_queue) {
     const error = new Error('Stage 197 liquidity refresh queue must be installed');
     error.code = 'canonical_liquidity_schema_missing';
+    throw error;
+  }
+  if (!schema.rows[0]?.quarantine_ready) {
+    const error = new Error('Stage 218 liquidity quarantine must be installed');
+    error.code = 'canonical_liquidity_quarantine_schema_missing';
     throw error;
   }
   if (options.realtimePublisherEnabled && !schema.rows[0]?.realtime_outbox) {
@@ -150,6 +163,7 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
     limit: options.refreshBatchSize, leaseMs: options.claimLeaseMs,
     concurrency: options.refreshConcurrency,
     retryBaseMs: options.retryBaseMs, retryMaxMs: options.retryMaxMs,
+    quarantineRecheckMs: options.quarantineRecheckMs,
     maxAnchorLagBlocks: options.maxAnchorLagBlocks,
   });
   const publisher = createRealtimePublisher(deps, options, database);

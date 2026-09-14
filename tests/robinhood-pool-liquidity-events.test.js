@@ -134,7 +134,11 @@ describe('Robinhood event-driven pool liquidity core', () => {
       reader: {
         async readAnchor() { return ANCHOR; },
         async valuePool(candidate) {
-          if (candidate.marketKey.endsWith('failed')) throw new Error('rpc unavailable');
+          if (candidate.marketKey.endsWith('failed')) {
+            const error = new Error('rpc unavailable');
+            error.details = { provider: 'local' };
+            throw error;
+          }
           return { ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9',
             status: 'spot_tvl_from_pool_balances', confidence: 'medium' };
         },
@@ -144,7 +148,8 @@ describe('Robinhood event-driven pool liquidity core', () => {
       { protocol: 'uniswap-v3', marketKey: pool('ok').marketKey, status: 'completed' },
       {
         protocol: 'uniswap-v3', marketKey: pool('failed').marketKey, status: 'failed',
-        error: { code: 'liquidity_refresh_error', message: 'rpc unavailable' },
+        error: { code: 'liquidity_refresh_error', message: 'rpc unavailable',
+          details: { provider: 'local' } },
       },
     ]);
   });

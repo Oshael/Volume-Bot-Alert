@@ -125,7 +125,21 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
       metadataReader.getMetadata(pool.tokenAddress, { blockTag: anchor.blockTag }),
       metadataReader.getMetadata(pool.quoteAddress, { blockTag: anchor.blockTag }),
     ]);
-    if (!token?.usable || !quote?.usable) throw new Error('pool metadata is unavailable');
+    const invalid = [
+      { role: 'token', address: pool.tokenAddress, metadata: token },
+      { role: 'quote', address: pool.quoteAddress, metadata: quote },
+    ].filter(({ metadata: item }) => item?.decimals == null);
+    if (invalid.length) {
+      const error = new Error('pool currency decimals are unavailable');
+      error.code = 'liquidity_currency_decimals_unavailable';
+      error.details = {
+        anchor: { number: anchor.number, hash: anchor.hash },
+        currencies: invalid.map(({ role, address, metadata: item }) => ({
+          role, address, status: item?.status || 'unavailable', errors: item?.errors || [],
+        })),
+      };
+      throw error;
+    }
     return { token, quote };
   }
 
