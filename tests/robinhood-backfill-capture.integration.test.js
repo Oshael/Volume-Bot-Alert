@@ -86,6 +86,31 @@ describe('Robinhood backfill capture repository integration', () => {
     assert.equal(Number(counts.rows[0].logs), 2);
   });
 
+  it('restores missing staging without changing its captured manifest or watermark', async () => {
+    const repository = createRobinhoodBackfillCaptureRepository();
+    const input = buildRange(120, 129, [buildLog(121)]);
+    const captured = await repository.captureMarketRange(input);
+    await db.query('DELETE FROM robinhood_market_log_staging WHERE range_id = $1', [captured.rangeId]);
+
+    const restored = await repository.restoreCapturedMarketRanges([{
+      rangeId: captured.rangeId,
+      fromBlock: input.fromBlock,
+      toBlock: input.toBlock,
+      rawLogCount: input.rawLogCount,
+      checkpointHash: input.checkpoint.hash,
+      logs: input.logs,
+    }]);
+    const staging = await db.query(
+      `SELECT range_id::text, enrichment_status
+       FROM robinhood_market_log_staging WHERE range_id = $1`,
+      [captured.rangeId]
+    );
+
+    assert.deepEqual(restored, { ranges: 1, insertedLogs: 1 });
+    assert.deepEqual(staging.rows, [{ range_id: captured.rangeId, enrichment_status: 'pending' }]);
+    assert.equal((await repository.loadMarketScanWatermark()).nextBlock, '130');
+  });
+
   it('captures an empty range and advances the durable scan watermark', async () => {
     const repository = createRobinhoodBackfillCaptureRepository();
 

@@ -4217,6 +4217,16 @@ Reiniciar um worker corretamente configurado deve retomar claims pendentes,
 leases expiradas e watermarks persistidos. Não resete cursores ou ranges para
 "começar de novo" sem auditoria.
 
+Se `market_enriched` parar em `staging_count_mismatch` porque staging terminal já
+foi podado, execute no host do archive
+`npm run robinhood:backfill-staging-repair` com `ROBINHOOD_ARCHIVE_RPC_URL`.
+O dry-run padrão recaptura e valida integralmente todos os manifests quebrados,
+incluindo chain ID, checkpoint, contagens raw/tracked e catálogo. Somente depois
+repita com `-- --apply`: a escrita é transacional, idempotente, restaura apenas
+linhas ausentes nos `range_id` originais e não altera ranges ou watermarks. Em
+seguida drene novamente enrichment e finalizer. Divergência aborta antes do commit;
+não corrija contadores ou cursores manualmente.
+
 #### Recovery de buckets Robinhood
 
 Quando observations corrigidas precisam substituir buckets históricos, o recovery

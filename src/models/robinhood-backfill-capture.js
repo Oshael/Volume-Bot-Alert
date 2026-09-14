@@ -98,6 +98,25 @@ function normalizeCapture(input = {}, now = Date.now) {
   };
 }
 
+function normalizeStagingRepair(input = {}) {
+  const rangeId = quantity(input.rangeId, 'rangeId');
+  const fromBlock = quantity(input.fromBlock, 'fromBlock');
+  const toBlock = quantity(input.toBlock, 'toBlock');
+  const logs = (Array.isArray(input.logs) ? input.logs : []).map(
+    (log) => normalizeLog(log, { fromBlock, toBlock })
+  );
+  const identities = new Set(logs.map((log) => `${log.transaction_hash}:${log.log_index}`));
+  if (identities.size !== logs.length) throw new Error('repair logs contain duplicate identities');
+  const rawLogCount = Number(input.rawLogCount);
+  if (!Number.isSafeInteger(rawLogCount) || rawLogCount < logs.length) {
+    throw new Error('rawLogCount must be a safe integer at least as large as logs.length');
+  }
+  return {
+    rangeId, fromBlock, toBlock, logs, rawLogCount,
+    checkpointHash: fixedHex(input.checkpointHash, 'checkpointHash', 32),
+  };
+}
+
 function normalizeWatermark(row) {
   if (!row) return null;
   return {
@@ -284,6 +303,81 @@ function createRobinhoodBackfillCaptureRepository(options = {}) {
         duplicate: false,
         watermarkAdvanced: true,
       };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function restoreCapturedMarketRanges(input = []) {
+    if (!Array.isArray(input) || input.length === 0 || input.length > 100) {
+      throw new Error('repair ranges must contain between 1 and 100 entries');
+    }
+    const repairs = input.map(normalizeStagingRepair);
+    if (new Set(repairs.map(({ rangeId }) => rangeId)).size !== repairs.length) {
+      throw new Error('repair ranges must have unique range IDs');
+    }
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('robinhood:backfill:staging-repair'))"
+      );
+      const manifests = await client.query(
+        `SELECT id::text, from_block::text, to_block::text, status,
+                raw_log_count, tracked_log_count, checkpoint_hash
+         FROM robinhood_backfill_ranges
+         WHERE chain = $1 AND stream = 'market'
+           AND id = ANY($2::bigint[])
+         FOR UPDATE`,
+        [CHAIN, repairs.map(({ rangeId }) => rangeId)]
+      );
+      const byId = new Map(manifests.rows.map((row) => [String(row.id), row]));
+      let insertedLogs = 0;
+      for (const repair of repairs) {
+        const manifest = byId.get(repair.rangeId);
+        if (
+          !manifest || manifest.status !== 'captured'
+          || String(manifest.from_block) !== repair.fromBlock
+          || String(manifest.to_block) !== repair.toBlock
+          || Number(manifest.raw_log_count) !== repair.rawLogCount
+          || Number(manifest.tracked_log_count) !== repair.logs.length
+          || String(manifest.checkpoint_hash).toLowerCase() !== repair.checkpointHash
+        ) {
+          throw new Error(`Captured manifest ${repair.rangeId} does not match archive evidence`);
+        }
+        const inserted = await client.query(
+          `INSERT INTO robinhood_market_log_staging (
+             chain, transaction_hash, log_index, range_id, block_number, block_hash,
+             transaction_index, address, topics, data, protocol, market_key
+           )
+           SELECT $1, item.transaction_hash, item.log_index::bigint, $2::bigint,
+                  item.block_number::bigint, item.block_hash,
+                  item.transaction_index::bigint, item.address, item.topics,
+                  item.data, item.protocol, item.market_key
+           FROM jsonb_to_recordset($3::jsonb) AS item(
+             transaction_hash text, log_index text, block_number text, block_hash text,
+             transaction_index text, address text, topics jsonb, data text,
+             protocol text, market_key text
+           )
+           ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
+           RETURNING 1`,
+          [CHAIN, repair.rangeId, JSON.stringify(repair.logs)]
+        );
+        const count = await client.query(
+          `SELECT COUNT(*)::int AS rows
+           FROM robinhood_market_log_staging WHERE chain = $1 AND range_id = $2`,
+          [CHAIN, repair.rangeId]
+        );
+        if (Number(count.rows[0].rows) !== repair.logs.length) {
+          throw new Error(`Staging repair for range ${repair.rangeId} did not reconcile`);
+        }
+        insertedLogs += inserted.rowCount;
+      }
+      await client.query('COMMIT');
+      return { ranges: repairs.length, insertedLogs };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -514,6 +608,7 @@ function createRobinhoodBackfillCaptureRepository(options = {}) {
     loadMarketScanWatermark: () => loadScanWatermark('market_scan'),
     releaseEnrichmentClaims,
     renewEnrichmentClaims,
+    restoreCapturedMarketRanges,
     settleEnrichmentClaims,
   });
 }
