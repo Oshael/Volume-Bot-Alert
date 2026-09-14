@@ -94,7 +94,10 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
     });
     cdp.emit('Network.loadingFinished', { requestId: 'api-1' });
   };
-  page.evaluate = async (_callback, input) => { evaluation = input; return ok({}); };
+  page.evaluate = async (_callback, input) => {
+    evaluation = input;
+    return input.requestPath === '/auth/my-profile' ? ok({ id: USER }) : ok({});
+  };
   let browserClosed = 0;
   const browser = { contexts: () => [context], close: () => { browserClosed += 1; } };
 
@@ -109,6 +112,7 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
     userBootstrapRequestBodies: 1, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 1,
     authorizationTokensInspected: 1, jwtPayloadsInspected: 1, jwtPayloadDecodeErrors: 0,
+    profileProbeAttempts: 1, profileProbeResponses: 1, profileProbeErrors: 0,
     lastUserBootstrapExtraInfoStatus: 200, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -130,6 +134,12 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
     lastJwtPayloadShape: 'object',
     lastJwtIdentityPath: 'subject',
     lastJwtIdentityFormat: 'uuid',
+    lastProfileProbeHttpStatus: 200,
+    lastProfileProbeBodyShape: 'object',
+    lastProfileProbeResponseObjectShape: 'object',
+    lastProfileProbeIdentityPath: 'response_object_id',
+    lastProfileProbeIdentityFormat: 'uuid',
+    lastProfileProbeErrorCategory: null,
   });
   assert.equal(JSON.stringify(api.diagnostics).includes(USER), false);
   await api.request('/follows', { method: 'POST', body: { following_id: A } });
@@ -181,6 +191,7 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
     userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 0,
     authorizationTokensInspected: 1, jwtPayloadsInspected: 0, jwtPayloadDecodeErrors: 0,
+    profileProbeAttempts: 1, profileProbeResponses: 1, profileProbeErrors: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -202,6 +213,12 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
     lastJwtPayloadShape: null,
     lastJwtIdentityPath: null,
     lastJwtIdentityFormat: null,
+    lastProfileProbeHttpStatus: 200,
+    lastProfileProbeBodyShape: 'object',
+    lastProfileProbeResponseObjectShape: 'object',
+    lastProfileProbeIdentityPath: 'missing',
+    lastProfileProbeIdentityFormat: 'missing',
+    lastProfileProbeErrorCategory: null,
   });
   assert.equal(evaluation.auth.authorization, 'Bearer ws-token');
   assert.equal(evaluation.auth.supportedChains, undefined);
@@ -302,6 +319,9 @@ test('Fomo browser API classifies a failed user bootstrap without exposing error
       assert.equal(diagnostics.authorizationTokensInspected, 1);
       assert.equal(diagnostics.jwtPayloadDecodeErrors, 1);
       assert.equal(diagnostics.lastAuthorizationTokenFormat, 'invalid_jwt');
+      assert.equal(diagnostics.profileProbeAttempts, 1);
+      assert.equal(diagnostics.profileProbeErrors, 1);
+      assert.equal(diagnostics.lastProfileProbeErrorCategory, 'request');
       assert.equal(JSON.stringify(diagnostics).includes('ERR_ABORTED'), false);
       assert.equal(JSON.stringify(diagnostics).includes('private-'), false);
       return error.code === 'FOMO_FOLLOW_PROFILE_TIMEOUT';
@@ -368,6 +388,7 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 0,
     authorizationTokensInspected: 0, jwtPayloadsInspected: 0, jwtPayloadDecodeErrors: 0,
+    profileProbeAttempts: 0, profileProbeResponses: 0, profileProbeErrors: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -380,6 +401,9 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
     lastAuthorizationTokenFormat: null, lastJwtPayloadShape: null,
     lastJwtIdentityPath: null, lastJwtIdentityFormat: null,
+    lastProfileProbeHttpStatus: null, lastProfileProbeBodyShape: null,
+    lastProfileProbeResponseObjectShape: null, lastProfileProbeIdentityPath: null,
+    lastProfileProbeIdentityFormat: null, lastProfileProbeErrorCategory: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
@@ -751,6 +775,7 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
     userBootstrapRequestBodies: 3, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 1,
     authorizationTokensInspected: 1, jwtPayloadsInspected: 1, jwtPayloadDecodeErrors: 0,
+    profileProbeAttempts: 1, profileProbeResponses: 1, profileProbeErrors: 0,
     lastUserBootstrapExtraInfoStatus: 401, userBootstrapPendingAtEnd: 1,
     lastUserBootstrapFailureCategory: 'connection_lost',
     lastUserBootstrapBlockedReason: null, lastUserBootstrapCorsError: null,
@@ -773,6 +798,12 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
     lastJwtPayloadShape: 'object',
     lastJwtIdentityPath: 'subject',
     lastJwtIdentityFormat: 'non_uuid',
+    lastProfileProbeHttpStatus: 200,
+    lastProfileProbeBodyShape: 'object',
+    lastProfileProbeResponseObjectShape: 'object',
+    lastProfileProbeIdentityPath: 'response_object_id',
+    lastProfileProbeIdentityFormat: 'uuid',
+    lastProfileProbeErrorCategory: null,
   };
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A],
@@ -798,6 +829,8 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
   assert.equal(queue.getStatus().challengeAcceptedFrames, 1);
   assert.equal(queue.getStatus().authorizationTokensInspected, 1);
   assert.equal(queue.getStatus().jwtPayloadsInspected, 1);
+  assert.equal(queue.getStatus().profileProbeAttempts, 1);
+  assert.equal(queue.getStatus().profileProbeResponses, 1);
   assert.equal(queue.getStatus().lastUserBootstrapHttpStatus, 200);
   assert.equal(queue.getStatus().lastUserBootstrapExtraInfoStatus, 401);
   assert.equal(queue.getStatus().userBootstrapPendingAtEnd, 1);
@@ -806,6 +839,7 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
   assert.equal(queue.getStatus().lastUserBootstrapRequestIdentityPath, 'root_user_id');
   assert.equal(queue.getStatus().lastChallengeAcceptedIdentityPath, 'missing');
   assert.equal(queue.getStatus().lastJwtIdentityPath, 'subject');
+  assert.equal(queue.getStatus().lastProfileProbeIdentityPath, 'response_object_id');
   assert.notEqual(queue.getStatus().lastFailureAt, null);
   assert.equal(saved.length, 1);
 });

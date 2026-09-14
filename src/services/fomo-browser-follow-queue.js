@@ -56,6 +56,7 @@ const BOOTSTRAP_COUNT_FIELDS = Object.freeze([
   'userBootstrapBodyReadErrors', 'userBootstrapJsonErrors', 'userBootstrapRequestBodies',
   'userBootstrapRequestBodyParseErrors', 'challengeAcceptedFrames',
   'authorizationTokensInspected', 'jwtPayloadsInspected', 'jwtPayloadDecodeErrors',
+  'profileProbeAttempts', 'profileProbeResponses', 'profileProbeErrors',
 ]);
 const BOOTSTRAP_LAST_FIELDS = Object.freeze([
   'lastUserBootstrapHttpStatus', 'lastUserBootstrapExtraInfoStatus',
@@ -70,6 +71,9 @@ const BOOTSTRAP_LAST_FIELDS = Object.freeze([
   'lastChallengeAcceptedPayloadShape', 'lastChallengeAcceptedUserShape',
   'lastChallengeAcceptedProfileShape', 'lastAuthorizationTokenFormat',
   'lastJwtPayloadShape', 'lastJwtIdentityPath', 'lastJwtIdentityFormat',
+  'lastProfileProbeHttpStatus', 'lastProfileProbeBodyShape',
+  'lastProfileProbeResponseObjectShape', 'lastProfileProbeIdentityPath',
+  'lastProfileProbeIdentityFormat', 'lastProfileProbeErrorCategory',
 ]);
 
 function valueShape(value) {
@@ -318,6 +322,7 @@ async function createFomoBrowserApi(options = {}) {
     userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 0,
     authorizationTokensInspected: 0, jwtPayloadsInspected: 0, jwtPayloadDecodeErrors: 0,
+    profileProbeAttempts: 0, profileProbeResponses: 0, profileProbeErrors: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -330,6 +335,9 @@ async function createFomoBrowserApi(options = {}) {
     lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
     lastAuthorizationTokenFormat: null, lastJwtPayloadShape: null,
     lastJwtIdentityPath: null, lastJwtIdentityFormat: null,
+    lastProfileProbeHttpStatus: null, lastProfileProbeBodyShape: null,
+    lastProfileProbeResponseObjectShape: null, lastProfileProbeIdentityPath: null,
+    lastProfileProbeIdentityFormat: null, lastProfileProbeErrorCategory: null,
   };
 
   function diagnosticsSnapshot() {
@@ -498,6 +506,54 @@ async function createFomoBrowserApi(options = {}) {
     cdp.off('Network.webSocketFrameReceived', inspectWebSocketFrameReceived);
   }
 
+  async function requestFromBrowser(auth, path, init = {}) {
+    try {
+      return await page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit, timeoutMs }) => {
+        const headers = {
+          'Content-Type': 'application/json', Authorization: auth.authorization,
+        };
+        if (auth.supportedChains) headers['X-Supported-Chains'] = auth.supportedChains;
+        const response = await fetch(`${apiOrigin}${requestPath}`, {
+          method: requestInit.method || 'GET', credentials: 'include', headers,
+          body: requestInit.body ? JSON.stringify(requestInit.body) : undefined,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        const text = await response.text();
+        let body = null;
+        try { body = JSON.parse(text); } catch {}
+        return { status: response.status, body };
+      }, {
+        apiOrigin: API_ORIGIN, auth, requestPath: path,
+        requestInit: init, timeoutMs: requestTimeoutMs,
+      });
+    } catch (error) {
+      const requestError = new Error('Fomo browser request failed');
+      requestError.code = /timeout|timed out/i.test(String(error?.name || error?.message))
+        ? 'FOMO_FOLLOW_REQUEST_TIMEOUT' : 'FOMO_FOLLOW_REQUEST';
+      throw requestError;
+    }
+  }
+
+  async function runProfileProbe(auth) {
+    diagnostics.profileProbeAttempts += 1;
+    try {
+      const response = await requestFromBrowser(auth, '/auth/my-profile');
+      diagnostics.profileProbeResponses += 1;
+      const status = Number(response?.status);
+      diagnostics.lastProfileProbeHttpStatus = Number.isInteger(status) ? status : null;
+      diagnostics.lastProfileProbeBodyShape = valueShape(response?.body);
+      diagnostics.lastProfileProbeResponseObjectShape = valueShape(response?.body?.responseObject);
+      const identity = inspectUserBootstrapBody(response?.body);
+      diagnostics.lastProfileProbeIdentityPath = identity.path;
+      diagnostics.lastProfileProbeIdentityFormat = identity.format;
+      diagnostics.lastProfileProbeErrorCategory = null;
+    } catch (error) {
+      diagnostics.profileProbeErrors += 1;
+      diagnostics.lastProfileProbeErrorCategory = error?.code === 'FOMO_FOLLOW_REQUEST_TIMEOUT'
+        ? 'timeout' : 'request';
+    }
+  }
+
   cdp.on('Network.requestWillBeSent', inspectRequest);
   cdp.on('Network.responseReceived', inspectResponse);
   cdp.on('Network.responseReceivedExtraInfo', inspectResponseExtraInfo);
@@ -507,6 +563,7 @@ async function createFomoBrowserApi(options = {}) {
   cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
   cdp.on('Network.webSocketFrameReceived', inspectWebSocketFrameReceived);
   await cdp.send('Network.enable');
+  const profileProbePromise = authContextPromise.then(runProfileProbe, () => {});
   timeout = setTimeout(() => {
     if (!authSettled) {
       authSettled = true;
@@ -526,7 +583,9 @@ async function createFomoBrowserApi(options = {}) {
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
     [authContext, currentUserId] = await Promise.all([authContextPromise, currentUserIdPromise]);
+    await profileProbePromise;
   } catch (error) {
+    await profileProbePromise;
     clearTimeout(timeout);
     authSettled = true;
     userSettled = true;
@@ -542,31 +601,7 @@ async function createFomoBrowserApi(options = {}) {
     currentUserId,
     diagnostics: diagnosticsSnapshot(),
     async request(path, init = {}) {
-      try {
-        return await page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit, timeoutMs }) => {
-          const headers = { 'Content-Type': 'application/json', Authorization: auth.authorization };
-          if (auth.supportedChains) headers['X-Supported-Chains'] = auth.supportedChains;
-          const response = await fetch(`${apiOrigin}${requestPath}`, {
-            method: requestInit.method || 'GET',
-            credentials: 'include',
-            headers,
-            body: requestInit.body ? JSON.stringify(requestInit.body) : undefined,
-            signal: AbortSignal.timeout(timeoutMs),
-          });
-          const text = await response.text();
-          let body = null;
-          try { body = JSON.parse(text); } catch {}
-          return { status: response.status, body };
-        }, {
-          apiOrigin: API_ORIGIN, auth: authContext, requestPath: path,
-          requestInit: init, timeoutMs: requestTimeoutMs,
-        });
-      } catch (error) {
-        const requestError = new Error('Fomo browser request failed');
-        requestError.code = /timeout|timed out/i.test(String(error?.name || error?.message))
-          ? 'FOMO_FOLLOW_REQUEST_TIMEOUT' : 'FOMO_FOLLOW_REQUEST';
-        throw requestError;
-      }
+      return requestFromBrowser(authContext, path, init);
     },
     async close() {
       return detachSession(cdp);
@@ -626,6 +661,7 @@ function createFomoBrowserFollowQueue(options = {}) {
     userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 0,
     authorizationTokensInspected: 0, jwtPayloadsInspected: 0, jwtPayloadDecodeErrors: 0,
+    profileProbeAttempts: 0, profileProbeResponses: 0, profileProbeErrors: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -638,6 +674,9 @@ function createFomoBrowserFollowQueue(options = {}) {
     lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
     lastAuthorizationTokenFormat: null, lastJwtPayloadShape: null,
     lastJwtIdentityPath: null, lastJwtIdentityFormat: null,
+    lastProfileProbeHttpStatus: null, lastProfileProbeBodyShape: null,
+    lastProfileProbeResponseObjectShape: null, lastProfileProbeIdentityPath: null,
+    lastProfileProbeIdentityFormat: null, lastProfileProbeErrorCategory: null,
     lastAlertErrorCode: null, completedAt: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
   };

@@ -2061,6 +2061,11 @@ Quando têm formato JWT, apenas o payload decodificado é comparado com claims d
 identidade predefinidas. A lease guarda contagens, formato, shape e caminho/formato
 da identidade; o token e os valores das claims nunca são persistidos.
 
+Após observar um Bearer válido, a captura executa um probe read-only de
+`GET /auth/my-profile` em paralelo à espera pela identidade do browser. O probe
+não alimenta o follow: somente contagens, status HTTP, shapes, caminho/formato de
+identidade e categoria fixa de erro entram na lease; nenhum body ou ID é retido.
+
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
