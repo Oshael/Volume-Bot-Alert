@@ -3773,6 +3773,7 @@ export function createAppController(): AppController {
     const token = state.session.token;
     if (
       !token
+      || !isMockTradingEnabled(state)
       || state.session.role !== 'admin'
       || floatingQuickBuyExecutionInFlight
       || !isFloatingQuickBuyWaitingForMarket()
@@ -3871,7 +3872,7 @@ export function createAppController(): AppController {
   }
 
   function shouldRefreshFloatingQuickBuyDashboard() {
-    if (!state.session.token || state.session.role !== 'admin' || !isFloatingQuickBuyWaitingForMarket()) {
+    if (!isMockTradingEnabled(state) || !state.session.token || state.session.role !== 'admin' || !isFloatingQuickBuyWaitingForMarket()) {
       return false;
     }
     if (isLiveWorkspace() || floatingQuickBuyDashboardRefreshInFlight) {
@@ -10533,7 +10534,7 @@ export function createAppController(): AppController {
       availableChains: ['solana'],
       chainReadiness: defaultChainReadiness,
       runtimeFlags: {
-        mockTradingEnabled: true,
+        mockTradingEnabled: false,
       },
       trackedTokensByIdentity: {},
       monitoredTokenIdentities: [],
@@ -11586,6 +11587,8 @@ export function createAppController(): AppController {
     applyUiPreferences(payload.uiPrefs);
     if (!isMockTradingEnabled(state)) {
       clearMockTradingState();
+      resetFloatingQuickBuyState();
+      state.ui.floatingQuickBuyVisible = false;
     }
     persistSoundSettings();
     state.data.blocklist = sortAddresses(payload.blocklist.map((item) => ({
@@ -16057,6 +16060,12 @@ export function createAppController(): AppController {
     },
     async armFloatingQuickBuy(address: string) {
       const token = state.session.token;
+      if (!isMockTradingEnabled(state)) {
+        resetFloatingQuickBuyState();
+        state.ui.floatingQuickBuyVisible = false;
+        emit('overlay', 'header');
+        return;
+      }
       if (!token || state.session.role !== 'admin') {
         setError('Admin access required');
         emit('overlay');
@@ -16140,7 +16149,7 @@ export function createAppController(): AppController {
       emit('overlay', 'header');
     },
     openFloatingQuickBuy() {
-      if (state.session.role !== 'admin') {
+      if (state.session.role !== 'admin' || !isMockTradingEnabled(state)) {
         return;
       }
       state.ui.floatingQuickBuyVisible = true;

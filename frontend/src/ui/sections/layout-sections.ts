@@ -1655,7 +1655,7 @@ export function renderWorkspaceSocialLinks() {
 }
 
 function renderQuickBuyMenuItem(state: AppState) {
-  if (state.session.role !== 'admin') {
+  if (state.session.role !== 'admin' || !isMockTradingEnabled(state)) {
     return '';
   }
   return '<button type="button" class="legacy-user-dd-item" data-action="open-floating-quick-buy"><span class="workspace-menu-icon">⚡</span><span>Quick Buy</span></button>';

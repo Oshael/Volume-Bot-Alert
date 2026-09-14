@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredPaneViewTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredPaneViewTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
@@ -1072,6 +1072,7 @@ function getHeaderRenderKey(state: AppState) {
   return serializePrimitiveList([
     state.session.status,
     state.session.role,
+    isMockTradingEnabled(state),
     state.session.username,
     state.session.email,
     state.runtime.mode,
@@ -1152,7 +1153,7 @@ function serializeMockTradingHeaderPositionsForView(state: AppState) {
 }
 
 function getFloatingQuickBuyRenderKey(state: AppState, isAccountSecurityRoute: boolean) {
-  if (state.session.status !== 'authenticated' || state.session.role !== 'admin' || isAccountSecurityRoute || !state.ui.floatingQuickBuyVisible) {
+  if (!isMockTradingEnabled(state) || state.session.status !== 'authenticated' || state.session.role !== 'admin' || isAccountSecurityRoute || !state.ui.floatingQuickBuyVisible) {
     return 'hidden';
   }
 
@@ -1223,7 +1224,7 @@ function renderFloatingQuickBuyWidget(
   controller: AppController,
   isAccountSecurityRoute: boolean,
 ) {
-  if (state.session.status !== 'authenticated' || state.session.role !== 'admin' || isAccountSecurityRoute || !state.ui.floatingQuickBuyVisible) {
+  if (!isMockTradingEnabled(state) || state.session.status !== 'authenticated' || state.session.role !== 'admin' || isAccountSecurityRoute || !state.ui.floatingQuickBuyVisible) {
     return null;
   }
 

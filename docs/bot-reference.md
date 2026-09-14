@@ -130,6 +130,11 @@ DB_NAME=volume_alert
 
 `BACKGROUND_WORKER_GROUPS` não deve existir no `.env` da VPS1.
 
+`MOCK_TRADING_ENABLED` é o feature gate único do mock trading na API e no frontend.
+Com `false`, as rotas `/api/admin/mock-trading/*`, o resumo MOCK, o item de menu
+Quick Buy e a janela flutuante ficam indisponíveis; o frontend inicia bloqueado até
+receber esse runtime flag da API, sem tentar carregar endpoints de mock trading antes disso.
+
 ### 3.2 VPS2 — dados e processamento
 
 Hostname operacional:

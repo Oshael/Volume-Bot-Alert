@@ -1149,7 +1149,7 @@ export function createAppState(): AppState {
         },
       },
       runtimeFlags: {
-        mockTradingEnabled: true,
+        mockTradingEnabled: false,
       },
       trackedTokensByIdentity: {},
       monitoredTokenIdentities: [],

@@ -1111,6 +1111,24 @@ test('shows shared workspace chrome in Alerts and Radar', async ({ page }) => {
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('hides admin Quick Buy when mock trading is disabled at runtime', async ({ page }) => {
+  const fixtures = {
+    ...API_FIXTURES,
+    'GET /api/auth/me': {
+      user: { ...API_FIXTURES['GET /api/auth/me'].user, role: 'admin' },
+    },
+    'GET /api/admin/token-review-alerts': { alerts: [] },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+
+  await expect(page.locator('[data-floating-quick-buy="true"]')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open user menu' }).click();
+  await expect(page.getByRole('button', { name: 'Quick Buy' })).toHaveCount(0);
+  expect(diagnostics.apiRequests.some((url) => new URL(url).pathname.startsWith('/api/admin/mock-trading/'))).toBe(false);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('keeps the publishable chain selector SOL-only and exposes matching settings', async ({ page }) => {
   test.setTimeout(35_000);
   const diagnostics = await openAuthenticatedWorkspace(page);
