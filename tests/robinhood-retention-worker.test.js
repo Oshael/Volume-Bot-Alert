@@ -9,11 +9,20 @@ const VALID_WALLET_GATE = Object.freeze({
   sourceFrontierBlock: '905',
   updatedAt: new Date().toISOString(),
 });
+const EMPTY_REALTIME_TELEMETRY = Object.freeze({
+  observedLagBlocks: null,
+  finalizedLagBlocks: null,
+});
 
 function dependencies(database, gate = VALID_WALLET_GATE) {
   return {
     database,
     watermarkRepository: { loadRetentionGate: async () => gate },
+    realtimeOutboxRepository: {
+      pruneTerminalCycles: async () => ({ cycles: 0, rows: 0 }),
+      loadTelemetry: async () => EMPTY_REALTIME_TELEMETRY,
+    },
+    realtimeOutboxTelemetryCache: { loadedAtMs: null, value: null },
   };
 }
 
@@ -63,6 +72,8 @@ describe('Robinhood retention worker', () => {
       batchLimit: 100,
       maxBatches: 50,
       statementTimeoutMs: 1000,
+      realtimeOutboxRetentionMs: 3 * 24 * 60 * 60 * 1000,
+      realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
     });
   });
 
@@ -100,6 +111,9 @@ describe('Robinhood retention worker', () => {
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
       transferReorgJournal: 0,
+      realtimeOutboxRows: 0,
+      realtimeOutboxCycles: 0,
+      realtimeOutbox: EMPTY_REALTIME_TELEMETRY,
     });
     assert.equal(database.calls.length, 3);
     assert.ok(database.calls.every((call) => call.params[0] === 100));
@@ -175,6 +189,9 @@ describe('Robinhood retention worker', () => {
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
       transferReorgJournal: 0,
+      realtimeOutboxRows: 0,
+      realtimeOutboxCycles: 0,
+      realtimeOutbox: null,
     });
     assert.equal(database.calls.length, 0);
   });
@@ -243,7 +260,7 @@ describe('Robinhood retention worker', () => {
       { batchLimit: 100 },
       {},
       {
-        database,
+        ...dependencies(database),
         watermarkRepository: {
           loadRetentionGate: async () => { throw new Error('cursor read failed'); },
         },
@@ -278,5 +295,31 @@ describe('Robinhood retention worker', () => {
     assert.match(calls[0].sql, /journal\.block_number <= cursor\.finalized_head/);
     assert.match(calls[0].sql, /FOR UPDATE OF journal SKIP LOCKED/);
     assert.deepEqual(calls[0].params, [100]);
+  });
+
+  it('reuses expensive realtime outbox telemetry between cleanup cycles', async () => {
+    const database = createFakeDatabase();
+    let nowMs = 1_000;
+    let telemetryLoads = 0;
+    const deps = dependencies(database);
+    deps.now = () => nowMs;
+    deps.realtimeOutboxRepository.loadTelemetry = async () => {
+      telemetryLoads += 1;
+      return EMPTY_REALTIME_TELEMETRY;
+    };
+
+    const options = {
+      batchLimit: 100,
+      maxBatches: 1,
+      realtimeOutboxTelemetryIntervalMs: 300_000,
+    };
+    await worker.runOnce(options, {}, deps);
+    nowMs += 299_999;
+    await worker.runOnce(options, {}, deps);
+    assert.equal(telemetryLoads, 1);
+
+    nowMs += 1;
+    await worker.runOnce(options, {}, deps);
+    assert.equal(telemetryLoads, 2);
   });
 });

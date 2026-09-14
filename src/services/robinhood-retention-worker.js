@@ -11,6 +11,12 @@ const DEFAULT_BATCH_LIMIT = 2000;
 const DEFAULT_MAX_BATCHES = 5;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_REALTIME_OUTBOX_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const DEFAULT_REALTIME_OUTBOX_TELEMETRY_INTERVAL_MS = 5 * 60 * 1000;
+
+const realtimeOutboxTelemetryCache = {
+  loadedAtMs: null,
+  value: null,
+};
 
 let timer = null;
 let running = false;
@@ -77,6 +83,12 @@ function normalizeOptions(options = {}) {
       DEFAULT_REALTIME_OUTBOX_RETENTION_MS,
       60 * 60 * 1000,
       7 * 24 * 60 * 60 * 1000
+    ),
+    realtimeOutboxTelemetryIntervalMs: boundedInteger(
+      options.realtimeOutboxTelemetryIntervalMs,
+      DEFAULT_REALTIME_OUTBOX_TELEMETRY_INTERVAL_MS,
+      10 * 1000,
+      60 * 60 * 1000
     ),
   };
 }
@@ -347,6 +359,7 @@ async function runCleanupBatches(database, options, wallet) {
 async function maintainRealtimeOutbox(database, options, deps) {
   const repository = deps.realtimeOutboxRepository
     || createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
+  const telemetryCache = deps.realtimeOutboxTelemetryCache || realtimeOutboxTelemetryCache;
   let cycles = 0;
   let rows = 0;
   for (let index = 0; index < options.maxBatches; index += 1) {
@@ -358,7 +371,14 @@ async function maintainRealtimeOutbox(database, options, deps) {
     rows += result.rows;
     if (result.cycles < options.batchLimit) break;
   }
-  return { cycles, rows, telemetry: await repository.loadTelemetry() };
+  const nowMs = (deps.now || Date.now)();
+  const telemetryExpired = telemetryCache.loadedAtMs == null
+    || nowMs - telemetryCache.loadedAtMs >= options.realtimeOutboxTelemetryIntervalMs;
+  if (telemetryCache.value == null || telemetryExpired) {
+    telemetryCache.value = await repository.loadTelemetry();
+    telemetryCache.loadedAtMs = nowMs;
+  }
+  return { cycles, rows, telemetry: telemetryCache.value };
 }
 
 async function runOnce(options = {}, meta = {}, deps = {}) {
@@ -492,6 +512,7 @@ module.exports = {
   DEFAULT_BATCH_LIMIT,
   DEFAULT_INTERVAL_MS,
   DEFAULT_REALTIME_OUTBOX_RETENTION_MS,
+  DEFAULT_REALTIME_OUTBOX_TELEMETRY_INTERVAL_MS,
   getStatus,
   runOnce,
   start,

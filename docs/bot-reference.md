@@ -884,6 +884,11 @@ bloqueados, fronteiras publicadas e a última invalidação retida. `observedLag
 capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_head` com a fronteira
 `finalized`. O watermark impede que o backlog anterior seja publicado; ciclos históricos nunca
 publicados permanecem disponíveis para auditoria e são removidos pela retenção quando elegíveis.
+A poda do outbox continua em todo ciclo do retention worker, mas essa telemetria agregada é
+recalculada por padrão somente a cada cinco minutos para não repetir uma varredura cara da tabela
+durante drenagens. Ajuste a cadência com
+`ROBINHOOD_RETENTION_REALTIME_TELEMETRY_INTERVAL_MS`; entre atualizações, o status conserva o
+último snapshot completo.
 
 O drill consolidado `npm run robinhood:reorg-safety-test` exige Docker, cria um PostgreSQL 16
 efêmero em porta aleatória restrita a `127.0.0.1` e substitui tanto `DATABASE_URL` quanto

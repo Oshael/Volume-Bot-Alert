@@ -931,6 +931,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_RETENTION_MAX_BATCHES: '0',
       ROBINHOOD_RETENTION_STATEMENT_TIMEOUT_MS: '500',
       ROBINHOOD_REALTIME_OUTBOX_RETENTION_MS: '999999999',
+      ROBINHOOD_RETENTION_REALTIME_TELEMETRY_INTERVAL_MS: '1',
     }, (config) => {
       assert.deepEqual(config.robinhoodRetentionWorker, {
         enabled: true,
@@ -939,6 +940,7 @@ describe('runtime worker groups config', () => {
         maxBatches: 1,
         statementTimeoutMs: 1000,
         realtimeOutboxRetentionMs: 7 * 24 * 60 * 60 * 1000,
+        realtimeOutboxTelemetryIntervalMs: 10_000,
       });
     });
   });
