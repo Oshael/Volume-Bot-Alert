@@ -154,6 +154,42 @@ describe('Robinhood backfill enrichment adapter', () => {
     ]]);
   });
 
+  it('primes V4 liquidity for the whole enrichment batch', async () => {
+    const item = claim(v4Fixture, 'uniswap-v4');
+    const prepared = createRobinhoodBackfillEnrichmentAdapter({
+      seedPools: [seed(v4Fixture, 'uniswap-v4')],
+    }).prepareClaim(item);
+    const ranges = [
+      { tick_lower: -887000, tick_upper: 887000, liquidity_gross: '1000000000000000000' },
+    ];
+    const reads = [];
+    const adapter = createRobinhoodBackfillEnrichmentAdapter({
+      seedPools: [seed(v4Fixture, 'uniswap-v4')],
+      v4LiquidityReader: {
+        async listHistoricalV4LiquidityRangesAtPositions(input) {
+          reads.push(input);
+          return new Map([[`${item.transactionHash}:${item.logIndex}`, ranges]]);
+        },
+        async listHistoricalV4LiquidityRanges() {
+          assert.fail('individual V4 range read must not run after batch priming');
+        },
+      },
+    });
+    await adapter.primeEntries([{
+      claim: item,
+      context: prepared.context,
+      item: { id: `${item.transactionHash}:${item.logIndex}` },
+    }]);
+    const entry = await adapter.buildEntry({
+      claim: item,
+      context: prepared.context,
+      results: resultsFor(prepared),
+    });
+
+    assert.equal(reads.length, 1);
+    assert.equal(entry.observation.liquidityStatus, 'spot_tvl_from_v4_tick_ranges');
+  });
+
   it('uses the canonical historical WETH quote reader without routing it to Alchemy', async () => {
     const calls = [];
     const quoteReader = {

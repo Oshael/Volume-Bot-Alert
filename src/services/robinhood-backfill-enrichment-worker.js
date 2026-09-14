@@ -199,6 +199,7 @@ function createRobinhoodBackfillEnrichmentWorker(deps = {}) {
         cancel: cancelHeartbeat,
       });
       const prepared = await prepareClaims(claims, adapter, options.prepareConcurrency);
+      if (typeof adapter.primeEntries === 'function') await adapter.primeEntries(prepared);
       const plan = createPlan(prepared.map(({ item }) => item), options.planner);
       const execution = await executePlan(plan, rpcClient, options.execution);
       const entries = await buildEntries(prepared, execution, adapter, options.prepareConcurrency);

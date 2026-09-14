@@ -13,7 +13,133 @@ function poolId(value) {
   return id;
 }
 
+function position(value, index) {
+  const id = String(value?.id || '').trim();
+  if (!id) throw new Error(`positions[${index}].id is required`);
+  return {
+    id,
+    poolId: poolId(value.poolId),
+    blockNumber: quantity(value.blockNumber, `positions[${index}].blockNumber`),
+    logIndex: quantity(value.logIndex, `positions[${index}].logIndex`),
+  };
+}
+
+function comparePosition(left, right) {
+  const block = BigInt(left.blockNumber) - BigInt(right.blockNumber);
+  if (block !== 0n) return block < 0n ? -1 : 1;
+  const log = BigInt(left.logIndex) - BigInt(right.logIndex);
+  return log < 0n ? -1 : log > 0n ? 1 : 0;
+}
+
+function snapshotRanges(state) {
+  return [...state.values()]
+    .filter(({ liquidityGross }) => liquidityGross > 0n)
+    .sort((left, right) => left.tickLower - right.tickLower || left.tickUpper - right.tickUpper)
+    .map(({ tickLower, tickUpper, liquidityGross }) => ({
+      tick_lower: tickLower,
+      tick_upper: tickUpper,
+      liquidity_gross: liquidityGross.toString(),
+    }));
+}
+
 function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
+  async function listHistoricalV4LiquidityRangesAtPositions(input) {
+    if (!Array.isArray(input) || input.length > 1000) {
+      throw new RangeError('at most 1000 historical positions are allowed');
+    }
+    const positions = input.map(position);
+    const ids = new Set();
+    for (const item of positions) {
+      if (ids.has(item.id)) throw new Error(`duplicate historical position id: ${item.id}`);
+      ids.add(item.id);
+    }
+    if (!positions.length) return new Map();
+    const { rows } = await database.query(
+      `WITH positions AS MATERIALIZED (
+         SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+           id text, pool_id text, block_number bigint, log_index bigint
+         )
+       ), requested AS MATERIALIZED (
+         SELECT DISTINCT pool_id FROM positions
+       ), maxima AS MATERIALIZED (
+         SELECT DISTINCT ON (pool_id) pool_id, block_number, log_index
+         FROM positions ORDER BY pool_id, block_number DESC, log_index DESC
+       ), ready AS MATERIALIZED (
+         SELECT replay.chain
+         FROM robinhood_v4_liquidity_replay_state replay
+         JOIN robinhood_v4_liquidity_materialization_state materialized
+           ON materialized.chain = replay.chain
+         WHERE replay.chain = 'robinhood' AND replay.status = 'completed'
+       ), result AS (
+         SELECT 'availability'::text AS row_kind, requested.pool_id,
+                ready.chain IS NOT NULL AS available,
+                NULL::bigint AS block_number, NULL::bigint AS log_index,
+                NULL::integer AS tick_lower, NULL::integer AS tick_upper,
+                NULL::numeric AS liquidity_delta
+         FROM requested LEFT JOIN ready ON TRUE
+         UNION ALL
+         SELECT 'delta', deltas.pool_id, TRUE, deltas.block_number, deltas.log_index,
+                deltas.tick_lower, deltas.tick_upper, deltas.liquidity_delta
+         FROM robinhood_v4_liquidity_deltas deltas
+         JOIN maxima USING (pool_id)
+         JOIN ready ON ready.chain = deltas.chain
+         WHERE (deltas.block_number, deltas.log_index)
+               < (maxima.block_number, maxima.log_index)
+       )
+       SELECT * FROM result
+       ORDER BY pool_id, block_number NULLS FIRST, log_index NULLS FIRST`,
+      [JSON.stringify(positions.map((item) => ({
+        id: item.id,
+        pool_id: item.poolId,
+        block_number: item.blockNumber,
+        log_index: item.logIndex,
+      })))]
+    );
+    const available = new Set(rows.filter((row) => (
+      row.row_kind === 'availability' && row.available
+    )).map((row) => row.pool_id));
+    const requestsByPool = new Map();
+    for (const item of positions) {
+      if (!requestsByPool.has(item.poolId)) requestsByPool.set(item.poolId, []);
+      requestsByPool.get(item.poolId).push(item);
+    }
+    const deltasByPool = new Map();
+    for (const row of rows) {
+      if (row.row_kind !== 'delta') continue;
+      if (!deltasByPool.has(row.pool_id)) deltasByPool.set(row.pool_id, []);
+      deltasByPool.get(row.pool_id).push({
+        blockNumber: String(row.block_number),
+        logIndex: String(row.log_index),
+        tickLower: Number(row.tick_lower),
+        tickUpper: Number(row.tick_upper),
+        liquidityDelta: BigInt(row.liquidity_delta),
+      });
+    }
+    const result = new Map(positions.map(({ id }) => [id, null]));
+    for (const [id, requests] of requestsByPool) {
+      if (!available.has(id)) continue;
+      requests.sort(comparePosition);
+      const deltas = deltasByPool.get(id) || [];
+      deltas.sort(comparePosition);
+      const state = new Map();
+      let offset = 0;
+      for (const request of requests) {
+        while (offset < deltas.length && comparePosition(deltas[offset], request) < 0) {
+          const delta = deltas[offset];
+          const key = `${delta.tickLower}:${delta.tickUpper}`;
+          const current = state.get(key) || {
+            tickLower: delta.tickLower, tickUpper: delta.tickUpper, liquidityGross: 0n,
+          };
+          current.liquidityGross += delta.liquidityDelta;
+          state.set(key, current);
+          offset += 1;
+        }
+        result.set(request.id, snapshotRanges(state));
+      }
+    }
+    return result;
+  }
+
   async function listHistoricalV4LiquidityRangesByPoolIds(poolIds, blockNumber, logIndex) {
     if (!Array.isArray(poolIds) || poolIds.length > POOL_LIQUIDITY_BATCH_SIZE) {
       throw new RangeError(`at most ${POOL_LIQUIDITY_BATCH_SIZE} pools are allowed`);
@@ -79,7 +205,11 @@ function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
     return (await listHistoricalV4LiquidityRangesByPoolIds([id], blockNumber, logIndex)).get(poolId(id));
   }
 
-  return { listHistoricalV4LiquidityRanges, listHistoricalV4LiquidityRangesByPoolIds };
+  return {
+    listHistoricalV4LiquidityRanges,
+    listHistoricalV4LiquidityRangesAtPositions,
+    listHistoricalV4LiquidityRangesByPoolIds,
+  };
 }
 
 module.exports = { createLiquidityHistoricalRangeRepository };

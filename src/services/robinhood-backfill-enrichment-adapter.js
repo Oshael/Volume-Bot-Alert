@@ -69,12 +69,22 @@ function tokenMetadata(context, results) {
   };
 }
 
-async function addLiquidity(observation, event, quoteMetadata, v4LiquidityReader) {
+function primedRangeLookup(ranges, claim) {
+  if (!claim) return { found: false, value: null };
+  const key = `${claim.transactionHash}:${claim.logIndex}`;
+  return { found: ranges.has(key), value: ranges.get(key) };
+}
+
+async function addLiquidity(
+  observation, event, quoteMetadata, v4LiquidityReader, primedRanges, hasPrimedRanges
+) {
   if (!observation.accepted) return observation;
   const v4Ranges = event.protocol === 'uniswap-v4' && v4LiquidityReader
-    ? await v4LiquidityReader.listHistoricalV4LiquidityRanges(
-      event.poolId, event.blockNumber, event.logIndex
-    )
+    ? hasPrimedRanges
+      ? primedRanges
+      : await v4LiquidityReader.listHistoricalV4LiquidityRanges(
+        event.poolId, event.blockNumber, event.logIndex
+      )
     : null;
   const liquidity = buildLiquidityAssessment({
     protocol: event.protocol,
@@ -108,8 +118,28 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
       ? createRobinhoodWethUsdQuoteReader({ rpcClient: options.rpcClient })
       : null);
   const v4LiquidityReader = options.v4LiquidityReader || null;
+  let primedV4Ranges = new Map();
 
-  async function buildEntry({ context, results }) {
+  async function primeEntries(prepared) {
+    primedV4Ranges = new Map();
+    if (typeof v4LiquidityReader?.listHistoricalV4LiquidityRangesAtPositions !== 'function') {
+      return;
+    }
+    const positions = prepared
+      .filter(({ context }) => (
+        context?.event?.kind === 'swap' && context.event.protocol === 'uniswap-v4'
+      ))
+      .map(({ item, context }) => ({
+        id: item.id,
+        poolId: context.event.poolId,
+        blockNumber: context.event.blockNumber,
+        logIndex: context.event.logIndex,
+      }));
+    primedV4Ranges = await v4LiquidityReader
+      .listHistoricalV4LiquidityRangesAtPositions(positions);
+  }
+
+  async function buildEntry({ claim, context, results }) {
     const enriched = enrichBlockContext(context, results.block);
     const event = enriched.event;
     if (event.kind !== 'swap') return { log: enriched.log, event };
@@ -143,15 +173,24 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
       event.tokenBalanceRaw = quantity(results.tokenBalance, 'tokenBalance').toString();
       event.quoteBalanceRaw = quantity(results.quoteBalance, 'quoteBalance').toString();
     }
+    const primed = primedRangeLookup(primedV4Ranges, claim);
     return {
       log: enriched.log,
       event,
-      observation: await addLiquidity(observation, event, quoteMetadata, v4LiquidityReader),
+      observation: await addLiquidity(
+        observation,
+        event,
+        quoteMetadata,
+        v4LiquidityReader,
+        primed.value,
+        primed.found
+      ),
     };
   }
 
   return Object.freeze({
     prepareClaim: preparer.prepareClaim,
+    primeEntries,
     buildEntry,
   });
 }

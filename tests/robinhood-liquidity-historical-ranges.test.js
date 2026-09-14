@@ -32,6 +32,46 @@ it('bounds historical range reads and preserves unavailable versus empty pools',
   assert.equal(calls.at(-1).params[0].length, 100);
 });
 
+it('reconstructs many historical positions from one ordered V4 delta read', async () => {
+  const availablePool = `0x${'a'.repeat(64)}`;
+  const unavailablePool = `0x${'b'.repeat(64)}`;
+  const calls = [];
+  const repository = createLiquidityHistoricalRangeRepository({ database: { async query(sql, params) {
+    calls.push({ sql, params });
+    return { rows: [
+      { row_kind: 'availability', pool_id: availablePool, available: true },
+      { row_kind: 'availability', pool_id: unavailablePool, available: false },
+      {
+        row_kind: 'delta', pool_id: availablePool, available: true,
+        block_number: '5', log_index: '1', tick_lower: -60, tick_upper: 60,
+        liquidity_delta: '10',
+      },
+      {
+        row_kind: 'delta', pool_id: availablePool, available: true,
+        block_number: '8', log_index: '1', tick_lower: -60, tick_upper: 60,
+        liquidity_delta: '-3',
+      },
+    ] };
+  } } });
+  const result = await repository.listHistoricalV4LiquidityRangesAtPositions([
+    { id: 'later', poolId: availablePool, blockNumber: '9', logIndex: '0' },
+    { id: 'earlier', poolId: availablePool, blockNumber: '7', logIndex: '0' },
+    { id: 'missing', poolId: unavailablePool, blockNumber: '9', logIndex: '0' },
+  ]);
+
+  assert.deepEqual(result.get('earlier'), [
+    { tick_lower: -60, tick_upper: 60, liquidity_gross: '10' },
+  ]);
+  assert.deepEqual(result.get('later'), [
+    { tick_lower: -60, tick_upper: 60, liquidity_gross: '7' },
+  ]);
+  assert.equal(result.get('missing'), null);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /jsonb_to_recordset/);
+  assert.match(calls[0].sql, /JOIN maxima USING \(pool_id\)/);
+  assert.equal(JSON.parse(calls[0].params[0]).length, 3);
+});
+
 it('registers a covering index for bounded V4 tail reads', () => {
   const sql = stage198.STATEMENTS.join('\n');
   const group = SCHEMA_GROUPS.find(({ key }) => (

@@ -70,6 +70,9 @@ function createHarness(options = {}) {
         context: { decoded: true },
       };
     },
+    async primeEntries(prepared) {
+      calls.push({ method: 'prime', prepared });
+    },
     async buildEntry(input) {
       calls.push({ method: 'build', input });
       return entryFor(input);
@@ -170,7 +173,7 @@ describe('Robinhood backfill enrichment worker', () => {
     });
     assert.deepEqual(
       harness.calls.map(({ method }) => method),
-      ['claim', 'prepare', 'rpc', 'build', 'commit']
+      ['claim', 'prepare', 'prime', 'rpc', 'build', 'commit']
     );
     const commit = harness.calls.find(({ method }) => method === 'commit').input;
     assert.equal(commit.owner, 'worker-a');
@@ -210,7 +213,7 @@ describe('Robinhood backfill enrichment worker', () => {
     );
     assert.deepEqual(
       harness.calls.map(({ method }) => method),
-      ['claim', 'prepare', 'rpc', 'fail']
+      ['claim', 'prepare', 'prime', 'rpc', 'fail']
     );
     const failure = harness.calls.find(({ method }) => method === 'fail').input;
     assert.equal(failure.retryDelayMs, 12_000);

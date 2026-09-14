@@ -387,6 +387,20 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       const fullResult = await batchReader.listHistoricalV4LiquidityRangesByPoolIds(fullBatch, '20', '1');
       assert.equal(fullResult.size, 100);
       for (const id of ids) assert.deepEqual(fullResult.get(id), atTwenty.get(id));
+      const positions = [
+        { id: 'first', poolId: ids[0], blockNumber: '20', logIndex: '0' },
+        { id: 'second', poolId: ids[0], blockNumber: '20', logIndex: '2' },
+        { id: 'empty', poolId: ids[1], blockNumber: '20', logIndex: '1' },
+      ];
+      const positioned = await batchReader.listHistoricalV4LiquidityRangesAtPositions(positions);
+      for (const item of positions) {
+        assert.deepEqual(
+          positioned.get(item.id),
+          await singleReader.listHistoricalV4LiquidityRanges(
+            item.poolId, item.blockNumber, item.logIndex
+          )
+        );
+      }
       await client.query("UPDATE robinhood_v4_liquidity_replay_state SET status = 'running', next_block = 200");
       assert.deepEqual([...(await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, '20', '1')).values()],
         [null, null, null]);
