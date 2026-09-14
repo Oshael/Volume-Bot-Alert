@@ -102,7 +102,10 @@ describe('Robinhood token creator attribution', () => {
     const repository = {
       loadDirectCursor: async () => null,
       initializeDirectCursor: async () => ({ next_block: '100', safe_head: '100' }),
-      recordCreatorBlock: async (input) => { persisted = input; return { attributed: input.deployments.length }; },
+      recordCreatorRange: async (input) => {
+        [persisted] = input.blocks;
+        return { attributed: persisted.deployments.length };
+      },
     };
     const result = await runDirectCreatorTick({ client, repository, confirmations: 2 });
     assert.equal(result.status, 'caught-up');
@@ -116,30 +119,37 @@ describe('Robinhood token creator attribution', () => {
     assert.equal(methods.includes('eth_getBlockReceipts'), true);
   });
 
-  it('processes a bounded canonical page without an RPC client', async () => {
+  it('persists a bounded canonical page in one atomic range without an RPC client', async () => {
     let persisted;
     const source = {
-      getSafeHead: async () => ({ head: '102', safeHead: '100' }),
+      getSafeHead: async () => ({ head: '103', safeHead: '101' }),
       matchesCheckpoint: async () => true,
-      readRange: async () => new Map([['100', {
-        blockNumber: '100', blockHash: BLOCK_HASH,
-        blockTimestamp: '2026-09-05T20:00:00.000Z', deployments: [],
-      }]]),
+      readRange: async () => new Map([
+        ['100', {
+          blockNumber: '100', blockHash: BLOCK_HASH,
+          blockTimestamp: '2026-09-05T20:00:00.000Z', deployments: [],
+        }],
+        ['101', {
+          blockNumber: '101', blockHash: `0x${'e'.repeat(64)}`,
+          blockTimestamp: '2026-09-05T20:00:01.000Z', deployments: [],
+        }],
+      ]),
     };
     const repository = {
       loadDirectCursor: async () => ({
         next_block: '100', safe_head: '99', checkpoint_block: '99',
         checkpoint_hash: `0x${'d'.repeat(64)}`,
       }),
-      recordCreatorBlock: async (input) => {
+      recordCreatorRange: async (input) => {
         persisted = input;
         return { attributed: 0 };
       },
     };
     const result = await runDirectCreatorTick({ source, repository, confirmations: 2 });
     assert.equal(result.status, 'caught-up');
-    assert.equal(result.processedBlocks, 1);
-    assert.equal(persisted.blockHash, BLOCK_HASH);
+    assert.equal(result.processedBlocks, 2);
+    assert.equal(persisted.safeHead, '101');
+    assert.deepEqual(persisted.blocks.map(({ blockNumber }) => blockNumber), ['100', '101']);
     assert.equal(directPrivate.normalizeSource('canonical_journal'), 'canonical_journal');
     assert.throws(() => directPrivate.normalizeSource('invalid'), /must be rpc/);
   });
@@ -158,16 +168,16 @@ describe('Robinhood token creator attribution', () => {
     await assert.rejects(() => directPrivate.scanBlock(client, 100n), /receipt diverged/);
   });
 
-  it('commits direct attribution and cursor advancement atomically', async () => {
+  it('commits a direct attribution range and cursor advancement atomically', async () => {
     const calls = [];
     const client = {
-      query: async (sql) => {
-        calls.push(sql);
+      query: async (sql, params) => {
+        calls.push({ sql, params });
         if (/SELECT recovery_state/.test(sql)) {
           return { rowCount: 1, rows: [{ recovery_state: 'running' }] };
         }
         if (/SELECT COUNT\(\*\)::int AS matched/.test(sql)) {
-          return { rowCount: 1, rows: [{ matched: 1 }] };
+          return { rowCount: 1, rows: [{ matched: 2 }] };
         }
         return sql.startsWith('UPDATE') ? { rowCount: 1, rows: [{}] } : { rows: [] };
       },
@@ -176,17 +186,49 @@ describe('Robinhood token creator attribution', () => {
     const repository = createRobinhoodTokenAttributionRepository({
       database: { getClient: async () => client },
     });
-    const result = await repository.recordCreatorBlock({
-      blockNumber: '100', safeHead: '100', blockHash: `0x${'c'.repeat(64)}`,
-      blockTimestamp: '2026-08-10T00:00:00.000Z',
-      deployments: [{ tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: `0x${'d'.repeat(64)}` }],
+    const result = await repository.recordCreatorRange({
+      safeHead: '105',
+      blocks: [{
+        blockNumber: '100', blockHash: `0x${'c'.repeat(64)}`,
+        blockTimestamp: '2026-08-10T00:00:00.000Z',
+        deployments: [{
+          tokenAddress: TOKEN, creatorAddress: CREATOR,
+          transactionHash: `0x${'d'.repeat(64)}`,
+        }],
+      }, {
+        blockNumber: '101', blockHash: `0x${'e'.repeat(64)}`,
+        blockTimestamp: '2026-08-10T00:00:01.000Z', deployments: [],
+      }],
     });
     assert.equal(result.attributed, 1);
-    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]),
+    assert.deepEqual(calls.map(({ sql }) => sql.split(/\s+/)[0]),
       ['BEGIN', 'SELECT', 'SELECT', 'SELECT', 'INSERT', 'UPDATE', 'COMMIT']);
-    assert.match(calls[1], /pg_advisory_xact_lock_shared/);
-    assert.match(calls[4], /attribution_factory_address/);
-    assert.match(calls[4], /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
+    assert.match(calls[1].sql, /pg_advisory_xact_lock_shared/);
+    assert.equal(JSON.parse(calls[3].params[0]).length, 2);
+    assert.match(calls[4].sql, /attribution_factory_address/);
+    assert.match(calls[4].sql, /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
+    assert.deepEqual(calls[5].params, [
+      '102', '105', '101', `0x${'e'.repeat(64)}`,
+      '2026-08-10T00:00:01.000Z', '100',
+    ]);
+  });
+
+  it('rejects a non-contiguous creator range before opening a transaction', async () => {
+    let clients = 0;
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: { getClient: async () => { clients += 1; } },
+    });
+    await assert.rejects(repository.recordCreatorRange({
+      safeHead: '102',
+      blocks: [{
+        blockNumber: '100', blockHash: BLOCK_HASH,
+        blockTimestamp: '2026-08-10T00:00:00.000Z', deployments: [],
+      }, {
+        blockNumber: '102', blockHash: `0x${'d'.repeat(64)}`,
+        blockTimestamp: '2026-08-10T00:00:02.000Z', deployments: [],
+      }],
+    }), /not contiguous/);
+    assert.equal(clients, 0);
   });
 
   it('rejects a creator LIVE commit while canonical recovery is active', async () => {

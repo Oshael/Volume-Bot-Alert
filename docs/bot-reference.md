@@ -3200,7 +3200,12 @@ Blockscout. A captura complementar `robinhood-direct-creator-live-worker`, no
 grupo `robinhood-wallet`, fica habilitada por padrão e deve usar
 `ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE=canonical_journal`: ela acompanha cada
 bloco seguro e grava somente as criações encontradas, portanto o custo persistido
-é uma linha pequena por contrato, não uma cópia dos blocos. Um deploy pode
+é uma linha pequena por contrato, não uma cópia dos blocos. O reader entrega
+páginas limitadas por `ROBINHOOD_DIRECT_CREATOR_LIVE_MAX_BLOCKS_PER_TICK`; cada
+página é validada contra os hashes canônicos e persistida em uma única transação.
+Attributions e checkpoint avançam atomicamente até o último bloco da página;
+conflito, reorg ou falha revertem a página inteira, que pode ser repetida com
+segurança. Um deploy pode
 desabilitá-la explicitamente com `ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED=false`,
 mas isso remove a garantia de evidência para futuras admissões. Evidência perdida
 antes do cursor LIVE requer o repair histórico explícito via Archive; ela não

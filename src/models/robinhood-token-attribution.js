@@ -328,28 +328,55 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     } finally { client.release(); }
   }
 
-  async function recordCreatorBlock(input = {}) {
-    const blockNumber = BigInt(String(input.blockNumber)).toString();
-    const canonicalHash = blockHash(input.blockHash, 'creator blockHash');
-    const nextBlock = (BigInt(blockNumber) + 1n).toString();
-    const safeHead = BigInt(String(input.safeHead)).toString();
-    const deployments = normalizeDeployments(input.deployments, blockNumber);
-    if (deployments.some((item) => item.blockNumber !== blockNumber)) {
-      throw new Error('creator deployment is outside its LIVE block');
+  async function recordCreatorRange(input = {}) {
+    if (!Array.isArray(input.blocks) || input.blocks.length < 1 || input.blocks.length > 2000) {
+      throw new Error('creator LIVE range must contain between 1 and 2000 blocks');
     }
+    const safeHead = BigInt(String(input.safeHead)).toString();
+    const blocks = input.blocks.map((item) => {
+      const blockNumber = BigInt(String(item.blockNumber)).toString();
+      const canonicalHash = blockHash(item.blockHash, 'creator blockHash');
+      const blockTimestamp = new Date(item.blockTimestamp);
+      if (!Number.isFinite(blockTimestamp.getTime())) {
+        throw new Error('creator blockTimestamp is invalid');
+      }
+      const deployments = normalizeDeployments(item.deployments, blockNumber);
+      if (deployments.some((deployment) => deployment.blockNumber !== blockNumber)) {
+        throw new Error('creator deployment is outside its LIVE block');
+      }
+      return {
+        blockNumber, blockHash: canonicalHash,
+        blockTimestamp: blockTimestamp.toISOString(), deployments,
+      };
+    });
+    const firstBlock = BigInt(blocks[0].blockNumber);
+    for (let index = 0; index < blocks.length; index += 1) {
+      if (BigInt(blocks[index].blockNumber) !== firstBlock + BigInt(index)) {
+        throw new Error('creator LIVE range is not contiguous');
+      }
+    }
+    const checkpoint = blocks.at(-1);
+    if (BigInt(checkpoint.blockNumber) > BigInt(safeHead)) {
+      throw new Error('creator LIVE range exceeds its safe head');
+    }
+    const deployments = blocks.flatMap((item) => item.deployments);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      await lockCanonicalWriter(client, [{ blockNumber, blockHash: canonicalHash }], true);
+      await lockCanonicalWriter(client, blocks, true);
       await upsertDeployments(client, deployments);
       const advanced = await client.query(
         `UPDATE robinhood_direct_creator_cursors
          SET next_block = $1::bigint, safe_head = GREATEST(safe_head, $2::bigint),
              checkpoint_block = $3::bigint, checkpoint_hash = $4,
              checkpoint_timestamp = $5::timestamptz, updated_at = NOW()
-         WHERE chain = '${CHAIN}' AND stream = 'live' AND next_block = $3::bigint
+         WHERE chain = '${CHAIN}' AND stream = 'live' AND next_block = $6::bigint
          RETURNING *`,
-        [nextBlock, safeHead, blockNumber, canonicalHash, input.blockTimestamp]
+        [
+          (BigInt(checkpoint.blockNumber) + 1n).toString(), safeHead,
+          checkpoint.blockNumber, checkpoint.blockHash, checkpoint.blockTimestamp,
+          blocks[0].blockNumber,
+        ]
       );
       if (advanced.rowCount !== 1) throw Object.assign(new Error('direct creator cursor conflict'), {
         code: 'cursor_conflict', retryable: true,
@@ -363,6 +390,10 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
       client.release();
     }
   }
+
+  const recordCreatorBlock = (input = {}) => recordCreatorRange({
+    blocks: [input], safeHead: input.safeHead,
+  });
 
   async function recordVerifiedDirectDeployments(inputs = []) {
     const deployments = normalizeDeployments(inputs);
@@ -423,8 +454,8 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
   return Object.freeze({
     initializeDirectCursor, initializeLaunchpadBackfillCursor,
     listCreatorCandidates, listHolderDirectVerificationCandidates,
-    loadDirectCursor, loadLaunchpadBackfillCursor,
-    recordAttempt, recordAttempts, recordCodeTransitions, recordCreatorBlock,
+    loadDirectCursor, loadLaunchpadBackfillCursor, recordAttempt, recordAttempts,
+    recordCodeTransitions, recordCreatorBlock, recordCreatorRange,
     recordDirectVerificationFailure,
     recordLaunchpadBackfillRange,
     recordVerifiedDirectDeployments,

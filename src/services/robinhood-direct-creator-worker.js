@@ -198,16 +198,18 @@ async function runDirectCreatorTick(deps = {}) {
     const throughBlock = nextBlock + pageSize - 1n < safeHead
       ? nextBlock + pageSize - 1n : safeHead;
     const blocks = await source.readRange(nextBlock, throughBlock);
-    while (nextBlock <= throughBlock) {
-      const scanned = blocks.get(nextBlock.toString());
-      if (!scanned) throw sourceContractError(`direct creator block ${nextBlock} is missing`);
-      const result = await deps.repository.recordCreatorBlock({
-        ...scanned, safeHead: safeHead.toString(),
-      });
-      attributed += result.attributed;
-      processedBlocks += 1;
-      nextBlock += 1n;
+    const page = [];
+    for (let number = nextBlock; number <= throughBlock; number += 1n) {
+      const scanned = blocks.get(number.toString());
+      if (!scanned) throw sourceContractError(`direct creator block ${number} is missing`);
+      page.push(scanned);
     }
+    const result = await deps.repository.recordCreatorRange({
+      blocks: page, safeHead: safeHead.toString(),
+    });
+    attributed += result.attributed;
+    processedBlocks += page.length;
+    nextBlock = throughBlock + 1n;
   }
   return {
     status: nextBlock > safeHead ? 'caught-up' : 'catching-up',

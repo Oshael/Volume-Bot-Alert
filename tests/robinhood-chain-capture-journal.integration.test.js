@@ -39,6 +39,9 @@ const {
   createRobinhoodWalletSwapRepository,
 } = require('../src/models/robinhood-wallet-swap-persistence');
 const {
+  createRobinhoodTokenAttributionRepository,
+} = require('../src/models/robinhood-token-attribution');
+const {
   createRobinhoodTokenTransferRepository,
 } = require('../src/models/robinhood-token-transfer-persistence');
 const {
@@ -572,6 +575,49 @@ describe('Robinhood canonical chain capture journal', () => {
     await assert.rejects(candidates.appendCaptureEntries({ entries: [{
       ...canonical, evidence: { source: 'changed' },
     }] }), (error) => error.code === 'canonical_candidate_conflict');
+  });
+
+  it('atomically persists a direct-creator page and advances through its final block', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await journal.commitBlock(capture());
+    const next = capture(101, NEXT_HASH, HASH);
+    next.transactions[0].hash = NEXT_TX;
+    next.events[0].transactionHash = NEXT_TX;
+    await journal.commitBlock(next);
+    await db.query(
+      `INSERT INTO robinhood_direct_creator_cursors(chain,stream,next_block,safe_head)
+       VALUES ('robinhood','live',100,99)`
+    );
+
+    const repository = createRobinhoodTokenAttributionRepository();
+    const result = await repository.recordCreatorRange({
+      safeHead: '101',
+      blocks: [{
+        blockNumber: '100', blockHash: HASH, blockTimestamp: OBSERVED_AT,
+        deployments: [{
+          tokenAddress: CREATOR_CANONICAL_TOKEN, creatorAddress: ADDRESS,
+          transactionHash: TX, source: 'rpc_direct', factoryAddress: null,
+        }],
+      }, {
+        blockNumber: '101', blockHash: NEXT_HASH, blockTimestamp: OBSERVED_AT,
+        deployments: [],
+      }],
+    });
+    assert.equal(result.attributed, 1);
+    const persisted = await db.query(
+      `SELECT cursor.next_block::text, cursor.safe_head::text,
+              cursor.checkpoint_block::text, cursor.checkpoint_hash,
+              attribution.creator_address, attribution.attribution_block::text
+         FROM robinhood_direct_creator_cursors cursor
+         JOIN robinhood_token_attributions attribution
+           ON attribution.chain=cursor.chain AND attribution.token_address=$1
+        WHERE cursor.chain='robinhood' AND cursor.stream='live'`,
+      [CREATOR_CANONICAL_TOKEN]
+    );
+    assert.deepEqual(persisted.rows, [{
+      next_block: '102', safe_head: '101', checkpoint_block: '101',
+      checkpoint_hash: NEXT_HASH, creator_address: ADDRESS, attribution_block: '100',
+    }]);
   });
 
   it('commits the block envelope, transaction, event, and cursor atomically', async () => {
