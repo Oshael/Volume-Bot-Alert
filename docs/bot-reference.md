@@ -2000,6 +2000,14 @@ expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
 processo; reiniciar durante um incidente pode gerar um novo alerta.
 
+O descarte de sessões CDP é best effort e limitado a cinco segundos. Falha ou
+timeout ao destacar uma sessão nunca impede a reconexão do collector nem a
+conclusão de um ciclo de follow/discovery. O collector agenda o reconnect antes
+desse cleanup; `detachErrors`, `detachTimeouts` e `lastDetachErrorCode` observam
+o transporte, enquanto a fila expõe os campos equivalentes com prefixo `cdp`.
+Qualquer erro de transporte também marca imediatamente `fomoHealth.connected`
+como falso; somente uma nova conexão ou frame pode restaurar esse indicador.
+
 Para retomar: configure `FOMO_FOLLOW_ENABLED=false`, reinicie o worker, investigue
 `lastErrorCode` e então execute
 `DELETE FROM callout_collector_checkpoints WHERE collector_key = 'fomo:follow';`.

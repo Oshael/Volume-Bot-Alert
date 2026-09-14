@@ -111,6 +111,9 @@ function createFomoBrowserHealthMonitor(options = {}) {
       }
     },
     onError(error) {
+      connected = false;
+      status.connected = false;
+      clearStaleTimer();
       reportIncident('transport', error?.code || 'FOMO_BROWSER_TRANSPORT');
     },
     onFrame(event = {}) {

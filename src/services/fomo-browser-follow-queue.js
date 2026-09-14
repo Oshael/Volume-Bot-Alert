@@ -2,6 +2,7 @@
 
 const { chromium } = require('playwright-core');
 const { isFomoPage, normalizeCdpEndpoint } = require('./fomo-browser-activity-stream');
+const { detachCdpSession } = require('./fomo-cdp-session');
 
 const API_ORIGIN = 'https://prod-api.fomo.family';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -130,6 +131,7 @@ async function readActivityProfiles(api, persistence, options = {}) {
 async function createFomoBrowserApi(options = {}) {
   const endpoint = normalizeCdpEndpoint(options.cdpEndpoint);
   const connectOverCDP = options.connectOverCDP || ((url) => chromium.connectOverCDP(url));
+  const detachSession = options.detachCdpSession || detachCdpSession;
   const authWaitMs = positiveInteger(options.authWaitMs, 60_000, 5 * 60_000);
   const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 15_000, 60_000);
   const browser = await connectOverCDP(endpoint);
@@ -253,7 +255,7 @@ async function createFomoBrowserApi(options = {}) {
     cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
     cdp.off('Network.loadingFinished', inspectLoadingFinished);
     cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
-    try { await cdp.detach(); } catch {}
+    await detachSession(cdp);
     throw error;
   }
   cdp.off('Network.requestWillBeSent', inspectRequest);
@@ -291,7 +293,7 @@ async function createFomoBrowserApi(options = {}) {
       }
     },
     async close() {
-      try { await cdp.detach(); } catch {}
+      return detachSession(cdp);
     },
   };
 }
@@ -337,6 +339,7 @@ function createFomoBrowserFollowQueue(options = {}) {
     autoResumeMs, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
     lastAlertErrorCode: null, completedAt: null,
+    cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
   };
 
   function fail(error, code) {
@@ -497,7 +500,12 @@ function createFomoBrowserFollowQueue(options = {}) {
     } catch (error) {
       await handleRunError(error);
     } finally {
-      await api?.close?.();
+      const detachResult = await api?.close?.();
+      if (detachResult?.ok === false) {
+        status.cdpDetachErrors += 1;
+        if (detachResult.timedOut) status.cdpDetachTimeouts += 1;
+        status.lastCdpDetachErrorCode = detachResult.errorCode;
+      }
       status.completedAt = new Date().toISOString();
     }
   }

@@ -1,6 +1,7 @@
 'use strict';
 
 const { chromium } = require('playwright-core');
+const { detachCdpSession } = require('./fomo-cdp-session');
 const { normalizeFomoFrame } = require('./fomo-frame-normalizer');
 
 const DEFAULT_CDP_ENDPOINT = 'http://127.0.0.1:9222';
@@ -85,6 +86,7 @@ function createFomoBrowserActivityStream(options = {}) {
   const onStatus = options.onStatus || (() => {});
   const onError = options.onError || (() => {});
   const resetBrowserPage = options.resetBrowserPage || resetFomoBrowserPage;
+  const detachSession = options.detachCdpSession || detachCdpSession;
   const baseReconnectMs = positiveInteger(options.reconnectMs, DEFAULT_RECONNECT_MS, MAX_RECONNECT_MS);
   const staleRecoveryMs = positiveInteger(
     options.staleRecoveryMs, DEFAULT_STALE_RECOVERY_MS, 60 * 60_000,
@@ -128,6 +130,9 @@ function createFomoBrowserActivityStream(options = {}) {
     pageResets: 0,
     pageResetErrors: 0,
     lastPageResetAt: null,
+    detachErrors: 0,
+    detachTimeouts: 0,
+    lastDetachErrorCode: null,
   };
 
   function emitStatus(state, extra = {}) {
@@ -194,16 +199,22 @@ function createFomoBrowserActivityStream(options = {}) {
 
   async function detach() {
     clearStaleTimer();
-    page?.off?.('close', handleDisconnect);
-    page?.off?.('crash', handlePageCrash);
-    browser?.off?.('disconnected', handleDisconnect);
-    if (session) {
-      session.off?.('Network.webSocketFrameReceived', handleFrame);
-      try { await session.detach(); } catch {}
-    }
+    const attachedPage = page;
+    const attachedBrowser = browser;
+    const attachedSession = session;
     session = null;
     page = null;
     browser = null;
+    attachedPage?.off?.('close', handleDisconnect);
+    attachedPage?.off?.('crash', handlePageCrash);
+    attachedBrowser?.off?.('disconnected', handleDisconnect);
+    attachedSession?.off?.('Network.webSocketFrameReceived', handleFrame);
+    const result = await detachSession(attachedSession);
+    if (!result.ok) {
+      status.detachErrors += 1;
+      if (result.timedOut) status.detachTimeouts += 1;
+      status.lastDetachErrorCode = result.errorCode;
+    }
   }
 
   async function reloadPage(reason) {
@@ -234,8 +245,8 @@ function createFomoBrowserActivityStream(options = {}) {
       else status.staleReloadErrors += 1;
       reportError(error, crashed ? 'FOMO_BROWSER_CRASH_RELOAD' : 'FOMO_BROWSER_STALE_RELOAD');
       status.connected = false;
-      await detach();
       scheduleReconnect();
+      await detach();
     } finally {
       pageReloadRunning = false;
     }
@@ -278,7 +289,7 @@ function createFomoBrowserActivityStream(options = {}) {
       const cdpSession = await fomoPage.context().newCDPSession(fomoPage);
       await cdpSession.send('Network.enable');
       if (!running) {
-        await cdpSession.detach();
+        await detachSession(cdpSession);
         return;
       }
       browser = connectedBrowser;

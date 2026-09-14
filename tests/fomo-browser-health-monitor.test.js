@@ -53,9 +53,11 @@ test('Fomo browser watchdog isolates Telegram delivery failures', async () => {
   });
 
   monitor.start();
+  monitor.onStatus({ state: 'connected' });
   monitor.onError({ code: 'FOMO_BROWSER_CONNECT' });
   await monitor.flush();
   assert.equal(monitor.getStatus().incidentKind, 'transport');
+  assert.equal(monitor.getStatus().connected, false);
   assert.equal(monitor.getStatus().notificationErrors, 1);
   assert.equal(monitor.getStatus().lastNotificationErrorCode, 'telegram_timeout');
   await monitor.stop();

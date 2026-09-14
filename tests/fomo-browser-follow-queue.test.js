@@ -181,8 +181,28 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
     autoResumeMs: 300_000, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
     alertSentAt: null, alertErrors: 0, lastAlertErrorCode: null,
+    cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
+});
+
+test('Fomo follow queue completes its cycle after a bounded CDP detach timeout', async () => {
+  const fixture = apiFixture();
+  fixture.api.close = async () => ({
+    ok: false, timedOut: true, errorCode: 'FOMO_BROWSER_DETACH_TIMEOUT',
+  });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: true, profileIds: [A],
+    createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(queue.getStatus().running, false);
+  assert.equal(queue.getStatus().cdpDetachErrors, 1);
+  assert.equal(queue.getStatus().cdpDetachTimeouts, 1);
+  assert.equal(queue.getStatus().lastCdpDetachErrorCode, 'FOMO_BROWSER_DETACH_TIMEOUT');
+  assert.notEqual(queue.getStatus().completedAt, null);
 });
 
 test('Fomo follow discovery covers the Top 100 by default', async () => {
