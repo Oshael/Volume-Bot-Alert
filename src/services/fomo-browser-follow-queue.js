@@ -17,6 +17,19 @@ const USER_ID_CANDIDATES = Object.freeze([
   ['root_user_object_id', (body) => body?.user?.id],
   ['root_profile_id', (body) => body?.profile?.id],
 ]);
+const BOOTSTRAP_COUNT_FIELDS = Object.freeze([
+  'userBootstrapRequests', 'userBootstrapResponses', 'userBootstrapExtraInfoResponses',
+  'userBootstrapLoadingFailures', 'userBootstrapBodyReads',
+  'userBootstrapBodyReadErrors', 'userBootstrapJsonErrors',
+]);
+const BOOTSTRAP_LAST_FIELDS = Object.freeze([
+  'lastUserBootstrapHttpStatus', 'lastUserBootstrapExtraInfoStatus',
+  'userBootstrapPendingAtEnd', 'lastUserBootstrapFailureCategory',
+  'lastUserBootstrapBlockedReason', 'lastUserBootstrapCorsError',
+  'lastUserBootstrapCanceled', 'lastUserBootstrapBodyShape',
+  'lastUserBootstrapResponseObjectShape', 'lastUserBootstrapIdentityPath',
+  'lastUserBootstrapIdentityFormat',
+]);
 
 function valueShape(value) {
   if (value === null) return 'null';
@@ -34,6 +47,55 @@ function inspectUserBootstrapBody(body) {
     firstPresent ||= candidate;
   }
   return firstPresent || { path: 'missing', format: 'missing', value: null };
+}
+
+function loadingFailureCategory(event = {}) {
+  if (event.canceled === true) return 'canceled';
+  const text = String(event.errorText || '').toLowerCase();
+  if (text.includes('aborted')) return 'aborted';
+  if (text.includes('timed_out') || text.includes('timeout')) return 'timed_out';
+  if (text.includes('name_not_resolved')) return 'dns';
+  if (text.includes('internet_disconnected')) return 'offline';
+  if (text.includes('connection_refused')) return 'connection_refused';
+  if (text.includes('connection_reset') || text.includes('connection_closed')) return 'connection_lost';
+  if (text.includes('blocked')) return 'blocked';
+  if (text.includes('cors')) return 'cors';
+  return 'other';
+}
+
+function blockedReasonCategory(value) {
+  const reason = String(value || '').toLowerCase();
+  if (!reason) return null;
+  if (reason.includes('mixed')) return 'mixed_content';
+  if (reason.includes('csp')) return 'csp';
+  if (reason.includes('origin') || reason.includes('corp') || reason.includes('coop')) {
+    return 'origin_policy';
+  }
+  if (reason.includes('inspector')) return 'inspector';
+  if (reason.includes('subresource')) return 'subresource_filter';
+  return 'other';
+}
+
+function corsErrorCategory(value) {
+  const error = String(value || '').toLowerCase();
+  if (!error) return null;
+  if (error.includes('preflight')) return 'preflight';
+  if (error.includes('alloworigin') || error.includes('origin')) return 'origin';
+  if (error.includes('credential')) return 'credentials';
+  if (error.includes('header')) return 'header';
+  if (error.includes('method')) return 'method';
+  return 'other';
+}
+
+function mergeBootstrapDiagnostics(status, diagnostics) {
+  for (const field of BOOTSTRAP_COUNT_FIELDS) {
+    status[field] += Number(diagnostics[field]) || 0;
+  }
+  for (const field of BOOTSTRAP_LAST_FIELDS) {
+    if (diagnostics[field] !== null && diagnostics[field] !== undefined) {
+      status[field] = diagnostics[field];
+    }
+  }
 }
 
 function normalizeProfileIds(values, max = 100) {
@@ -181,11 +243,19 @@ async function createFomoBrowserApi(options = {}) {
   const userRequestIds = new Set();
   const diagnostics = {
     userBootstrapRequests: 0, userBootstrapResponses: 0,
+    userBootstrapExtraInfoResponses: 0, userBootstrapLoadingFailures: 0,
     userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
     userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
+    lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
+    lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
     lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
     lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
   };
+
+  function diagnosticsSnapshot() {
+    return { authSource, identitySource, ...diagnostics, userBootstrapPendingAtEnd: userRequestIds.size };
+  }
   const authContextPromise = new Promise((resolve, reject) => {
     resolveAuthContext = resolve;
     rejectAuthContext = reject;
@@ -245,6 +315,22 @@ async function createFomoBrowserApi(options = {}) {
     diagnostics.lastUserBootstrapHttpStatus = Number.isInteger(status) ? status : null;
   }
 
+  function inspectResponseExtraInfo(event) {
+    if (!userRequestIds.has(event?.requestId)) return;
+    diagnostics.userBootstrapExtraInfoResponses += 1;
+    const status = Number(event?.statusCode);
+    diagnostics.lastUserBootstrapExtraInfoStatus = Number.isInteger(status) ? status : null;
+  }
+
+  function inspectLoadingFailed(event) {
+    if (!userRequestIds.delete(event?.requestId)) return;
+    diagnostics.userBootstrapLoadingFailures += 1;
+    diagnostics.lastUserBootstrapFailureCategory = loadingFailureCategory(event);
+    diagnostics.lastUserBootstrapBlockedReason = blockedReasonCategory(event.blockedReason);
+    diagnostics.lastUserBootstrapCorsError = corsErrorCategory(event.corsErrorStatus?.corsError);
+    diagnostics.lastUserBootstrapCanceled = event.canceled === true;
+  }
+
   function inspectExtraInfo(event) {
     if (apiRequestIds.has(event?.requestId)) inspectHeaders(event.headers);
   }
@@ -284,10 +370,22 @@ async function createFomoBrowserApi(options = {}) {
     }
   }
 
+  function removeCaptureListeners() {
+    cdp.off('Network.requestWillBeSent', inspectRequest);
+    cdp.off('Network.responseReceived', inspectResponse);
+    cdp.off('Network.responseReceivedExtraInfo', inspectResponseExtraInfo);
+    cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
+    cdp.off('Network.loadingFinished', inspectLoadingFinished);
+    cdp.off('Network.loadingFailed', inspectLoadingFailed);
+    cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
+  }
+
   cdp.on('Network.requestWillBeSent', inspectRequest);
   cdp.on('Network.responseReceived', inspectResponse);
+  cdp.on('Network.responseReceivedExtraInfo', inspectResponseExtraInfo);
   cdp.on('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
   cdp.on('Network.loadingFinished', inspectLoadingFinished);
+  cdp.on('Network.loadingFailed', inspectLoadingFailed);
   cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
   await cdp.send('Network.enable');
   timeout = setTimeout(() => {
@@ -313,25 +411,17 @@ async function createFomoBrowserApi(options = {}) {
     clearTimeout(timeout);
     authSettled = true;
     userSettled = true;
-    cdp.off('Network.requestWillBeSent', inspectRequest);
-    cdp.off('Network.responseReceived', inspectResponse);
-    cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
-    cdp.off('Network.loadingFinished', inspectLoadingFinished);
-    cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
+    removeCaptureListeners();
     await detachSession(cdp);
     const failure = error instanceof Error ? error : new Error('Fomo browser API capture failed');
-    failure.fomoDiagnostics = { authSource, identitySource, ...diagnostics };
+    failure.fomoDiagnostics = diagnosticsSnapshot();
     throw failure;
   }
-  cdp.off('Network.requestWillBeSent', inspectRequest);
-  cdp.off('Network.responseReceived', inspectResponse);
-  cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
-  cdp.off('Network.loadingFinished', inspectLoadingFinished);
-  cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
+  removeCaptureListeners();
 
   return {
     currentUserId,
-    diagnostics: { authSource, identitySource, ...diagnostics },
+    diagnostics: diagnosticsSnapshot(),
     async request(path, init = {}) {
       try {
         return await page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit, timeoutMs }) => {
@@ -411,8 +501,12 @@ function createFomoBrowserFollowQueue(options = {}) {
     lastFailureCode: null, lastFailureAt: null, lastFailurePhase: null,
     lastApiReadyAt: null, lastAuthSource: null, lastIdentitySource: null,
     userBootstrapRequests: 0, userBootstrapResponses: 0,
+    userBootstrapExtraInfoResponses: 0, userBootstrapLoadingFailures: 0,
     userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
     userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
+    lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
+    lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
     lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
     lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
     lastAlertErrorCode: null, completedAt: null,
@@ -584,23 +678,9 @@ function createFomoBrowserFollowQueue(options = {}) {
 
   function recordApiDiagnostics(diagnostics) {
     if (!diagnostics) return;
-    status.lastAuthSource = diagnostics?.authSource || status.lastAuthSource;
-    status.lastIdentitySource = diagnostics?.identitySource || status.lastIdentitySource;
-    status.userBootstrapRequests += Number(diagnostics.userBootstrapRequests) || 0;
-    status.userBootstrapResponses += Number(diagnostics.userBootstrapResponses) || 0;
-    status.userBootstrapBodyReads += Number(diagnostics.userBootstrapBodyReads) || 0;
-    status.userBootstrapBodyReadErrors += Number(diagnostics.userBootstrapBodyReadErrors) || 0;
-    status.userBootstrapJsonErrors += Number(diagnostics.userBootstrapJsonErrors) || 0;
-    status.lastUserBootstrapHttpStatus = diagnostics.lastUserBootstrapHttpStatus
-      ?? status.lastUserBootstrapHttpStatus;
-    status.lastUserBootstrapBodyShape = diagnostics.lastUserBootstrapBodyShape
-      || status.lastUserBootstrapBodyShape;
-    status.lastUserBootstrapResponseObjectShape = diagnostics.lastUserBootstrapResponseObjectShape
-      || status.lastUserBootstrapResponseObjectShape;
-    status.lastUserBootstrapIdentityPath = diagnostics.lastUserBootstrapIdentityPath
-      || status.lastUserBootstrapIdentityPath;
-    status.lastUserBootstrapIdentityFormat = diagnostics.lastUserBootstrapIdentityFormat
-      || status.lastUserBootstrapIdentityFormat;
+    status.lastAuthSource = diagnostics.authSource || status.lastAuthSource;
+    status.lastIdentitySource = diagnostics.identitySource || status.lastIdentitySource;
+    mergeBootstrapDiagnostics(status, diagnostics);
   }
 
   function recordFollowPlan(plan) {

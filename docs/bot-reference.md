@@ -2046,6 +2046,11 @@ do identificador pertence a uma lista fixa de estruturas conhecidas. O formato
 do identificador informa apenas `uuid`, `non_uuid` ou `missing`. Esses campos não
 armazenam o ID, chaves livres, body, URL, query ou headers da resposta.
 
+Requests sem `responseReceived` são separados entre pendentes ao fim da captura e
+terminados por `Network.loadingFailed`. Respostas `ExtraInfo` preservam apenas o
+status numérico. Motivo de falha, bloqueio e CORS é reduzido a categorias fixas;
+`errorText` e os enums originais do CDP nunca entram na telemetria.
+
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
