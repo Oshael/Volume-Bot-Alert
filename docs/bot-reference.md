@@ -2056,6 +2056,11 @@ inspecionados somente contra caminhos de identidade predefinidos. A telemetria
 guarda encoding, shapes, caminho reconhecido e formato `uuid`, `non_uuid` ou
 `missing`; valores, chaves livres, bodies e frames completos nunca são retidos.
 
+Tokens Bearer observados são deduplicados somente em memória durante a captura.
+Quando têm formato JWT, apenas o payload decodificado é comparado com claims de
+identidade predefinidas. A lease guarda contagens, formato, shape e caminho/formato
+da identidade; o token e os valores das claims nunca são persistidos.
+
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por

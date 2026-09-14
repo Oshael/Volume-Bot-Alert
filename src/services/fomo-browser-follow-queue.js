@@ -37,11 +37,25 @@ const USER_ID_CANDIDATES = Object.freeze([
   ['root_profile_id_snake', (body) => body?.profile_id],
   ['root_account_id_snake', (body) => body?.account_id],
 ]);
+const JWT_ID_CANDIDATES = Object.freeze([
+  ['subject', (body) => body?.sub],
+  ...USER_ID_CANDIDATES,
+  ['user_metadata_id', (body) => body?.user_metadata?.id],
+  ['user_metadata_user_id', (body) => body?.user_metadata?.userId],
+  ['user_metadata_user_id_snake', (body) => body?.user_metadata?.user_id],
+  ['app_metadata_id', (body) => body?.app_metadata?.id],
+  ['app_metadata_user_id', (body) => body?.app_metadata?.userId],
+  ['app_metadata_user_id_snake', (body) => body?.app_metadata?.user_id],
+  ['metadata_id', (body) => body?.metadata?.id],
+  ['metadata_user_id', (body) => body?.metadata?.userId],
+  ['metadata_user_id_snake', (body) => body?.metadata?.user_id],
+]);
 const BOOTSTRAP_COUNT_FIELDS = Object.freeze([
   'userBootstrapRequests', 'userBootstrapResponses', 'userBootstrapExtraInfoResponses',
   'userBootstrapLoadingFailures', 'userBootstrapBodyReads',
   'userBootstrapBodyReadErrors', 'userBootstrapJsonErrors', 'userBootstrapRequestBodies',
   'userBootstrapRequestBodyParseErrors', 'challengeAcceptedFrames',
+  'authorizationTokensInspected', 'jwtPayloadsInspected', 'jwtPayloadDecodeErrors',
 ]);
 const BOOTSTRAP_LAST_FIELDS = Object.freeze([
   'lastUserBootstrapHttpStatus', 'lastUserBootstrapExtraInfoStatus',
@@ -54,7 +68,8 @@ const BOOTSTRAP_LAST_FIELDS = Object.freeze([
   'lastUserBootstrapRequestIdentityFormat', 'lastChallengeAcceptedIdentityPath',
   'lastChallengeAcceptedIdentityFormat', 'lastChallengeAcceptedDataShape',
   'lastChallengeAcceptedPayloadShape', 'lastChallengeAcceptedUserShape',
-  'lastChallengeAcceptedProfileShape',
+  'lastChallengeAcceptedProfileShape', 'lastAuthorizationTokenFormat',
+  'lastJwtPayloadShape', 'lastJwtIdentityPath', 'lastJwtIdentityFormat',
 ]);
 
 function valueShape(value) {
@@ -63,9 +78,9 @@ function valueShape(value) {
   return typeof value;
 }
 
-function inspectUserBootstrapBody(body) {
+function inspectUserBootstrapBody(body, candidates = USER_ID_CANDIDATES) {
   let firstPresent = null;
-  for (const [path, read] of USER_ID_CANDIDATES) {
+  for (const [path, read] of candidates) {
     const value = String(read(body) || '').trim();
     if (!value) continue;
     const candidate = { path, format: UUID.test(value) ? 'uuid' : 'non_uuid', value };
@@ -73,6 +88,17 @@ function inspectUserBootstrapBody(body) {
     firstPresent ||= candidate;
   }
   return firstPresent || { path: 'missing', format: 'missing', value: null };
+}
+
+function decodeJwtPayload(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) return { format: 'opaque', payload: null, decodeError: false };
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return { format: 'jwt', payload, decodeError: false };
+  } catch {
+    return { format: 'invalid_jwt', payload: null, decodeError: true };
+  }
 }
 
 function parseRequestBody(request = {}) {
@@ -283,6 +309,7 @@ async function createFomoBrowserApi(options = {}) {
   let rejectCurrentUserId;
   const apiRequestIds = new Set();
   const userRequestIds = new Set();
+  const observedAuthorizationTokens = new Set();
   const diagnostics = {
     userBootstrapRequests: 0, userBootstrapResponses: 0,
     userBootstrapExtraInfoResponses: 0, userBootstrapLoadingFailures: 0,
@@ -290,6 +317,7 @@ async function createFomoBrowserApi(options = {}) {
     userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
     userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 0,
+    authorizationTokensInspected: 0, jwtPayloadsInspected: 0, jwtPayloadDecodeErrors: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -300,6 +328,8 @@ async function createFomoBrowserApi(options = {}) {
     lastChallengeAcceptedIdentityPath: null, lastChallengeAcceptedIdentityFormat: null,
     lastChallengeAcceptedDataShape: null, lastChallengeAcceptedPayloadShape: null,
     lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
+    lastAuthorizationTokenFormat: null, lastJwtPayloadShape: null,
+    lastJwtIdentityPath: null, lastJwtIdentityFormat: null,
   };
 
   function diagnosticsSnapshot() {
@@ -319,8 +349,23 @@ async function createFomoBrowserApi(options = {}) {
   }
 
   function settleAuthorization(authorization, supportedChains, source) {
-    if (authSettled) return;
     if (typeof authorization !== 'string' || !/^Bearer\s+\S+$/i.test(authorization)) return;
+    const token = authorization.replace(/^Bearer\s+/i, '');
+    if (!observedAuthorizationTokens.has(token)) {
+      observedAuthorizationTokens.add(token);
+      diagnostics.authorizationTokensInspected += 1;
+      const decoded = decodeJwtPayload(token);
+      diagnostics.lastAuthorizationTokenFormat = decoded.format;
+      if (decoded.decodeError) diagnostics.jwtPayloadDecodeErrors += 1;
+      if (decoded.payload !== null) {
+        diagnostics.jwtPayloadsInspected += 1;
+        diagnostics.lastJwtPayloadShape = valueShape(decoded.payload);
+        const identity = inspectUserBootstrapBody(decoded.payload, JWT_ID_CANDIDATES);
+        diagnostics.lastJwtIdentityPath = identity.path;
+        diagnostics.lastJwtIdentityFormat = identity.format;
+      }
+    }
+    if (authSettled) return;
     authSettled = true;
     authSource = source;
     resolveAuthContext({ authorization, supportedChains });
@@ -580,6 +625,7 @@ function createFomoBrowserFollowQueue(options = {}) {
     userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
     userBootstrapRequestBodies: 0, userBootstrapRequestBodyParseErrors: 0,
     challengeAcceptedFrames: 0,
+    authorizationTokensInspected: 0, jwtPayloadsInspected: 0, jwtPayloadDecodeErrors: 0,
     lastUserBootstrapExtraInfoStatus: null, userBootstrapPendingAtEnd: 0,
     lastUserBootstrapFailureCategory: null, lastUserBootstrapBlockedReason: null,
     lastUserBootstrapCorsError: null, lastUserBootstrapCanceled: null,
@@ -590,6 +636,8 @@ function createFomoBrowserFollowQueue(options = {}) {
     lastChallengeAcceptedIdentityPath: null, lastChallengeAcceptedIdentityFormat: null,
     lastChallengeAcceptedDataShape: null, lastChallengeAcceptedPayloadShape: null,
     lastChallengeAcceptedUserShape: null, lastChallengeAcceptedProfileShape: null,
+    lastAuthorizationTokenFormat: null, lastJwtPayloadShape: null,
+    lastJwtIdentityPath: null, lastJwtIdentityFormat: null,
     lastAlertErrorCode: null, completedAt: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
   };
