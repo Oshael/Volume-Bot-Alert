@@ -7,6 +7,34 @@ const { detachCdpSession } = require('./fomo-cdp-session');
 const API_ORIGIN = 'https://prod-api.fomo.family';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DISCOVERY_TIMEFRAMES = ['24h', '7d', '30d'];
+const USER_ID_CANDIDATES = Object.freeze([
+  ['response_object_id', (body) => body?.responseObject?.id],
+  ['response_object_user_id', (body) => body?.responseObject?.userId],
+  ['response_object_user_object_id', (body) => body?.responseObject?.user?.id],
+  ['response_object_profile_id', (body) => body?.responseObject?.profile?.id],
+  ['root_id', (body) => body?.id],
+  ['root_user_id', (body) => body?.userId],
+  ['root_user_object_id', (body) => body?.user?.id],
+  ['root_profile_id', (body) => body?.profile?.id],
+]);
+
+function valueShape(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function inspectUserBootstrapBody(body) {
+  let firstPresent = null;
+  for (const [path, read] of USER_ID_CANDIDATES) {
+    const value = String(read(body) || '').trim();
+    if (!value) continue;
+    const candidate = { path, format: UUID.test(value) ? 'uuid' : 'non_uuid', value };
+    if (candidate.format === 'uuid') return candidate;
+    firstPresent ||= candidate;
+  }
+  return firstPresent || { path: 'missing', format: 'missing', value: null };
+}
 
 function normalizeProfileIds(values, max = 100) {
   const unique = [...new Set((Array.isArray(values) ? values : [])
@@ -151,6 +179,13 @@ async function createFomoBrowserApi(options = {}) {
   let rejectCurrentUserId;
   const apiRequestIds = new Set();
   const userRequestIds = new Set();
+  const diagnostics = {
+    userBootstrapRequests: 0, userBootstrapResponses: 0,
+    userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
+    userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
+    lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
+  };
   const authContextPromise = new Promise((resolve, reject) => {
     resolveAuthContext = resolve;
     rejectAuthContext = reject;
@@ -198,8 +233,16 @@ async function createFomoBrowserApi(options = {}) {
     apiRequestIds.add(event.requestId);
     if (event.request.method === 'POST' && url.pathname === '/v2/users') {
       userRequestIds.add(event.requestId);
+      diagnostics.userBootstrapRequests += 1;
     }
     inspectHeaders(event.request.headers);
+  }
+
+  function inspectResponse(event) {
+    if (!userRequestIds.has(event?.requestId)) return;
+    diagnostics.userBootstrapResponses += 1;
+    const status = Number(event?.response?.status);
+    diagnostics.lastUserBootstrapHttpStatus = Number.isInteger(status) ? status : null;
   }
 
   function inspectExtraInfo(event) {
@@ -218,17 +261,31 @@ async function createFomoBrowserApi(options = {}) {
   }
 
   async function inspectLoadingFinished(event) {
-    if (userSettled || !userRequestIds.delete(event?.requestId)) return;
+    if (!userRequestIds.delete(event?.requestId)) return;
     try {
       const result = await cdp.send('Network.getResponseBody', { requestId: event.requestId });
+      diagnostics.userBootstrapBodyReads += 1;
       const text = result.base64Encoded
         ? Buffer.from(result.body, 'base64').toString('utf8') : result.body;
-      const body = JSON.parse(text);
+      let body;
+      try { body = JSON.parse(text); } catch {
+        diagnostics.userBootstrapJsonErrors += 1;
+        diagnostics.lastUserBootstrapBodyShape = 'invalid_json';
+        return;
+      }
+      const identity = inspectUserBootstrapBody(body);
+      diagnostics.lastUserBootstrapBodyShape = valueShape(body);
+      diagnostics.lastUserBootstrapResponseObjectShape = valueShape(body?.responseObject);
+      diagnostics.lastUserBootstrapIdentityPath = identity.path;
+      diagnostics.lastUserBootstrapIdentityFormat = identity.format;
       settleCurrentUserId(body?.responseObject?.id, 'user_response');
-    } catch {}
+    } catch {
+      diagnostics.userBootstrapBodyReadErrors += 1;
+    }
   }
 
   cdp.on('Network.requestWillBeSent', inspectRequest);
+  cdp.on('Network.responseReceived', inspectResponse);
   cdp.on('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
   cdp.on('Network.loadingFinished', inspectLoadingFinished);
   cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
@@ -257,22 +314,24 @@ async function createFomoBrowserApi(options = {}) {
     authSettled = true;
     userSettled = true;
     cdp.off('Network.requestWillBeSent', inspectRequest);
+    cdp.off('Network.responseReceived', inspectResponse);
     cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
     cdp.off('Network.loadingFinished', inspectLoadingFinished);
     cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
     await detachSession(cdp);
     const failure = error instanceof Error ? error : new Error('Fomo browser API capture failed');
-    failure.fomoDiagnostics = { authSource, identitySource };
+    failure.fomoDiagnostics = { authSource, identitySource, ...diagnostics };
     throw failure;
   }
   cdp.off('Network.requestWillBeSent', inspectRequest);
+  cdp.off('Network.responseReceived', inspectResponse);
   cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
   cdp.off('Network.loadingFinished', inspectLoadingFinished);
   cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
 
   return {
     currentUserId,
-    diagnostics: { authSource, identitySource },
+    diagnostics: { authSource, identitySource, ...diagnostics },
     async request(path, init = {}) {
       try {
         return await page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit, timeoutMs }) => {
@@ -351,6 +410,11 @@ function createFomoBrowserFollowQueue(options = {}) {
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
     lastFailureCode: null, lastFailureAt: null, lastFailurePhase: null,
     lastApiReadyAt: null, lastAuthSource: null, lastIdentitySource: null,
+    userBootstrapRequests: 0, userBootstrapResponses: 0,
+    userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
+    userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
+    lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
     lastAlertErrorCode: null, completedAt: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
   };
@@ -519,8 +583,24 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   function recordApiDiagnostics(diagnostics) {
+    if (!diagnostics) return;
     status.lastAuthSource = diagnostics?.authSource || status.lastAuthSource;
     status.lastIdentitySource = diagnostics?.identitySource || status.lastIdentitySource;
+    status.userBootstrapRequests += Number(diagnostics.userBootstrapRequests) || 0;
+    status.userBootstrapResponses += Number(diagnostics.userBootstrapResponses) || 0;
+    status.userBootstrapBodyReads += Number(diagnostics.userBootstrapBodyReads) || 0;
+    status.userBootstrapBodyReadErrors += Number(diagnostics.userBootstrapBodyReadErrors) || 0;
+    status.userBootstrapJsonErrors += Number(diagnostics.userBootstrapJsonErrors) || 0;
+    status.lastUserBootstrapHttpStatus = diagnostics.lastUserBootstrapHttpStatus
+      ?? status.lastUserBootstrapHttpStatus;
+    status.lastUserBootstrapBodyShape = diagnostics.lastUserBootstrapBodyShape
+      || status.lastUserBootstrapBodyShape;
+    status.lastUserBootstrapResponseObjectShape = diagnostics.lastUserBootstrapResponseObjectShape
+      || status.lastUserBootstrapResponseObjectShape;
+    status.lastUserBootstrapIdentityPath = diagnostics.lastUserBootstrapIdentityPath
+      || status.lastUserBootstrapIdentityPath;
+    status.lastUserBootstrapIdentityFormat = diagnostics.lastUserBootstrapIdentityFormat
+      || status.lastUserBootstrapIdentityFormat;
   }
 
   function recordFollowPlan(plan) {

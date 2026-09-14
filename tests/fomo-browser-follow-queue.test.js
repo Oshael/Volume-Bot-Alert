@@ -79,6 +79,9 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
         headers: { Authorization: 'Bearer fixture-token', 'X-Supported-Chains': 'solana' },
       },
     });
+    cdp.emit('Network.responseReceived', {
+      requestId: 'api-1', response: { status: 200 },
+    });
     cdp.emit('Network.loadingFinished', { requestId: 'api-1' });
   };
   page.evaluate = async (_callback, input) => { evaluation = input; return ok({}); };
@@ -89,6 +92,13 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
   assert.equal(api.currentUserId, USER);
   assert.deepEqual(api.diagnostics, {
     authSource: 'http_request', identitySource: 'user_response',
+    userBootstrapRequests: 1, userBootstrapResponses: 1,
+    userBootstrapBodyReads: 1, userBootstrapBodyReadErrors: 0,
+    userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: 200,
+    lastUserBootstrapBodyShape: 'object',
+    lastUserBootstrapResponseObjectShape: 'object',
+    lastUserBootstrapIdentityPath: 'response_object_id',
+    lastUserBootstrapIdentityFormat: 'uuid',
   });
   await api.request('/follows', { method: 'POST', body: { following_id: A } });
   assert.equal(evaluation.requestPath, '/follows');
@@ -132,6 +142,13 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   assert.equal(api.currentUserId, USER);
   assert.deepEqual(api.diagnostics, {
     authSource: 'websocket_challenge', identitySource: 'websocket_subscribe',
+    userBootstrapRequests: 0, userBootstrapResponses: 0,
+    userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
+    userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    lastUserBootstrapBodyShape: null,
+    lastUserBootstrapResponseObjectShape: null,
+    lastUserBootstrapIdentityPath: null,
+    lastUserBootstrapIdentityFormat: null,
   });
   assert.equal(evaluation.auth.authorization, 'Bearer ws-token');
   assert.equal(evaluation.auth.supportedChains, undefined);
@@ -144,7 +161,11 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
 
 test('Fomo browser API preserves observed auth source when identity times out', async () => {
   const cdp = new EventEmitter();
-  cdp.send = async () => ({});
+  cdp.send = async (method) => (method === 'Network.getResponseBody'
+    ? { body: JSON.stringify({
+      responseObject: { user: { id: USER }, activated: true },
+    }), base64Encoded: false }
+    : {});
   cdp.detach = async () => {};
   const page = new EventEmitter();
   page.url = () => 'https://fomo.family/alerts';
@@ -154,6 +175,16 @@ test('Fomo browser API preserves observed auth source when identity times out', 
     cdp.emit('Network.webSocketFrameSent', {
       response: { payloadData: JSON.stringify({ type: 'challengeResponse', jwt: 'ws-token' }) },
     });
+    cdp.emit('Network.requestWillBeSent', {
+      requestId: 'api-missing-id', request: {
+        url: 'https://prod-api.fomo.family/v2/users', method: 'POST',
+        headers: { Authorization: 'Bearer ws-token' },
+      },
+    });
+    cdp.emit('Network.responseReceived', {
+      requestId: 'api-missing-id', response: { status: 200 },
+    });
+    cdp.emit('Network.loadingFinished', { requestId: 'api-missing-id' });
   };
   const browser = { contexts: () => [context] };
 
@@ -161,7 +192,10 @@ test('Fomo browser API preserves observed auth source when identity times out', 
     createFomoBrowserApi({ connectOverCDP: async () => browser, authWaitMs: 1 }),
     (error) => error.code === 'FOMO_FOLLOW_PROFILE_TIMEOUT'
       && error.fomoDiagnostics?.authSource === 'websocket_challenge'
-      && error.fomoDiagnostics?.identitySource === null,
+      && error.fomoDiagnostics?.identitySource === null
+      && error.fomoDiagnostics?.lastUserBootstrapHttpStatus === 200
+      && error.fomoDiagnostics?.lastUserBootstrapIdentityPath === 'response_object_user_object_id'
+      && error.fomoDiagnostics?.lastUserBootstrapIdentityFormat === 'uuid',
   );
 });
 
@@ -217,6 +251,11 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     lastFailureCode: null, lastFailureAt: null, lastFailurePhase: null,
     lastApiReadyAt: queue.getStatus().lastApiReadyAt,
     lastAuthSource: null, lastIdentitySource: null,
+    userBootstrapRequests: 0, userBootstrapResponses: 0,
+    userBootstrapBodyReads: 0, userBootstrapBodyReadErrors: 0,
+    userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: null,
+    lastUserBootstrapBodyShape: null, lastUserBootstrapResponseObjectShape: null,
+    lastUserBootstrapIdentityPath: null, lastUserBootstrapIdentityFormat: null,
     cdpDetachErrors: 0, cdpDetachTimeouts: 0, lastCdpDetachErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
@@ -579,7 +618,16 @@ test('Fomo follow keeps its durable pause when Telegram delivery fails', async (
 test('Fomo follow queue persists timeouts and does not attempt a write', async () => {
   const saved = [];
   const timeout = Object.assign(new Error('timeout'), { code: 'FOMO_FOLLOW_AUTH_TIMEOUT' });
-  timeout.fomoDiagnostics = { authSource: 'websocket_challenge', identitySource: null };
+  timeout.fomoDiagnostics = {
+    authSource: 'websocket_challenge', identitySource: null,
+    userBootstrapRequests: 3, userBootstrapResponses: 3,
+    userBootstrapBodyReads: 2, userBootstrapBodyReadErrors: 1,
+    userBootstrapJsonErrors: 0, lastUserBootstrapHttpStatus: 200,
+    lastUserBootstrapBodyShape: 'object',
+    lastUserBootstrapResponseObjectShape: 'object',
+    lastUserBootstrapIdentityPath: 'missing',
+    lastUserBootstrapIdentityFormat: 'missing',
+  };
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A],
     createBrowserApi: async () => { throw timeout; },
@@ -594,6 +642,12 @@ test('Fomo follow queue persists timeouts and does not attempt a write', async (
   assert.equal(queue.getStatus().lastFailurePhase, 'browser_auth');
   assert.equal(queue.getStatus().lastAuthSource, 'websocket_challenge');
   assert.equal(queue.getStatus().lastIdentitySource, null);
+  assert.equal(queue.getStatus().userBootstrapRequests, 3);
+  assert.equal(queue.getStatus().userBootstrapResponses, 3);
+  assert.equal(queue.getStatus().userBootstrapBodyReads, 2);
+  assert.equal(queue.getStatus().userBootstrapBodyReadErrors, 1);
+  assert.equal(queue.getStatus().lastUserBootstrapHttpStatus, 200);
+  assert.equal(queue.getStatus().lastUserBootstrapIdentityPath, 'missing');
   assert.notEqual(queue.getStatus().lastFailureAt, null);
   assert.equal(saved.length, 1);
 });

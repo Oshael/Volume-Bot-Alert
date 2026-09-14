@@ -2039,6 +2039,13 @@ query, headers ou corpo. A fila preserva `lastAuthSource` mesmo quando a captura
 de identidade expira antes de criar a API, permitindo distinguir autenticação
 observada de descoberta do usuário.
 
+Durante a captura de identidade, a fila conta requests, responses, leituras de
+body, falhas de leitura e JSON inválido do bootstrap `POST /v2/users`. O último
+status HTTP é numérico; shapes são limitados a tipos JSON/JavaScript e o caminho
+do identificador pertence a uma lista fixa de estruturas conhecidas. O formato
+do identificador informa apenas `uuid`, `non_uuid` ou `missing`. Esses campos não
+armazenam o ID, chaves livres, body, URL, query ou headers da resposta.
+
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
