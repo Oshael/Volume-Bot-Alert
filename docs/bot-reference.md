@@ -4228,6 +4228,8 @@ seguida drene novamente enrichment e finalizer. Divergência aborta antes do com
 não corrija contadores ou cursores manualmente.
 O validador reconhece os perfis de tópicos atual e legado anterior à captura de
 `ModifyLiquidity` V4, escolhendo-os apenas por reconciliação exata do manifest.
+O catálogo também é reconstruído pelo `created_at` das pools no instante de
+conclusão de cada range; perfis com identidades ambíguas são recusados.
 
 #### Recovery de buckets Robinhood
 

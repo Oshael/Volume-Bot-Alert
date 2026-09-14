@@ -16,6 +16,7 @@ function range(overrides = {}) {
     id: '7', from_block: '100', to_block: '109', raw_log_count: 1,
     tracked_log_count: 1, checkpoint_hash: HASH,
     checkpoint_timestamp: new Date('2026-01-01T00:00:00.000Z'),
+    completed_at: new Date('2026-01-01T00:01:00.000Z'),
     staging_count: 0, total_broken: 1, ...overrides,
   };
 }
@@ -34,7 +35,7 @@ function dependencies(overrides = {}) {
       listBrokenRanges: async () => [sourceRange],
       listPoolsForLogs: async () => [{
         protocol: 'uniswap-v3', market_key: 'robinhood:uniswap-v3:test',
-        pool_address: ADDRESS,
+        pool_address: ADDRESS, created_at: new Date('2025-12-31T00:00:00.000Z'),
       }],
     },
     rpc: {
@@ -66,6 +67,7 @@ describe('Robinhood backfill staging repair', () => {
     assert.deepEqual(result, {
       mode: 'dry-run', ranges: 1, logs: 1, firstBlock: '100', lastBlock: '109',
       topicProfiles: ['current'],
+      catalogProfiles: ['capture-time'],
     });
     assert.equal(written, false);
   });
@@ -93,7 +95,7 @@ describe('Robinhood backfill staging repair', () => {
 
     await assert.rejects(
       runRepair({ apply: true, rpcUrl: 'http://archive', maxRanges: 100 }, deps),
-      /tracked log count does not match/
+      /tracked log count mismatch/
     );
     assert.equal(written, false);
   });
@@ -115,5 +117,30 @@ describe('Robinhood backfill staging repair', () => {
 
     assert.equal(result.logs, 1);
     assert.deepEqual(result.topicProfiles, ['legacy-without-v4-liquidity']);
+  });
+
+  it('uses only pools that existed when the manifest was captured', async () => {
+    const deps = dependencies({ range: { raw_log_count: 2 } });
+    const newerAddress = `0x${'e'.repeat(40)}`;
+    deps.repository.listPoolsForLogs = async () => [
+      ...(await dependencies().repository.listPoolsForLogs()),
+      {
+        protocol: 'uniswap-v3', market_key: 'robinhood:uniswap-v3:newer',
+        pool_address: newerAddress, created_at: new Date('2026-01-02T00:00:00.000Z'),
+      },
+    ];
+    const request = deps.rpc.requestProvider;
+    deps.rpc.requestProvider = async (provider, method) => (
+      method === 'eth_getLogs'
+        ? [rawLog(), { ...rawLog(), transactionHash: `0x${'f'.repeat(64)}`, address: newerAddress }]
+        : request(provider, method)
+    );
+
+    const result = await runRepair(
+      { apply: false, rpcUrl: 'http://archive', maxRanges: 100 }, deps
+    );
+
+    assert.equal(result.logs, 1);
+    assert.deepEqual(result.catalogProfiles, ['capture-time']);
   });
 });

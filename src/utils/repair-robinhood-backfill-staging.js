@@ -53,7 +53,7 @@ function createRepairRepository(database = db) {
        ), broken AS MATERIALIZED (
          SELECT ranges.id::text, ranges.from_block::text, ranges.to_block::text,
                 ranges.raw_log_count, ranges.tracked_log_count,
-                ranges.checkpoint_hash, ranges.checkpoint_timestamp,
+                ranges.checkpoint_hash, ranges.checkpoint_timestamp, ranges.completed_at,
                 COUNT(staging.transaction_hash)::int AS staging_count
          FROM robinhood_backfill_ranges ranges
          CROSS JOIN frontiers
@@ -94,7 +94,7 @@ function createRepairRepository(database = db) {
        SELECT registry.protocol, registry.market_key, registry.pool_address,
               registry.pool_id, registry.origin_address, registry.token_address,
               registry.quote_address, registry.currency0, registry.currency1,
-              registry.fee, registry.tick_spacing, registry.metadata
+              registry.fee, registry.tick_spacing, registry.metadata, registry.created_at
        FROM requested JOIN robinhood_pool_registry registry
          ON registry.chain = 'robinhood' AND registry.protocol = requested.protocol
         AND registry.pool_address = requested.pool_address
@@ -103,7 +103,7 @@ function createRepairRepository(database = db) {
        SELECT registry.protocol, registry.market_key, registry.pool_address,
               registry.pool_id, registry.origin_address, registry.token_address,
               registry.quote_address, registry.currency0, registry.currency1,
-              registry.fee, registry.tick_spacing, registry.metadata
+              registry.fee, registry.tick_spacing, registry.metadata, registry.created_at
        FROM requested JOIN robinhood_pool_registry registry
          ON registry.chain = 'robinhood' AND registry.protocol = requested.protocol
         AND registry.pool_id = requested.pool_id
@@ -162,6 +162,33 @@ async function recaptureRange(client, range) {
   };
 }
 
+function selectCatalogProfile(rawLogs, pools, range) {
+  const captureTime = new Date(range.completed_at).getTime();
+  if (!Number.isFinite(captureTime)) throw new Error(`Range ${range.id} has invalid completion time`);
+  const profiles = [
+    ['capture-time', pools.filter((pool) => new Date(pool.created_at).getTime() <= captureTime)],
+    ['current', pools],
+  ].map(([name, profilePools]) => ({
+    name,
+    logs: selectTrackedLogs(rawLogs, profilePools),
+  }));
+  const expected = Number(range.tracked_log_count);
+  const matches = profiles.filter(({ logs }) => logs.length === expected);
+  if (!matches.length) {
+    throw new Error(
+      `Range ${range.id} tracked log count mismatch: expected=${expected} `
+      + profiles.map(({ name, logs }) => `${name}=${logs.length}`).join(' ')
+    );
+  }
+  const identitySet = (logs) => [...logs]
+    .map((log) => `${String(log.transactionHash).toLowerCase()}:${String(log.logIndex).toLowerCase()}`)
+    .sort().join(',');
+  if (new Set(matches.map(({ logs }) => identitySet(logs))).size !== 1) {
+    throw new Error(`Range ${range.id} has ambiguous catalog profiles`);
+  }
+  return matches[0];
+}
+
 async function runRepair(options, deps = {}) {
   const repository = deps.repository || createRepairRepository(deps.database || db);
   const ranges = await repository.listBrokenRanges(options.maxRanges);
@@ -177,13 +204,11 @@ async function runRepair(options, deps = {}) {
   for (const range of ranges) captures.push(await recaptureRange(rpc, range));
   const pools = await repository.listPoolsForLogs(captures.flatMap(({ logs }) => logs));
   const repairs = ranges.map((range, index) => {
-    const logs = selectTrackedLogs(captures[index].logs, pools);
-    if (logs.length !== Number(range.tracked_log_count)) {
-      throw new Error(`Range ${range.id} tracked log count does not match its manifest`);
-    }
+    const selected = selectCatalogProfile(captures[index].logs, pools, range);
     return {
       rangeId: range.id, fromBlock: range.from_block, toBlock: range.to_block,
-      rawLogCount: Number(range.raw_log_count), checkpointHash: range.checkpoint_hash, logs,
+      rawLogCount: Number(range.raw_log_count), checkpointHash: range.checkpoint_hash,
+      logs: selected.logs, catalogProfile: selected.name,
     };
   });
   const summary = {
@@ -193,6 +218,7 @@ async function runRepair(options, deps = {}) {
     firstBlock: ranges[0].from_block,
     lastBlock: ranges.at(-1).to_block,
     topicProfiles: [...new Set(captures.map(({ topicProfile }) => topicProfile))],
+    catalogProfiles: [...new Set(repairs.map(({ catalogProfile }) => catalogProfile))],
   };
   if (!options.apply) return summary;
   const capture = deps.capture || createRobinhoodBackfillCaptureRepository({
@@ -216,5 +242,5 @@ if (require.main === module) void run();
 
 module.exports = {
   runRepair,
-  __private: { createRepairRepository, parseArgs, recaptureRange },
+  __private: { createRepairRepository, parseArgs, recaptureRange, selectCatalogProfile },
 };
