@@ -203,51 +203,25 @@ test('Fomo browser stream reloads immediately when the attached page crashes', a
   await stream.stop();
 });
 
-test('Fomo browser stream reloads a stale page once and enforces its cooldown', async () => {
+test('Fomo browser stream never reloads solely because frames are silent', async () => {
   const fixture = fakeBrowser();
-  const timers = new Map();
-  const states = [];
-  let timerId = 0;
-  let currentMs = Date.parse('2026-08-29T06:00:00.000Z');
+  const schedules = [];
   let reloads = 0;
-  fixture.page.reload = async (options) => {
-    reloads += 1;
-    assert.deepEqual(options, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  };
+  fixture.page.reload = async () => { reloads += 1; };
   const stream = createFomoBrowserActivityStream({
     connectOverCDP: async () => fixture.browser,
-    now: () => currentMs,
     schedule: (callback, delayMs) => {
-      timerId += 1;
-      timers.set(timerId, { callback, delayMs });
-      return timerId;
+      schedules.push({ callback, delayMs });
+      return schedules.length;
     },
-    cancelSchedule: (id) => timers.delete(id),
-    onStatus: ({ state }) => states.push(state),
+    cancelSchedule: () => {},
   });
 
   stream.start();
   await nextTurn();
-  const stale = [...timers.entries()][0];
-  assert.equal(stale[1].delayMs, 90_000);
-  timers.delete(stale[0]);
-  stale[1].callback();
-  await nextTurn();
-  assert.equal(reloads, 1);
-  assert.equal(stream.getStatus().staleReloads, 1);
-  assert.equal(stream.getStatus().lastStaleReloadAt, '2026-08-29T06:00:00.000Z');
-  assert.equal(states.includes('stale_reloading'), true);
-
-  const duringCooldown = [...timers.entries()][0];
-  timers.delete(duringCooldown[0]);
-  duringCooldown[1].callback();
-  await nextTurn();
-  assert.equal(reloads, 1);
-  assert.equal([...timers.values()][0].delayMs, 300_000);
-
-  currentMs += 300_000;
+  assert.equal(schedules.length, 0);
+  assert.equal(reloads, 0);
   await stream.stop();
-  assert.equal(timers.size, 0);
 });
 
 test('Fomo browser stream reconnects before a stalled CDP detach finishes', async () => {
@@ -273,12 +247,10 @@ test('Fomo browser stream reconnects before a stalled CDP detach finishes', asyn
 
   stream.start();
   await nextTurn();
-  const stale = [...timers.entries()][0];
-  timers.delete(stale[0]);
-  stale[1].callback();
+  fixture.page.emit('crash');
   await nextTurn();
-  assert.equal(errors[0].code, 'FOMO_BROWSER_STALE_RELOAD');
-  assert.equal(stream.getStatus().staleReloadErrors, 1);
+  assert.equal(errors[0].code, 'FOMO_BROWSER_CRASH_RELOAD');
+  assert.equal(stream.getStatus().crashReloadErrors, 1);
   assert.equal(stream.getStatus().connected, false);
   assert.equal([...timers.values()][0].delayMs, 1_000);
   resolveDetach({

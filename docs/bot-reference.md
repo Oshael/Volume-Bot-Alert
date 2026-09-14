@@ -1973,29 +1973,30 @@ quando a pausa ainda não possui `alertSentAt`.
 
 No transporte `browser_cdp`, o mesmo canal também observa os eventos do stream
 sem fazer requests adicionais à Fomo. Erro de conexão, fechamento do browser/aba
-gera somente um alerta por incidente contínuo. A ausência total de frames por
-`FOMO_BROWSER_STALE_SECONDS` (default 90, mínimo 30) inicia a recuperação antes
-do alerta: o transporte recarrega automaticamente a página Fomo uma vez e aguarda
-novos frames por `FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS` (default 30, faixa
-5–300). Uma recuperação dentro dessa janela não gera alerta de incidente; reloads
-adicionais respeitam
-`FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS` (default 300, faixa 60–3600). Se
-o reload falhar, a sessão CDP é descartada e entra no backoff normal de reconnect.
-Um evento de crash do renderer (`Aw, Snap!`) inicia o reload imediatamente. Se o
-worker iniciar quando a aba já estiver crashada e duas conexões CDP consecutivas
-falharem, ele usa apenas a interface loopback do Chrome para reabrir a URL atual
-do target ou, quando ele não existe mais, a página conhecida do token Robinhood
-acima. A nova aba usa o mesmo perfil do navegador e é criada antes de fechar o
-target crashado. Essa ordem impede o Chrome de encerrar a janela quando a Fomo
-for seu único target. Esse
-reset respeita o mesmo cooldown e não fecha o Chrome nem toca em outras abas; ele
-não substitui supervisão systemd quando o processo inteiro do Chrome ou a porta
-CDP estiverem indisponíveis. `crashReloads`, `crashReloadErrors`, `pageResets`,
-`pageResetErrors`, `lastCrashReloadAt` e `lastPageResetAt` tornam o caminho
-observável.
+gera somente um alerta por incidente contínuo. Ausência total de frames por
+`FOMO_BROWSER_STALE_SECONDS` (default e mínimo 900) é somente um sinal de
+freshness: gera `FOMO_BROWSER_STREAM_STALE`, mas nunca recarrega a página,
+descarta a sessão ou agenda reconnect. Silêncio não comprova queda do browser.
 O primeiro frame posterior gera a mensagem de recuperação e rearma o watchdog.
-`staleReloads`, `staleReloadErrors` e `lastStaleReloadAt` expõem o auto-heal na
-telemetria do stream. A telemetria `fomoHealth`
+
+Um evento real de crash do renderer (`Aw, Snap!`) inicia o reload imediatamente
+e aguarda frames por `FOMO_BROWSER_RECOVERY_GRACE_SECONDS` (default 30, faixa
+5–300) antes do alerta. Se o reload falhar, a sessão CDP é descartada e entra no
+backoff normal de reconnect. Se o worker iniciar quando a aba já estiver crashada
+e duas conexões CDP consecutivas falharem, ele usa apenas a interface loopback do
+Chrome para reabrir a URL atual do target ou, quando ele não existe mais, a página
+conhecida do token Robinhood acima. A nova aba usa o mesmo perfil do navegador e
+é criada antes de fechar o target crashado. Essa ordem impede o Chrome de encerrar
+a janela quando a Fomo for seu único target. Esse reset respeita
+`FOMO_BROWSER_PAGE_RESET_COOLDOWN_SECONDS` (default 300, faixa 60–3600), não fecha
+o Chrome e não toca em outras abas; ele não substitui supervisão systemd quando o
+processo inteiro do Chrome ou a porta CDP estiverem indisponíveis. Os nomes antigos
+`FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS` e
+`FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS` permanecem aceitos como fallback.
+`crashReloads`, `crashReloadErrors`, `pageResets`, `pageResetErrors`,
+`lastCrashReloadAt` e `lastPageResetAt` tornam os caminhos observáveis.
+
+A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
 processo; reiniciar durante um incidente pode gerar um novo alerta.

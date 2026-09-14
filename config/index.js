@@ -885,13 +885,17 @@ module.exports = {
       browserHealth: {
         enabled: fomoTelegramAlertsEnabled,
         staleMs: parseIntegerInRange(
-          process.env.FOMO_BROWSER_STALE_SECONDS, 90, 30, 3600
+          process.env.FOMO_BROWSER_STALE_SECONDS, 900, 900, 3600
         ) * 1000,
-        recoveryCooldownMs: parseIntegerInRange(
-          process.env.FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS, 300, 60, 3600
+        pageResetCooldownMs: parseIntegerInRange(
+          process.env.FOMO_BROWSER_PAGE_RESET_COOLDOWN_SECONDS
+            ?? process.env.FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS,
+          300, 60, 3600
         ) * 1000,
         recoveryGraceMs: parseIntegerInRange(
-          process.env.FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS, 30, 5, 300
+          process.env.FOMO_BROWSER_RECOVERY_GRACE_SECONDS
+            ?? process.env.FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS,
+          30, 5, 300
         ) * 1000,
       },
       profileDiscovery: {

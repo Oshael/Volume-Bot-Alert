@@ -7,8 +7,7 @@ const { normalizeFomoFrame } = require('./fomo-frame-normalizer');
 const DEFAULT_CDP_ENDPOINT = 'http://127.0.0.1:9222';
 const DEFAULT_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 60_000;
-const DEFAULT_STALE_RECOVERY_MS = 90_000;
-const DEFAULT_STALE_RECOVERY_COOLDOWN_MS = 5 * 60_000;
+const DEFAULT_PAGE_RESET_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_RELOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_PAGE_RESET_TIMEOUT_MS = 10_000;
 const CONNECT_FAILURES_BEFORE_PAGE_RESET = 2;
@@ -88,11 +87,8 @@ function createFomoBrowserActivityStream(options = {}) {
   const resetBrowserPage = options.resetBrowserPage || resetFomoBrowserPage;
   const detachSession = options.detachCdpSession || detachCdpSession;
   const baseReconnectMs = positiveInteger(options.reconnectMs, DEFAULT_RECONNECT_MS, MAX_RECONNECT_MS);
-  const staleRecoveryMs = positiveInteger(
-    options.staleRecoveryMs, DEFAULT_STALE_RECOVERY_MS, 60 * 60_000,
-  );
-  const staleRecoveryCooldownMs = positiveInteger(
-    options.staleRecoveryCooldownMs, DEFAULT_STALE_RECOVERY_COOLDOWN_MS, 60 * 60_000,
+  const pageResetCooldownMs = positiveInteger(
+    options.pageResetCooldownMs, DEFAULT_PAGE_RESET_COOLDOWN_MS, 60 * 60_000,
   );
   const reloadTimeoutMs = positiveInteger(
     options.reloadTimeoutMs, DEFAULT_RELOAD_TIMEOUT_MS, 60_000,
@@ -105,9 +101,7 @@ function createFomoBrowserActivityStream(options = {}) {
   let page = null;
   let session = null;
   let reconnectTimer = null;
-  let staleTimer = null;
   let pageReloadRunning = false;
-  let lastPageReloadMs = null;
   let consecutiveConnectFailures = 0;
   let lastPageResetMs = null;
   let reconnectMs = baseReconnectMs;
@@ -121,9 +115,6 @@ function createFomoBrowserActivityStream(options = {}) {
     candidates: 0,
     callouts: 0,
     lastFrameAt: null,
-    staleReloads: 0,
-    staleReloadErrors: 0,
-    lastStaleReloadAt: null,
     crashReloads: 0,
     crashReloadErrors: 0,
     lastCrashReloadAt: null,
@@ -141,20 +132,6 @@ function createFomoBrowserActivityStream(options = {}) {
 
   function reportError(error, code) {
     onError(safeError(error, code));
-  }
-
-  function clearStaleTimer() {
-    if (staleTimer) cancelSchedule(staleTimer);
-    staleTimer = null;
-  }
-
-  function armStaleRecovery(delayMs = staleRecoveryMs) {
-    clearStaleTimer();
-    if (!running || !status.connected || !page) return;
-    staleTimer = schedule(() => {
-      staleTimer = null;
-      void reloadPage('stale');
-    }, delayMs);
   }
 
   function scheduleReconnect() {
@@ -176,7 +153,6 @@ function createFomoBrowserActivityStream(options = {}) {
     status.frames += 1;
     status.bytes += evidence.byteLength;
     status.lastFrameAt = new Date().toISOString();
-    armStaleRecovery();
     onFrame({ at: status.lastFrameAt });
     if (evidence.frameKind === 'json') status.jsonFrames += 1;
     if (!evidence.tradingActivityCandidate && !evidence.callout) return;
@@ -187,18 +163,16 @@ function createFomoBrowserActivityStream(options = {}) {
 
   function handleDisconnect() {
     if (!status.connected) return;
-    clearStaleTimer();
     status.connected = false;
     emitStatus('closed');
     scheduleReconnect();
   }
 
   function handlePageCrash() {
-    void reloadPage('crash');
+    void reloadCrashedPage();
   }
 
   async function detach() {
-    clearStaleTimer();
     const attachedPage = page;
     const attachedBrowser = browser;
     const attachedSession = session;
@@ -217,33 +191,17 @@ function createFomoBrowserActivityStream(options = {}) {
     }
   }
 
-  async function reloadPage(reason) {
+  async function reloadCrashedPage() {
     if (!running || !status.connected || !page || pageReloadRunning) return;
-    const elapsedMs = lastPageReloadMs == null ? Infinity : now() - lastPageReloadMs;
-    if (elapsedMs < staleRecoveryCooldownMs) {
-      armStaleRecovery(staleRecoveryCooldownMs - elapsedMs);
-      return;
-    }
-    clearStaleTimer();
     pageReloadRunning = true;
-    lastPageReloadMs = now();
-    const crashed = reason === 'crash';
-    const timestamp = new Date(lastPageReloadMs).toISOString();
-    if (crashed) {
-      status.crashReloads += 1;
-      status.lastCrashReloadAt = timestamp;
-    } else {
-      status.staleReloads += 1;
-      status.lastStaleReloadAt = timestamp;
-    }
-    emitStatus(crashed ? 'crash_reloading' : 'stale_reloading');
+    status.crashReloads += 1;
+    status.lastCrashReloadAt = new Date(now()).toISOString();
+    emitStatus('crash_reloading');
     try {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: reloadTimeoutMs });
-      armStaleRecovery();
     } catch (error) {
-      if (crashed) status.crashReloadErrors += 1;
-      else status.staleReloadErrors += 1;
-      reportError(error, crashed ? 'FOMO_BROWSER_CRASH_RELOAD' : 'FOMO_BROWSER_STALE_RELOAD');
+      status.crashReloadErrors += 1;
+      reportError(error, 'FOMO_BROWSER_CRASH_RELOAD');
       status.connected = false;
       scheduleReconnect();
       await detach();
@@ -256,7 +214,7 @@ function createFomoBrowserActivityStream(options = {}) {
     consecutiveConnectFailures += 1;
     if (consecutiveConnectFailures < CONNECT_FAILURES_BEFORE_PAGE_RESET) return;
     const elapsedMs = lastPageResetMs == null ? Infinity : now() - lastPageResetMs;
-    if (elapsedMs < staleRecoveryCooldownMs) return;
+    if (elapsedMs < pageResetCooldownMs) return;
     lastPageResetMs = now();
     status.lastPageResetAt = new Date(lastPageResetMs).toISOString();
     try {
@@ -302,7 +260,6 @@ function createFomoBrowserActivityStream(options = {}) {
       status.connected = true;
       consecutiveConnectFailures = 0;
       reconnectMs = baseReconnectMs;
-      armStaleRecovery();
       emitStatus('connected');
     } catch (error) {
       reportError(error, 'FOMO_BROWSER_CONNECT');
@@ -325,7 +282,6 @@ function createFomoBrowserActivityStream(options = {}) {
     status.connected = false;
     if (reconnectTimer) cancelSchedule(reconnectTimer);
     reconnectTimer = null;
-    clearStaleTimer();
     await detach();
   }
 

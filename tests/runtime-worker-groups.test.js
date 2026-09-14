@@ -344,6 +344,7 @@ describe('runtime worker groups config', () => {
         ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
         PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
         FOMO_BROWSER_CDP_ENDPOINT: 'http://127.0.0.1:9222',
+        FOMO_BROWSER_STALE_SECONDS: '90',
         FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
         FOMO_PRIVY_REFRESH_TOKEN_FILE: '',
       },
@@ -357,8 +358,8 @@ describe('runtime worker groups config', () => {
     assert.equal(config.follow.requestTimeoutMs, 15_000);
     assert.equal(config.follow.autoResumeMs, 300_000);
     assert.equal(config.telegramAlerts.enabled, false);
-    assert.equal(config.browserHealth.staleMs, 90_000);
-    assert.equal(config.browserHealth.recoveryCooldownMs, 300_000);
+    assert.equal(config.browserHealth.staleMs, 900_000);
+    assert.equal(config.browserHealth.pageResetCooldownMs, 300_000);
     assert.equal(config.browserHealth.recoveryGraceMs, 30_000);
   });
 
@@ -387,7 +388,7 @@ describe('runtime worker groups config', () => {
         PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
         FOMO_FOLLOW_ENABLED: 'false', FOMO_TELEGRAM_ALERTS_ENABLED: 'true',
         FOMO_TELEGRAM_BOT_TOKEN: 'test-token', FOMO_TELEGRAM_CHAT_ID: '123456',
-        FOMO_BROWSER_STALE_SECONDS: '120', FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '',
+        FOMO_BROWSER_STALE_SECONDS: '1200', FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '',
         FOMO_WS_JWT_FILE: '',
       },
       encoding: 'utf8',
@@ -396,7 +397,7 @@ describe('runtime worker groups config', () => {
     const fomo = JSON.parse(result.stdout);
     assert.equal(fomo.telegramAlerts.enabled, true);
     assert.equal(fomo.browserHealth.enabled, true);
-    assert.equal(fomo.browserHealth.staleMs, 120_000);
+    assert.equal(fomo.browserHealth.staleMs, 1_200_000);
     assert.equal(fomo.follow.enabled, false);
   });
 
