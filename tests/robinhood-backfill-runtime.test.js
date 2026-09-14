@@ -51,6 +51,7 @@ describe('Robinhood backfill operational runtime', () => {
     const clientOptions = [];
     const adapters = [];
     const quoteReaders = [];
+    const v4LiquidityReader = {};
     let poolLoads = 0;
     const runtime = createRobinhoodBackfillEnrichmentRuntime({
       ...clock,
@@ -67,6 +68,7 @@ describe('Robinhood backfill operational runtime', () => {
       repositoryFactory: () => ({
         listActivePools: async () => [{ market_key: `pool-${++poolLoads}` }],
       }),
+      v4LiquidityReaderFactory: () => v4LiquidityReader,
       quoteReaderFactory: (input) => {
         const reader = { rpcClient: input.rpcClient };
         quoteReaders.push(reader);
@@ -96,6 +98,8 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(quoteReaders.length, 1);
     assert.equal(adapters[0].quoteReader, quoteReaders[0]);
     assert.equal(adapters[1].quoteReader, quoteReaders[0]);
+    assert.equal(adapters[0].v4LiquidityReader, v4LiquidityReader);
+    assert.equal(adapters[1].v4LiquidityReader, v4LiquidityReader);
     assert.equal(runtime.getStatus().totals.runs, 2);
     assert.equal(clock.cancelled.length, 1);
   });

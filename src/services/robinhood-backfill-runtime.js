@@ -2,6 +2,9 @@ const os = require('os');
 const {
   createRobinhoodPersistenceRepository,
 } = require('../models/robinhood-persistence');
+const {
+  createLiquidityHistoricalRangeRepository,
+} = require('../models/robinhood-liquidity-historical-ranges');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const {
   createRobinhoodBackfillEnrichmentAdapter,
@@ -200,6 +203,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
   let rawClient = null;
   let rpcClient = null;
   let repository = null;
+  let v4LiquidityReader = null;
   let quoteReader = null;
   let chainValidated = false;
   let timestampProvider = 'drpc';
@@ -224,6 +228,9 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
       });
       timestampProvider = options.alchemyTimestampsEnabled ? 'alchemy-free' : 'drpc';
       repository = (deps.repositoryFactory || createRobinhoodPersistenceRepository)();
+      v4LiquidityReader = (
+        deps.v4LiquidityReaderFactory || createLiquidityHistoricalRangeRepository
+      )();
       chainValidated = false;
     },
     async execute(options) {
@@ -243,7 +250,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
         rpcProvider: 'drpc',
         timestampProvider,
         quoteReader,
-        v4LiquidityReader: repository,
+        v4LiquidityReader,
       });
       const worker = (deps.workerFactory || createRobinhoodBackfillEnrichmentWorker)({
         adapter,
