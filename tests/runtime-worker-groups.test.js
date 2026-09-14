@@ -1585,7 +1585,6 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_BACKFILL_ENRICHMENT_INTERVAL_MS: '1',
       ROBINHOOD_BACKFILL_ENRICHMENT_CLAIM_SIZE: '9999',
       ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_MS: '1',
-      ROBINHOOD_BACKFILL_ENRICHMENT_CATALOG_REFRESH_MS: '99999999',
       ROBINHOOD_ENRICHMENT_RPC_MIN_INTERVAL_MS: '999999',
       ROBINHOOD_RPC_BATCH_SIZE: '999',
       ROBINHOOD_BACKFILL_FINALIZER_ENABLED: 'true',
@@ -1599,7 +1598,6 @@ describe('runtime worker groups config', () => {
       assert.equal(enrichment.intervalMs, 250);
       assert.equal(enrichment.limit, 1000);
       assert.equal(enrichment.leaseMs, 1000);
-      assert.equal(enrichment.catalogRefreshMs, 3_600_000);
       assert.equal(enrichment.rpcMinIntervalMs, 60_000);
       assert.equal(enrichment.rpcBatchSize, 100);
       assert.deepEqual(config.robinhoodBackfillFinalizerWorker, {

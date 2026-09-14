@@ -89,6 +89,7 @@ function createHarness(options = {}) {
     },
   };
   return {
+    adapter,
     calls,
     createWorker(overrides = {}) {
       return createRobinhoodBackfillEnrichmentWorker({
@@ -180,6 +181,24 @@ describe('Robinhood backfill enrichment worker', () => {
     assert.deepEqual(commit.claims, [claim()]);
     assert.equal(commit.entries[0].observation.accepted, true);
     assert.equal(worker.getStatus().totals.completed, 1);
+  });
+
+  it('builds the adapter from the exact claimed batch', async () => {
+    const harness = createHarness();
+    const worker = harness.createWorker({
+      adapter: undefined,
+      async adapterFactory(claims) {
+        harness.calls.push({ method: 'adapterFactory', claims });
+        return harness.adapter;
+      },
+    });
+
+    await worker.runOnce({ owner: 'worker-a', useBatch: false });
+
+    assert.deepEqual(harness.calls.map(({ method }) => method), [
+      'claim', 'adapterFactory', 'prepare', 'prime', 'rpc', 'build', 'commit',
+    ]);
+    assert.deepEqual(harness.calls[1].claims, [claim()]);
   });
 
   it('returns idle without creating RPC work when the durable queue is empty', async () => {

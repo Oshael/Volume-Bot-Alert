@@ -52,6 +52,22 @@ function normalizeSignalProtocols(value) {
   return protocols;
 }
 
+function normalizePoolIdentities(value) {
+  if (!Array.isArray(value) || value.length > 1000) {
+    throw new Error('pool identities must contain at most 1000 entries');
+  }
+  const result = new Map();
+  for (const item of value) {
+    const protocol = String(item?.protocol || '').trim().toLowerCase();
+    const marketKey = String(item?.marketKey || item?.market_key || '').trim().toLowerCase();
+    if (!SIGNAL_PROTOCOLS.has(protocol) || !marketKey || marketKey.length > 160) {
+      throw new Error('pool identity is invalid');
+    }
+    result.set(`${protocol}:${marketKey}`, { protocol, marketKey });
+  }
+  return [...result.values()];
+}
+
 function decimalQuantity(value, label) {
   const raw = String(value ?? '').trim();
   if (!/^\d+$/.test(raw) && !/^0x[0-9a-f]+$/i.test(raw)) throw new Error(`${label} is invalid`);
@@ -2154,6 +2170,27 @@ function createRobinhoodPersistenceRepository(options = {}) {
     return result.rows;
   }
 
+  async function listActivePoolsByIdentities(input) {
+    const identities = normalizePoolIdentities(input);
+    if (!identities.length) return [];
+    const result = await database.query(
+      `SELECT registry.protocol, registry.market_key, registry.pool_address,
+              registry.pool_id, registry.origin_address, registry.token_address,
+              registry.quote_address, registry.currency0, registry.currency1,
+              registry.fee, registry.tick_spacing, registry.metadata
+       FROM jsonb_to_recordset($1::jsonb) AS requested(protocol text, market_key text)
+       JOIN robinhood_pool_registry registry
+         ON registry.chain = 'robinhood'
+        AND registry.protocol = requested.protocol
+        AND registry.market_key = requested.market_key
+        AND registry.active = true`,
+      [JSON.stringify(identities.map(({ protocol, marketKey }) => ({
+        protocol, market_key: marketKey,
+      })))]
+    );
+    return result.rows;
+  }
+
   // Strict processing frontier for derived-outbox coverage (Corte 5, option A):
   // every block below the queue's pending block is fully processed, so the newest
   // accepted observation there marks the point up to which market data is
@@ -2396,6 +2433,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
     commitHeadProcessingBatch,
     commitMarketRange,
     listActivePools,
+    listActivePoolsByIdentities,
     listCurrentV4LiquidityRanges,
     listCurrentV4LiquidityRangesByPoolIds,
     listExistingV4LiquidityDeltaIdentities,

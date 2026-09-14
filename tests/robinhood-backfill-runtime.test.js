@@ -46,17 +46,16 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(calls[0].tokenLimit, 3);
   });
 
-  it('caches pools for bounded batches while reusing the WETH quote reader', async () => {
+  it('loads only claimed pools per batch while reusing the WETH quote reader', async () => {
     const clock = scheduler();
     const clientOptions = [];
     const adapters = [];
     const quoteReaders = [];
     const v4LiquidityReader = {};
-    let poolLoads = 0;
-    let now = 0;
+    const poolLoads = [];
+    let workerRuns = 0;
     const runtime = createRobinhoodBackfillEnrichmentRuntime({
       ...clock,
-      now: () => now,
       logger: { error() {} },
       clientFactory: (options) => {
         clientOptions.push(options);
@@ -68,7 +67,10 @@ describe('Robinhood backfill operational runtime', () => {
         };
       },
       repositoryFactory: () => ({
-        listActivePools: async () => [{ market_key: `pool-${++poolLoads}` }],
+        async listActivePoolsByIdentities(identities) {
+          poolLoads.push(identities);
+          return [{ market_key: identities[0].marketKey }];
+        },
       }),
       v4LiquidityReaderFactory: () => v4LiquidityReader,
       quoteReaderFactory: (input) => {
@@ -80,26 +82,37 @@ describe('Robinhood backfill operational runtime', () => {
         adapters.push(input);
         return { prepareClaim() {}, buildEntry() {} };
       },
-      workerFactory: () => ({ runOnce: async () => ({ status: 'completed' }) }),
+      workerFactory: (input) => ({
+        async runOnce() {
+          workerRuns += 1;
+          await input.adapterFactory([{
+            protocol: 'uniswap-v4', marketKey: `pool-${workerRuns}`,
+          }]);
+          return { status: 'completed' };
+        },
+      }),
     });
 
     assert.equal(runtime.start({ enabled: true, drpcRpcUrl: 'https://drpc.example' }), true);
     assert.equal(runtime.start({ enabled: true, drpcRpcUrl: 'ignored' }), false);
     await clock.pending.shift().callback();
     await clock.pending.shift().callback();
-    now = 300_000;
     await clock.pending.shift().callback();
     await runtime.stop();
 
     assert.deepEqual(clientOptions[0].providers, [{
       name: 'drpc', url: 'https://drpc.example',
     }]);
-    assert.equal(poolLoads, 2);
+    assert.deepEqual(poolLoads, [
+      [{ protocol: 'uniswap-v4', marketKey: 'pool-1' }],
+      [{ protocol: 'uniswap-v4', marketKey: 'pool-2' }],
+      [{ protocol: 'uniswap-v4', marketKey: 'pool-3' }],
+    ]);
     assert.equal(adapters[0].rpcProvider, 'drpc');
     assert.equal(adapters[0].timestampProvider, 'drpc');
     assert.equal(adapters[0].seedPools[0].market_key, 'pool-1');
-    assert.equal(adapters[1].seedPools[0].market_key, 'pool-1');
-    assert.equal(adapters[2].seedPools[0].market_key, 'pool-2');
+    assert.equal(adapters[1].seedPools[0].market_key, 'pool-2');
+    assert.equal(adapters[2].seedPools[0].market_key, 'pool-3');
     assert.equal(quoteReaders.length, 1);
     assert.equal(adapters[0].quoteReader, quoteReaders[0]);
     assert.equal(adapters[1].quoteReader, quoteReaders[0]);
@@ -133,12 +146,19 @@ describe('Robinhood backfill operational runtime', () => {
         },
         getMetrics: () => ({ 'alchemy-free': { requests: 1 } }),
       }),
-      repositoryFactory: () => ({ listActivePools: async () => [] }),
+      repositoryFactory: () => ({ listActivePoolsByIdentities: async () => [] }),
       adapterFactory: (input) => {
         adapterInput = input;
         return { prepareClaim() {}, buildEntry() {} };
       },
-      workerFactory: () => ({ runOnce: async () => ({ status: 'idle' }) }),
+      workerFactory: (input) => ({
+        async runOnce() {
+          await input.adapterFactory([{
+            protocol: 'uniswap-v4', marketKey: 'robinhood:uniswap-v4:test',
+          }]);
+          return { status: 'idle' };
+        },
+      }),
     });
 
     assert.throws(() => runtime.start({

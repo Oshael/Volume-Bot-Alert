@@ -2272,12 +2272,6 @@ module.exports = {
     maxAttempts: parseIntegerInRange(
       process.env.ROBINHOOD_BACKFILL_ENRICHMENT_MAX_ATTEMPTS, 5, 1, 100
     ),
-    catalogRefreshMs: parseIntegerInRange(
-      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_CATALOG_REFRESH_MS,
-      300_000,
-      1000,
-      3_600_000
-    ),
     rpcBatchSize: parseIntegerInRange(process.env.ROBINHOOD_RPC_BATCH_SIZE, 100, 1, 100),
     rpcConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_BACKFILL_ENRICHMENT_RPC_CONCURRENCY, 1, 1, 8

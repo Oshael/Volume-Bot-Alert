@@ -136,7 +136,9 @@ function createClaimHeartbeat(input) {
 }
 
 function createRobinhoodBackfillEnrichmentWorker(deps = {}) {
-  const adapter = requireAdapter(deps.adapter);
+  const staticAdapter = deps.adapter ? requireAdapter(deps.adapter) : null;
+  const adapterFactory = typeof deps.adapterFactory === 'function' ? deps.adapterFactory : null;
+  if (!staticAdapter && !adapterFactory) throw new TypeError('adapter or adapterFactory is required');
   const rpcClient = deps.rpcClient;
   if (typeof rpcClient?.request !== 'function') throw new TypeError('rpcClient.request is required');
   const captureRepository = deps.captureRepository
@@ -198,6 +200,7 @@ function createRobinhoodBackfillEnrichmentWorker(deps = {}) {
         schedule: scheduleHeartbeat,
         cancel: cancelHeartbeat,
       });
+      const adapter = staticAdapter || requireAdapter(await adapterFactory(claims));
       const prepared = await prepareClaims(claims, adapter, options.prepareConcurrency);
       if (typeof adapter.primeEntries === 'function') await adapter.primeEntries(prepared);
       const plan = createPlan(prepared.map(({ item }) => item), options.planner);

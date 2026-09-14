@@ -629,10 +629,17 @@ describe('Robinhood persistence repository', () => {
 
     assert.deepEqual(await repository.loadCursor('discovery'), { stream: 'discovery' });
     assert.deepEqual(await repository.listActivePools(), [{ stream: 'discovery' }]);
+    assert.deepEqual(await repository.listActivePoolsByIdentities([{
+      protocol: 'uniswap-v4', marketKey: `robinhood:uniswap-v4:${POOL_ID}`,
+    }]), [{ stream: 'discovery' }]);
     assert.ok(fake.calls.every((call) => /chain = 'robinhood'/.test(call.sql)));
-    const poolRead = fake.calls.find((call) => /FROM robinhood_pool_registry/.test(call.sql));
+    const poolReads = fake.calls.filter((call) => /robinhood_pool_registry/.test(call.sql));
+    const [poolRead, targetedPoolRead] = poolReads;
     assert.doesNotMatch(poolRead.sql, /SELECT \*/);
     assert.match(poolRead.sql, /protocol, market_key, pool_address/);
+    assert.match(targetedPoolRead.sql, /jsonb_to_recordset/);
+    assert.match(targetedPoolRead.sql, /registry\.protocol = requested\.protocol/);
+    assert.match(targetedPoolRead.sql, /registry\.market_key = requested\.market_key/);
   });
 
   it('reads V4 ranges at the exact swap boundary', async () => {
