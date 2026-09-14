@@ -134,8 +134,19 @@ async function recaptureRange(client, range) {
       'archive', 'eth_getBlockByNumber', [toQuantity(range.to_block), false]
     ),
   ]);
-  if (!Array.isArray(rawLogs) || rawLogs.length !== Number(range.raw_log_count)) {
-    throw new Error(`Range ${range.id} raw log count does not match its manifest`);
+  if (!Array.isArray(rawLogs)) throw new Error(`Range ${range.id} returned invalid logs`);
+  const expectedRaw = Number(range.raw_log_count);
+  const legacyLogs = rawLogs.filter(
+    (log) => String(log.topics?.[0] || '').toLowerCase() !== v4.TOPICS.modifyLiquidity
+  );
+  const topicProfile = rawLogs.length === expectedRaw
+    ? 'current'
+    : legacyLogs.length === expectedRaw ? 'legacy-without-v4-liquidity' : null;
+  if (!topicProfile) {
+    throw new Error(
+      `Range ${range.id} raw log count mismatch: expected=${expectedRaw} `
+      + `current=${rawLogs.length} legacy=${legacyLogs.length}`
+    );
   }
   if (
     parseQuantity(checkpoint?.number, 'checkpoint.number') !== BigInt(range.to_block)
@@ -145,7 +156,10 @@ async function recaptureRange(client, range) {
   ) {
     throw new Error(`Range ${range.id} checkpoint does not match its manifest`);
   }
-  return rawLogs;
+  return {
+    logs: topicProfile === 'current' ? rawLogs : legacyLogs,
+    topicProfile,
+  };
 }
 
 async function runRepair(options, deps = {}) {
@@ -159,11 +173,11 @@ async function runRepair(options, deps = {}) {
   if (parseQuantity(await rpc.requestProvider('archive', 'eth_chainId'), 'chainId') !== CHAIN_ID) {
     throw new Error('Archive RPC is not on Robinhood Chain');
   }
-  const rawByRange = [];
-  for (const range of ranges) rawByRange.push(await recaptureRange(rpc, range));
-  const pools = await repository.listPoolsForLogs(rawByRange.flat());
+  const captures = [];
+  for (const range of ranges) captures.push(await recaptureRange(rpc, range));
+  const pools = await repository.listPoolsForLogs(captures.flatMap(({ logs }) => logs));
   const repairs = ranges.map((range, index) => {
-    const logs = selectTrackedLogs(rawByRange[index], pools);
+    const logs = selectTrackedLogs(captures[index].logs, pools);
     if (logs.length !== Number(range.tracked_log_count)) {
       throw new Error(`Range ${range.id} tracked log count does not match its manifest`);
     }
@@ -178,6 +192,7 @@ async function runRepair(options, deps = {}) {
     logs: repairs.reduce((total, repair) => total + repair.logs.length, 0),
     firstBlock: ranges[0].from_block,
     lastBlock: ranges.at(-1).to_block,
+    topicProfiles: [...new Set(captures.map(({ topicProfile }) => topicProfile))],
   };
   if (!options.apply) return summary;
   const capture = deps.capture || createRobinhoodBackfillCaptureRepository({

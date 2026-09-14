@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const v3 = require('../src/services/uniswap-v3-decoder');
+const v4 = require('../src/services/uniswap-v4-decoder');
 const {
   runRepair,
   __private: { parseArgs },
@@ -64,6 +65,7 @@ describe('Robinhood backfill staging repair', () => {
 
     assert.deepEqual(result, {
       mode: 'dry-run', ranges: 1, logs: 1, firstBlock: '100', lastBlock: '109',
+      topicProfiles: ['current'],
     });
     assert.equal(written, false);
   });
@@ -94,5 +96,24 @@ describe('Robinhood backfill staging repair', () => {
       /tracked log count does not match/
     );
     assert.equal(written, false);
+  });
+
+  it('reconstructs a legacy manifest from the known pre-liquidity topic profile', async () => {
+    const deps = dependencies();
+    const request = deps.rpc.requestProvider;
+    deps.rpc.requestProvider = async (provider, method) => {
+      if (method !== 'eth_getLogs') return request(provider, method);
+      return [rawLog(), {
+        ...rawLog(), transactionHash: `0x${'d'.repeat(64)}`,
+        logIndex: '0x2', topics: [v4.TOPICS.modifyLiquidity],
+      }];
+    };
+
+    const result = await runRepair(
+      { apply: false, rpcUrl: 'http://archive', maxRanges: 100 }, deps
+    );
+
+    assert.equal(result.logs, 1);
+    assert.deepEqual(result.topicProfiles, ['legacy-without-v4-liquidity']);
   });
 });

@@ -4226,6 +4226,8 @@ repita com `-- --apply`: a escrita é transacional, idempotente, restaura apenas
 linhas ausentes nos `range_id` originais e não altera ranges ou watermarks. Em
 seguida drene novamente enrichment e finalizer. Divergência aborta antes do commit;
 não corrija contadores ou cursores manualmente.
+O validador reconhece os perfis de tópicos atual e legado anterior à captura de
+`ModifyLiquidity` V4, escolhendo-os apenas por reconciliação exata do manifest.
 
 #### Recovery de buckets Robinhood
 
