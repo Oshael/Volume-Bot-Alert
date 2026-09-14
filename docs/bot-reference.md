@@ -402,6 +402,39 @@ tabelas aparecem em `pg_stat_progress_vacuum`, porque o `ALTER TABLE` aguardaria
 vacuum atual. Depois da stage, remova qualquer aceleração global temporária com
 `ALTER SYSTEM RESET autovacuum_vacuum_cost_delay; SELECT pg_reload_conf();`.
 
+Em hosts Robinhood com retenção contínua, a Stage 219 substitui o perfil da Stage
+202. Antes de aplicá-la, proteja também tabelas ainda não cobertas por perfil local
+com limites globais recarregáveis (não exigem reinício do PostgreSQL):
+
+```sql
+ALTER SYSTEM SET autovacuum_naptime = '30s';
+ALTER SYSTEM SET autovacuum_vacuum_cost_delay = '10ms';
+ALTER SYSTEM SET autovacuum_vacuum_cost_limit = 300;
+SELECT pg_reload_conf();
+```
+
+Depois execute `node src/utils/db-init-stage219.js`. A stage configura as oito
+tabelas Robinhood de maior churn para iniciar vacuum em `100000 + 0.1%` das
+linhas, insert-vacuum em `100000 + 0.2%`, analyze em `100000 + 0.5%` e limita
+cada autovacuum local a `10ms/300`. Isso evita tanto o limite padrão tardio
+quanto o perfil anterior `2ms/2000`, que permitia três workers simultâneos
+competirem agressivamente com a captura.
+
+A Stage 219 deliberadamente não altera `autovacuum_enabled`. Após uma contenção
+emergencial, reative primeiro `robinhood_token_holder_daily_snapshots`, aguarde o
+vacuum terminar, depois faça o mesmo com `robinhood_head_captures` e somente então
+com `robinhood_chain_events`. Não reative a próxima enquanto a anterior aparecer
+em `pg_stat_progress_vacuum`. Acompanhe simultaneamente o lag da captura, o espaço
+livre, `n_dead_tup` e `pg_stat_progress_vacuum`; pause manutenção e retenção antes
+de cancelar um vacuum que esteja prejudicando o head.
+
+O throttle limita pressão, não transforma um heap monolítico em lotes físicos:
+o primeiro vacuum após uma exclusão histórica grande ainda pode percorrer boa
+parte de `robinhood_chain_events`. Depois que essa dívida inicial termina, os
+limites menores impedem que dezenas de milhões de tuplas mortas voltem a se
+acumular. Se `n_dead_tup` crescer continuamente por várias horas, ajuste primeiro
+para `5ms/500`; não restaure `2ms/2000` durante captura live.
+
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
 adapter de captura (`robinhood_head_captures` + cursor próprio) e o pipeline em
