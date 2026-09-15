@@ -9,6 +9,7 @@ const {
 } = require('../src/models/robinhood-head-processing');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage186 = require('../src/utils/db-init-stage186');
+const stage224 = require('../src/utils/db-init-stage224');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK_HASH = `0x${'b'.repeat(64)}`;
@@ -60,6 +61,7 @@ describe('Robinhood head processing repository integration', () => {
     await assertUsingTestDatabase(db);
     await stage103.init({ closePool: false });
     await stage186.init({ closePool: false });
+    await stage224.init({ closePool: false });
   });
 
   beforeEach(async () => {
@@ -325,6 +327,46 @@ describe('Robinhood head processing repository integration', () => {
     const rejected = await statusOf(drop);
     assert.equal(rejected.processing_status, 'rejected');
     assert.equal(rejected.last_error, 'quote_usd_unavailable');
+  });
+
+  it('mirrors insert, lease and terminal lifecycle into the narrow shadow state', async () => {
+    const identity = await seedPending({ block: 100 });
+    let state = (await db.query(
+      `SELECT processing_status, lease_owner, attempt_count
+         FROM robinhood_head_capture_states
+        WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
+      [identity.transactionHash, identity.logIndex]
+    )).rows[0];
+    assert.deepEqual(state, {
+      processing_status: 'pending', lease_owner: null, attempt_count: 0,
+    });
+
+    await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
+    state = (await db.query(
+      `SELECT processing_status, lease_owner, attempt_count
+         FROM robinhood_head_capture_states
+        WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
+      [identity.transactionHash, identity.logIndex]
+    )).rows[0];
+    assert.deepEqual(state, {
+      processing_status: 'leased', lease_owner: 'worker-a', attempt_count: 1,
+    });
+
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS, processed: [identity],
+    });
+    const parity = (await db.query(
+      `SELECT capture.processing_status = state.processing_status
+                AND capture.terminal_at = state.terminal_at
+                AND capture.retention_eligible_at = state.retention_eligible_at AS matches
+         FROM robinhood_head_captures capture
+         JOIN robinhood_head_capture_states state
+           USING (chain, transaction_hash, log_index)
+        WHERE capture.chain='robinhood' AND capture.transaction_hash=$1
+          AND capture.log_index=$2`,
+      [identity.transactionHash, identity.logIndex]
+    )).rows[0];
+    assert.equal(parity.matches, true);
   });
 
   it('refuses to settle a claim leased by a different owner', async () => {

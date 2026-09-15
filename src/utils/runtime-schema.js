@@ -6159,6 +6159,42 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage224-robinhood-head-capture-state',
+    name: 'Stage 224 Robinhood head capture shadow state',
+    repair: 'node src/utils/db-init-stage224.js',
+    tables: [{
+      table: 'robinhood_head_capture_states',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'processing_status',
+        'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'last_error', 'terminal_at', 'retention_eligible_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_head_capture_states_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+      }, {
+        name: 'rh_head_capture_states_capture_fkey',
+        includes: ['FOREIGN KEY', 'chain', 'transaction_hash', 'log_index', 'ON DELETE CASCADE'],
+      }, {
+        name: 'rh_head_capture_states_status_check',
+        includes: ['pending', 'leased', 'processed', 'rejected', 'blocked'],
+      }, {
+        name: 'rh_head_capture_states_lease_check',
+        includes: ['processing_status', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_head_capture_states_terminal_check',
+        includes: ['processing_status', 'processed', 'rejected', 'terminal_at'],
+      }],
+      indexes: [
+        { name: 'idx_rh_head_capture_states_claim', includes: [
+          'next_attempt_at', 'transaction_hash', 'log_index', 'pending',
+        ] },
+        { name: 'idx_rh_head_capture_states_lease', includes: ['lease_until', 'leased'] },
+        { name: 'idx_rh_head_capture_states_retention', includes: ['retention_eligible_at'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

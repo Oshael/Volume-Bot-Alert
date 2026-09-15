@@ -625,6 +625,17 @@ ocioso de 5 segundos fica restrito ao backoff após erro. A lease expõe `listen
 O corte não exige schema nem flag nova e requer reiniciar apenas
 `trendscope-worker@robinhood-processing.service`.
 
+A Stage 224 inicia a separação do lifecycle mutável com
+`robinhood_head_capture_states`, que contém somente identidade, lease, tentativa,
+erro e datas operacionais. Aplique `node src/utils/db-init-stage224.js` antes de
+subir código que exige o novo runtime schema. Um trigger transacional temporário
+espelha inserts e updates de lifecycle de `robinhood_head_captures`; portanto
+writers e reparos existentes continuam oficiais e não precisam de dual-write
+próprio. A stage não copia as linhas históricas. Até o backfill limitado e a
+auditoria de paridade serem concluídos, claim, settle, retry, retenção e recovery
+continuam lendo e alterando exclusivamente `robinhood_head_captures`; a tabela
+shadow não autoriza o cutover do Corte 3B.
+
 A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
 vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200. A Stage 107

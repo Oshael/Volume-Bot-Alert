@@ -191,6 +191,12 @@ conter apenas identidade, status, lease, tentativa, próxima tentativa, erro e
 datas necessárias. O payload e a evidence continuam na estrutura durável
 existente durante a transição.
 
+A Stage 224 cria essa tabela inicialmente vazia e instala um trigger
+transacional temporário no payload atual. Inserts e mutações de lifecycle passam
+a ser espelhados sem trocar a autoridade de leitura. Registros anteriores serão
+copiados por backfill limitado em corte separado; nenhum `INSERT ... SELECT`
+massivo faz parte da criação do schema.
+
 O writer grava payload e estado na mesma transação. O consumidor antigo ainda
 permanece oficial. Uma auditoria compara identidades e estados antes de qualquer
 cutover.
