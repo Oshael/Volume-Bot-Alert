@@ -586,6 +586,14 @@ O ramo V4 percorre esse índice por `market_key` com skip scan recursivo: faz um
 primeira captura ativa de cada pool em vez de reler todas as capturas ativas a cada tick. O custo
 do claim inicial cresce com a quantidade de pools, não com o backlog acumulado dentro delas;
 lease, retry e dead-letter continuam sendo a primeira captura retornada e preservam o no-overtake.
+Antes da primeira claim market de cada processo, o repositório executa `EXPLAIN` sem processar
+linhas. Se uma fila V4 com pelo menos 1000 capturas ativas não usar
+`idx_rh_head_captures_v4_active_frontier`, ele atualiza somente as estatísticas das colunas do
+claim com `ANALYZE`, limitado por `lock_timeout=1s` e `statement_timeout=60s`, e revalida o plano.
+Falha de lock/timeout é retentada pelo backoff normal do worker; se estatísticas novas ainda
+produzirem um plano sem o índice dedicado, o processo falha fechado antes de criar leases. Essa
+proteção evita que uma retomada pós-manutenção execute o skip scan V4 pelo índice geral enquanto
+preserva os limites de custo do autovacuum e não pesa filas pequenas.
 
 `ROBINHOOD_PROCESSING_BATCH_SIZE` aceita 1–8000 capturas por claim (default 200),
 tanto no claim inicial de market quanto nas continuações V4. Claims maiores que 2000

@@ -17,6 +17,8 @@ const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
 const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
 const V3_ARCHIVE_REPAIR_LOCK_KEY = 'robinhood:v3-pruned-capture-repair';
+const V4_FRONTIER_INDEX = 'idx_rh_head_captures_v4_active_frontier';
+const MARKET_PLAN_GUARD_ACTIVE_LIMIT = 1000;
 
 const MARKET_CLAIM_SQL = `WITH RECURSIVE first_v4_by_pool AS (
   (
@@ -181,6 +183,68 @@ WHERE capture.chain = claimable.chain
   AND capture.log_index = claimable.log_index
 RETURNING capture.*`;
 
+function explainIndexNames(result) {
+  let payload = result?.rows?.[0]?.['QUERY PLAN'];
+  if (typeof payload === 'string') payload = JSON.parse(payload);
+  const names = new Set();
+  function visit(value) {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    if (typeof value['Index Name'] === 'string') names.add(value['Index Name']);
+    Object.values(value).forEach(visit);
+  }
+  visit(payload);
+  return names;
+}
+
+async function explainMarketClaim(database, params) {
+  return database.query(`EXPLAIN (FORMAT JSON) ${MARKET_CLAIM_SQL}`, params);
+}
+
+async function countRelevantActiveV4(database) {
+  const result = await database.query(
+    `SELECT COUNT(*)::int AS active
+       FROM (
+         SELECT capture.market_key
+         FROM robinhood_head_captures capture
+         WHERE capture.chain = '${CHAIN}'
+           AND capture.stream = 'market'
+           AND capture.protocol = 'uniswap-v4'
+           AND capture.market_key IS NOT NULL
+           AND capture.processing_status IN ('pending', 'leased', 'blocked')
+         ORDER BY capture.market_key, capture.block_number,
+                  capture.transaction_index, capture.log_index
+         LIMIT $1
+       ) bounded`,
+    [MARKET_PLAN_GUARD_ACTIVE_LIMIT]
+  );
+  return Number(result.rows[0]?.active || 0);
+}
+
+async function analyzeMarketClaimColumns(database) {
+  const client = await database.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '1s'");
+    await client.query("SET LOCAL statement_timeout = '60s'");
+    await client.query(
+      `ANALYZE robinhood_head_captures (
+         chain, stream, protocol, market_key, processing_status,
+         block_number, transaction_index, log_index, next_attempt_at
+       )`
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function requireOwner(value) {
   const owner = String(value || '').trim();
   if (!owner || owner.length > 128) throw new Error('processing owner is required');
@@ -266,6 +330,39 @@ function normalizeRejected(entry) {
 function createRobinhoodHeadProcessingRepository(options = {}) {
   const database = options.database || db;
   const defaultMaxAttempts = options.maxAttempts || DEFAULT_MAX_ATTEMPTS;
+  const logger = options.logger || console;
+  let marketClaimPlanReady = false;
+  let marketClaimPlanCheck = null;
+  let marketClaimPlanError = null;
+
+  async function checkMarketClaimPlan(params) {
+    const initialPlan = await explainMarketClaim(database, params);
+    if (explainIndexNames(initialPlan).has(V4_FRONTIER_INDEX)) return;
+    const active = await countRelevantActiveV4(database);
+    if (active < MARKET_PLAN_GUARD_ACTIVE_LIMIT) return;
+    logger.warn?.(
+      '[RobinhoodHeadProcessing] V4 claim plan missed its frontier index; refreshing statistics'
+    );
+    await analyzeMarketClaimColumns(database);
+    const refreshedPlan = await explainMarketClaim(database, params);
+    if (explainIndexNames(refreshedPlan).has(V4_FRONTIER_INDEX)) return;
+    const error = new Error(`Market claim plan does not use ${V4_FRONTIER_INDEX}`);
+    error.code = 'robinhood_market_claim_plan_unsafe';
+    marketClaimPlanError = error;
+    throw error;
+  }
+
+  async function ensureMarketClaimPlan(params) {
+    if (marketClaimPlanReady) return;
+    if (marketClaimPlanError) throw marketClaimPlanError;
+    marketClaimPlanCheck ||= checkMarketClaimPlan(params);
+    try {
+      await marketClaimPlanCheck;
+      marketClaimPlanReady = true;
+    } finally {
+      marketClaimPlanCheck = null;
+    }
+  }
 
   // Leases a batch of pending, due captures in on-chain order. FOR UPDATE SKIP
   // LOCKED lets concurrent consumers claim disjoint rows without blocking.
@@ -274,9 +371,13 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     const limit = requirePositiveInt(input.limit, 'limit');
     const leaseMs = requirePositiveInt(input.leaseMs, 'leaseMs');
     const stream = optionalStream(input.stream);
-    const result = stream === 'market'
-      ? await database.query(MARKET_CLAIM_SQL, [owner, limit, leaseMs])
-      : await database.query(
+    let result;
+    if (stream === 'market') {
+      const params = [owner, limit, leaseMs];
+      await ensureMarketClaimPlan(params);
+      result = await database.query(MARKET_CLAIM_SQL, params);
+    } else {
+      result = await database.query(
         `WITH first_v4_by_pool AS MATERIALIZED (
          SELECT DISTINCT ON (market_key)
                 chain, market_key, transaction_hash, log_index
@@ -321,6 +422,7 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
        RETURNING capture.*`,
         [owner, limit, leaseMs, stream]
       );
+    }
     return result.rows.sort(compareCaptureOrder);
   }
 
