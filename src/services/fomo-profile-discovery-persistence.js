@@ -8,6 +8,7 @@ const {
 } = require('./profile-wallet-domain');
 
 const CHECKPOINT_KEY = 'fomo:profile-discovery';
+const SEARCH_CHECKPOINT_KEY = 'fomo:profile-search';
 
 function createFomoProfileDiscoveryPersistence(options = {}) {
   const repository = options.repository;
@@ -17,6 +18,46 @@ function createFomoProfileDiscoveryPersistence(options = {}) {
   async function findMissingWalletProfileIds(profileIds) {
     if (!repository.findProfilesWithoutWallet) return profileIds;
     return repository.findProfilesWithoutWallet('fomo', profileIds);
+  }
+
+  async function loadSearchState() {
+    if (!repository.loadCheckpoint) return {};
+    return (await repository.loadCheckpoint(SEARCH_CHECKPOINT_KEY))?.state || {};
+  }
+
+  async function listSearchSeeds(input) {
+    if (!repository.listProfileSearchSeeds) {
+      throw new TypeError('Fomo profile search requires seed lookup support');
+    }
+    return repository.listProfileSearchSeeds('fomo', input);
+  }
+
+  async function persistSearch(users = [], state = {}) {
+    const observedAt = new Date(now()).toISOString();
+    const observations = (Array.isArray(users) ? users : []).flatMap((user) => {
+      const observation = normalizeFomoLeaderboardProfile(user, {
+        observedAt, source: 'fuzzy_search',
+      });
+      return observation ? [observation] : [];
+    });
+    const profileEnvelopes = observations.map((observation, sequence) => (
+      createProfileObservationEnvelope(observation, {
+        capturedAt: observedAt, stream: 'fomo_profile_search', sequence,
+      })
+    ));
+    const profileKeys = new Set();
+    const walletKeys = new Set();
+    for (const envelope of profileEnvelopes) {
+      const profile = envelope.payload;
+      profileKeys.add(`${profile.platform}:${profile.platformUserId}`);
+      for (const wallet of profile.wallets || []) walletKeys.add(walletObservationKey(profile, wallet));
+    }
+    const result = { profiles: profileKeys.size, wallets: walletKeys.size, persistedAt: observedAt };
+    await repository.commitCapture({
+      profileEnvelopes, calloutEnvelopes: [], checkpointKey: SEARCH_CHECKPOINT_KEY,
+      checkpointState: { ...state, ...result }, committedAt: observedAt,
+    });
+    return result;
   }
 
   async function persist(entries = [], discovery = {}) {
@@ -68,7 +109,9 @@ function createFomoProfileDiscoveryPersistence(options = {}) {
     return result;
   }
 
-  return Object.freeze({ findMissingWalletProfileIds, persist });
+  return Object.freeze({
+    findMissingWalletProfileIds, listSearchSeeds, loadSearchState, persist, persistSearch,
+  });
 }
 
-module.exports = { CHECKPOINT_KEY, createFomoProfileDiscoveryPersistence };
+module.exports = { CHECKPOINT_KEY, SEARCH_CHECKPOINT_KEY, createFomoProfileDiscoveryPersistence };

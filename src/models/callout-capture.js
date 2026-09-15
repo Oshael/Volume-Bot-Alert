@@ -236,6 +236,14 @@ WHERE NOT EXISTS (
 )
 ORDER BY requested.ordinal`;
 
+const LIST_PROFILE_SEARCH_SEEDS = `SELECT platform_user_id, username
+FROM callout_profiles
+WHERE platform = $1
+  AND NULLIF(BTRIM(username), '') IS NOT NULL
+  AND ($2::text IS NULL OR platform_user_id > $2)
+ORDER BY platform_user_id
+LIMIT $3::int`;
+
 async function persistCallouts(client, callouts) {
   if (!callouts.length) return;
   const serialized = JSON.stringify(callouts);
@@ -251,6 +259,20 @@ async function persistCallouts(client, callouts) {
 
 function createCalloutCaptureRepository(options = {}) {
   const database = options.database || db;
+  async function listProfileSearchSeeds(platform, input = {}) {
+    const normalizedPlatform = String(platform || '').trim();
+    const afterId = String(input.afterId || '').trim() || null;
+    const limit = Number(input.limit);
+    if (!normalizedPlatform) throw new TypeError('Profile platform is required');
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError('Profile search seed limit must be between 1 and 100');
+    }
+    const result = await database.query(
+      LIST_PROFILE_SEARCH_SEEDS, [normalizedPlatform, afterId, limit]
+    );
+    return result.rows;
+  }
+
   async function findProfilesWithoutWallet(platform, profileIds = []) {
     const normalizedPlatform = String(platform || '').trim();
     const ids = [...new Set((Array.isArray(profileIds) ? profileIds : [])
@@ -316,7 +338,8 @@ function createCalloutCaptureRepository(options = {}) {
   }
 
   return Object.freeze({
-    commitCapture, findProfilesWithoutWallet, loadCheckpoint, pruneExpiredCallouts,
+    commitCapture, findProfilesWithoutWallet, listProfileSearchSeeds, loadCheckpoint,
+    pruneExpiredCallouts,
   });
 }
 
@@ -324,6 +347,7 @@ module.exports = {
   createCalloutCaptureRepository,
   __private: {
     ARCHIVE_UPSERT, CALLOUT_UPSERT, CHECKPOINT_UPSERT, FIND_PROFILES_WITHOUT_WALLET,
+    LIST_PROFILE_SEARCH_SEEDS,
     PROFILE_UPSERT, PRUNE_EXPIRED_CALLOUTS,
     WALLET_UPSERT,
     calloutRows, persistCallouts, profileRows, walletRows,

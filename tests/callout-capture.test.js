@@ -197,6 +197,27 @@ describe('callout capture repository', () => {
     assert.deepEqual(await repository.findProfilesWithoutWallet('fomo', []), []);
   });
 
+  it('lists bounded profile search seeds after a durable cursor', async () => {
+    const calls = [];
+    const repository = createCalloutCaptureRepository({
+      database: { query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rows: [{ platform_user_id: 'profile-b', username: 'Beta' }] };
+      } },
+    });
+
+    assert.deepEqual(await repository.listProfileSearchSeeds('fomo', {
+      afterId: 'profile-a', limit: 20,
+    }), [{ platform_user_id: 'profile-b', username: 'Beta' }]);
+    assert.equal(calls[0].sql, __private.LIST_PROFILE_SEARCH_SEEDS);
+    assert.deepEqual(calls[0].params, ['fomo', 'profile-a', 20]);
+    assert.match(calls[0].sql, /platform_user_id > \$2/);
+    assert.match(calls[0].sql, /ORDER BY platform_user_id/);
+    await assert.rejects(
+      repository.listProfileSearchSeeds('fomo', { limit: 101 }), /between 1 and 100/
+    );
+  });
+
   it('prunes only expired callout rows through a bounded non-blocking query', async () => {
     const calls = [];
     const repository = createCalloutCaptureRepository({

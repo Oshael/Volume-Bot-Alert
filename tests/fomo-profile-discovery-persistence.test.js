@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
-  CHECKPOINT_KEY, createFomoProfileDiscoveryPersistence,
+  CHECKPOINT_KEY, SEARCH_CHECKPOINT_KEY, createFomoProfileDiscoveryPersistence,
 } = require('../src/services/fomo-profile-discovery-persistence');
 
 test('Fomo leaderboard persistence stores profile metadata and platform-reported wallets', async () => {
@@ -84,4 +84,49 @@ test('Fomo activity persistence stores active profiles and trade-backed wallet e
     'activity_wallet');
   assert.equal(commits[0].checkpointState.activityProfiles, 1);
   assert.equal(commits[0].checkpointState.activityTradeIdentities, 1);
+});
+
+test('Fomo fuzzy search persistence stores metadata, wallets, and cursor atomically', async () => {
+  const commits = [];
+  const seedQueries = [];
+  const repository = {
+    loadCheckpoint: async (key) => ({ state: { cursor: 'profile-a', rounds: 2, key } }),
+    listProfileSearchSeeds: async (platform, input) => {
+      seedQueries.push({ platform, input });
+      return [{ platform_user_id: 'profile-b', username: 'Beta' }];
+    },
+    commitCapture: async (input) => commits.push(input),
+  };
+  const persistence = createFomoProfileDiscoveryPersistence({
+    repository, now: () => Date.parse('2026-09-15T12:00:00.000Z'),
+  });
+
+  assert.deepEqual(await persistence.loadSearchState(), {
+    cursor: 'profile-a', rounds: 2, key: SEARCH_CHECKPOINT_KEY,
+  });
+  assert.deepEqual(await persistence.listSearchSeeds({ afterId: 'profile-a', limit: 20 }),
+    [{ platform_user_id: 'profile-b', username: 'Beta' }]);
+  assert.deepEqual(seedQueries, [{
+    platform: 'fomo', input: { afterId: 'profile-a', limit: 20 },
+  }]);
+
+  const result = await persistence.persistSearch([{
+    id: 'profile-b', userHandle: 'Beta', displayName: 'Beta User',
+    profilePictureLink: 'https://img.test/beta.png',
+    address: '6ismWYLTwvzngqAzeWLhAfq1jSY2yv8hG55te1HnTw9j',
+    evmAddress: '0x1111111111111111111111111111111111111111',
+  }], { cursor: 'profile-b', rounds: 2 });
+
+  assert.deepEqual(result, {
+    profiles: 1, wallets: 2, persistedAt: '2026-09-15T12:00:00.000Z',
+  });
+  assert.equal(commits[0].checkpointKey, SEARCH_CHECKPOINT_KEY);
+  assert.equal(commits[0].checkpointState.cursor, 'profile-b');
+  assert.equal(commits[0].profileEnvelopes[0].stream, 'fomo_profile_search');
+  const profile = commits[0].profileEnvelopes[0].payload;
+  assert.equal(profile.source, 'fuzzy_search');
+  assert.equal(profile.profilePictureUrl, 'https://img.test/beta.png');
+  assert.deepEqual(profile.wallets.map(({ chainKey, chainFamily }) => (
+    chainKey || chainFamily
+  )), ['solana', 'evm']);
 });
