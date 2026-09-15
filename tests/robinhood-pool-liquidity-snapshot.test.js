@@ -208,6 +208,39 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123', '0']);
   });
 
+  it('persists factory-resolved WETH/USDG pools and reads their compact checkpoint', async () => {
+    const calls = [];
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        if (sql.includes('INSERT INTO robinhood_weth_usd_reference_pools')) {
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes('SELECT pool_address, fee, deployment_block::text')) {
+          return { rows: [{ pool_address: QUOTE, fee: 100, deployment_block: '20' }] };
+        }
+        return { rows: [{
+          fee: 100, pool_address: QUOTE, block_number: '120',
+          block_hash: `0x${'4'.repeat(64)}`, transaction_hash: `0x${'5'.repeat(64)}`,
+          transaction_index: '6', log_index: '7', address: QUOTE,
+          topics: [v3.TOPICS.swap], data: '0x01',
+        }] };
+      },
+    } });
+    assert.equal(await repository.syncWethUsdReferencePools([{
+      fee: 100, poolAddress: QUOTE, deploymentBlock: '20',
+    }]), 1);
+    const pools = await repository.listWethUsdReferencePools();
+    const checkpoints = await repository.listWethUsdEventCheckpoints();
+
+    assert.deepEqual(pools, [{ poolAddress: QUOTE, fee: 100, deploymentBlock: 20n }]);
+    assert.equal(checkpoints[0].poolAddress, QUOTE);
+    assert.equal(checkpoints[0].log.blockNumber, '120');
+    assert.match(calls[2].sql, /compact\.canonical=TRUE/);
+    assert.match(calls[2].sql, /target\.block_number-100000/);
+    assert.deepEqual(calls[2].params, [null, v3.ROBINHOOD_WETH]);
+  });
+
   it('invalidates orphaned snapshots and returns their active pools for repair', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {

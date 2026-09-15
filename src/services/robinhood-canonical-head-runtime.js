@@ -21,11 +21,11 @@ const { createRobinhoodWethUsdQuoteReader } = require('./robinhood-weth-usd-quot
 
 function createValuationReaders(deps, database, rpcClient) {
   const metadataReader = (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient });
-  const quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
-    rpcClient, eventFallbackEnabled: false,
-  });
   const repository = deps.stockReferenceRepository
     || createRobinhoodPoolLiquiditySnapshotRepository({ database });
+  const quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
+    rpcClient, eventFallbackEnabled: false, checkpointRepository: repository,
+  });
   const stockQuoteReader = deps.stockQuoteReader
     || (deps.stockQuoteReaderFactory || createRobinhoodStockUsdQuoteReader)({
       rpcClient, repository, metadataReader, wethQuoteReader: quoteReader,

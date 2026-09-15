@@ -150,7 +150,7 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
   if (!reader) {
     const metadataReader = (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient });
     const quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
-      rpcClient, eventFallbackEnabled: false,
+      rpcClient, eventFallbackEnabled: false, checkpointRepository: snapshotRepository,
     });
     const stockQuoteReader = deps.stockQuoteReader
       || (deps.stockQuoteReaderFactory || createRobinhoodStockUsdQuoteReader)({

@@ -5,9 +5,31 @@ const db = require('../models/db');
 const {
   backfillRange,
 } = require('../models/robinhood-stock-usd-reference-journal');
+const {
+  createRobinhoodPoolLiquiditySnapshotRepository,
+} = require('../models/robinhood-pool-liquidity-snapshot');
+const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
+const { createRobinhoodWethUsdQuoteReader } = require('../services/robinhood-weth-usd-quote');
 
 const LOOKBACK_BLOCKS = 100_000n;
 const BATCH_BLOCKS = 2_000n;
+
+async function syncWethUsdPools(database, deps = {}) {
+  const repository = deps.repository
+    || createRobinhoodPoolLiquiditySnapshotRepository({ database });
+  const rpcUrl = String(deps.rpcUrl || process.env.ROBINHOOD_CANONICAL_HEAD_RPC_URL
+    || process.env.ROBINHOOD_CHAIN_CAPTURE_RPC_URL || '').trim();
+  if (!rpcUrl && !deps.rpcClient) {
+    throw new Error('ROBINHOOD_CANONICAL_HEAD_RPC_URL is required');
+  }
+  const rpcClient = deps.rpcClient || createEvmJsonRpcClient({
+    providers: [{ name: 'live', url: rpcUrl }], timeoutMs: 60_000, maxRetries: 2,
+  });
+  const pools = await createRobinhoodWethUsdQuoteReader({
+    rpcClient, checkpointRepository: repository, eventFallbackEnabled: false,
+  }).syncReferencePools();
+  return pools.length;
+}
 
 async function window(database) {
   const { rows } = await database.query(
@@ -31,6 +53,7 @@ async function main(args = process.argv.slice(2), deps = {}) {
   const database = deps.database || db;
   const logger = deps.logger || console;
   try {
+    const wethUsdPools = await syncWethUsdPools(database, deps);
     const bounds = await window(database);
     let inserted = 0;
     let batches = 0;
@@ -46,7 +69,7 @@ async function main(args = process.argv.slice(2), deps = {}) {
       first = last + 1n;
     }
     const result = { phase: 'summary', fromBlock: bounds.from.toString(),
-      throughBlock: bounds.through.toString(), batches, inserted };
+      throughBlock: bounds.through.toString(), batches, inserted, wethUsdPools };
     logger.log(JSON.stringify(result));
     return result;
   } finally {
@@ -59,4 +82,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { main, window };
+module.exports = { main, syncWethUsdPools, window };

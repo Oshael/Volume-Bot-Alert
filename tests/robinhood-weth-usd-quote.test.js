@@ -206,6 +206,55 @@ describe('Robinhood canonical WETH/USD quote reader', () => {
     assert.equal(rpc.calls.some(({ method }) => method === 'eth_getLogs'), false);
   });
 
+  it('uses the compact checkpoint when the live state call times out', async () => {
+    let synchronized;
+    const checkpointRepository = {
+      syncWethUsdReferencePools: async (pools) => { synchronized = pools; },
+      listWethUsdEventCheckpoints: async ({ blockNumber }) => {
+        assert.equal(blockNumber, null);
+        return [{ fee: 100, poolAddress: POOL, log: swapLog(FEE_100_HISTORY_BLOCK) }];
+      },
+    };
+    const rpc = createRpc({ handler: async (method, params) => {
+      if (method === 'eth_call' && params[0].to === ROBINHOOD_V3_FACTORY) {
+        return addressResult(feeFromFactoryCall(params[0].data) === 100 ? POOL : ZERO_ADDRESS);
+      }
+      if (method === 'eth_getCode') return '0x6000';
+      if (method === 'eth_getLogs') throw new Error('live log scan must not execute');
+      const error = new Error('eth_call timeout'); error.code = 'timeout'; throw error;
+    } });
+    const reader = createRobinhoodWethUsdQuoteReader({
+      rpcClient: rpc, eventFallbackEnabled: false, checkpointRepository,
+    });
+
+    const snapshot = await reader.getCurrent();
+
+    assert.equal(snapshot.source, 'canonical-uniswap-v3-weth-usdg-100-journal');
+    assert.equal(snapshot.sourceBlockTag, FEE_100_HISTORY_BLOCK);
+    assert.equal(synchronized[0].poolAddress, POOL);
+    assert.equal(rpc.calls.some(({ method }) => method === 'eth_getLogs'), false);
+  });
+
+  it('restores persisted reference pools when the factory times out after restart', async () => {
+    const checkpointRepository = {
+      listWethUsdReferencePools: async () => [{
+        fee: 100, poolAddress: POOL, deploymentBlock: 0n,
+      }],
+      listWethUsdEventCheckpoints: async () => [{
+        fee: 100, poolAddress: POOL, log: swapLog(FEE_100_HISTORY_BLOCK),
+      }],
+    };
+    const rpc = createRpc({ handler: async () => {
+      const error = new Error('eth_call timeout'); error.code = 'timeout'; throw error;
+    } });
+    const snapshot = await createRobinhoodWethUsdQuoteReader({
+      rpcClient: rpc, eventFallbackEnabled: false, checkpointRepository,
+    }).getCurrent();
+
+    assert.equal(snapshot.source, 'canonical-uniswap-v3-weth-usdg-100-journal');
+    assert.equal(rpc.calls.some(({ method }) => method === 'eth_getLogs'), false);
+  });
+
   it('caches an empty event interval instead of rescanning back to deployment', async () => {
     const ranges = [];
     const rpc = createRpc({

@@ -98,6 +98,7 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
   const configuredEventRangeSize = BigInt(options.eventRangeSize || 50000);
   const eventRangeSize = configuredEventRangeSize > 0n ? configuredEventRangeSize : 1n;
   const eventFallbackEnabled = options.eventFallbackEnabled !== false;
+  const checkpointRepository = options.checkpointRepository;
   const maxCacheEntries = Math.max(1, Math.trunc(Number(options.maxCacheEntries)) || 5000);
   const cache = new Map();
   const pending = new Map();
@@ -143,9 +144,21 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
         });
       }
       if (!pools.length) throw new Error('Canonical WETH/USDG pool is not deployed');
+      if (typeof checkpointRepository?.syncWethUsdReferencePools === 'function') {
+        await checkpointRepository.syncWethUsdReferencePools(pools);
+      }
       verifiedPools = pools;
       return verifiedPools;
-    })().finally(() => {
+    })().catch(async (error) => {
+      if (typeof checkpointRepository?.listWethUsdReferencePools === 'function') {
+        const persisted = await checkpointRepository.listWethUsdReferencePools();
+        if (persisted.length) {
+          verifiedPools = persisted;
+          return verifiedPools;
+        }
+      }
+      throw error;
+    }).finally(() => {
       poolResolution = null;
     });
     return poolResolution;
@@ -321,6 +334,31 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     return snapshot;
   }
 
+  async function readCheckpointSnapshot(requestOptions, resolvedBlockTag) {
+    if (typeof checkpointRepository?.listWethUsdEventCheckpoints !== 'function') return null;
+    const checkpoints = await checkpointRepository.listWethUsdEventCheckpoints({
+      blockNumber: resolvedBlockTag === 'latest'
+        ? null : quantity(resolvedBlockTag, 'blockTag').toString(),
+    });
+    return mostLiquidSnapshot(checkpoints.map((checkpoint) => snapshotFromSqrtPrice(
+      sqrtPriceFromSwapLog(checkpoint.log), requestOptions, {
+        source: `canonical-uniswap-v3-weth-usdg-${checkpoint.fee}-journal`,
+        poolAddress: checkpoint.poolAddress,
+        fee: checkpoint.fee,
+        liquidityRaw: decodeWord(checkpoint.log.data, 3, 'Swap liquidity').toString(),
+        blockTag: resolvedBlockTag,
+        sourceBlockTag: blockTag(quantity(checkpoint.log.blockNumber, 'Swap blockNumber')),
+      }
+    )));
+  }
+
+  async function recoverStateSnapshot(error, requestOptions, resolvedBlockTag) {
+    const checkpoint = await readCheckpointSnapshot(requestOptions, resolvedBlockTag);
+    if (checkpoint) return checkpoint;
+    if (!eventFallbackEnabled || resolvedBlockTag === 'latest') throw error;
+    return readEventSnapshot(requestOptions, resolvedBlockTag);
+  }
+
   async function getSnapshot(requestOptions = {}) {
     const resolvedBlockTag = String(requestOptions.blockTag || 'latest');
     if (resolvedBlockTag === 'latest') return readStateSnapshot(requestOptions, resolvedBlockTag);
@@ -328,10 +366,7 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     if (cache.has(key)) return { ...cache.get(key), cached: true };
     if (pending.has(key)) return pending.get(key);
     const task = readStateSnapshot(requestOptions, resolvedBlockTag)
-      .catch((error) => {
-        if (!eventFallbackEnabled) throw error;
-        return readEventSnapshot(requestOptions, resolvedBlockTag);
-      })
+      .catch((error) => recoverStateSnapshot(error, requestOptions, resolvedBlockTag))
       .then((snapshot) => {
         remember(key, snapshot);
         return { ...snapshot, cached: false };
@@ -355,6 +390,7 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
       return currentPending.task;
     }
     const task = readStateSnapshot({ decimalPlaces }, 'latest')
+      .catch((error) => recoverStateSnapshot(error, { decimalPlaces }, 'latest'))
       .then((snapshot) => {
         currentEntry = { snapshot, decimalPlaces, expiresAt: now() + currentTtlMs };
         return { ...snapshot, cached: false };
@@ -366,7 +402,10 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     return task;
   }
 
-  return Object.freeze({ getSnapshot, getCurrent, getCacheSize: () => cache.size });
+  return Object.freeze({
+    getSnapshot, getCurrent, syncReferencePools: resolvePools,
+    getCacheSize: () => cache.size,
+  });
 }
 
 module.exports = {

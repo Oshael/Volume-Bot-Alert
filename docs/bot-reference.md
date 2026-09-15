@@ -1239,8 +1239,9 @@ transientes continuam no backoff normal. Stocks oficiais usam a mesma rota ancor
 stock/USDG ou stock/WETH do head. Todas as falhas preservam o snapshot válido anterior.
 A telemetria da lease separa
 `scanner` e `refresher`, incluindo ranges/blocos/logs/pools enfileiradas e claims
-concluídas/retentadas. O fallback histórico de cotação WETH/USDG por eventos fica desabilitado
-nesse processo, e o `rpcGuard` da lease bloqueia qualquer tentativa futura de `eth_getLogs`;
+concluídas/retentadas. O fallback RPC de cotação WETH/USDG por `eth_getLogs` fica desabilitado
+nesse processo; o fallback pelo journal compacto permanece ativo, e o `rpcGuard` da lease
+bloqueia qualquer tentativa futura de `eth_getLogs`;
 backfills e reparos continuam podendo usar o fallback explicitamente fora do papel live.
 No reorg, o recovery trava snapshots/fila contra writers concorrentes, invalida somente snapshots
 ancorados na faixa órfã, recua o cursor ao ancestral e reancora as pools afetadas como `pending`.
@@ -4853,11 +4854,19 @@ solicitado, portanto nunca usa preço do futuro. Esse checkpoint event-driven
 permite catch-up sem archive permanente; se não existir referência on-chain nem
 evento anterior no intervalo, a ausência continua falhando fechada.
 A Stage 222 cria `robinhood_stock_usd_reference_events`, um journal compacto e
-independente da retenção dos raws que recebe atomicamente apenas `Sync` V2 e
-`Swap` V3/V4 de pools stock/USDG já registradas. Antes de reabrir uma frontier
-antiga, aplique `node src/utils/db-init-stage222.js`, reinicie o chain capture e
+independente da retenção dos raws que recebe atomicamente `Sync` V2 e `Swap`
+V3/V4 de pools stock/USDG registradas, além dos `Swap` das pools WETH/USDG
+oficiais. Essas pools são resolvidas pelo factory, validadas on-chain e
+sincronizadas em `robinhood_weth_usd_reference_pools`; não são hardcoded. Quando
+o `eth_call` corrente ou histórico de WETH/USDG falha, o reader escolhe pelo
+evento compacto a pool com maior liquidez, sem liberar `eth_getLogs` no papel
+live. Antes de reabrir uma frontier antiga, aplique
+`node src/utils/db-init-stage222.js`, reinicie chain capture e canonical head e
 semeie a janela necessária com
 `npm run robinhood:backfill-stock-reference-journal -- --write`. O backfill usa
+o RPC pruned corrente de `ROBINHOOD_CANONICAL_HEAD_RPC_URL` (ou o RPC de capture)
+somente para descobrir e validar as pools WETH/USDG pelo factory; a semeadura dos
+eventos lê o journal PostgreSQL, não o RPC histórico. Ele usa
 por padrão os 100.000 blocos anteriores ao primeiro outbox incompleto até o
 checkpoint capturado, em lotes idempotentes de 2.000 blocos. A consulta live lê
 somente esse journal pequeno e ainda valida o hash contra o bloco canônico.

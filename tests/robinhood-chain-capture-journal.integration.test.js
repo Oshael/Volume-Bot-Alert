@@ -136,6 +136,7 @@ const {
   PONS_V2_FACTORY, TOPICS: PONS_V2_TOPICS,
 } = require('../src/services/pons-v2-lifecycle-decoder');
 const v2 = require('../src/services/uniswap-v2-decoder');
+const v3 = require('../src/services/uniswap-v3-decoder');
 const {
   CANONICAL_CONTRACTS, ROBINHOOD_TOKENIZED_ASSETS,
 } = require('../src/services/robinhood-market-policy');
@@ -316,6 +317,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_pool_liquidity_refresh_queue WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_snapshots WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_stock_usd_reference_events WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_weth_usd_reference_pools WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_relationship_evidence WHERE chain='robinhood'");
@@ -476,8 +478,9 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(snapshots.repair, 'node src/utils/db-init-stage195.js');
   });
 
-  it('atomically copies registered stock/USDG reference events into the compact journal', async () => {
+  it('atomically copies stock/USDG and WETH/USDG events into the compact journal', async () => {
     const pool = `0x${'a'.repeat(40)}`;
+    const wethPool = `0x${'b'.repeat(40)}`;
     const marketKey = `robinhood:uniswap-v2:${pool}`;
     const stock = ROBINHOOD_TOKENIZED_ASSETS.SPY;
     await db.query(
@@ -489,6 +492,11 @@ describe('Robinhood canonical chain capture journal', () => {
       [marketKey, pool, stock, CANONICAL_CONTRACTS.USDG,
         PARENT, LEGACY_TX, OBSERVED_AT]
     );
+    await db.query(
+      `INSERT INTO robinhood_weth_usd_reference_pools(
+         chain, pool_address, fee, deployment_block
+       ) VALUES ('robinhood',$1,100,99)`, [wethPool]
+    );
     const input = capture();
     input.events[0] = {
       transactionHash: TX, transactionIndex: 0, logIndex: 0,
@@ -496,14 +504,21 @@ describe('Robinhood canonical chain capture journal', () => {
       data: `0x${[100n, 200n]
         .map((value) => value.toString(16).padStart(64, '0')).join('')}`,
     };
+    input.events.push({
+      transactionHash: TX, transactionIndex: 0, logIndex: 1,
+      address: wethPool, topics: [v3.TOPICS.swap], data: '0x01',
+    });
     await createRobinhoodChainCaptureJournal().commitBlock(input);
     const stored = await db.query(
       `SELECT protocol, market_key, stock_address, block_number::text
-         FROM robinhood_stock_usd_reference_events`
+         FROM robinhood_stock_usd_reference_events ORDER BY market_key`
     );
     assert.deepEqual(stored.rows, [{
       protocol: 'uniswap-v2', market_key: marketKey,
       stock_address: stock, block_number: '100',
+    }, {
+      protocol: 'uniswap-v3', market_key: `robinhood:uniswap-v3:${wethPool}`,
+      stock_address: CANONICAL_CONTRACTS.WETH, block_number: '100',
     }]);
   });
 

@@ -11,6 +11,19 @@ const LEGACY_INDEX_NAMES = Object.freeze([
   'idx_rh_stock_usd_reference_events_lookup',
 ]);
 const STATEMENTS = Object.freeze([
+  `CREATE TABLE IF NOT EXISTS robinhood_weth_usd_reference_pools (
+     chain VARCHAR(16) NOT NULL DEFAULT 'robinhood',
+     pool_address VARCHAR(42) NOT NULL,
+     fee INTEGER NOT NULL,
+     deployment_block BIGINT NOT NULL,
+     active BOOLEAN NOT NULL DEFAULT TRUE,
+     observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT rh_weth_usd_reference_pools_pkey PRIMARY KEY (chain, pool_address),
+     CONSTRAINT rh_weth_usd_reference_pools_values_check CHECK (
+       chain='robinhood' AND pool_address ~ '^0x[0-9a-f]{40}$'
+       AND fee IN (100,500,3000,10000) AND deployment_block>=0
+     )
+   )`,
   `CREATE TABLE IF NOT EXISTS ${TABLE} (
      chain VARCHAR(16) NOT NULL DEFAULT 'robinhood',
      protocol VARCHAR(24) NOT NULL,

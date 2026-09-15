@@ -12,13 +12,17 @@ describe('Robinhood canonical head runtime', () => {
     const seedPools = [{ protocol: 'uniswap-v3', market_key: 'pool-a' }];
     const outbox = {}; const candidateRepository = {}; let pipelineOptions; let runnerDeps;
     const stockQuoteReader = { getSnapshot: async () => ({ priceUsd: '42' }) };
+    const stockReferenceRepository = {}; let quoteOptions;
     const runtime = await createRobinhoodCanonicalHeadRuntime({
       rpcClient: { request: async () => 'ok' },
       catalog: {
         listActivePools: async () => seedPools,
         listCurrentV4LiquidityRanges: async () => [],
       },
-      outbox, stockQuoteReader,
+      outbox, stockQuoteReader, stockReferenceRepository,
+      quoteReaderFactory: (options) => {
+        quoteOptions = options; return { getCurrent: async () => ({ priceUsd: '1' }) };
+      },
       candidateRepositoryFactory: () => candidateRepository,
       pipelineFactory: (options) => {
         pipelineOptions = options;
@@ -39,6 +43,8 @@ describe('Robinhood canonical head runtime', () => {
     assert.equal(pipelineOptions.seedPools, seedPools);
     assert.equal(pipelineOptions.observationConcurrency, 4);
     assert.equal(pipelineOptions.stockQuoteReader, stockQuoteReader);
+    assert.equal(quoteOptions.eventFallbackEnabled, false);
+    assert.equal(quoteOptions.checkpointRepository, stockReferenceRepository);
     assert.equal(runnerDeps.outbox, outbox);
     assert.equal(runnerDeps.headRepository, candidateRepository);
     assert.equal(runnerDeps.options.leaseMs, 30_000);

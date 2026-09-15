@@ -114,11 +114,8 @@ function normalizeCandidate(row) {
   });
 }
 
-function normalizeStockUsdEventCheckpoint(row) {
-  if (!row) return null;
+function normalizeCheckpointLog(row) {
   return Object.freeze({
-    reference: normalizeCandidate(row),
-    log: Object.freeze({
       blockNumber: quantity(row.block_number, 'blockNumber'),
       blockHash: blockHash(row.block_hash),
       transactionHash: blockHash(row.transaction_hash),
@@ -127,7 +124,22 @@ function normalizeStockUsdEventCheckpoint(row) {
       address: normalizeTokenAddress(CHAIN, row.address),
       topics: Object.freeze([...(row.topics || [])]),
       data: String(row.data || ''),
-    }),
+  });
+}
+
+function normalizeStockUsdEventCheckpoint(row) {
+  if (!row) return null;
+  return Object.freeze({
+    reference: normalizeCandidate(row),
+    log: normalizeCheckpointLog(row),
+  });
+}
+
+function normalizeWethUsdEventCheckpoint(row) {
+  return Object.freeze({
+    fee: Number(row.fee),
+    poolAddress: normalizeTokenAddress(CHAIN, row.pool_address),
+    log: normalizeCheckpointLog(row),
   });
 }
 
@@ -364,6 +376,76 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return normalizeStockUsdEventCheckpoint(rows[0]);
   }
 
+  async function syncWethUsdReferencePools(pools = []) {
+    const values = pools.map((pool) => {
+      const fee = Number(pool.fee);
+      if (![100, 500, 3000, 10000].includes(fee)) throw new Error('WETH/USDG fee is invalid');
+      return {
+        poolAddress: normalizeTokenAddress(CHAIN, pool.poolAddress), fee,
+        deploymentBlock: quantity(pool.deploymentBlock, 'deploymentBlock'),
+      };
+    });
+    if (!values.length) return 0;
+    const result = await database.query(
+      `INSERT INTO robinhood_weth_usd_reference_pools(
+         chain, pool_address, fee, deployment_block, active, observed_at
+       ) SELECT '${CHAIN}', item."poolAddress", item.fee, item."deploymentBlock", TRUE, NOW()
+           FROM jsonb_to_recordset($1::jsonb) item(
+             "poolAddress" text, fee integer, "deploymentBlock" bigint
+           )
+       ON CONFLICT (chain, pool_address) DO UPDATE SET
+         fee=EXCLUDED.fee, deployment_block=EXCLUDED.deployment_block,
+         active=TRUE, observed_at=NOW()`,
+      [JSON.stringify(values)]
+    );
+    return result.rowCount;
+  }
+
+  async function listWethUsdReferencePools() {
+    const { rows } = await database.query(
+      `SELECT pool_address, fee, deployment_block::text
+         FROM robinhood_weth_usd_reference_pools
+        WHERE chain='${CHAIN}' AND active=TRUE ORDER BY fee`
+    );
+    return Object.freeze(rows.map((row) => Object.freeze({
+      poolAddress: normalizeTokenAddress(CHAIN, row.pool_address),
+      fee: Number(row.fee), deploymentBlock: BigInt(row.deployment_block),
+    })));
+  }
+
+  async function listWethUsdEventCheckpoints(input = {}) {
+    const requested = input.blockNumber == null
+      ? null : quantity(input.blockNumber, 'blockNumber');
+    const { rows } = await database.query(
+      `WITH target AS MATERIALIZED (
+         SELECT COALESCE($1::bigint, (
+           SELECT checkpoint_block FROM robinhood_chain_capture_cursor
+            WHERE chain='${CHAIN}'
+         )) AS block_number
+       )
+       SELECT pool.fee, pool.pool_address, event.block_number, event.block_hash,
+              event.transaction_hash, event.transaction_index, event.log_index,
+              event.address, event.topics, event.data
+         FROM robinhood_weth_usd_reference_pools pool
+         CROSS JOIN target
+         CROSS JOIN LATERAL (
+           SELECT compact.* FROM robinhood_stock_usd_reference_events compact
+            WHERE compact.chain='${CHAIN}' AND compact.canonical=TRUE
+              AND compact.protocol='uniswap-v3' AND compact.stock_address=$2
+              AND compact.market_key='robinhood:uniswap-v3:' || pool.pool_address
+              AND compact.block_number BETWEEN GREATEST(target.block_number-100000, 0)
+                                           AND target.block_number
+            ORDER BY compact.block_number DESC, compact.transaction_index DESC,
+                     compact.log_index DESC LIMIT 1
+         ) event
+        WHERE pool.chain='${CHAIN}' AND pool.active=TRUE
+          AND pool.deployment_block<=target.block_number
+        ORDER BY pool.fee`,
+      [requested, ROBINHOOD_WETH]
+    );
+    return Object.freeze(rows.map(normalizeWethUsdEventCheckpoint));
+  }
+
   async function invalidateSnapshotsFromBlock(input = {}) {
     const rewindBlock = quantity(input.rewindBlock, 'rewindBlock');
     const { rows } = await database.query(
@@ -513,6 +595,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
 
   return Object.freeze({
     findStockUsdEventCheckpoint, invalidateSnapshotsFromBlock,
+    listWethUsdEventCheckpoints, listWethUsdReferencePools, syncWethUsdReferencePools,
     listDuePools, listPoolsForLiquidityEvents, listStockUsdReferences, recordFailure,
     recordSnapshot, recordSnapshots, resolveAnchorBlock, resolveCanonicalAnchorWindow,
   });

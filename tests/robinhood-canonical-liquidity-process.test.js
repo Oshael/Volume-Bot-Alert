@@ -138,6 +138,7 @@ test('standalone canonical liquidity process validates and owns its dedicated le
     },
   });
   assert.equal(quoteOptions.eventFallbackEnabled, false);
+  assert.equal(quoteOptions.checkpointRepository, snapshotRepository);
   assert.notEqual(quoteOptions.rpcClient, baseRpcClient);
   assert.equal(stockOptions.repository, snapshotRepository);
   assert.equal(stockOptions.wethQuoteReader.getSnapshot instanceof Function, true);

@@ -6109,9 +6109,19 @@ const SCHEMA_GROUPS = [
   },
   {
     key: 'stage222-robinhood-stock-usd-reference-journal',
-    name: 'Stage 222 compact Robinhood stock/USD reference journal',
+    name: 'Stage 222 compact Robinhood valuation reference journal',
     repair: 'node src/utils/db-init-stage222.js',
     tables: [{
+      table: 'robinhood_weth_usd_reference_pools',
+      columns: ['chain', 'pool_address', 'fee', 'deployment_block', 'active', 'observed_at'],
+      constraints: [{
+        name: 'rh_weth_usd_reference_pools_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'pool_address'],
+      }, {
+        name: 'rh_weth_usd_reference_pools_values_check',
+        includes: ['100', '500', '3000', '10000', 'deployment_block'],
+      }],
+    }, {
       table: 'robinhood_stock_usd_reference_events',
       columns: [
         'chain', 'protocol', 'market_key', 'stock_address', 'block_number',

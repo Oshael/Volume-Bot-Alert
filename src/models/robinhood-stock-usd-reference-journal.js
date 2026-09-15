@@ -12,7 +12,7 @@ const CHAIN = 'robinhood';
 const STOCKS = Object.freeze(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
 const REFERENCE_TOPICS = new Set([v2.TOPICS.sync, v3.TOPICS.swap, v4.TOPICS.swap]);
 
-function branches(source, usdgParameter, stocksParameter) {
+function branches(source, usdgParameter, stocksParameter, wethParameter) {
   const branch = (protocol, emitter, topic, poolId = '') => `
     SELECT registry.protocol, registry.market_key,
            registry.token_address AS stock_address, event.block_number,
@@ -33,12 +33,22 @@ function branches(source, usdgParameter, stocksParameter) {
     branch('uniswap-v3', 'pool_address', v3.TOPICS.swap),
     branch('uniswap-v4', 'origin_address', v4.TOPICS.swap,
       'AND event.topics->>1=registry.pool_id'),
+    `SELECT 'uniswap-v3', 'robinhood:uniswap-v3:' || pool.pool_address,
+            ${wethParameter}, event.block_number, event.block_hash,
+            event.transaction_hash, event.transaction_index, event.log_index,
+            event.address, event.topics, event.data
+       FROM ${source} event
+       INNER JOIN robinhood_weth_usd_reference_pools pool
+         ON pool.chain='${CHAIN}' AND pool.active=TRUE
+        AND pool.pool_address=event.address
+        AND pool.deployment_block<=event.block_number
+      WHERE event.topic0='${v3.TOPICS.swap}'`,
   ].join('\nUNION ALL\n');
 }
 
-function insertSql(sourceSql, usdgParameter, stocksParameter) {
+function insertSql(sourceSql, usdgParameter, stocksParameter, wethParameter) {
   return `${sourceSql}, matched AS MATERIALIZED (${branches(
-    'candidate_events', usdgParameter, stocksParameter
+    'candidate_events', usdgParameter, stocksParameter, wethParameter
   )})
   INSERT INTO robinhood_stock_usd_reference_events(
     chain, protocol, market_key, stock_address, block_number, block_hash,
@@ -59,8 +69,8 @@ async function appendCapturedEvents(executor, events = []) {
          transaction_index INTEGER, log_index INTEGER, address TEXT,
          topic0 TEXT, topics JSONB, data TEXT
        )
-     )`, '$2', '$3'
-  ), [JSON.stringify(candidates), CANONICAL_CONTRACTS.USDG, STOCKS]);
+     )`, '$2', '$3', '$4'
+  ), [JSON.stringify(candidates), CANONICAL_CONTRACTS.USDG, STOCKS, CANONICAL_CONTRACTS.WETH]);
   return result.rowCount;
 }
 
@@ -80,8 +90,9 @@ async function backfillRange(input = {}, options = {}) {
         AND event.topic0 IN (
           '${v2.TOPICS.sync}', '${v3.TOPICS.swap}', '${v4.TOPICS.swap}'
         )
-     )`, '$3', '$4'
-  ), [fromBlock.toString(), throughBlock.toString(), CANONICAL_CONTRACTS.USDG, STOCKS]);
+     )`, '$3', '$4', '$5'
+  ), [fromBlock.toString(), throughBlock.toString(),
+    CANONICAL_CONTRACTS.USDG, STOCKS, CANONICAL_CONTRACTS.WETH]);
   return result.rowCount;
 }
 
