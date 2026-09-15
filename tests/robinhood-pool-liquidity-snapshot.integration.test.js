@@ -186,6 +186,35 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         stockAddress: TOKEN, blockNumber: '20', limit: 5,
       });
       assert.deepEqual(references.map(({ marketKey }) => marketKey), [referenceKey]);
+      await client.query(
+        `INSERT INTO robinhood_market_buckets_1m (
+           protocol, market_key, token_address, quote_address, bucket_ts,
+           open_price_usd, high_price_usd, low_price_usd, close_price_usd,
+           open_fdv_usd, high_fdv_usd, low_fdv_usd, close_fdv_usd,
+           volume_usd, swaps, buys, sells, transactions,
+           first_observed_at, first_block_number, first_log_index,
+           last_observed_at, last_block_number, last_log_index, expires_at,
+           close_liquidity_usd, close_liquidity_raw, close_liquidity_status,
+           close_liquidity_confidence
+         ) VALUES ('uniswap-v3', $1, $2, $3, '2026-08-22T11:01:00Z',
+           42, 42, 42, 42, 4200, 4200, 4200, 4200, 1, 1, 1, 0, 1,
+           '2026-08-22T11:01:01Z', 19, 2, '2026-08-22T11:01:01Z', 19, 2,
+           '2026-09-05T11:01:00Z', 1200, 60,
+           'spot_tvl_from_pool_balances', 'medium')`,
+        [referenceKey, TOKEN, v3.ROBINHOOD_USDG]
+      );
+      const checkpoint = await repository.findStockUsdCheckpoint({
+        stockAddress: TOKEN, blockNumber: '20',
+      });
+      assert.deepEqual({
+        protocol: checkpoint.protocol,
+        marketKey: checkpoint.marketKey,
+        priceUsd: checkpoint.priceUsd,
+        blockNumber: checkpoint.blockNumber,
+      }, {
+        protocol: 'uniswap-v3', marketKey: referenceKey,
+        priceUsd: '42', blockNumber: '19',
+      });
     } finally {
       await client.query('ROLLBACK');
       client.release();

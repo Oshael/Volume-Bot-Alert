@@ -160,4 +160,22 @@ describe('Robinhood stock USD quote reader', () => {
       /official stock token/
     );
   });
+
+  it('falls back to the last canonical direct USDG checkpoint when pruned state is unavailable', async () => {
+    const deps = dependencies([reference('uniswap-v4')], async () => '0x');
+    deps.repository.findStockUsdCheckpoint = async (input) => {
+      assert.deepEqual(input, { stockAddress: STOCK, blockNumber: '100' });
+      return {
+        protocol: 'uniswap-v3', marketKey: 'robinhood:uniswap-v3:checkpoint',
+        poolAddress: POOL, poolId: null, priceUsd: '760.794678239595',
+        blockNumber: '98', logIndex: '4',
+      };
+    };
+    const reader = createRobinhoodStockUsdQuoteReader(deps);
+    const result = await reader.getSnapshot({ stockAddress: STOCK, blockTag: BLOCK_TAG });
+    assert.equal(result.priceUsd, '760.794678239595');
+    assert.equal(result.source, 'canonical-uniswap-v3-stock-usdg-checkpoint');
+    assert.equal(result.blockTag, '0x62');
+    assert.equal(result.requestedBlockTag, BLOCK_TAG);
+  });
 });

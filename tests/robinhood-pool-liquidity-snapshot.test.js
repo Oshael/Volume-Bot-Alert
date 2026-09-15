@@ -177,6 +177,27 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, v3.ROBINHOOD_WETH, '123', 7]);
   });
 
+  it('reads a direct stock/USDG checkpoint without looking past the requested block', async () => {
+    const calls = [];
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{
+          protocol: 'uniswap-v4', market_key: MARKET, pool_address: null,
+          pool_id: POOL_ID, price_usd: '42.5', block_number: '120', log_index: '7',
+        }] };
+      },
+    } });
+    const checkpoint = await repository.findStockUsdCheckpoint({
+      stockAddress: TOKEN, blockNumber: '123',
+    });
+    assert.equal(checkpoint.priceUsd, '42.5');
+    assert.equal(checkpoint.blockNumber, '120');
+    assert.match(calls[0].sql, /bucket\.last_block_number<=\$3::bigint/);
+    assert.match(calls[0].sql, /bucket\.quote_address=\$2/);
+    assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123']);
+  });
+
   it('invalidates orphaned snapshots and returns their active pools for repair', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {

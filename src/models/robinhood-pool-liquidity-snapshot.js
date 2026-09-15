@@ -113,6 +113,20 @@ function normalizeCandidate(row) {
   });
 }
 
+function normalizeStockUsdCheckpoint(row) {
+  if (!row) return null;
+  return Object.freeze({
+    protocol: protocol(row.protocol),
+    marketKey: marketKey(row.market_key),
+    poolAddress: row.pool_address == null ? null
+      : normalizeTokenAddress(CHAIN, row.pool_address),
+    poolId: row.pool_id == null ? null : String(row.pool_id).toLowerCase(),
+    priceUsd: decimal(row.price_usd, 'priceUsd'),
+    blockNumber: quantity(row.block_number, 'blockNumber'),
+    logIndex: quantity(row.log_index, 'logIndex'),
+  });
+}
+
 function normalizeEventLogs(logs = []) {
   const addresses = new Set();
   const v4Pools = new Map();
@@ -290,6 +304,28 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return Object.freeze(rows.map(normalizeCandidate));
   }
 
+  async function findStockUsdCheckpoint(input = {}) {
+    const stockAddress = normalizeTokenAddress(CHAIN, input.stockAddress);
+    const blockNumber = quantity(input.blockNumber, 'blockNumber');
+    const { rows } = await database.query(
+      `SELECT bucket.protocol, bucket.market_key, registry.pool_address,
+              registry.pool_id, bucket.close_price_usd AS price_usd,
+              bucket.last_block_number AS block_number,
+              bucket.last_log_index AS log_index
+         FROM robinhood_market_buckets_1m bucket
+         INNER JOIN robinhood_pool_registry registry
+           USING (chain, protocol, market_key)
+        WHERE bucket.chain='${CHAIN}' AND bucket.token_address=$1
+          AND bucket.quote_address=$2 AND bucket.last_block_number<=$3::bigint
+          AND bucket.close_price_usd>0 AND registry.active=TRUE
+        ORDER BY bucket.bucket_ts DESC, bucket.last_block_number DESC,
+                 bucket.last_log_index DESC
+        LIMIT 1`,
+      [stockAddress, ROBINHOOD_USDG, blockNumber]
+    );
+    return normalizeStockUsdCheckpoint(rows[0]);
+  }
+
   async function invalidateSnapshotsFromBlock(input = {}) {
     const rewindBlock = quantity(input.rewindBlock, 'rewindBlock');
     const { rows } = await database.query(
@@ -439,8 +475,8 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
 
   return Object.freeze({
     invalidateSnapshotsFromBlock, listDuePools, listPoolsForLiquidityEvents,
-    listStockUsdReferences, recordFailure, recordSnapshot, recordSnapshots, resolveAnchorBlock,
-    resolveCanonicalAnchorWindow,
+    findStockUsdCheckpoint, listStockUsdReferences, recordFailure, recordSnapshot,
+    recordSnapshots, resolveAnchorBlock, resolveCanonicalAnchorWindow,
   });
 }
 

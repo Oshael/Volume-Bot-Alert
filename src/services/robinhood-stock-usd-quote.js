@@ -183,6 +183,25 @@ function createRobinhoodStockUsdQuoteReader(options = {}) {
         });
       }
     }
+    if (typeof repository.findStockUsdCheckpoint === 'function') {
+      const checkpoint = await repository.findStockUsdCheckpoint({
+        stockAddress, blockNumber: BigInt(resolvedBlockTag).toString(),
+      });
+      if (checkpoint) {
+        const price = parseDecimal(checkpoint.priceUsd);
+        return Object.freeze({
+          priceUsd: formatDecimal(price, 12),
+          exact: { numerator: price.numerator.toString(), denominator: price.denominator.toString() },
+          source: `canonical-${checkpoint.protocol}-stock-usdg-checkpoint`,
+          status: 'observed', confidence: 'medium', stockAddress,
+          referenceProtocol: checkpoint.protocol,
+          referenceMarketKey: checkpoint.marketKey,
+          referencePool: checkpoint.poolAddress || checkpoint.poolId,
+          blockTag: blockTag(checkpoint.blockNumber),
+          requestedBlockTag: resolvedBlockTag,
+        });
+      }
+    }
     throw errorResult(stockAddress, resolvedBlockTag, failures);
   }
 
