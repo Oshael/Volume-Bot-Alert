@@ -134,4 +134,44 @@ describe('Robinhood canonical head runner', () => {
       },
     });
   });
+
+  it('replays an idempotent append after settlement fails and then completes', async () => {
+    const captured = new Set();
+    let settleAttempts = 0;
+    const runner = createRobinhoodCanonicalHeadRunner({
+      outbox: {
+        reclaimExpiredLeases: async () => 0,
+        claimNextBlock: async () => [row('market', 3)],
+        settle: async ({ complete, retry }) => {
+          if (retry) return { completed: 0, blocked: 0, retried: retry.length };
+          settleAttempts += 1;
+          if (settleAttempts === 1) throw new Error('settlement connection lost');
+          return { completed: complete.length, blocked: 0, retried: 0 };
+        },
+      },
+      pipeline: {
+        processDiscoveryRange: async () => [],
+        processMarketRange: async (logs) => logs.map(entry),
+      },
+      headRepository: { appendCaptureEntries: async ({ entries }) => {
+        let insertedCaptures = 0;
+        for (const captureEntry of entries) {
+          const identity = `${captureEntry.log.transactionHash}:${captureEntry.log.logIndex}`;
+          if (!captured.has(identity)) {
+            captured.add(identity);
+            insertedCaptures += 1;
+          }
+        }
+        return { insertedCaptures, duplicateCaptures: entries.length - insertedCaptures };
+      } },
+    });
+
+    const failedSettlement = await runner.runOnce();
+    assert.equal(failedSettlement.retried, 1);
+    const replay = await runner.runOnce();
+    assert.equal(replay.inserted, 0);
+    assert.equal(replay.duplicates, 1);
+    assert.equal(replay.completed, 1);
+    assert.equal(captured.size, 1);
+  });
 });

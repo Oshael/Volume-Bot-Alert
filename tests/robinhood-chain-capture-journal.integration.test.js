@@ -2011,7 +2011,7 @@ describe('Robinhood canonical chain capture journal', () => {
     )).rows[0].blocks, 0);
   });
 
-  it('leases only rows covered by the legacy cursor and protects settlement ownership', async () => {
+  it('leases only covered rows and deletes completed work under the owning lease', async () => {
     const journal = createRobinhoodChainCaptureJournal();
     await journal.commitBlock(capture());
     await db.query(
@@ -2034,6 +2034,14 @@ describe('Robinhood canonical chain capture journal', () => {
         domain: 'discovery', blockHash: HASH, logIndex: 0,
       }],
     }), { completed: 1, blocked: 0, retried: 0 });
+    assert.equal((await db.query(
+      `SELECT COUNT(*)::int AS items FROM robinhood_chain_domain_outbox
+        WHERE chain='robinhood' AND block_hash=$1 AND log_index=0`, [HASH]
+    )).rows[0].items, 0);
+    assert.equal((await db.query(
+      `SELECT COUNT(*)::int AS events FROM robinhood_chain_events
+        WHERE chain='robinhood' AND block_hash=$1 AND log_index=0`, [HASH]
+    )).rows[0].events, 1);
   });
 
   it('measures mature outbox lag against captured work rather than the legacy lead', async () => {

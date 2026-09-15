@@ -4902,6 +4902,11 @@ mesma evidência v2 de `robinhood_head_captures` consumida pelo processing atual
 V2/V3/V4 são decodificados sem RPC; NOXA mantém apenas seus `eth_call` e
 `eth_getCode` de validação de estado. A captura é inserida antes do settlement
 idempotente da outbox, portanto crash entre as duas etapas gera retry seguro.
+O settlement bem-sucedido remove imediatamente o item sob a lease proprietária:
+a domain outbox contém somente trabalho ativo (`pending`, `leased`, `blocked` ou
+em backoff), enquanto `robinhood_chain_events` permanece como histórico durável.
+Linhas `complete` criadas por versões anteriores continuam compatíveis com o
+schema e saem apenas pela retenção limitada; não há limpeza massiva no rollout.
 Como o market legado mantém o registry de pools em memória a partir do poller de
 discovery, os dois pollers não podem ser separados no cutover. O consumidor
 canônico combinado reclama um bloco completo, entrega discovery antes de market,

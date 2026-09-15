@@ -207,10 +207,8 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
     try {
       await client.query('BEGIN');
       const completed = await client.query(
-        `UPDATE robinhood_chain_domain_outbox outbox
-            SET status='complete', lease_owner=NULL, lease_until=NULL,
-                completed_at=NOW(), last_error=NULL, updated_at=NOW()
-           FROM jsonb_to_recordset($1::jsonb) item(
+        `DELETE FROM robinhood_chain_domain_outbox outbox
+          USING jsonb_to_recordset($1::jsonb) item(
              domain text, "blockHash" text, "logIndex" integer
            )
           WHERE outbox.chain=$2 AND outbox.domain=item.domain
