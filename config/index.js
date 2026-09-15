@@ -501,6 +501,7 @@ const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direc
 const fomoFollowEnabled = parseBoolean(process.env.FOMO_FOLLOW_ENABLED, false);
 const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
 const fomoFollowDiscoveryEnabled = parseBoolean(process.env.FOMO_FOLLOW_DISCOVERY_ENABLED, false);
+const fomoFollowCurrentUserId = String(process.env.FOMO_FOLLOW_USER_ID || '').trim();
 const fomoProfileDiscoveryEnabled = parseBoolean(process.env.FOMO_PROFILE_DISCOVERY_ENABLED, false);
 const fomoTelegramAlertsEnabled = parseBoolean(
   process.env.FOMO_TELEGRAM_ALERTS_ENABLED
@@ -676,6 +677,10 @@ if (calloutCaptureEnabled) {
   if (fomoFollowProfileIds.length > 100
       || fomoFollowProfileIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
     missing.push('FOMO_FOLLOW_PROFILE_IDS must contain at most 100 UUIDs');
+  }
+  if (fomoFollowCurrentUserId
+      && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fomoFollowCurrentUserId)) {
+    missing.push('FOMO_FOLLOW_USER_ID must be a UUID');
   }
   if (fomoCaptureTransport === 'direct_ws'
       && String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
@@ -915,6 +920,7 @@ module.exports = {
         dryRun: fomoFollowDryRun,
         discoveryEnabled: fomoFollowDiscoveryEnabled,
         discoveryLimit: parseIntegerInRange(process.env.FOMO_FOLLOW_DISCOVERY_LIMIT, 100, 1, 100),
+        currentUserId: fomoFollowCurrentUserId || null,
         profileIds: fomoFollowProfileIds,
         maxFollowsPerRun: parseIntegerInRange(process.env.FOMO_FOLLOW_MAX_PER_RUN, 1, 1, 10),
         intervalMs: parseIntegerInRange(

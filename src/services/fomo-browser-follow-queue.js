@@ -186,6 +186,13 @@ function normalizeProfileIds(values, max = 100) {
   return unique;
 }
 
+function normalizeOptionalUserId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (!UUID.test(normalized)) throw new TypeError('Fomo current user ID must be a UUID');
+  return normalized;
+}
+
 function positiveInteger(value, fallback, max) {
   return Number.isSafeInteger(value) && value > 0 ? Math.min(value, max) : fallback;
 }
@@ -304,6 +311,7 @@ async function createFomoBrowserApi(options = {}) {
   const detachSession = options.detachCdpSession || detachCdpSession;
   const authWaitMs = positiveInteger(options.authWaitMs, 60_000, 5 * 60_000);
   const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 15_000, 60_000);
+  const configuredUserId = normalizeOptionalUserId(options.currentUserId);
   const browser = await connectOverCDP(endpoint);
   const pages = browser.contexts().flatMap((context) => context.pages());
   const page = pages.find(isFomoPage);
@@ -404,6 +412,8 @@ async function createFomoBrowserApi(options = {}) {
       .find(([name]) => name.toLowerCase() === 'x-supported-chains')?.[1];
     settleAuthorization(authorization, supportedChains, 'http_request');
   }
+
+  if (configuredUserId) settleCurrentUserId(configuredUserId, 'config');
 
   function inspectRequest(event) {
     let url;
@@ -582,7 +592,8 @@ async function createFomoBrowserApi(options = {}) {
   cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
   cdp.on('Network.webSocketFrameReceived', inspectWebSocketFrameReceived);
   await cdp.send('Network.enable');
-  const profileProbePromise = authContextPromise.then(runProfileProbe, () => {});
+  const profileProbePromise = configuredUserId
+    ? Promise.resolve() : authContextPromise.then(runProfileProbe, () => {});
   timeout = setTimeout(() => {
     if (!authSettled) {
       authSettled = true;
@@ -632,6 +643,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   const enabled = options.enabled === true;
   const followEnabled = options.followEnabled !== false;
   const dryRun = options.dryRun !== false;
+  const currentUserId = normalizeOptionalUserId(options.currentUserId);
   const profileIds = normalizeProfileIds(options.profileIds);
   const discoveryEnabled = options.discoveryEnabled === true;
   const discoveryLimit = positiveInteger(options.discoveryLimit, 100, 100);
@@ -907,6 +919,7 @@ function createFomoBrowserFollowQueue(options = {}) {
       status.phase = 'browser_auth';
       api = await createBrowserApi({
         cdpEndpoint: options.cdpEndpoint,
+        currentUserId,
         authWaitMs: options.authWaitMs,
         requestTimeoutMs: options.requestTimeoutMs,
       });
@@ -976,6 +989,7 @@ module.exports = {
   createFomoBrowserFollowQueue,
   leaderboardProfileIds,
   normalizeProfileIds,
+  normalizeOptionalUserId,
   readActivityProfiles,
   responseStatus,
 };

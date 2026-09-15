@@ -7,6 +7,7 @@ const {
   createFomoBrowserApi,
   createFomoBrowserFollowQueue,
   leaderboardProfileIds,
+  normalizeOptionalUserId,
   normalizeProfileIds,
 } = require('../src/services/fomo-browser-follow-queue');
 
@@ -53,6 +54,9 @@ function apiFixture({ following = [], followStatus = 200, leaderboard = [] } = {
 test('Fomo follow allowlist accepts unique UUIDs only', () => {
   assert.deepEqual(normalizeProfileIds([A, A, B]), [A, B]);
   assert.throws(() => normalizeProfileIds(['not-an-id']), /UUIDs/);
+  assert.equal(normalizeOptionalUserId(` ${USER} `), USER);
+  assert.equal(normalizeOptionalUserId(''), null);
+  assert.throws(() => normalizeOptionalUserId('not-an-id'), /current user ID/);
 });
 
 test('Fomo leaderboard discovery keeps eligible unique profiles in rank order', () => {
@@ -247,6 +251,39 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   await api.close();
 });
 
+test('Fomo browser API uses configured identity without probing or waiting for profile traffic', async () => {
+  const cdp = new EventEmitter();
+  cdp.send = async () => ({});
+  cdp.detach = async () => {};
+  const page = new EventEmitter();
+  page.url = () => 'https://fomo.family/tokens/bnb/private-contract';
+  let profileProbes = 0;
+  const context = {
+    pages: () => [page], newCDPSession: async () => cdp,
+    request: { get: async () => { profileProbes += 1; throw new Error('must not probe'); } },
+  };
+  page.context = () => context;
+  page.reload = async () => {
+    cdp.emit('Network.requestWillBeSent', {
+      requestId: 'api-auth', request: {
+        url: 'https://prod-api.fomo.family/feed/tradingActivity', method: 'GET',
+        headers: { Authorization: `Bearer ${USER_JWT}` },
+      },
+    });
+  };
+  const browser = { contexts: () => [context] };
+
+  const api = await createFomoBrowserApi({
+    connectOverCDP: async () => browser, currentUserId: USER, authWaitMs: 10,
+  });
+  assert.equal(api.currentUserId, USER);
+  assert.equal(api.diagnostics.identitySource, 'config');
+  assert.equal(api.diagnostics.profileProbeAttempts, 0);
+  assert.equal(profileProbes, 0);
+  assert.equal(JSON.stringify(api.diagnostics).includes(USER), false);
+  await api.close();
+});
+
 test('Fomo browser API preserves observed auth source when identity times out', async () => {
   const cdp = new EventEmitter();
   cdp.send = async (method) => (method === 'Network.getResponseBody'
@@ -352,9 +389,10 @@ test('Fomo browser API classifies a failed user bootstrap without exposing error
 
 test('Fomo follow queue plans a dry-run without writing to the account', async () => {
   const fixture = apiFixture({ following: [A] });
+  let browserOptions;
   const queue = createFomoBrowserFollowQueue({
-    enabled: true, dryRun: true, profileIds: [A, B],
-    createBrowserApi: async () => fixture.api,
+    enabled: true, dryRun: true, currentUserId: USER, profileIds: [A, B],
+    createBrowserApi: async (options) => { browserOptions = options; return fixture.api; },
   });
 
   queue.start();
@@ -365,6 +403,7 @@ test('Fomo follow queue plans a dry-run without writing to the account', async (
   assert.equal(queue.getStatus().alreadyFollowed, 1);
   assert.equal(queue.getStatus().planned, 1);
   assert.equal(queue.getStatus().followed, 0);
+  assert.equal(browserOptions.currentUserId, USER);
 });
 
 test('Fomo follow queue discovers Top Profits candidates in dry-run without writes', async () => {

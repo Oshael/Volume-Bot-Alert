@@ -2007,11 +2007,15 @@ nem escreve `/follows` nesses casos.
 Follows externos usam a mesma fila de descoberta, exclusiva de `browser_cdp`.
 O follow é ativado com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
 `FOMO_FOLLOW_DRY_RUN=true` e aceita no máximo 100 UUIDs explícitos em
-`FOMO_FOLLOW_PROFILE_IDS`. Discovery opt-in para follow usa os rankings 24h, 7d
+`FOMO_FOLLOW_PROFILE_IDS`. `FOMO_FOLLOW_USER_ID` aceita o UUID estável da conta
+autenticada e, quando definido, tem precedência sobre a descoberta de identidade
+no browser; valores inválidos impedem a inicialização. Discovery opt-in para
+follow usa os rankings 24h, 7d
 e 30d via `FOMO_FOLLOW_DISCOVERY_ENABLED=true`; o limite é por ranking, não um
 teto cumulativo de contas seguidas. Ela ignora o próprio usuário e perfis
-privados, restritos ou desativados. A fila observa o ID do usuário na resposta de
-`POST /v2/users` carregada pelo próprio navegador, lê `followingIds`, remove os já
+privados, restritos ou desativados. Sem `FOMO_FOLLOW_USER_ID`, a fila tenta observar
+o ID do usuário na resposta de `POST /v2/users` ou em frames enviados pelo browser.
+Com o UUID configurado, ela ignora essa espera e o probe de perfil, lê `followingIds`, remove os já
 seguidos e executa `POST /follows` com concorrência 1, jitter e limite default de
 uma escrita por ciclo. Enquanto o circuito estiver fechado, relê leaderboard e
 `followingIds` a cada `FOMO_FOLLOW_INTERVAL_SECONDS` (default 300, faixa 30–86400)

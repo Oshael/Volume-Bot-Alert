@@ -363,6 +363,32 @@ describe('runtime worker groups config', () => {
     assert.equal(config.browserHealth.recoveryGraceMs, 30_000);
   });
 
+  it('validates and exposes an explicit Fomo follow user ID', () => {
+    const baseEnv = {
+      ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+      PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+      FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+    };
+    const valid = spawnSync(process.execPath, ['-e', "const c=require('./config'); console.log(JSON.stringify(c.calloutCaptureWorker.fomo.follow))"], {
+      cwd: ROOT_DIR,
+      env: { ...baseEnv, FOMO_FOLLOW_USER_ID: '00000000-0000-4000-8000-000000000001' },
+      encoding: 'utf8',
+    });
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.equal(
+      JSON.parse(valid.stdout).currentUserId,
+      '00000000-0000-4000-8000-000000000001',
+    );
+
+    const invalid = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: { ...baseEnv, FOMO_FOLLOW_USER_ID: 'not-an-id' },
+      encoding: 'utf8',
+    });
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /FOMO_FOLLOW_USER_ID must be a UUID/);
+  });
+
   it('requires complete private Telegram settings for Fomo operational alerts', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,
