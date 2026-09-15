@@ -4852,6 +4852,10 @@ preço diretamente da evidência do evento. O filtro exige bloco menor ou igual 
 solicitado, portanto nunca usa preço do futuro. Esse checkpoint event-driven
 permite catch-up sem archive permanente; se não existir referência on-chain nem
 evento anterior no intervalo, a ausência continua falhando fechada.
+A Stage 222 instala os índices parciais de cauda usados por esse fallback; aplique
+`node src/utils/db-init-stage222.js` antes de reabrir uma frontier bloqueada. Os
+índices são criados concorrentemente para não bloquear a captura, embora a criação
+possa acrescentar I/O enquanto percorre o journal existente.
 O canário não pode gravar direto em `robinhood_head_captures`, porque a chave
 idempotente faria o primeiro writer esconder divergências. A Stage 194 cria
 `robinhood_canonical_head_candidates`, um sink separado e imutável que compara

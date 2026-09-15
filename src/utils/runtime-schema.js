@@ -6107,6 +6107,24 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage222-robinhood-stock-usd-journal-indexes',
+    name: 'Stage 222 Robinhood stock/USD journal tail indexes',
+    repair: 'node src/utils/db-init-stage222.js',
+    tables: [{
+      table: 'robinhood_chain_events',
+      indexes: [{
+        name: 'idx_rh_chain_events_v2_v3_pool_tail',
+        includes: ['chain', 'address', 'topic0', 'block_number', 'transaction_index', 'log_index'],
+      }, {
+        name: 'idx_rh_chain_events_v4_pool_tail',
+        includes: [
+          'chain', 'address', 'topic0', 'topics', 'block_number',
+          'transaction_index', 'log_index', '40e9cecb',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

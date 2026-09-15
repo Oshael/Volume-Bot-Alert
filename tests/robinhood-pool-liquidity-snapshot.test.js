@@ -203,10 +203,12 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.match(calls[0].sql, /snapshot\.liquidity_usd DESC NULLS LAST/);
     assert.match(calls[0].sql, /ORDER BY checkpoint\.reference_rank/);
     assert.match(calls[0].sql, /LIMIT 20/);
-    assert.deepEqual(calls[0].params, [
-      TOKEN, v3.ROBINHOOD_USDG, '123', '0',
-      v2.TOPICS.sync, v3.TOPICS.swap, v4.TOPICS.swap,
-    ]);
+    assert.match(calls[0].sql, new RegExp(v2.TOPICS.sync));
+    assert.match(calls[0].sql, new RegExp(v3.TOPICS.swap));
+    assert.match(calls[0].sql, new RegExp(v4.TOPICS.swap));
+    assert.equal((calls[0].sql.match(/UNION ALL/g) || []).length, 2);
+    assert.doesNotMatch(calls[0].sql, /registry\.protocol='uniswap-v2'[\s\S]* OR /);
+    assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123', '0']);
   });
 
   it('invalidates orphaned snapshots and returns their active pools for repair', async () => {
