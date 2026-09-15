@@ -780,6 +780,13 @@ só então remove o índice antigo iniciado por `audit_next_attempt_at`. Isso ev
 backlog pendente para reclamar um lote pequeno. O deadline permanece como contenção caso o plano
 de execução volte a degradar.
 
+Aplique também `node src/utils/db-init-stage221.js` antes de reiniciar o wallet worker. A Stage
+221 cria concorrentemente o índice parcial `idx_rh_wallet_swap_outbox_active_frontier`. O claim
+econômico percorre primeiro o prefixo ordenado da outbox e valida cada hash por lookup canônico,
+impedindo que o PostgreSQL transforme um `LIMIT` pequeno em hash join e sort de toda a fila. O
+mesmo índice torna o `MIN(block_number)` usado pelo watermark uma busca de fronteira, em vez de
+uma varredura completa da outbox.
+
 O publisher v2 reclama somente linhas já aprovadas pelo auditor e é composto no runtime do grupo
 `robinhood-wallet`. Novos `observed` exigem
 `ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED=true` e um bloco decimal ou hexadecimal em

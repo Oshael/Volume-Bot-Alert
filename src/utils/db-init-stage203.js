@@ -46,6 +46,9 @@ const STATEMENTS = Object.freeze([
      ) WHERE status = 'pending'`,
   `CREATE INDEX IF NOT EXISTS idx_rh_wallet_swap_outbox_lease
      ON robinhood_wallet_swap_outbox(lease_until) WHERE status = 'leased'`,
+  `CREATE INDEX IF NOT EXISTS idx_rh_wallet_swap_outbox_active_frontier
+     ON robinhood_wallet_swap_outbox(block_number)
+     WHERE chain='robinhood' AND status IN ('pending', 'leased', 'blocked')`,
 ]);
 
 async function init(options = {}) {

@@ -6095,6 +6095,18 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage221-robinhood-wallet-swap-frontier',
+    name: 'Stage 221 Robinhood wallet-swap economic frontier',
+    repair: 'node src/utils/db-init-stage221.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_outbox',
+      indexes: [{
+        name: 'idx_rh_wallet_swap_outbox_active_frontier',
+        includes: ['block_number', 'robinhood', 'pending', 'leased', 'blocked'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

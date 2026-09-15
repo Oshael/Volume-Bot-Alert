@@ -71,13 +71,16 @@ function createRobinhoodWalletSwapOutboxRepository(options = {}) {
       `WITH claimable AS (
          SELECT outbox.transaction_hash, outbox.log_index
          FROM robinhood_wallet_swap_outbox outbox
-         INNER JOIN robinhood_chain_blocks block
-           ON block.chain = outbox.chain
-          AND block.block_number = outbox.block_number
-          AND block.block_hash = outbox.block_hash
-          AND block.canonical
          WHERE outbox.chain = '${CHAIN}' AND outbox.status = 'pending'
            AND outbox.next_attempt_at <= NOW() AND outbox.block_number <= $4::bigint
+           AND EXISTS (
+             SELECT 1 FROM robinhood_chain_blocks block
+              WHERE block.chain = outbox.chain
+                AND block.block_number = outbox.block_number
+                AND block.block_hash = outbox.block_hash
+                AND block.canonical
+              OFFSET 0
+           )
          ORDER BY outbox.block_number, outbox.transaction_index, outbox.log_index
          LIMIT $2 FOR UPDATE OF outbox SKIP LOCKED
        )
