@@ -36,6 +36,7 @@ const {
   createRobinhoodPoolLiquidityOnchainReader,
 } = require('../services/robinhood-pool-liquidity-onchain');
 const { createRobinhoodWethUsdQuoteReader } = require('../services/robinhood-weth-usd-quote');
+const { createRobinhoodStockUsdQuoteReader } = require('../services/robinhood-stock-usd-quote');
 const { createRobinhoodLiveRpcGuard } = require('../services/robinhood-live-rpc-guard');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
 
@@ -145,14 +146,22 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
   const source = deps.source || createRobinhoodCanonicalLiquiditySource({ database });
   const rangeRepository = deps.rangeRepository
     || createLiquidityHistoricalRangeRepository({ database });
-  const reader = deps.reader || createRobinhoodPoolLiquidityOnchainReader({
-    rpcClient,
-    metadataReader: (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient }),
-    quoteReader: (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
+  let reader = deps.reader;
+  if (!reader) {
+    const metadataReader = (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient });
+    const quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
       rpcClient, eventFallbackEnabled: false,
-    }),
-    v4RangeReader: rangeRepository,
-  });
+    });
+    const stockQuoteReader = deps.stockQuoteReader
+      || (deps.stockQuoteReaderFactory || createRobinhoodStockUsdQuoteReader)({
+        rpcClient, repository: snapshotRepository, metadataReader,
+        wethQuoteReader: quoteReader,
+      });
+    reader = createRobinhoodPoolLiquidityOnchainReader({
+      rpcClient, metadataReader, quoteReader, stockQuoteReader,
+      v4RangeReader: rangeRepository,
+    });
+  }
   const scanner = deps.scanner || createRobinhoodCanonicalLiquidityScanner({
     source, cursorRepository, poolRepository: snapshotRepository, refreshQueue,
   }, { maxBlocks: options.scanBatchBlocks });

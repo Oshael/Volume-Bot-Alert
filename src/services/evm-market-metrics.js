@@ -91,7 +91,7 @@ function reject(reason, swap) {
   };
 }
 
-function resolveQuoteUsd(quoteAddress, options) {
+function resolveQuoteUsd(quoteAddress, options = {}) {
   if (quoteAddress === ROBINHOOD_USDG) {
     const price = parseDecimal(options.usdgUsdPrice ?? '1', 'USDG/USD price');
     return { price, source: options.usdgUsdSource || 'usdg-peg-assumption', status: 'assumed' };
@@ -99,6 +99,16 @@ function resolveQuoteUsd(quoteAddress, options) {
   if (quoteAddress === ROBINHOOD_WETH && options.wethUsdPrice != null) {
     const price = parseDecimal(options.wethUsdPrice, 'WETH/USD price');
     return { price, source: options.wethUsdSource || 'canonical-weth-usdg-pool', status: 'observed' };
+  }
+  if (options.quoteUsdPrice != null
+      && normalizeAddress(options.quoteUsdAddress, 'quote USD address') === quoteAddress) {
+    const source = String(options.quoteUsdSource || '').trim();
+    const status = String(options.quoteUsdStatus || 'observed').trim();
+    if (!source) throw new Error('quote USD source is required');
+    if (!['observed', 'assumed'].includes(status)) throw new Error('quote USD status is invalid');
+    return {
+      price: parseDecimal(options.quoteUsdPrice, 'quote USD price'), source, status,
+    };
   }
   return null;
 }

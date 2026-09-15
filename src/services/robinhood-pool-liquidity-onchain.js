@@ -3,6 +3,7 @@ const v4 = require('./uniswap-v4-decoder');
 const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
 const {
   CANONICAL_CONTRACTS,
+  ROBINHOOD_TOKENIZED_ASSETS,
   buildLiquidityAssessment,
 } = require('./robinhood-market-policy');
 const {
@@ -16,6 +17,7 @@ const {
 } = require('./evm-market-metrics');
 
 const QUOTE_USD_UNSUPPORTED_ERROR_CODE = 'liquidity_quote_usd_unsupported';
+const STOCKS = new Set(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
 
 const GET_RESERVES_SELECTOR = '0x0902f1ac';
 const SLOT0_SELECTOR = '0x3850c7bd';
@@ -102,6 +104,7 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
   const rpcClient = deps.rpcClient;
   const metadataReader = deps.metadataReader;
   const quoteReader = deps.quoteReader;
+  const stockQuoteReader = deps.stockQuoteReader;
   const v4RangeReader = deps.v4RangeReader;
   const assessLiquidity = deps.assessLiquidity || buildLiquidityAssessment;
   const stateViewAddress = String(
@@ -147,6 +150,12 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
   }
 
   async function quoteUsd(pool, anchor) {
+    if (STOCKS.has(pool.quoteAddress)) {
+      const snapshot = await stockQuoteReader.getSnapshot({
+        stockAddress: pool.quoteAddress, blockTag: anchor.blockTag,
+      });
+      return snapshot.priceUsd;
+    }
     const options = pool.quoteAddress === ROBINHOOD_WETH
       ? await quoteReader.getSnapshot({ blockTag: anchor.blockTag }) : {};
     const resolved = resolveQuoteUsd(pool.quoteAddress, {
@@ -166,6 +175,7 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
 
   function assertSupportedQuote(pool, anchor) {
     if (pool.quoteAddress === ROBINHOOD_USDG || pool.quoteAddress === ROBINHOOD_WETH) return;
+    if (STOCKS.has(pool.quoteAddress) && typeof stockQuoteReader?.getSnapshot === 'function') return;
     const error = new Error('pool quote USD price is unavailable');
     error.code = QUOTE_USD_UNSUPPORTED_ERROR_CODE;
     error.details = {

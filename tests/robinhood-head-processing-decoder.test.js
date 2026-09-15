@@ -8,6 +8,7 @@ const {
 } = require('../src/services/robinhood-head-processing-decoder');
 const { HEAD_EVIDENCE_VERSION } = require('../src/services/robinhood-head-evidence');
 const { ROBINHOOD_WETH } = require('../src/services/evm-market-metrics');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
 const v4 = require('../src/services/uniswap-v4-decoder');
@@ -20,6 +21,7 @@ const POOL_ID = `0x${'33'.repeat(32)}`;
 const BLOCK_HASH = `0x${'ab'.repeat(32)}`;
 const TX_HASH = `0x${'cd'.repeat(32)}`;
 const ONE = 10n ** 18n;
+const STOCK = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
 
 function word(value) {
   const big = BigInt(value);
@@ -103,6 +105,21 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     assert.equal(result.observation.quoteUsdStatus, 'observed');
     assert.equal(result.observation.quoteUsdSource, 'canonical-weth-usdg-3000');
     assert.equal(result.observation.tokenSupplyStatus, 'latest_call');
+  });
+
+  it('rebuilds a stock-quoted observation from frozen evidence without RPC', () => {
+    const row = v3Row({
+      quoteAddress: STOCK,
+      quoteMetadata: { decimals: 18 },
+      quoteUsd: {
+        priceUsd: '42', source: 'canonical-uniswap-v3-stock-usdg',
+        status: 'observed', blockTag: '0x64',
+      },
+    });
+    const result = decodeCapture(row);
+    assert.equal(result.observation.accepted, true);
+    assert.equal(result.observation.quoteUsdPrice, '42');
+    assert.equal(result.observation.quoteUsdSource, 'canonical-uniswap-v3-stock-usdg');
   });
 
   it('derives the quote slot from the addresses, ignoring a stale frozen quoteIndex', () => {

@@ -9,13 +9,17 @@
  * eligibility/metadata/quote decisions become rejection captures so the cursor
  * still advances with an auditable reason.
  */
-const { classifyTokenEligibility } = require('./robinhood-market-policy');
+const {
+  classifyTokenEligibility, ROBINHOOD_TOKENIZED_ASSETS,
+} = require('./robinhood-market-policy');
 const { formatDecimal, resolveQuoteUsd, ROBINHOOD_WETH } = require('./evm-market-metrics');
 const {
   HEAD_EVIDENCE_VERSION,
   buildMarketEvidence,
   buildDiscoveryEvidence,
 } = require('./robinhood-head-evidence');
+
+const STOCKS = new Set(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
 
 function blockTag(value) {
   return `0x${BigInt(value).toString(16)}`;
@@ -32,6 +36,7 @@ function requireCaptureTimestampMs(value) {
 function createRobinhoodHeadCaptureBuilder(deps = {}) {
   const metadataReader = deps.metadataReader;
   const quoteReader = deps.quoteReader;
+  const stockQuoteReader = deps.stockQuoteReader;
   const policyOptions = deps.policyOptions;
   const classifyEligibility = deps.classifyEligibility || classifyTokenEligibility;
   if (typeof metadataReader?.getMetadata !== 'function') throw new Error('metadataReader is required');
@@ -48,6 +53,37 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
       totalSupplyRaw: metadata.totalSupplyRaw,
       tokenSupplyStatus: 'latest_call',
       tokenSupplyBlockTag: blockTag(blockNumber),
+    };
+  }
+
+  async function resolveStockQuote(swap) {
+    if (!STOCKS.has(swap.quoteAddress) || !stockQuoteReader) return null;
+    try {
+      return await stockQuoteReader.getSnapshot({
+        stockAddress: swap.quoteAddress, blockTag: blockTag(swap.blockNumber),
+      });
+    } catch (error) {
+      if (error?.retryable !== false) throw error;
+      return null;
+    }
+  }
+
+  async function resolveUsdQuote(swap) {
+    const wethQuote = swap.quoteAddress === ROBINHOOD_WETH
+      ? await quoteReader.getCurrent() : null;
+    const stockQuote = await resolveStockQuote(swap);
+    const quoteUsd = resolveQuoteUsd(swap.quoteAddress, {
+      wethUsdPrice: wethQuote?.priceUsd,
+      wethUsdSource: wethQuote?.source,
+      quoteUsdAddress: stockQuote?.stockAddress,
+      quoteUsdPrice: stockQuote?.priceUsd,
+      quoteUsdSource: stockQuote?.source,
+      quoteUsdStatus: stockQuote?.status,
+    });
+    if (!quoteUsd || quoteUsd.price.numerator <= 0n) return null;
+    return {
+      quoteUsd,
+      quoteBlockTag: stockQuote?.blockTag || wethQuote?.blockTag || 'latest',
     };
   }
 
@@ -138,17 +174,16 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
     ]);
     if (!tokenMetadata.usable) return { reject: 'token_metadata_unusable' };
     if (!quoteMetadata?.usable) return { reject: 'quote_metadata_unusable' };
-    const quoteOptions = swap.quoteAddress === ROBINHOOD_WETH ? await quoteReader.getCurrent() : null;
-    const quoteUsd = resolveQuoteUsd(swap.quoteAddress, {
-      wethUsdPrice: quoteOptions?.priceUsd,
-      wethUsdSource: quoteOptions?.source,
-    });
-    if (!quoteUsd || quoteUsd.price.numerator <= 0n) return { reject: 'quote_usd_unavailable' };
+    const resolvedQuote = await resolveUsdQuote(swap);
+    if (!resolvedQuote) return { reject: 'quote_usd_unavailable' };
     const v3Balances = await resolveV3Balances(swap, options);
     if (v3Balances?.unavailable) {
       return { reject: v3Balances.reason || 'v3_pool_balance_unavailable' };
     }
-    return { eligibility, tokenMetadata, quoteMetadata, quoteUsd, quoteOptions, v3: v3Balances?.v3 };
+    return {
+      eligibility, tokenMetadata, quoteMetadata, ...resolvedQuote,
+      v3: v3Balances?.v3,
+    };
   }
 
   async function buildMarketCapture(swap, options = {}) {
@@ -167,7 +202,7 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
         priceUsd: formatDecimal(inputs.quoteUsd.price, 12),
         source: inputs.quoteUsd.source,
         status: inputs.quoteUsd.status,
-        blockTag: inputs.quoteOptions?.blockTag ?? 'latest',
+        blockTag: inputs.quoteBlockTag,
       },
       v2: swap.protocol === 'uniswap-v2' ? { quoteReserveRaw: swap.quoteReserveRaw } : undefined,
       v3: inputs.v3,

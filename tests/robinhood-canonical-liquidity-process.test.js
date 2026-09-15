@@ -75,8 +75,10 @@ test('canonical liquidity startup gate excludes legacy and requires canonical au
 
 test('standalone canonical liquidity process validates and owns its dedicated lease', async () => {
   let definition; let validated = false; let gated = false;
-  let started = false; let stopped = false; let closed = false; let quoteOptions;
+  let started = false; let stopped = false; let closed = false;
+  let quoteOptions; let stockOptions;
   const database = { pool: {} };
+  const snapshotRepository = {};
   const baseRpcClient = {
     providers: ['robinhood-public'],
     request: async () => null,
@@ -100,7 +102,7 @@ test('standalone canonical liquidity process validates and owns its dedicated le
       leaseHeartbeatMs: 30_000, leaseTtlMs: 120_000,
     },
     database, timedDatabase: database, rpcOptions: {},
-    rpcClientFactory: () => baseRpcClient, snapshotRepository: {}, cursorRepository: {},
+    rpcClientFactory: () => baseRpcClient, snapshotRepository, cursorRepository: {},
     refreshQueue: {}, source: {},
     rangeRepository: { listHistoricalV4LiquidityRanges: async () => [] },
     metadataReaderFactory: () => ({
@@ -108,6 +110,10 @@ test('standalone canonical liquidity process validates and owns its dedicated le
     }),
     quoteReaderFactory: (value) => {
       quoteOptions = value;
+      return { getSnapshot: async () => ({}) };
+    },
+    stockQuoteReaderFactory: (value) => {
+      stockOptions = value;
       return { getSnapshot: async () => ({}) };
     },
     scanner, refresher,
@@ -133,6 +139,8 @@ test('standalone canonical liquidity process validates and owns its dedicated le
   });
   assert.equal(quoteOptions.eventFallbackEnabled, false);
   assert.notEqual(quoteOptions.rpcClient, baseRpcClient);
+  assert.equal(stockOptions.repository, snapshotRepository);
+  assert.equal(stockOptions.wethQuoteReader.getSnapshot instanceof Function, true);
   await definition.start();
   assert.equal(validated, true); assert.equal(gated, true); assert.equal(started, true);
   await runtime.shutdown();

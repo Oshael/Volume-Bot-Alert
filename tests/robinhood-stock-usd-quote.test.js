@@ -150,6 +150,11 @@ describe('Robinhood stock USD quote reader', () => {
       (error) => error.code === 'stock_usd_reference_unavailable'
         && error.details.failures.length === 1
     );
+    const missing = createRobinhoodStockUsdQuoteReader(dependencies([], async () => '0x'));
+    await assert.rejects(
+      missing.getSnapshot({ stockAddress: STOCK, blockTag: BLOCK_TAG }),
+      (error) => error.code === 'stock_usd_reference_missing' && error.retryable === false
+    );
     await assert.rejects(
       reader.getSnapshot({ stockAddress: `0x${'9'.repeat(40)}`, blockTag: BLOCK_TAG }),
       /official stock token/

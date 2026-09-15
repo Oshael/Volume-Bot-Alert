@@ -18,6 +18,7 @@ const SLOT0_SELECTOR = '0x3850c7bd';
 const V4_GET_SLOT0_SELECTOR = '0xc815641c';
 const RPC_OPTIONS = Object.freeze({ fallbackOnRpcError: true });
 const STOCKS = new Set(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
+const STOCK_USD_REFERENCE_MISSING_ERROR_CODE = 'stock_usd_reference_missing';
 
 function address(value, label) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -76,7 +77,9 @@ function normalizePrice(rawRatio, tokenDecimals, quoteDecimals, quoteUsdPrice) {
 
 function errorResult(stockAddress, block, failures) {
   const error = new Error(`stock USD reference is unavailable for ${stockAddress} at ${block}`);
-  error.code = 'stock_usd_reference_unavailable';
+  error.code = failures.length
+    ? 'stock_usd_reference_unavailable' : STOCK_USD_REFERENCE_MISSING_ERROR_CODE;
+  error.retryable = failures.length > 0;
   error.details = { stockAddress, blockTag: block, failures };
   return error;
 }
@@ -209,5 +212,6 @@ module.exports = {
   GET_RESERVES_SELECTOR,
   SLOT0_SELECTOR,
   V4_GET_SLOT0_SELECTOR,
+  STOCK_USD_REFERENCE_MISSING_ERROR_CODE,
   createRobinhoodStockUsdQuoteReader,
 };

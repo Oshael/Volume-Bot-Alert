@@ -11,13 +11,14 @@ describe('Robinhood canonical head runtime', () => {
   it('seeds the capture pipeline from persisted pools and disables mutable projections', async () => {
     const seedPools = [{ protocol: 'uniswap-v3', market_key: 'pool-a' }];
     const outbox = {}; const candidateRepository = {}; let pipelineOptions; let runnerDeps;
+    const stockQuoteReader = { getSnapshot: async () => ({ priceUsd: '42' }) };
     const runtime = await createRobinhoodCanonicalHeadRuntime({
       rpcClient: { request: async () => 'ok' },
       catalog: {
         listActivePools: async () => seedPools,
         listCurrentV4LiquidityRanges: async () => [],
       },
-      outbox,
+      outbox, stockQuoteReader,
       candidateRepositoryFactory: () => candidateRepository,
       pipelineFactory: (options) => {
         pipelineOptions = options;
@@ -37,6 +38,7 @@ describe('Robinhood canonical head runtime', () => {
     assert.equal(pipelineOptions.windowAggregationEnabled, false);
     assert.equal(pipelineOptions.seedPools, seedPools);
     assert.equal(pipelineOptions.observationConcurrency, 4);
+    assert.equal(pipelineOptions.stockQuoteReader, stockQuoteReader);
     assert.equal(runnerDeps.outbox, outbox);
     assert.equal(runnerDeps.headRepository, candidateRepository);
     assert.equal(runnerDeps.options.leaseMs, 30_000);

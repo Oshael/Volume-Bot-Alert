@@ -5,8 +5,10 @@ const {
   createRobinhoodHeadCaptureBuilder,
 } = require('../src/services/robinhood-head-capture-builder');
 const { ROBINHOOD_WETH } = require('../src/services/evm-market-metrics');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 
 const TOKEN = '0xtoken';
+const STOCK = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
 
 function metadataReaderStub(overrides = {}) {
   return {
@@ -30,6 +32,7 @@ function builder(overrides = {}) {
   return createRobinhoodHeadCaptureBuilder({
     metadataReader: metadataReaderStub(overrides.metadataReader),
     quoteReader: overrides.quoteReader || quoteReaderStub,
+    stockQuoteReader: overrides.stockQuoteReader,
     classifyEligibility: overrides.classifyEligibility || (() => ({ eligible: true })),
   });
 }
@@ -112,6 +115,33 @@ describe('head capture builder — market', () => {
   it('rejects when the quote USD is unavailable', async () => {
     const capture = await builder().buildMarketCapture(v3Swap({ quoteAddress: '0xunknownquote' }));
     assert.equal(capture.evidence.rejected, 'quote_usd_unavailable');
+  });
+
+  it('freezes a stock/USD quote at the swap block', async () => {
+    const calls = [];
+    const capture = await builder({ stockQuoteReader: { async getSnapshot(input) {
+      calls.push(input);
+      return {
+        stockAddress: STOCK, priceUsd: '42.5', source: 'canonical-uniswap-v3-stock-usdg',
+        status: 'observed', blockTag: '0x64',
+      };
+    } } }).buildMarketCapture(v3Swap({ quoteAddress: STOCK }));
+    assert.deepEqual(calls, [{ stockAddress: STOCK, blockTag: '0x64' }]);
+    assert.deepEqual(capture.evidence.quoteUsd, {
+      priceUsd: '42.5', source: 'canonical-uniswap-v3-stock-usdg',
+      status: 'observed', blockTag: '0x64',
+    });
+  });
+
+  it('rejects only a deterministic missing stock reference without blocking the head', async () => {
+    const error = Object.assign(new Error('missing reference'), { retryable: false });
+    const capture = await builder({ stockQuoteReader: {
+      async getSnapshot() { throw error; },
+    } }).buildMarketCapture(v3Swap({ quoteAddress: STOCK }));
+    assert.equal(capture.evidence.rejected, 'quote_usd_unavailable');
+    await assert.rejects(builder({ stockQuoteReader: {
+      async getSnapshot() { throw Object.assign(new Error('RPC down'), { retryable: true }); },
+    } }).buildMarketCapture(v3Swap({ quoteAddress: STOCK })), /RPC down/);
   });
 
   it('emits a terminal rejection capture when V3 pool state is pruned (null balance)', async () => {

@@ -163,6 +163,14 @@ describe('Robinhood canonical liquidity refresher', () => {
     const retried = calls.find((call) => call.operation === 'retry');
     assert.equal(retried.value.retryMs, 123_000);
     assert.equal(retried.value.error, failedError);
+    const missingReference = {
+      code: 'stock_usd_reference_missing', message: 'stock USD reference is unavailable',
+    };
+    const missing = fixture(
+      { failedError: missingReference }, { unsupportedQuoteRetryMs: 123_000 }
+    );
+    await missing.refresher.runOnce();
+    assert.equal(missing.calls.find((call) => call.operation === 'retry').value.retryMs, 123_000);
   });
 
   it('rejects incomplete dependencies and unsafe bounds', () => {

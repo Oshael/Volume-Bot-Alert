@@ -8,10 +8,30 @@ const {
   createRobinhoodCanonicalHeadCandidateRepository,
 } = require('../models/robinhood-canonical-head-candidate');
 const { createRobinhoodHeadCaptureRepository } = require('../models/robinhood-head-capture');
+const {
+  createRobinhoodPoolLiquiditySnapshotRepository,
+} = require('../models/robinhood-pool-liquidity-snapshot');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
+const { createErc20MetadataReader } = require('./evm-erc20-metadata');
 const { createRobinhoodCanonicalHeadRunner } = require('./robinhood-canonical-head-runner');
 const { createRobinhoodLiveRpcGuard } = require('./robinhood-live-rpc-guard');
 const { createRobinhoodOnchainPipeline } = require('./robinhood-onchain-pipeline');
+const { createRobinhoodStockUsdQuoteReader } = require('./robinhood-stock-usd-quote');
+const { createRobinhoodWethUsdQuoteReader } = require('./robinhood-weth-usd-quote');
+
+function createValuationReaders(deps, database, rpcClient) {
+  const metadataReader = (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient });
+  const quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
+    rpcClient, eventFallbackEnabled: false,
+  });
+  const repository = deps.stockReferenceRepository
+    || createRobinhoodPoolLiquiditySnapshotRepository({ database });
+  const stockQuoteReader = deps.stockQuoteReader
+    || (deps.stockQuoteReaderFactory || createRobinhoodStockUsdQuoteReader)({
+      rpcClient, repository, metadataReader, wethQuoteReader: quoteReader,
+    });
+  return { metadataReader, quoteReader, stockQuoteReader };
+}
 
 async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
   if (typeof deps.rpcClient?.request !== 'function') throw new Error('rpcClient.request is required');
@@ -23,8 +43,9 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     database,
   });
   const seedPools = await catalog.listActivePools();
+  const readers = createValuationReaders(deps, database, rpcClient);
   const pipeline = (deps.pipelineFactory || createRobinhoodOnchainPipeline)({
-    rpcClient,
+    rpcClient, ...readers,
     seedPools,
     v4LiquidityReader: catalog,
     captureMode: true,

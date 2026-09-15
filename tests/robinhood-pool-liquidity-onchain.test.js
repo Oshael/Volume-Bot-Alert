@@ -11,6 +11,7 @@ const {
   createRobinhoodPoolLiquidityOnchainReader,
 } = require('../src/services/robinhood-pool-liquidity-onchain');
 const { ROBINHOOD_USDG, ROBINHOOD_WETH } = require('../src/services/evm-market-metrics');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const POOL = `0x${'2'.repeat(40)}`;
@@ -172,6 +173,23 @@ describe('Robinhood pool liquidity current-state reader', () => {
     });
     assert.equal(metadataReads, 0);
     assert.equal(rpcReads, 0);
+  });
+
+  it('values a stock-quoted pool from the stock/USD reader at the same anchor', async () => {
+    const stock = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
+    const quoteCalls = [];
+    const reader = createRobinhoodPoolLiquidityOnchainReader(dependencies(
+      async () => words(2_000_000, 5_000_000, 1),
+      { stockQuoteReader: { async getSnapshot(input) {
+        quoteCalls.push(input);
+        return { priceUsd: '42' };
+      } } }
+    ));
+    const result = await reader.valuePool(pool('uniswap-v2', {
+      quoteAddress: stock, currency1: stock,
+    }), ANCHOR);
+    assert.equal(result.liquidityUsd, '420');
+    assert.deepEqual(quoteCalls, [{ stockAddress: stock, blockTag: ANCHOR.blockTag }]);
   });
 
   it('values V3 from slot0 plus exact pool balances at the anchor', async () => {

@@ -29,6 +29,7 @@ function resolveCaptureBuilder(options, metadataReader, quoteReader) {
   return options.captureBuilder || createRobinhoodHeadCaptureBuilder({
     metadataReader,
     quoteReader,
+    stockQuoteReader: options.stockQuoteReader,
     policyOptions: options.policyOptions,
   });
 }

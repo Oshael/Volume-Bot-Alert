@@ -521,14 +521,16 @@ bloco de criação e primeiro `Initialize`, além de classificar o registry de c
 como `missing`, `inactive`, `orientation_mismatch` ou `ready`. A cobertura histórica por
 swap é estrutural (`mode=initialized_reference_pool`): confirma que uma referência da mesma
 stock já estava inicializada no bloco, preferindo stock/USDG direto e usando stock/WETH como
-segunda rota. Ela não afirma que o `slot0` archive daquele bloco já foi lido nem que o writer
-suporta a stock como cotação; `stock_quote_valuation_not_implemented` continua bloqueando a
-prontidão enquanto a valoração USD específica não existir.
+segunda rota. Ela não afirma que o `slot0` archive daquele bloco já foi lido; captures antigos
+continuam bloqueados até o reparo direcionado executar a nova valoração stock/USD.
 
 O live discovery reconhece ativos tokenizados oficiais como quote em pools meme/stock
-V2, V3 e V4 e registra essas pools como ativas. Enquanto a rota stock/USD não estiver
-implementada, seus swaps são rejeitados com `quote_usd_unavailable`: o registry e a
-identificação de LP funcionam, mas preço, volume e alertas ainda não são publicados.
+V2, V3 e V4 e registra essas pools como ativas. A cotação stock/USD é resolvida no bloco
+exato do swap ou snapshot: stock/USDG tem precedência e stock/WETH compõe WETH/USD no mesmo
+bloco. O resolvedor aceita referências V2, V3 e V4, tenta a próxima pool quando uma referência
+falha e mantém cache por `stock:block`. A captura congela preço, fonte, status e bloco na
+evidência; o processing reconstrói preço, volume e FDV sem RPC. Captures históricos rejeitados
+antes dessa rota continuam exigindo o reparo direcionado de stock.
 
 `npm run robinhood:audit-stock-pool-liquidity -- --token-address=<token>
 --expected-total-usd=<comparação>` prova a contribuição corrente das pools V4 meme/stock
@@ -1219,10 +1221,11 @@ os eventos pendentes de cada pool; o refresher então faz uma única valoração
 processing por meio de `eth_call`, usando somente o node pruned permanente configurado em
 `ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL` (loopback obrigatório; na VPS2, `127.0.0.1:8547`). O claim
 prioriza `next_attempt_at` antes do bloco sujo para impedir que falhas antigas e recorrentes
-monopolizem o batch. Quotes sem fonte USD canônica recebem
+monopolizem o batch. Quotes não reconhecidos e sem fonte USD canônica recebem
 `liquidity_quote_usd_unsupported` e são adiados por
 `ROBINHOOD_CANONICAL_LIQUIDITY_UNSUPPORTED_QUOTE_RETRY_MS` (24 horas por padrão), enquanto falhas
-transientes continuam no backoff normal. Todas as falhas preservam o snapshot válido anterior.
+transientes continuam no backoff normal. Stocks oficiais usam a mesma rota ancorada
+stock/USDG ou stock/WETH do head. Todas as falhas preservam o snapshot válido anterior.
 A telemetria da lease separa
 `scanner` e `refresher`, incluindo ranges/blocos/logs/pools enfileiradas e claims
 concluídas/retentadas. O fallback histórico de cotação WETH/USDG por eventos fica desabilitado

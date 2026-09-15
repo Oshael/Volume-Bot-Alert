@@ -5,6 +5,9 @@ const {
   QUOTE_USD_UNSUPPORTED_ERROR_CODE,
 } = require('./robinhood-pool-liquidity-onchain');
 const {
+  STOCK_USD_REFERENCE_MISSING_ERROR_CODE,
+} = require('./robinhood-stock-usd-quote');
+const {
   QUARANTINE_ERROR_CODE,
 } = require('../models/robinhood-pool-liquidity-refresh-queue');
 
@@ -72,7 +75,9 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
       const error = errors.get(`${row.protocol}:${row.market_key}`)
         || new Error('liquidity refresh result is missing');
       const quarantine = error?.code === QUARANTINE_ERROR_CODE;
-      const unsupportedQuote = error?.code === QUOTE_USD_UNSUPPORTED_ERROR_CODE;
+      const unsupportedQuote = [
+        QUOTE_USD_UNSUPPORTED_ERROR_CODE, STOCK_USD_REFERENCE_MISSING_ERROR_CODE,
+      ].includes(error?.code);
       const changed = await deps.refreshQueue[quarantine ? 'quarantine' : 'retry']({
         owner: options.owner,
         protocol: row.protocol,

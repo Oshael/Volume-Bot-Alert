@@ -121,7 +121,13 @@ function quoteOptionsFromEvidence(evidence) {
   if (evidence.quoteAddress === ROBINHOOD_WETH) {
     return { wethUsdPrice: quote.priceUsd, wethUsdSource: quote.source };
   }
-  return {};
+  if (evidence.quoteAddress === v2.ROBINHOOD_USDG) return {};
+  return {
+    quoteUsdAddress: evidence.quoteAddress,
+    quoteUsdPrice: quote.priceUsd,
+    quoteUsdSource: quote.source,
+    quoteUsdStatus: quote.status,
+  };
 }
 
 function liquidityInputsFromEvidence(protocol, evidence, swap, observation) {

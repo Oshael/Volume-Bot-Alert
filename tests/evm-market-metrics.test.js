@@ -116,6 +116,20 @@ describe('EVM market metrics', () => {
     assert.equal(observation.quoteUsdSource, 'canonical-v3-weth-usdg');
   });
 
+  it('accepts an explicit USD quote only for the matching quote currency', () => {
+    const input = {
+      swap: swap({ quoteAddress: OTHER }),
+      tokenMetadata: metadata(TOKEN, 18, 1_000_000n * 10n ** 18n),
+      quoteMetadata: metadata(OTHER, 6, 1n), eligibility: ELIGIBLE,
+      quoteUsdAddress: OTHER, quoteUsdPrice: '42',
+      quoteUsdSource: 'canonical-stock-usdg', quoteUsdStatus: 'observed',
+    };
+    assert.equal(buildMarketObservation(input).quoteUsdPrice, '42');
+    assert.equal(buildMarketObservation({
+      ...input, quoteUsdAddress: `0x${'3'.repeat(40)}`,
+    }).reason, 'quote_usd_unavailable');
+  });
+
   it('keeps integers above Number.MAX_SAFE_INTEGER exact', () => {
     // The huge value rides on volume (unguarded) rather than FDV, whose supply
     // is now bounded by the human ceiling: this still proves the rational
