@@ -10,6 +10,7 @@ const {
   parseDecimal,
   rational,
 } = require('./evm-market-metrics');
+const v2 = require('./uniswap-v2-decoder');
 const v3 = require('./uniswap-v3-decoder');
 const v4 = require('./uniswap-v4-decoder');
 
@@ -131,6 +132,56 @@ function createRobinhoodStockUsdQuoteReader(options = {}) {
       .exactPriceRatio(sqrtPriceX96, { quoteIndex: index });
   }
 
+  async function eventCheckpoint(stockAddress, resolvedBlockTag) {
+    if (typeof repository.findStockUsdEventCheckpoint !== 'function') return null;
+    const checkpoint = await repository.findStockUsdEventCheckpoint({
+      stockAddress, blockNumber: BigInt(resolvedBlockTag).toString(),
+    });
+    if (!checkpoint) return null;
+    const reference = checkpoint.reference;
+    const index = quoteIndex(reference);
+    const pool = {
+      tracked: true, marketKey: reference.marketKey,
+      tokenAddress: reference.tokenAddress, quoteAddress: reference.quoteAddress,
+      quoteIndex: index,
+      ...(reference.protocol === 'uniswap-v2'
+        ? { pairAddress: reference.poolAddress }
+        : reference.protocol === 'uniswap-v3'
+        ? { poolAddress: reference.poolAddress }
+        : { poolId: reference.poolId, poolManagerAddress: reference.originAddress }),
+    };
+    let ratio;
+    if (reference.protocol === 'uniswap-v2') {
+      const sync = v2.decodeSync(checkpoint.log, pool);
+      const tokenReserve = BigInt(sync.tokenReserveRaw);
+      const quoteReserve = BigInt(sync.quoteReserveRaw);
+      if (tokenReserve === 0n || quoteReserve === 0n) return null;
+      ratio = rational(quoteReserve, tokenReserve);
+    } else {
+      const swap = reference.protocol === 'uniswap-v3'
+        ? v3.decodeSwap(checkpoint.log, pool)
+        : v4.decodeSwap(checkpoint.log, pool, { poolManagerAddress: reference.originAddress });
+      ratio = swap.priceQuotePerTokenRaw;
+    }
+    const [tokenMetadata, quoteMetadata] = await Promise.all([
+      metadataReader.getMetadata(stockAddress),
+      metadataReader.getMetadata(reference.quoteAddress),
+    ]);
+    const price = normalizePrice(
+      ratio,
+      decimals(tokenMetadata, 'stock'), decimals(quoteMetadata, 'quote'), '1'
+    );
+    return Object.freeze({
+      priceUsd: formatDecimal(price, 12),
+      exact: { numerator: price.numerator.toString(), denominator: price.denominator.toString() },
+      source: `canonical-${reference.protocol}-stock-usdg-journal`,
+      status: 'observed', confidence: 'medium', stockAddress,
+      referenceProtocol: reference.protocol, referenceMarketKey: reference.marketKey,
+      referencePool: reference.poolAddress || reference.poolId,
+      blockTag: blockTag(checkpoint.log.blockNumber), requestedBlockTag: resolvedBlockTag,
+    });
+  }
+
   async function resolve(stockAddress, resolvedBlockTag) {
     const references = await repository.listStockUsdReferences({
       stockAddress, blockNumber: BigInt(resolvedBlockTag).toString(),
@@ -183,25 +234,8 @@ function createRobinhoodStockUsdQuoteReader(options = {}) {
         });
       }
     }
-    if (typeof repository.findStockUsdCheckpoint === 'function') {
-      const checkpoint = await repository.findStockUsdCheckpoint({
-        stockAddress, blockNumber: BigInt(resolvedBlockTag).toString(),
-      });
-      if (checkpoint) {
-        const price = parseDecimal(checkpoint.priceUsd);
-        return Object.freeze({
-          priceUsd: formatDecimal(price, 12),
-          exact: { numerator: price.numerator.toString(), denominator: price.denominator.toString() },
-          source: `canonical-${checkpoint.protocol}-stock-usdg-checkpoint`,
-          status: 'observed', confidence: 'medium', stockAddress,
-          referenceProtocol: checkpoint.protocol,
-          referenceMarketKey: checkpoint.marketKey,
-          referencePool: checkpoint.poolAddress || checkpoint.poolId,
-          blockTag: blockTag(checkpoint.blockNumber),
-          requestedBlockTag: resolvedBlockTag,
-        });
-      }
-    }
+    const journalCheckpoint = await eventCheckpoint(stockAddress, resolvedBlockTag);
+    if (journalCheckpoint) return journalCheckpoint;
     throw errorResult(stockAddress, resolvedBlockTag, failures);
   }
 

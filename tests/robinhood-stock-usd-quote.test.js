@@ -12,6 +12,8 @@ const {
   V4_GET_SLOT0_SELECTOR,
   createRobinhoodStockUsdQuoteReader,
 } = require('../src/services/robinhood-stock-usd-quote');
+const v3 = require('../src/services/uniswap-v3-decoder');
+const v4 = require('../src/services/uniswap-v4-decoder');
 
 const STOCK = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
 const POOL = `0x${'2'.repeat(40)}`;
@@ -33,6 +35,7 @@ function reference(protocol, quoteAddress = CANONICAL_CONTRACTS.USDG) {
     protocol, marketKey: `robinhood:${protocol}:${POOL}`,
     poolAddress: protocol === 'uniswap-v4' ? null : POOL,
     poolId: protocol === 'uniswap-v4' ? POOL_ID : null,
+    originAddress: protocol === 'uniswap-v4' ? STATE_VIEW : POOL,
     tokenAddress: STOCK, quoteAddress,
     currency0: STOCK, currency1: quoteAddress,
   };
@@ -161,21 +164,49 @@ describe('Robinhood stock USD quote reader', () => {
     );
   });
 
-  it('falls back to the last canonical direct USDG checkpoint when pruned state is unavailable', async () => {
-    const deps = dependencies([reference('uniswap-v4')], async () => '0x');
-    deps.repository.findStockUsdCheckpoint = async (input) => {
+  it('falls back to the last canonical direct USDG event when pruned state is unavailable', async () => {
+    const deps = dependencies([reference('uniswap-v3')], async () => '0x');
+    deps.repository.findStockUsdEventCheckpoint = async (input) => {
       assert.deepEqual(input, { stockAddress: STOCK, blockNumber: '100' });
       return {
-        protocol: 'uniswap-v3', marketKey: 'robinhood:uniswap-v3:checkpoint',
-        poolAddress: POOL, poolId: null, priceUsd: '760.794678239595',
-        blockNumber: '98', logIndex: '4',
+        reference: reference('uniswap-v3'),
+        log: {
+          blockNumber: '98', blockHash: `0x${'5'.repeat(64)}`,
+          transactionHash: `0x${'6'.repeat(64)}`, logIndex: '4', address: POOL,
+          topics: [v3.TOPICS.swap, `0x${'0'.repeat(64)}`, `0x${'0'.repeat(64)}`],
+          data: words(0, 0, Q96, 1, 0),
+        },
       };
     };
+    deps.metadataReader = { async getMetadata(address) {
+      return { address, decimals: address === CANONICAL_CONTRACTS.USDG ? 6 : 18 };
+    } };
     const reader = createRobinhoodStockUsdQuoteReader(deps);
     const result = await reader.getSnapshot({ stockAddress: STOCK, blockTag: BLOCK_TAG });
-    assert.equal(result.priceUsd, '760.794678239595');
-    assert.equal(result.source, 'canonical-uniswap-v3-stock-usdg-checkpoint');
+    assert.equal(result.priceUsd, '1000000000000');
+    assert.equal(result.source, 'canonical-uniswap-v3-stock-usdg-journal');
     assert.equal(result.blockTag, '0x62');
     assert.equal(result.requestedBlockTag, BLOCK_TAG);
+  });
+
+  it('decodes a canonical V4 journal checkpoint without historical RPC state', async () => {
+    const deps = dependencies([reference('uniswap-v4')], async () => '0x');
+    deps.repository.findStockUsdEventCheckpoint = async () => ({
+      reference: reference('uniswap-v4'),
+      log: {
+        blockNumber: '99', blockHash: `0x${'7'.repeat(64)}`,
+        transactionHash: `0x${'8'.repeat(64)}`, logIndex: '5', address: STATE_VIEW,
+        topics: [v4.TOPICS.swap, POOL_ID, `0x${'0'.repeat(64)}`],
+        data: words(0, 0, Q96, 1, 0, 0),
+      },
+    });
+    deps.metadataReader = { async getMetadata(address) {
+      return { address, decimals: address === CANONICAL_CONTRACTS.USDG ? 6 : 18 };
+    } };
+    const result = await createRobinhoodStockUsdQuoteReader(deps)
+      .getSnapshot({ stockAddress: STOCK, blockTag: BLOCK_TAG });
+    assert.equal(result.priceUsd, '1000000000000');
+    assert.equal(result.source, 'canonical-uniswap-v4-stock-usdg-journal');
+    assert.equal(result.blockTag, '0x63');
   });
 });

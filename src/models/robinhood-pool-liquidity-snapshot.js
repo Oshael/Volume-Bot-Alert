@@ -1,5 +1,7 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const v2 = require('../services/uniswap-v2-decoder');
+const v3 = require('../services/uniswap-v3-decoder');
 const v4 = require('../services/uniswap-v4-decoder');
 const { V4_DONATE_TOPIC } = require('../services/robinhood-pool-liquidity-events');
 const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
@@ -11,6 +13,7 @@ const {
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 const MAX_BATCH_SIZE = 500;
+const STOCK_USD_EVENT_LOOKBACK_BLOCKS = 100_000n;
 const V4_EVENT_TOPICS = new Set([...Object.values(v4.TOPICS), V4_DONATE_TOPIC]);
 
 function timestamp(value, label) {
@@ -113,17 +116,20 @@ function normalizeCandidate(row) {
   });
 }
 
-function normalizeStockUsdCheckpoint(row) {
+function normalizeStockUsdEventCheckpoint(row) {
   if (!row) return null;
   return Object.freeze({
-    protocol: protocol(row.protocol),
-    marketKey: marketKey(row.market_key),
-    poolAddress: row.pool_address == null ? null
-      : normalizeTokenAddress(CHAIN, row.pool_address),
-    poolId: row.pool_id == null ? null : String(row.pool_id).toLowerCase(),
-    priceUsd: decimal(row.price_usd, 'priceUsd'),
-    blockNumber: quantity(row.block_number, 'blockNumber'),
-    logIndex: quantity(row.log_index, 'logIndex'),
+    reference: normalizeCandidate(row),
+    log: Object.freeze({
+      blockNumber: quantity(row.block_number, 'blockNumber'),
+      blockHash: blockHash(row.block_hash),
+      transactionHash: blockHash(row.transaction_hash),
+      transactionIndex: quantity(row.transaction_index, 'transactionIndex'),
+      logIndex: quantity(row.log_index, 'logIndex'),
+      address: normalizeTokenAddress(CHAIN, row.address),
+      topics: Object.freeze([...(row.topics || [])]),
+      data: String(row.data || ''),
+    }),
   });
 }
 
@@ -304,26 +310,67 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return Object.freeze(rows.map(normalizeCandidate));
   }
 
-  async function findStockUsdCheckpoint(input = {}) {
+  async function findStockUsdEventCheckpoint(input = {}) {
     const stockAddress = normalizeTokenAddress(CHAIN, input.stockAddress);
     const blockNumber = quantity(input.blockNumber, 'blockNumber');
+    const fromBlock = (BigInt(blockNumber) > STOCK_USD_EVENT_LOOKBACK_BLOCKS
+      ? BigInt(blockNumber) - STOCK_USD_EVENT_LOOKBACK_BLOCKS : 0n).toString();
     const { rows } = await database.query(
-      `SELECT bucket.protocol, bucket.market_key, registry.pool_address,
-              registry.pool_id, bucket.close_price_usd AS price_usd,
-              bucket.last_block_number AS block_number,
-              bucket.last_log_index AS log_index
-         FROM robinhood_market_buckets_1m bucket
-         INNER JOIN robinhood_pool_registry registry
-           USING (chain, protocol, market_key)
-        WHERE bucket.chain='${CHAIN}' AND bucket.token_address=$1
-          AND bucket.quote_address=$2 AND bucket.last_block_number<=$3::bigint
-          AND bucket.close_price_usd>0 AND registry.active=TRUE
-        ORDER BY bucket.bucket_ts DESC, bucket.last_block_number DESC,
-                 bucket.last_log_index DESC
+      `WITH direct_references AS MATERIALIZED (
+         SELECT registry.*,
+                ROW_NUMBER() OVER (
+                  ORDER BY snapshot.liquidity_usd DESC NULLS LAST,
+                           registry.discovery_block, registry.protocol,
+                           registry.market_key
+                ) AS reference_rank
+           FROM robinhood_pool_registry registry
+           LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
+             USING (chain, protocol, market_key)
+          WHERE registry.chain='${CHAIN}' AND registry.active=TRUE
+            AND registry.token_address=$1 AND registry.quote_address=$2
+            AND registry.discovery_block<=$3::bigint
+          ORDER BY snapshot.liquidity_usd DESC NULLS LAST,
+                   registry.discovery_block, registry.protocol, registry.market_key
+          LIMIT 20
+       ), checkpoints AS MATERIALIZED (
+         SELECT registry.*, event.block_number, event.block_hash,
+                event.transaction_hash, event.transaction_index, event.log_index,
+                event.address, event.topics, event.data
+           FROM direct_references registry
+           CROSS JOIN LATERAL (
+             SELECT event.*
+               FROM robinhood_chain_events event
+               INNER JOIN robinhood_chain_blocks block
+                 ON block.chain=event.chain AND block.block_hash=event.block_hash
+                AND block.canonical=TRUE
+              WHERE event.chain='${CHAIN}'
+                AND event.block_number BETWEEN $4::bigint AND $3::bigint
+                AND ((registry.protocol='uniswap-v2'
+                      AND registry.pool_address=event.address AND event.topic0=$5)
+                  OR (registry.protocol='uniswap-v3'
+                      AND registry.pool_address=event.address AND event.topic0=$6)
+                  OR (registry.protocol='uniswap-v4'
+                      AND registry.origin_address=event.address AND event.topic0=$7
+                      AND event.topics->>1=registry.pool_id))
+              ORDER BY event.block_number DESC, event.transaction_index DESC,
+                       event.log_index DESC
+              LIMIT 1
+           ) event
+       )
+       SELECT checkpoint.protocol, checkpoint.market_key, checkpoint.pool_address,
+              checkpoint.pool_id, checkpoint.origin_address, checkpoint.token_address,
+              checkpoint.quote_address, checkpoint.currency0, checkpoint.currency1,
+              checkpoint.discovered_at, checkpoint.block_number, checkpoint.block_hash,
+              checkpoint.transaction_hash, checkpoint.transaction_index,
+              checkpoint.log_index, checkpoint.address, checkpoint.topics,
+              checkpoint.data
+         FROM checkpoints checkpoint
+        ORDER BY checkpoint.reference_rank
         LIMIT 1`,
-      [stockAddress, ROBINHOOD_USDG, blockNumber]
+      [stockAddress, ROBINHOOD_USDG, blockNumber, fromBlock,
+        v2.TOPICS.sync, v3.TOPICS.swap, v4.TOPICS.swap]
     );
-    return normalizeStockUsdCheckpoint(rows[0]);
+    return normalizeStockUsdEventCheckpoint(rows[0]);
   }
 
   async function invalidateSnapshotsFromBlock(input = {}) {
@@ -474,9 +521,9 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   }
 
   return Object.freeze({
-    invalidateSnapshotsFromBlock, listDuePools, listPoolsForLiquidityEvents,
-    findStockUsdCheckpoint, listStockUsdReferences, recordFailure, recordSnapshot,
-    recordSnapshots, resolveAnchorBlock, resolveCanonicalAnchorWindow,
+    findStockUsdEventCheckpoint, invalidateSnapshotsFromBlock,
+    listDuePools, listPoolsForLiquidityEvents, listStockUsdReferences, recordFailure,
+    recordSnapshot, recordSnapshots, resolveAnchorBlock, resolveCanonicalAnchorWindow,
   });
 }
 

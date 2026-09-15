@@ -177,25 +177,36 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, v3.ROBINHOOD_WETH, '123', 7]);
   });
 
-  it('reads a direct stock/USDG checkpoint without looking past the requested block', async () => {
+  it('reads a bounded canonical stock/USDG event without looking past the requested block', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
       async query(sql, params) {
         calls.push({ sql, params });
         return { rows: [{
-          protocol: 'uniswap-v4', market_key: MARKET, pool_address: null,
-          pool_id: POOL_ID, price_usd: '42.5', block_number: '120', log_index: '7',
+          protocol: 'uniswap-v4', market_key: MARKET, pool_address: null, pool_id: POOL_ID,
+          origin_address: QUOTE, token_address: TOKEN, quote_address: v3.ROBINHOOD_USDG,
+          currency0: TOKEN, currency1: v3.ROBINHOOD_USDG,
+          discovered_at: new Date('2026-08-22T10:00:00Z'), block_number: '120',
+          block_hash: `0x${'4'.repeat(64)}`, transaction_hash: `0x${'5'.repeat(64)}`,
+          transaction_index: '6', log_index: '7', address: QUOTE,
+          topics: [v4.TOPICS.swap, POOL_ID, `0x${'0'.repeat(64)}`], data: '0x01',
         }] };
       },
     } });
-    const checkpoint = await repository.findStockUsdCheckpoint({
+    const checkpoint = await repository.findStockUsdEventCheckpoint({
       stockAddress: TOKEN, blockNumber: '123',
     });
-    assert.equal(checkpoint.priceUsd, '42.5');
-    assert.equal(checkpoint.blockNumber, '120');
-    assert.match(calls[0].sql, /bucket\.last_block_number<=\$3::bigint/);
-    assert.match(calls[0].sql, /bucket\.quote_address=\$2/);
-    assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123']);
+    assert.equal(checkpoint.reference.marketKey, MARKET);
+    assert.equal(checkpoint.log.blockNumber, '120');
+    assert.match(calls[0].sql, /event\.block_number BETWEEN \$4::bigint AND \$3::bigint/);
+    assert.match(calls[0].sql, /block\.canonical=TRUE/);
+    assert.match(calls[0].sql, /snapshot\.liquidity_usd DESC NULLS LAST/);
+    assert.match(calls[0].sql, /ORDER BY checkpoint\.reference_rank/);
+    assert.match(calls[0].sql, /LIMIT 20/);
+    assert.deepEqual(calls[0].params, [
+      TOKEN, v3.ROBINHOOD_USDG, '123', '0',
+      v2.TOPICS.sync, v3.TOPICS.swap, v4.TOPICS.swap,
+    ]);
   });
 
   it('invalidates orphaned snapshots and returns their active pools for repair', async () => {

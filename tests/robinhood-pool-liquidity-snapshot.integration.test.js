@@ -18,6 +18,7 @@ const stage102 = require('../src/utils/db-init-stage102');
 const stage147 = require('../src/utils/db-init-stage147');
 const stage148 = require('../src/utils/db-init-stage148');
 const stage150 = require('../src/utils/db-init-stage150');
+const stage191 = require('../src/utils/db-init-stage191');
 const stage198 = require('../src/utils/db-init-stage198');
 const stage212 = require('../src/utils/db-init-stage212');
 const {
@@ -71,6 +72,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage148.init({ closePool: false });
     await stage150.init({ closePool: false });
     await stage150.init({ closePool: false });
+    await stage191.init({ closePool: false });
     await stage198.init({ closePool: false });
     await stage212.init({ closePool: false });
     await cleanup();
@@ -186,34 +188,45 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         stockAddress: TOKEN, blockNumber: '20', limit: 5,
       });
       assert.deepEqual(references.map(({ marketKey }) => marketKey), [referenceKey]);
+      const checkpointBlock = '9000019';
+      const checkpointHash = `0x${'c'.repeat(64)}`;
+      const transactionHash = `0x${'d'.repeat(64)}`;
+      const addressTopic = `0x${'0'.repeat(24)}${'1'.repeat(40)}`;
+      const data = `0x${[0n, 0n, 1n << 96n, 1n, 0n]
+        .map((value) => value.toString(16).padStart(64, '0')).join('')}`;
       await client.query(
-        `INSERT INTO robinhood_market_buckets_1m (
-           protocol, market_key, token_address, quote_address, bucket_ts,
-           open_price_usd, high_price_usd, low_price_usd, close_price_usd,
-           open_fdv_usd, high_fdv_usd, low_fdv_usd, close_fdv_usd,
-           volume_usd, swaps, buys, sells, transactions,
-           first_observed_at, first_block_number, first_log_index,
-           last_observed_at, last_block_number, last_log_index, expires_at,
-           close_liquidity_usd, close_liquidity_raw, close_liquidity_status,
-           close_liquidity_confidence
-         ) VALUES ('uniswap-v3', $1, $2, $3, '2026-08-22T11:01:00Z',
-           42, 42, 42, 42, 4200, 4200, 4200, 4200, 1, 1, 1, 0, 1,
-           '2026-08-22T11:01:01Z', 19, 2, '2026-08-22T11:01:01Z', 19, 2,
-           '2026-09-05T11:01:00Z', 1200, 60,
-           'spot_tvl_from_pool_balances', 'medium')`,
-        [referenceKey, TOKEN, v3.ROBINHOOD_USDG]
+        `INSERT INTO robinhood_chain_blocks (
+           block_number, block_hash, parent_hash, capture_digest, block_timestamp,
+           canonical, head_observed_at, receipts_available_at
+         ) VALUES ($1, $2, $3, $4, '2026-08-22T11:01:00Z', TRUE,
+           '2026-08-22T11:01:01Z', '2026-08-22T11:01:01Z')`,
+        [checkpointBlock, checkpointHash, `0x${'e'.repeat(64)}`, `0x${'f'.repeat(64)}`]
       );
-      const checkpoint = await repository.findStockUsdCheckpoint({
-        stockAddress: TOKEN, blockNumber: '20',
+      await client.query(
+        `INSERT INTO robinhood_chain_transactions (
+           block_hash, transaction_hash, transaction_index, from_address,
+           to_address, receipt_succeeded
+         ) VALUES ($1, $2, 0, $3, $4, TRUE)`,
+        [checkpointHash, transactionHash, `0x${'1'.repeat(40)}`, referenceKey.split(':')[2]]
+      );
+      await client.query(
+        `INSERT INTO robinhood_chain_events (
+           block_hash, block_number, transaction_hash, transaction_index,
+           log_index, address, topic0, topics, data
+         ) VALUES ($1, $2, $3, 0, 0, $4, $5, $6::jsonb, $7)`,
+        [checkpointHash, checkpointBlock, transactionHash, referenceKey.split(':')[2],
+          v3.TOPICS.swap, JSON.stringify([v3.TOPICS.swap, addressTopic, addressTopic]), data]
+      );
+      const checkpoint = await repository.findStockUsdEventCheckpoint({
+        stockAddress: TOKEN, blockNumber: '9000020',
       });
       assert.deepEqual({
-        protocol: checkpoint.protocol,
-        marketKey: checkpoint.marketKey,
-        priceUsd: checkpoint.priceUsd,
-        blockNumber: checkpoint.blockNumber,
+        protocol: checkpoint.reference.protocol,
+        marketKey: checkpoint.reference.marketKey,
+        blockNumber: checkpoint.log.blockNumber,
       }, {
         protocol: 'uniswap-v3', marketKey: referenceKey,
-        priceUsd: '42', blockNumber: '19',
+        blockNumber: checkpointBlock,
       });
     } finally {
       await client.query('ROLLBACK');

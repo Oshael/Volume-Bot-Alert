@@ -4846,12 +4846,12 @@ head legado durante o canário. Tentativa de `eth_getLogs` ou frontier `blocked`
 haltam a lease.
 Pools cujo quote é uma stock tentam primeiro resolver a referência USD no estado
 exato do RPC live. Quando uma frontier atrasada já caiu fora da retenção de estado
-do node pruned, o resolver usa o último fechamento canônico anterior da própria
-stock contra USDG em `robinhood_market_buckets_1m`. O filtro exige
-`last_block_number` menor ou igual ao bloco solicitado, portanto nunca usa preço
-do futuro. Esse checkpoint event-driven permite catch-up sem archive permanente;
-se não existir referência on-chain nem checkpoint anterior, a ausência continua
-falhando fechada.
+do node pruned, o resolver busca no journal o último `Sync` V2 ou `Swap` V3/V4
+canônico da própria stock contra USDG nos 100.000 blocos anteriores e calcula o
+preço diretamente da evidência do evento. O filtro exige bloco menor ou igual ao
+solicitado, portanto nunca usa preço do futuro. Esse checkpoint event-driven
+permite catch-up sem archive permanente; se não existir referência on-chain nem
+evento anterior no intervalo, a ausência continua falhando fechada.
 O canário não pode gravar direto em `robinhood_head_captures`, porque a chave
 idempotente faria o primeiro writer esconder divergências. A Stage 194 cria
 `robinhood_canonical_head_candidates`, um sink separado e imutável que compara
