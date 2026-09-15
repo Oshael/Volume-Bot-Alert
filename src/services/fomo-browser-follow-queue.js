@@ -1,5 +1,7 @@
 'use strict';
 
+const { runFomoProfileSearchBatch } = require('./fomo-profile-search-discovery');
+
 const { chromium } = require('playwright-core');
 const { isFomoPage, normalizeCdpEndpoint } = require('./fomo-browser-activity-stream');
 const { detachCdpSession } = require('./fomo-cdp-session');
@@ -414,6 +416,10 @@ async function createFomoBrowserApi(options = {}) {
   }
 
   if (configuredUserId) settleCurrentUserId(configuredUserId, 'config');
+  else if (options.requireCurrentUserId === false) {
+    userSettled = true;
+    resolveCurrentUserId(null);
+  }
 
   function inspectRequest(event) {
     let url;
@@ -592,7 +598,7 @@ async function createFomoBrowserApi(options = {}) {
   cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
   cdp.on('Network.webSocketFrameReceived', inspectWebSocketFrameReceived);
   await cdp.send('Network.enable');
-  const profileProbePromise = configuredUserId
+  const profileProbePromise = configuredUserId || options.requireCurrentUserId === false
     ? Promise.resolve() : authContextPromise.then(runProfileProbe, () => {});
   timeout = setTimeout(() => {
     if (!authSettled) {
@@ -651,6 +657,12 @@ function createFomoBrowserFollowQueue(options = {}) {
   const activityLimit = positiveInteger(options.activityLimit, 50, 50);
   const activityThreshold = nonNegativeInteger(options.activityThreshold, 0, 1_000_000_000);
   const activityTradeLookupLimit = nonNegativeInteger(options.activityTradeLookupLimit, 5, 10);
+  const profileSearchEnabled = options.profileSearchEnabled === true;
+  const profileSearchBatchSize = positiveInteger(options.profileSearchBatchSize, 20, 100);
+  const profileSearchDelayMs = positiveInteger(options.profileSearchDelayMs, 1_000, 60_000);
+  const profileSearchBackoffMs = positiveInteger(
+    options.profileSearchBackoffMs, 60_000, 24 * 60 * 60_000
+  );
   const maxFollows = positiveInteger(options.maxFollowsPerRun, 1, 10);
   const intervalMs = positiveInteger(options.intervalMs, 5 * 60_000, 24 * 60 * 60_000);
   const autoResumeMs = positiveInteger(options.autoResumeMs, 5 * 60_000, 24 * 60 * 60_000);
@@ -663,6 +675,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   const createBrowserApi = options.createBrowserApi || createFomoBrowserApi;
   const stateStore = options.stateStore || { load: async () => null, save: async () => {} };
   const profilePersistence = options.profilePersistence;
+  const runProfileSearch = options.runProfileSearch || runFomoProfileSearchBatch;
   const pauseNotifier = options.pauseNotifier;
   let started = false;
   let running = false;
@@ -670,6 +683,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   let timer = null;
   const status = {
     enabled, followEnabled, dryRun, discoveryEnabled, activityDiscoveryEnabled,
+    profileSearchEnabled,
     running: false, discovered: 0, activityProfiles: 0, activityTradeLookups: 0,
     activityTradeLookupErrors: 0, activityDiscoveryErrors: 0,
     lastActivityDiscoveryAt: null, lastActivityDiscoveryErrorCode: null,
@@ -679,6 +693,10 @@ function createFomoBrowserFollowQueue(options = {}) {
     lastFollowAttemptAt: null, lastFollowSuccessAt: null, lastFollowFailureAt: null,
     persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
     profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
+    searchProcessedTerms: 0, searchReturnedProfiles: 0, searchUniqueProfiles: 0,
+    searchPersistedProfiles: 0, searchPersistedWallets: 0, searchRounds: 0,
+    searchCursor: null, searchNextAttemptAt: null, searchErrors: 0,
+    lastSearchAt: null, lastSearchHttpStatus: null, lastSearchErrorCode: null,
     cycles: 0, phase: 'idle', intervalMs, lastStartedAt: null, nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
     autoResumeMs, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
@@ -828,7 +846,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   async function persistDiscoveredProfiles(entries, activity) {
-    if (!profilePersistence) return;
+    if (!profilePersistence || (!discoveryEnabled && !activityDiscoveryEnabled)) return;
     try {
       const persisted = await profilePersistence.persist(entries, activity);
       status.persistedProfiles = persisted.profiles;
@@ -862,6 +880,33 @@ function createFomoBrowserFollowQueue(options = {}) {
         error?.code || 'FOMO_PROFILE_ACTIVITY_DISCOVERY_ERROR',
       );
       return {};
+    }
+  }
+
+  async function discoverSearchProfiles(api) {
+    if (!profileSearchEnabled || !profilePersistence) return;
+    try {
+      const result = await runProfileSearch({
+        request: api.request, persistence: profilePersistence,
+        batchSize: profileSearchBatchSize, delayMs: profileSearchDelayMs,
+        backoffMs: profileSearchBackoffMs, wait, now,
+      });
+      status.searchNextAttemptAt = result.nextAttemptAt || null;
+      if (result.skipped) return;
+      status.searchProcessedTerms = result.processedTerms;
+      status.searchReturnedProfiles = result.returnedProfiles;
+      status.searchUniqueProfiles = result.uniqueProfiles;
+      status.searchPersistedProfiles = result.persistedProfiles;
+      status.searchPersistedWallets = result.persistedWallets;
+      status.searchRounds = result.rounds;
+      status.searchCursor = result.cursor;
+      status.lastSearchAt = result.completedAt;
+      status.lastSearchHttpStatus = result.lastHttpStatus;
+      status.lastSearchErrorCode = result.lastErrorCode;
+      if (!result.complete) status.searchErrors += 1;
+    } catch (error) {
+      status.searchErrors += 1;
+      status.lastSearchErrorCode = String(error?.code || 'FOMO_PROFILE_SEARCH_ERROR');
     }
   }
 
@@ -903,7 +948,12 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   function shouldRun() {
-    return enabled && (profileIds.length > 0 || discoveryEnabled || profilePersistence);
+    return enabled && (profileIds.length > 0 || discoveryEnabled
+      || activityDiscoveryEnabled || profileSearchEnabled);
+  }
+
+  function needsFollowPlan() {
+    return followEnabled || discoveryEnabled || profileIds.length > 0;
   }
 
   function shouldWriteFollows() {
@@ -920,19 +970,24 @@ function createFomoBrowserFollowQueue(options = {}) {
       api = await createBrowserApi({
         cdpEndpoint: options.cdpEndpoint,
         currentUserId,
+        requireCurrentUserId: needsFollowPlan(),
         authWaitMs: options.authWaitMs,
         requestTimeoutMs: options.requestTimeoutMs,
       });
       recordApiReady(api);
       status.phase = 'follow_plan';
-      const plan = await readFollowPlan(api, profileIds, {
-        discoveryEnabled, discoveryLimit, followEnabled: followEnabled && !status.paused,
-      });
+      const plan = needsFollowPlan()
+        ? await readFollowPlan(api, profileIds, {
+          discoveryEnabled, discoveryLimit, followEnabled: followEnabled && !status.paused,
+        })
+        : { discovered: 0, discoveredProfiles: [], pending: [], alreadyFollowed: 0 };
       recordFollowPlan(plan);
       status.phase = 'activity_discovery';
       const activity = await discoverActivityProfiles(api);
       status.phase = 'profile_persistence';
       await persistDiscoveredProfiles(plan.discoveredProfiles, activity);
+      status.phase = 'profile_search';
+      await discoverSearchProfiles(api);
       if (!shouldWriteFollows()) return;
       status.phase = 'follow_write';
       await writePending(api, plan.userId, plan.pending);

@@ -503,6 +503,9 @@ const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
 const fomoFollowDiscoveryEnabled = parseBoolean(process.env.FOMO_FOLLOW_DISCOVERY_ENABLED, false);
 const fomoFollowCurrentUserId = String(process.env.FOMO_FOLLOW_USER_ID || '').trim();
 const fomoProfileDiscoveryEnabled = parseBoolean(process.env.FOMO_PROFILE_DISCOVERY_ENABLED, false);
+const fomoProfileSearchEnabled = parseBoolean(
+  process.env.FOMO_PROFILE_SEARCH_DISCOVERY_ENABLED, false
+);
 const fomoTelegramAlertsEnabled = parseBoolean(
   process.env.FOMO_TELEGRAM_ALERTS_ENABLED
     ?? process.env.FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED,
@@ -660,6 +663,9 @@ if (calloutCaptureEnabled) {
   }
   if (fomoProfileDiscoveryEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_PROFILE_DISCOVERY_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
+  }
+  if (fomoProfileSearchEnabled && fomoCaptureTransport !== 'browser_cdp') {
+    missing.push('FOMO_PROFILE_SEARCH_DISCOVERY_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
   }
   if (fomoTelegramAlertsEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_TELEGRAM_ALERTS_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
@@ -914,6 +920,16 @@ module.exports = {
         activityTradeLookupLimit: parseIntegerInRange(
           process.env.FOMO_PROFILE_ACTIVITY_TRADE_LOOKUPS_PER_CYCLE, 5, 0, 10
         ),
+      },
+      profileSearch: {
+        enabled: fomoProfileSearchEnabled,
+        batchSize: parseIntegerInRange(process.env.FOMO_PROFILE_SEARCH_BATCH_SIZE, 20, 1, 100),
+        delayMs: parseIntegerInRange(
+          process.env.FOMO_PROFILE_SEARCH_DELAY_MS, 1000, 250, 10000
+        ),
+        backoffMs: parseIntegerInRange(
+          process.env.FOMO_PROFILE_SEARCH_BACKOFF_SECONDS, 60, 30, 86400
+        ) * 1000,
       },
       follow: {
         enabled: fomoFollowEnabled,

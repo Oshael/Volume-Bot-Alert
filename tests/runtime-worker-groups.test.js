@@ -469,6 +469,9 @@ describe('runtime worker groups config', () => {
         ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
         PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
         FOMO_PROFILE_DISCOVERY_ENABLED: 'true', FOMO_FOLLOW_ENABLED: 'false',
+        FOMO_PROFILE_SEARCH_DISCOVERY_ENABLED: 'true',
+        FOMO_PROFILE_SEARCH_BATCH_SIZE: '17', FOMO_PROFILE_SEARCH_DELAY_MS: '1250',
+        FOMO_PROFILE_SEARCH_BACKOFF_SECONDS: '90',
         FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
       },
       encoding: 'utf8',
@@ -479,7 +482,26 @@ describe('runtime worker groups config', () => {
     assert.equal(fomo.profileDiscovery.activityLimit, 50);
     assert.equal(fomo.profileDiscovery.activityThreshold, 0);
     assert.equal(fomo.profileDiscovery.activityTradeLookupLimit, 5);
+    assert.deepEqual(fomo.profileSearch, {
+      enabled: true, batchSize: 17, delayMs: 1250, backoffMs: 90_000,
+    });
     assert.equal(fomo.follow.enabled, false);
+  });
+
+  it('requires browser CDP transport for Fomo profile search discovery', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'direct_ws',
+        FOMO_WS_TOPIC_ID: 'topic', FOMO_WS_JWT: 'jwt',
+        FOMO_PROFILE_SEARCH_DISCOVERY_ENABLED: 'true',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr,
+      /FOMO_PROFILE_SEARCH_DISCOVERY_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp/);
   });
 
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {

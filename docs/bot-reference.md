@@ -2032,6 +2032,31 @@ independente é `fomo:profile-discovery`. A sincronização continua funcionando
 follow desabilitado ou com o circuito de follow pausado e nunca lê `followingIds`
 nem escreve `/follows` nesses casos.
 
+A descoberta incremental pelo diretório de usuários é um fluxo separado,
+ativado por `FOMO_PROFILE_SEARCH_DISCOVERY_ENABLED=true`. Ela não consulta
+leaderboard, `followingIds` nem `/follows`, e não precisa descobrir o UUID da
+conta autenticada. A fonte é
+`GET /v2/users/fuzzy-search?searchTerm=...`: usernames Fomo já persistidos são
+lidos em ordem de `platform_user_id` e usados como sementes, pois a API não
+expõe paginação nem um evento completo do diretório. Cada resposta persiste de
+forma idempotente ID, handle, nome, foto e wallets Solana/EVM declaradas.
+
+Esse polling de expansão fica isolado do live path no ciclo da fila Fomo. O lote
+é limitado por `FOMO_PROFILE_SEARCH_BATCH_SIZE` (default 20, máximo 100), tem
+concorrência 1 e intervalo configurado por `FOMO_PROFILE_SEARCH_DELAY_MS`
+(default 1000, faixa 250–10000). O checkpoint `fomo:profile-search` grava o
+cursor junto com os perfis e wallets na mesma transação; falha não avança além
+da última semente concluída. HTTP 429, resposta inválida ou erro de request
+interrompe o lote e grava `nextAttemptAt`, usando
+`FOMO_PROFILE_SEARCH_BACKOFF_SECONDS` (default 60, faixa 30–86400). A execução
+retoma nos ciclos regulares de `FOMO_FOLLOW_INTERVAL_SECONDS`, não bloqueia
+captura, leaderboard, discovery por atividade ou follow, e pode operar com todos
+eles desligados. `searchProcessedTerms`, `searchReturnedProfiles`,
+`searchUniqueProfiles`, contagens persistidas, `searchCursor`, `searchRounds`,
+`searchNextAttemptAt`, `lastSearchAt`, status HTTP e erro expõem progresso e
+freshness. Escritores event-driven continuam tendo precedência; upserts e chaves
+de observação tornam replay e sobreposição entre termos seguros.
+
 Follows externos usam a mesma fila de descoberta, exclusiva de `browser_cdp`.
 O follow é ativado com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
 `FOMO_FOLLOW_DRY_RUN=true` e aceita no máximo 100 UUIDs explícitos em

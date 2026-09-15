@@ -284,6 +284,34 @@ test('Fomo browser API uses configured identity without probing or waiting for p
   await api.close();
 });
 
+test('Fomo browser API can capture auth without requiring account identity', async () => {
+  const cdp = new EventEmitter();
+  cdp.send = async () => ({});
+  cdp.detach = async () => {};
+  const page = new EventEmitter();
+  page.url = () => 'https://fomo.family/tokens/bnb/private-contract';
+  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  page.context = () => context;
+  page.reload = async () => {
+    cdp.emit('Network.requestWillBeSent', {
+      requestId: 'api-auth', request: {
+        url: 'https://prod-api.fomo.family/feed/tradingActivity', method: 'GET',
+        headers: { Authorization: `Bearer ${USER_JWT}` },
+      },
+    });
+  };
+  const api = await createFomoBrowserApi({
+    connectOverCDP: async () => ({ contexts: () => [context] }),
+    requireCurrentUserId: false, authWaitMs: 10,
+  });
+
+  assert.equal(api.currentUserId, null);
+  assert.equal(api.diagnostics.authSource, 'http_request');
+  assert.equal(api.diagnostics.identitySource, null);
+  assert.equal(api.diagnostics.profileProbeAttempts, 0);
+  await api.close();
+});
+
 test('Fomo browser API preserves observed auth source when identity times out', async () => {
   const cdp = new EventEmitter();
   cdp.send = async (method) => (method === 'Network.getResponseBody'
@@ -422,7 +450,7 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
   assert.equal(fixture.calls.some((call) => call.path === '/follows'), false);
   assert.deepEqual(queue.getStatus(), {
     enabled: true, followEnabled: true, dryRun: true, discoveryEnabled: true,
-    activityDiscoveryEnabled: false, running: false,
+    activityDiscoveryEnabled: false, profileSearchEnabled: false, running: false,
     discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
     followingSnapshotSize: 1, lastFollowingReadAt: queue.getStatus().lastFollowingReadAt,
     followAttempts: 0, followFailures: 0, lastFollowHttpStatus: null,
@@ -432,6 +460,10 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     lastActivityDiscoveryErrorCode: null,
     persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
     profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
+    searchProcessedTerms: 0, searchReturnedProfiles: 0, searchUniqueProfiles: 0,
+    searchPersistedProfiles: 0, searchPersistedWallets: 0, searchRounds: 0,
+    searchCursor: null, searchNextAttemptAt: null, searchErrors: 0,
+    lastSearchAt: null, lastSearchHttpStatus: null, lastSearchErrorCode: null,
     cycles: 1, phase: 'idle', intervalMs: 300_000,
     lastStartedAt: queue.getStatus().lastStartedAt,
     nextRunAt: null,
@@ -610,6 +642,42 @@ test('Fomo profile discovery persists rankings without reading or writing follow
   assert.equal(queue.getStatus().persistedProfiles, 2);
   assert.equal(queue.getStatus().persistedWallets, 3);
   assert.equal(queue.getStatus().planned, 0);
+});
+
+test('Fomo profile search runs without leaderboard, follow reads, or account identity', async () => {
+  const fixture = apiFixture();
+  const profilePersistence = {};
+  let browserOptions;
+  let searchOptions;
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, followEnabled: false, profileSearchEnabled: true,
+    profileSearchBatchSize: 20, profileSearchDelayMs: 1_000,
+    profileSearchBackoffMs: 60_000,
+    profilePersistence,
+    createBrowserApi: async (options) => { browserOptions = options; return fixture.api; },
+    runProfileSearch: async (options) => {
+      searchOptions = options;
+      return {
+        skipped: false, complete: false, processedTerms: 3, returnedProfiles: 30,
+        uniqueProfiles: 21, persistedProfiles: 21, persistedWallets: 42,
+        rounds: 4, cursor: A, completedAt: '2026-09-15T12:00:00.000Z',
+        nextAttemptAt: '2026-09-15T12:01:00.000Z', lastHttpStatus: 429,
+        lastErrorCode: 'FOMO_PROFILE_SEARCH_HTTP_429',
+      };
+    },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.deepEqual(fixture.calls, []);
+  assert.equal(browserOptions.requireCurrentUserId, false);
+  assert.equal(searchOptions.request, fixture.api.request);
+  assert.equal(searchOptions.persistence, profilePersistence);
+  assert.equal(queue.getStatus().searchProcessedTerms, 3);
+  assert.equal(queue.getStatus().searchPersistedProfiles, 21);
+  assert.equal(queue.getStatus().lastSearchHttpStatus, 429);
+  assert.equal(queue.getStatus().searchErrors, 1);
+  assert.equal(queue.getStatus().paused, false);
 });
 
 test('Fomo activity discovery persists profiles and only enriches missing wallets', async () => {

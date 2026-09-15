@@ -278,4 +278,38 @@ describe('callout capture production persistence', () => {
     assert.equal(followOptions.profilePersistence, profilePersistence);
     await worker.stop();
   });
+
+  it('starts Fomo profile search without enabling leaderboard or follow discovery', async () => {
+    let followOptions;
+    const repository = { loadCheckpoint: async () => null, commitCapture: async () => {} };
+    const profilePersistence = { persistSearch: async () => ({}) };
+    const worker = createCalloutCaptureWorker({
+      repository,
+      createPumpClient: () => ({}),
+      createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
+      createFomoCollector: () => ({ start: () => {}, stop: async () => {} }),
+      createFomoProfileDiscoveryPersistence: () => profilePersistence,
+      createFomoFollowQueue: (options) => {
+        followOptions = options;
+        return { start: () => {}, stop: async () => {} };
+      },
+      createRetentionWorker: () => ({ start: () => {}, stop: async () => {} }),
+    });
+
+    await worker.start({
+      pump: {},
+      fomo: {
+        transport: 'browser_cdp', profileDiscovery: { enabled: false },
+        profileSearch: { enabled: true, batchSize: 20, delayMs: 1_000, backoffMs: 60_000 },
+        follow: { enabled: false, discoveryEnabled: false },
+      },
+    });
+    assert.equal(followOptions.followEnabled, false);
+    assert.equal(followOptions.discoveryEnabled, false);
+    assert.equal(followOptions.activityDiscoveryEnabled, false);
+    assert.equal(followOptions.profileSearchEnabled, true);
+    assert.equal(followOptions.profileSearchBatchSize, 20);
+    assert.equal(followOptions.profilePersistence, profilePersistence);
+    await worker.stop();
+  });
 });

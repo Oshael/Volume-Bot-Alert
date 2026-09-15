@@ -104,11 +104,21 @@ function createFomoFollowStateStore(repository) {
   };
 }
 
+function fomoQueueFeatures(config) {
+  return {
+    follow: config.follow?.enabled === true,
+    profileDiscovery: config.profileDiscovery?.enabled === true,
+    profileSearch: config.profileSearch?.enabled === true,
+  };
+}
+
 function buildFomoFollowQueue(deps, config, repository, pauseNotifier) {
-  const followEnabled = config.follow?.enabled === true;
-  const profileDiscoveryEnabled = config.profileDiscovery?.enabled === true;
-  if (config.transport !== 'browser_cdp' || (!followEnabled && !profileDiscoveryEnabled)) return null;
-  const profilePersistence = profileDiscoveryEnabled
+  const features = fomoQueueFeatures(config);
+  const { follow: followEnabled, profileDiscovery: profileDiscoveryEnabled } = features;
+  const profileSearchEnabled = features.profileSearch;
+  if (config.transport !== 'browser_cdp'
+    || (!followEnabled && !profileDiscoveryEnabled && !profileSearchEnabled)) return null;
+  const profilePersistence = profileDiscoveryEnabled || profileSearchEnabled
     ? (deps.createFomoProfileDiscoveryPersistence || createFomoProfileDiscoveryPersistence)({ repository })
     : null;
   return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
@@ -118,6 +128,10 @@ function buildFomoFollowQueue(deps, config, repository, pauseNotifier) {
     activityLimit: config.profileDiscovery?.activityLimit,
     activityThreshold: config.profileDiscovery?.activityThreshold,
     activityTradeLookupLimit: config.profileDiscovery?.activityTradeLookupLimit,
+    profileSearchEnabled,
+    profileSearchBatchSize: config.profileSearch?.batchSize,
+    profileSearchDelayMs: config.profileSearch?.delayMs,
+    profileSearchBackoffMs: config.profileSearch?.backoffMs,
     cdpEndpoint: config.cdpEndpoint, profilePersistence,
     stateStore: createFomoFollowStateStore(repository),
     pauseNotifier,
