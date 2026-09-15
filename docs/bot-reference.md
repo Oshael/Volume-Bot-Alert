@@ -4852,10 +4852,15 @@ preço diretamente da evidência do evento. O filtro exige bloco menor ou igual 
 solicitado, portanto nunca usa preço do futuro. Esse checkpoint event-driven
 permite catch-up sem archive permanente; se não existir referência on-chain nem
 evento anterior no intervalo, a ausência continua falhando fechada.
-A Stage 222 instala os índices parciais de cauda usados por esse fallback; aplique
-`node src/utils/db-init-stage222.js` antes de reabrir uma frontier bloqueada. Os
-índices são criados concorrentemente para não bloquear a captura, embora a criação
-possa acrescentar I/O enquanto percorre o journal existente.
+A Stage 222 cria `robinhood_stock_usd_reference_events`, um journal compacto e
+independente da retenção dos raws que recebe atomicamente apenas `Sync` V2 e
+`Swap` V3/V4 de pools stock/USDG já registradas. Antes de reabrir uma frontier
+antiga, aplique `node src/utils/db-init-stage222.js`, reinicie o chain capture e
+semeie a janela necessária com
+`npm run robinhood:backfill-stock-reference-journal -- --write`. O backfill usa
+por padrão os 100.000 blocos anteriores ao primeiro outbox incompleto até o
+checkpoint capturado, em lotes idempotentes de 2.000 blocos. A consulta live lê
+somente esse journal pequeno e ainda valida o hash contra o bloco canônico.
 O canário não pode gravar direto em `robinhood_head_captures`, porque a chave
 idempotente faria o primeiro writer esconder divergências. A Stage 194 cria
 `robinhood_canonical_head_candidates`, um sink separado e imutável que compara

@@ -21,6 +21,7 @@ const stage150 = require('../src/utils/db-init-stage150');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage198 = require('../src/utils/db-init-stage198');
 const stage212 = require('../src/utils/db-init-stage212');
+const stage222 = require('../src/utils/db-init-stage222');
 const {
   createRobinhoodPoolLiquiditySeedRepository,
 } = require('../src/models/robinhood-pool-liquidity-seed');
@@ -35,6 +36,10 @@ const { Pool } = require('pg');
 const { createLiquidityTimedDatabase } = require('../src/utils/robinhood-liquidity-db-timing');
 const { createLiquidityHistoricalRangeRepository } = require('../src/models/robinhood-liquidity-historical-ranges');
 const { createRobinhoodPersistenceRepository } = require('../src/models/robinhood-persistence');
+const {
+  backfillRange,
+} = require('../src/models/robinhood-stock-usd-reference-journal');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
 const v4 = require('../src/services/uniswap-v4-decoder');
@@ -44,8 +49,10 @@ const POOL = `0x${'7'.repeat(40)}`;
 const TOKEN = `0x${'8'.repeat(40)}`;
 const QUOTE = `0x${'9'.repeat(40)}`;
 const MARKET = `robinhood:uniswap-v3:${POOL}`;
+const STOCK = ROBINHOOD_TOKENIZED_ASSETS.SPY;
 
 async function cleanup() {
+  await db.query("DELETE FROM robinhood_stock_usd_reference_events WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address = $1', [TOKEN]);
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_market_buckets_1m WHERE market_key = $1', [MARKET]);
@@ -75,6 +82,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage191.init({ closePool: false });
     await stage198.init({ closePool: false });
     await stage212.init({ closePool: false });
+    await stage222.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (
@@ -181,11 +189,11 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
            discovery_block_hash, discovery_tx_hash, discovery_log_index, discovered_at
          ) VALUES ('uniswap-v3', $1, $2, $2, $3, $4, $3, $4, 20,
            $5, $6, 0, '2026-08-22T10:00:00Z')`,
-        [referenceKey, referenceKey.split(':')[2], TOKEN, v3.ROBINHOOD_USDG,
+        [referenceKey, referenceKey.split(':')[2], STOCK, v3.ROBINHOOD_USDG,
           `0x${'a'.repeat(64)}`, `0x${'b'.repeat(64)}`]
       );
       const references = await repository.listStockUsdReferences({
-        stockAddress: TOKEN, blockNumber: '20', limit: 5,
+        stockAddress: STOCK, blockNumber: '20', limit: 5,
       });
       assert.deepEqual(references.map(({ marketKey }) => marketKey), [referenceKey]);
       const checkpointBlock = '9000019';
@@ -217,8 +225,11 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         [checkpointHash, checkpointBlock, transactionHash, referenceKey.split(':')[2],
           v3.TOPICS.swap, JSON.stringify([v3.TOPICS.swap, addressTopic, addressTopic]), data]
       );
+      assert.equal(await backfillRange({
+        fromBlock: checkpointBlock, throughBlock: checkpointBlock,
+      }, { database: client }), 1);
       const checkpoint = await repository.findStockUsdEventCheckpoint({
-        stockAddress: TOKEN, blockNumber: '9000020',
+        stockAddress: STOCK, blockNumber: '9000020',
       });
       assert.deepEqual({
         protocol: checkpoint.reference.protocol,
@@ -228,6 +239,13 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         protocol: 'uniswap-v3', marketKey: referenceKey,
         blockNumber: checkpointBlock,
       });
+      await client.query(
+        'UPDATE robinhood_stock_usd_reference_events SET canonical=FALSE WHERE block_hash=$1',
+        [checkpointHash]
+      );
+      assert.equal(await repository.findStockUsdEventCheckpoint({
+        stockAddress: STOCK, blockNumber: '9000020',
+      }), null);
     } finally {
       await client.query('ROLLBACK');
       client.release();

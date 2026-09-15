@@ -3,50 +3,57 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const stage222 = require('../src/utils/db-init-stage222');
-const v2 = require('../src/services/uniswap-v2-decoder');
+const {
+  appendCapturedEvents, backfillRange,
+} = require('../src/models/robinhood-stock-usd-reference-journal');
 const v3 = require('../src/services/uniswap-v3-decoder');
-const v4 = require('../src/services/uniswap-v4-decoder');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
-describe('Robinhood stock/USD journal lookup indexes', () => {
-  it('defines protocol-specific concurrent tail indexes and registers them', () => {
+describe('Robinhood compact stock/USD reference journal', () => {
+  it('defines an independent compact event table and removes the abandoned raw indexes', () => {
     const sql = stage222.STATEMENTS.join('\n');
-    assert.match(sql, /CREATE INDEX CONCURRENTLY/);
-    assert.match(sql, new RegExp(v2.TOPICS.sync));
-    assert.match(sql, new RegExp(v3.TOPICS.swap));
-    assert.match(sql, new RegExp(v4.TOPICS.swap));
-    assert.match(sql, /topics ->> 1/);
-    assert.deepEqual(stage222.INDEX_NAMES, [
-      'idx_rh_chain_events_v2_v3_pool_tail',
-      'idx_rh_chain_events_v4_pool_tail',
-    ]);
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_stock_usd_reference_events/);
+    assert.match(sql, /PRIMARY KEY \([\s\S]*chain, protocol, market_key, block_hash, log_index/);
+    assert.match(sql, /idx_rh_stock_usd_reference_events_canonical_lookup/);
+    assert.match(sql, /WHERE canonical=TRUE/);
     const group = SCHEMA_GROUPS.find(({ key }) => (
-      key === 'stage222-robinhood-stock-usd-journal-indexes'
+      key === 'stage222-robinhood-stock-usd-reference-journal'
     ));
     assert.equal(group.repair, 'node src/utils/db-init-stage222.js');
-    assert.deepEqual(group.tables[0].indexes.map(({ name }) => name), stage222.INDEX_NAMES);
+    assert.equal(group.tables[0].table, stage222.TABLE);
+    assert.deepEqual(stage222.LEGACY_INDEX_NAMES, [
+      'idx_rh_chain_events_v2_v3_pool_tail',
+      'idx_rh_chain_events_v4_pool_tail',
+      'idx_rh_stock_usd_reference_events_lookup',
+    ]);
   });
 
-  it('repairs invalid indexes and verifies each index before continuing', async () => {
+  it('filters live input to reference topics and keeps writes idempotent', async () => {
     const calls = [];
-    const inspections = new Map();
-    await stage222.init({
-      database: { query: async (statement, params = []) => {
-        calls.push({ statement, params });
-        if (!statement.startsWith('SELECT indisvalid')) return { rows: [] };
-        const count = (inspections.get(params[0]) || 0) + 1;
-        inspections.set(params[0], count);
-        return count === 1
-          ? { rows: [{ indisvalid: false, indisready: false }] }
-          : { rows: [{ indisvalid: true, indisready: true }] };
+    const ignored = await appendCapturedEvents({ query: async () => assert.fail() }, [{
+      topic0: `0x${'0'.repeat(64)}`,
+    }]);
+    assert.equal(ignored, 0);
+    const inserted = await appendCapturedEvents({ query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rowCount: 1 };
+    } }, [{
+      topic0: v3.TOPICS.swap, block_number: '10', block_hash: `0x${'1'.repeat(64)}`,
+    }]);
+    assert.equal(inserted, 1);
+    assert.match(calls[0].sql, /ON CONFLICT DO NOTHING/);
+    assert.match(calls[0].sql, /registry\.quote_address=\$2/);
+  });
+
+  it('backfills only a bounded canonical raw range', async () => {
+    const calls = [];
+    await backfillRange({ fromBlock: '100', throughBlock: '200' }, {
+      database: { query: async (sql, params) => {
+        calls.push({ sql, params }); return { rowCount: 3 };
       } },
-      closePool: false,
     });
-    for (const definition of stage222.INDEX_DEFINITIONS) {
-      assert.ok(calls.some(({ statement }) => (
-        statement === `DROP INDEX CONCURRENTLY IF EXISTS ${definition.name}`
-      )));
-      assert.ok(calls.some(({ statement }) => statement === definition.statement));
-    }
+    assert.match(calls[0].sql, /block\.canonical=TRUE/);
+    assert.match(calls[0].sql, /event\.block_number BETWEEN \$1::bigint AND \$2::bigint/);
+    assert.deepEqual(calls[0].params.slice(0, 2), ['100', '200']);
   });
 });

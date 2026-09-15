@@ -6108,19 +6108,28 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
-    key: 'stage222-robinhood-stock-usd-journal-indexes',
-    name: 'Stage 222 Robinhood stock/USD journal tail indexes',
+    key: 'stage222-robinhood-stock-usd-reference-journal',
+    name: 'Stage 222 compact Robinhood stock/USD reference journal',
     repair: 'node src/utils/db-init-stage222.js',
     tables: [{
-      table: 'robinhood_chain_events',
-      indexes: [{
-        name: 'idx_rh_chain_events_v2_v3_pool_tail',
-        includes: ['chain', 'address', 'topic0', 'block_number', 'transaction_index', 'log_index'],
+      table: 'robinhood_stock_usd_reference_events',
+      columns: [
+        'chain', 'protocol', 'market_key', 'stock_address', 'block_number',
+        'block_hash', 'transaction_hash', 'transaction_index', 'log_index',
+        'address', 'topics', 'data', 'canonical', 'captured_at',
+      ],
+      constraints: [{
+        name: 'rh_stock_usd_reference_events_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'protocol', 'market_key', 'block_hash', 'log_index'],
       }, {
-        name: 'idx_rh_chain_events_v4_pool_tail',
+        name: 'rh_stock_usd_reference_events_values_check',
+        includes: ['uniswap-v2', 'uniswap-v3', 'uniswap-v4', 'jsonb_typeof'],
+      }],
+      indexes: [{
+        name: 'idx_rh_stock_usd_reference_events_canonical_lookup',
         includes: [
-          'chain', 'address', 'topic0', 'topics', 'block_number',
-          'transaction_index', 'log_index', '40e9cecb',
+          'chain', 'stock_address', 'market_key', 'block_number',
+          'transaction_index', 'log_index', 'canonical',
         ],
       }],
     }],

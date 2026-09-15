@@ -198,16 +198,13 @@ describe('Robinhood current pool liquidity snapshots', () => {
     });
     assert.equal(checkpoint.reference.marketKey, MARKET);
     assert.equal(checkpoint.log.blockNumber, '120');
+    assert.match(calls[0].sql, /robinhood_stock_usd_reference_events/);
     assert.match(calls[0].sql, /event\.block_number BETWEEN \$4::bigint AND \$3::bigint/);
-    assert.match(calls[0].sql, /block\.canonical=TRUE/);
+    assert.match(calls[0].sql, /event\.canonical=TRUE/);
     assert.match(calls[0].sql, /snapshot\.liquidity_usd DESC NULLS LAST/);
     assert.match(calls[0].sql, /ORDER BY checkpoint\.reference_rank/);
     assert.match(calls[0].sql, /LIMIT 20/);
-    assert.match(calls[0].sql, new RegExp(v2.TOPICS.sync));
-    assert.match(calls[0].sql, new RegExp(v3.TOPICS.swap));
-    assert.match(calls[0].sql, new RegExp(v4.TOPICS.swap));
-    assert.equal((calls[0].sql.match(/UNION ALL/g) || []).length, 2);
-    assert.doesNotMatch(calls[0].sql, /registry\.protocol='uniswap-v2'[\s\S]* OR /);
+    assert.doesNotMatch(calls[0].sql, /FROM robinhood_chain_events/);
     assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123', '0']);
   });
 

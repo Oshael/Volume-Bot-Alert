@@ -1,7 +1,5 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
-const v2 = require('../services/uniswap-v2-decoder');
-const v3 = require('../services/uniswap-v3-decoder');
 const v4 = require('../services/uniswap-v4-decoder');
 const { V4_DONATE_TOPIC } = require('../services/robinhood-pool-liquidity-events');
 const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
@@ -131,29 +129,6 @@ function normalizeStockUsdEventCheckpoint(row) {
       data: String(row.data || ''),
     }),
   });
-}
-
-function stockUsdEventCheckpointBranch(protocolName, addressColumn, topic, poolId = false) {
-  return `SELECT registry.*, event.block_number, event.block_hash,
-                 event.transaction_hash, event.transaction_index, event.log_index,
-                 event.address, event.topics, event.data
-            FROM direct_references registry
-            CROSS JOIN LATERAL (
-              SELECT event.*
-                FROM robinhood_chain_events event
-                INNER JOIN robinhood_chain_blocks block
-                  ON block.chain=event.chain AND block.block_hash=event.block_hash
-                 AND block.canonical=TRUE
-               WHERE registry.protocol='${protocolName}'
-                 AND event.chain='${CHAIN}'
-                 AND event.block_number BETWEEN $4::bigint AND $3::bigint
-                 AND event.address=registry.${addressColumn}
-                 AND event.topic0='${topic}'
-                 ${poolId ? 'AND event.topics->>1=registry.pool_id' : ''}
-               ORDER BY event.block_number DESC, event.transaction_index DESC,
-                        event.log_index DESC
-               LIMIT 1
-            ) event`;
 }
 
 function normalizeEventLogs(logs = []) {
@@ -356,17 +331,23 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
                    registry.discovery_block, registry.protocol, registry.market_key
           LIMIT 20
        ), checkpoints AS MATERIALIZED (
-         ${stockUsdEventCheckpointBranch(
-    'uniswap-v2', 'pool_address', v2.TOPICS.sync
-  )}
-         UNION ALL
-         ${stockUsdEventCheckpointBranch(
-    'uniswap-v3', 'pool_address', v3.TOPICS.swap
-  )}
-         UNION ALL
-         ${stockUsdEventCheckpointBranch(
-    'uniswap-v4', 'origin_address', v4.TOPICS.swap, true
-  )}
+         SELECT registry.*, event.block_number, event.block_hash,
+                event.transaction_hash, event.transaction_index, event.log_index,
+                event.address, event.topics, event.data
+           FROM direct_references registry
+           CROSS JOIN LATERAL (
+             SELECT event.*
+               FROM robinhood_stock_usd_reference_events event
+              WHERE event.chain='${CHAIN}'
+                AND event.canonical=TRUE
+                AND event.stock_address=$1
+                AND event.protocol=registry.protocol
+                AND event.market_key=registry.market_key
+                AND event.block_number BETWEEN $4::bigint AND $3::bigint
+              ORDER BY event.block_number DESC, event.transaction_index DESC,
+                       event.log_index DESC
+              LIMIT 1
+           ) event
        )
        SELECT checkpoint.protocol, checkpoint.market_key, checkpoint.pool_address,
               checkpoint.pool_id, checkpoint.origin_address, checkpoint.token_address,

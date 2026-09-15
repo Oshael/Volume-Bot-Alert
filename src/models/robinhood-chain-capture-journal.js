@@ -14,6 +14,9 @@ const {
 const {
   appendRobinhoodTokenLifecycleEvidence,
 } = require('./robinhood-token-lifecycle-evidence');
+const {
+  appendCapturedEvents: appendStockUsdReferenceEvents,
+} = require('./robinhood-stock-usd-reference-journal');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_capture';
@@ -423,6 +426,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                topic0 TEXT, topics JSONB, data TEXT
              )`, [CHAIN, JSON.stringify(payload.events)]
       );
+      await appendStockUsdReferenceEvents(client, payload.events);
       await appendRobinhoodTokenLifecycleEvidence(client, payload.lifecycleEvidence);
       await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(

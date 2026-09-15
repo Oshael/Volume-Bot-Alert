@@ -471,6 +471,12 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       if (orphaned.rowCount !== Number(rewind.depth)) {
         throw recoveryError('capture_recovery_fence_conflict', 'orphan branch changed');
       }
+      await client.query(
+        `UPDATE robinhood_stock_usd_reference_events SET canonical=FALSE
+          WHERE chain=$1 AND canonical=TRUE
+            AND block_number BETWEEN $2::bigint AND $3::bigint`,
+        [CHAIN, rewind.fromBlock.toString(), rewind.throughBlock.toString()]
+      );
       const cursor = await client.query(
         `UPDATE robinhood_chain_capture_cursor
             SET next_block=$3::bigint, checkpoint_block=$2::bigint, checkpoint_hash=$4,

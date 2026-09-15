@@ -98,6 +98,7 @@ const stage213 = require('../src/utils/db-init-stage213');
 const stage214 = require('../src/utils/db-init-stage214');
 const stage215 = require('../src/utils/db-init-stage215');
 const stage216 = require('../src/utils/db-init-stage216');
+const stage222 = require('../src/utils/db-init-stage222');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -135,6 +136,9 @@ const {
   PONS_V2_FACTORY, TOPICS: PONS_V2_TOPICS,
 } = require('../src/services/pons-v2-lifecycle-decoder');
 const v2 = require('../src/services/uniswap-v2-decoder');
+const {
+  CANONICAL_CONTRACTS, ROBINHOOD_TOKENIZED_ASSETS,
+} = require('../src/services/robinhood-market-policy');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 const { SCHEMA_GROUPS, __private: schemaChecks } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -311,6 +315,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_liquidity_realtime_outbox WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_refresh_queue WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_snapshots WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_stock_usd_reference_events WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_relationship_evidence WHERE chain='robinhood'");
@@ -370,6 +375,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
     await stage216.init({ closePool: false });
+    await stage222.init({ closePool: false });
     await stage90.init({ closePool: false });
     await stage91.init({ closePool: false });
     await stage109.init({ closePool: false });
@@ -468,6 +474,37 @@ describe('Robinhood canonical chain capture journal', () => {
       key === 'stage195-robinhood-v3-balance-snapshots'
     ));
     assert.equal(snapshots.repair, 'node src/utils/db-init-stage195.js');
+  });
+
+  it('atomically copies registered stock/USDG reference events into the compact journal', async () => {
+    const pool = `0x${'a'.repeat(40)}`;
+    const marketKey = `robinhood:uniswap-v2:${pool}`;
+    const stock = ROBINHOOD_TOKENIZED_ASSETS.SPY;
+    await db.query(
+      `INSERT INTO robinhood_pool_registry(
+         protocol, market_key, pool_address, origin_address, token_address,
+         quote_address, currency0, currency1, discovery_block,
+         discovery_block_hash, discovery_tx_hash, discovery_log_index, discovered_at
+       ) VALUES ('uniswap-v2',$1,$2,$2,$3,$4,$3,$4,99,$5,$6,0,$7)`,
+      [marketKey, pool, stock, CANONICAL_CONTRACTS.USDG,
+        PARENT, LEGACY_TX, OBSERVED_AT]
+    );
+    const input = capture();
+    input.events[0] = {
+      transactionHash: TX, transactionIndex: 0, logIndex: 0,
+      address: pool, topics: [v2.TOPICS.sync],
+      data: `0x${[100n, 200n]
+        .map((value) => value.toString(16).padStart(64, '0')).join('')}`,
+    };
+    await createRobinhoodChainCaptureJournal().commitBlock(input);
+    const stored = await db.query(
+      `SELECT protocol, market_key, stock_address, block_number::text
+         FROM robinhood_stock_usd_reference_events`
+    );
+    assert.deepEqual(stored.rows, [{
+      protocol: 'uniswap-v2', market_key: marketKey,
+      stock_address: stock, block_number: '100',
+    }]);
   });
 
   it('keeps canonical canary evidence immutable and compares it with legacy evidence', async () => {
