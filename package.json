@@ -115,6 +115,7 @@
     "robinhood:audit-v3-stock-pairs": "node src/utils/audit-robinhood-v3-stock-pairs.js",
     "robinhood:audit-stock-pool-liquidity": "node src/utils/audit-robinhood-stock-pool-liquidity.js",
     "robinhood:canonical-head-audit": "node src/utils/audit-robinhood-canonical-head-canary.js",
+    "robinhood:backfill-head-capture-states": "node src/utils/backfill-robinhood-head-capture-states.js",
     "robinhood:canonical-liquidity-audit": "node src/utils/audit-robinhood-canonical-liquidity.js",
     "robinhood:canonical-holder-audit": "node src/utils/audit-robinhood-canonical-holder.js",
     "robinhood:canonical-holder-canary": "node src/utils/audit-robinhood-canonical-holder-canary.js",

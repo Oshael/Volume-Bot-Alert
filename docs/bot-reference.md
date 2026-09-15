@@ -636,6 +636,18 @@ auditoria de paridade serem concluídos, claim, settle, retry, retenção e reco
 continuam lendo e alterando exclusivamente `robinhood_head_captures`; a tabela
 shadow não autoriza o cutover do Corte 3B.
 
+Depois da Stage 224, execute primeiro o preview read-only:
+`npm run robinhood:backfill-head-capture-states`. Para escrever, informe
+`--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.
+O default processa somente um lote de 1.000 linhas; `--batch-size` aceita até
+5.000, `--max-batches` até 1.000 e `--pause-ms` controla a pausa entre lotes.
+Antes de cada lote, o comando exige que o lag canônico não supere 128 blocos
+(`--max-canonical-lag-blocks`) e verifica se o trigger da Stage 224 está ativo.
+Cada lote usa cursor keyset, `ON CONFLICT DO NOTHING`, timeout limitado e compara
+todos os campos de lifecycle. Paridade ausente ou divergente faz rollback do lote
+e não avança o checkpoint. Somente um write que percorreu toda a tabela retorna
+`approved=true`; isso ainda não muda a autoridade nem autoriza o Corte 3B.
+
 A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
 vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200. A Stage 107

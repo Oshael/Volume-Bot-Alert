@@ -7,6 +7,9 @@ const db = require('../src/models/db');
 const {
   createRobinhoodHeadProcessingRepository,
 } = require('../src/models/robinhood-head-processing');
+const {
+  createRobinhoodHeadCaptureStateRepository,
+} = require('../src/models/robinhood-head-capture-state');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage186 = require('../src/utils/db-init-stage186');
 const stage224 = require('../src/utils/db-init-stage224');
@@ -367,6 +370,32 @@ describe('Robinhood head processing repository integration', () => {
       [identity.transactionHash, identity.logIndex]
     )).rows[0];
     assert.equal(parity.matches, true);
+  });
+
+  it('backfills a bounded missing state and verifies lifecycle parity', async () => {
+    const identity = await seedPending({ block: 100 });
+    await db.query(
+      `DELETE FROM robinhood_head_capture_states
+        WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
+      [identity.transactionHash, identity.logIndex]
+    );
+    const states = createRobinhoodHeadCaptureStateRepository({ database: db });
+    await states.assertMirrorReady();
+    const preview = await states.processBatch({
+      limit: 100, write: false, statementTimeoutMs: 30_000,
+    });
+    assert.deepEqual(
+      [preview.scanned, preview.inserted, preview.missing, preview.divergent],
+      [1, 0, 1, 0]
+    );
+
+    const written = await states.processBatch({
+      limit: 100, write: true, statementTimeoutMs: 30_000,
+    });
+    assert.deepEqual(
+      [written.scanned, written.inserted, written.missing, written.divergent, written.complete],
+      [1, 1, 0, 0, true]
+    );
   });
 
   it('refuses to settle a claim leased by a different owner', async () => {

@@ -197,6 +197,13 @@ a ser espelhados sem trocar a autoridade de leitura. Registros anteriores serão
 copiados por backfill limitado em corte separado; nenhum `INSERT ... SELECT`
 massivo faz parte da criação do schema.
 
+O backfill usa cursor keyset persistido em arquivo, lotes de 1.000 por default,
+pausa configurável e revalidação do lag canônico antes de cada lote. Ele insere
+somente estados ausentes com `ON CONFLICT DO NOTHING` e audita imediatamente a
+paridade integral do lifecycle copiado. Falha de paridade reverte o lote e não
+avança o checkpoint. O modo padrão é read-only; escrita exige `--write` e um
+checkpoint explícito.
+
 O writer grava payload e estado na mesma transação. O consumidor antigo ainda
 permanece oficial. Uma auditoria compara identidades e estados antes de qualquer
 cutover.
