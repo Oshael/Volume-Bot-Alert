@@ -81,6 +81,7 @@
     "pump:callout-probe": "node src/utils/pump-callout-probe.js",
     "pump:capture": "node src/utils/pump-continuous-capture.js",
     "fomo:ws-probe": "node src/utils/fomo-ws-probe.js",
+    "fomo:profile-search-probe": "node src/utils/fomo-profile-search-probe.js",
     "fomo:capture": "node src/utils/fomo-continuous-capture.js",
     "callouts:summaries:compare": "node src/utils/compare-callout-summaries.js",
     "callouts:repair-pump-solana": "node src/utils/repair-pump-callout-solana-chains.js",

@@ -2077,6 +2077,21 @@ credencial ou o UUID. `followAttempts`, `followFailures`,
 `followingSnapshotSize` e `lastFollowingReadAt` permitem separar tentativa HTTP
 aceita de confirmação pelo snapshot posterior de `followingIds`.
 
+`npm run fomo:profile-search-probe` mede, sem persistir ou seguir perfis, a
+capacidade de descoberta de `GET /v2/users/fuzzy-search?searchTerm=...`. O probe
+usa até 100 usernames Fomo recentes já presentes em `callout_profiles`, consulta
+sequencialmente pelo Chrome CDP autenticado e informa resultados únicos, perfis
+novos, repetição, cobertura de wallets, limite aparente por termo, latência,
+status HTTP e rate limit. `FOMO_PROFILE_SEARCH_PROBE_LIMIT` limita os termos entre
+1 e 100 (default 100), e `FOMO_PROFILE_SEARCH_PROBE_DELAY_MS` controla o intervalo
+entre 250 e 10000 ms (default 1000). Ele não consulta leaderboard, faz no máximo
+um reload inicial da página para observar a autenticação e não registra headers,
+tokens, UUID da conta nem endereços de wallet no relatório.
+
+Na VPS, exporte o env do worker antes da execução one-shot: `set -a`, carregue
+`. /etc/trendscope/callouts.env`, execute `set +a` e então rode
+`npm run fomo:profile-search-probe` no diretório da aplicação.
+
 Os alertas operacionais privados são opt-in por
 `FOMO_TELEGRAM_ALERTS_ENABLED=true`. Eles usam somente chamadas outbound
 `sendMessage` e não exigem webhook, username público nem ativar
