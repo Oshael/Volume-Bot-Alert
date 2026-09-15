@@ -7,10 +7,13 @@ const {
 } = require('./evm-erc20-metadata');
 const {
   classifyTokenEligibility,
+  ROBINHOOD_TOKENIZED_ASSETS,
 } = require('./robinhood-market-policy');
 const v2 = require('./uniswap-v2-decoder');
 const v3 = require('./uniswap-v3-decoder');
 const v4 = require('./uniswap-v4-decoder');
+
+const STOCKS = new Set(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
 
 function blockTag(value) {
   const raw = String(value ?? '').trim();
@@ -182,6 +185,7 @@ function createRobinhoodBackfillEnrichmentPreparer(options = {}) {
         eligibility,
         blockTag: resolvedBlockTag,
         needsWethQuote: event.kind === 'swap' && event.quoteAddress === v2.ROBINHOOD_WETH,
+        needsStockQuote: event.kind === 'swap' && STOCKS.has(event.quoteAddress),
       },
     };
   }

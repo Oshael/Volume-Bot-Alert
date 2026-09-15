@@ -530,7 +530,18 @@ exato do swap ou snapshot: stock/USDG tem precedência e stock/WETH compõe WETH
 bloco. O resolvedor aceita referências V2, V3 e V4, tenta a próxima pool quando uma referência
 falha e mantém cache por `stock:block`. A captura congela preço, fonte, status e bloco na
 evidência; o processing reconstrói preço, volume e FDV sem RPC. Captures históricos rejeitados
-antes dessa rota continuam exigindo o reparo direcionado de stock.
+antes dessa rota continuam exigindo o reparo direcionado de stock descrito abaixo.
+
+`npm run robinhood:repair-stock-captures` seleciona somente captures market V2/V3/V4
+rejeitados com `quote_usd_unavailable` cuja quote no registry é uma stock oficial. O comando
+é dry-run por padrão e usa `ROBINHOOD_STOCK_REPAIR_RPC_URL` apenas em `--mode=write`; a fonte
+deve ser archive porque metadata, estado da pool de referência e saldos V3 são lidos no bloco
+exato. Ele compartilha o reparador idempotente de captures, mas usa advisory lock próprio,
+não move cursores live e começa conservadoramente com batch 50, concorrência RPC 1, pausa de
+1 segundo e `--max-batches=1`. Depois do canário e somente com os lags live estáveis, use
+`--max-batches=0` para drenar toda a coorte. Referência inexistente no bloco é isolada em
+`archiveRepair.status='blocked'`; falha RPC retentável interrompe o batch sem terminalizar a
+captura.
 
 `npm run robinhood:audit-stock-pool-liquidity -- --token-address=<token>
 --expected-total-usd=<comparação>` prova a contribuição corrente das pools V4 meme/stock

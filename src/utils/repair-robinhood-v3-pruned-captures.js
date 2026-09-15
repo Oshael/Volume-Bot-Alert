@@ -4,17 +4,51 @@ const {
   createRobinhoodPersistenceRepository,
 } = require('../models/robinhood-persistence');
 const {
+  createLiquidityHistoricalRangeRepository,
+} = require('../models/robinhood-liquidity-historical-ranges');
+const {
+  createRobinhoodPoolLiquiditySnapshotRepository,
+} = require('../models/robinhood-pool-liquidity-snapshot');
+const {
   createRobinhoodBackfillEnrichmentAdapter,
 } = require('../services/robinhood-backfill-enrichment-adapter');
 const {
   executeRobinhoodBackfillEnrichmentPlan,
   planRobinhoodBackfillEnrichment,
 } = require('../services/robinhood-backfill-enrichment-planner');
+const { createErc20MetadataReader } = require('../services/evm-erc20-metadata');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../services/robinhood-market-policy');
+const {
+  createRobinhoodStockUsdQuoteReader,
+} = require('../services/robinhood-stock-usd-quote');
+const {
+  createRobinhoodWethUsdQuoteReader,
+} = require('../services/robinhood-weth-usd-quote');
 
 const CHAIN_ID = 4663n;
-const REJECTION = 'v3_pool_balance_unavailable';
-const LOCK_KEY = 'robinhood:v3-pruned-capture-repair';
+const DEFAULT_TARGET = 'v3-pruned';
+const TARGETS = Object.freeze({
+  [DEFAULT_TARGET]: Object.freeze({
+    rejection: 'v3_pool_balance_unavailable', protocols: ['uniswap-v3'],
+    stockOnly: false, lockKey: 'robinhood:v3-pruned-capture-repair',
+    rpcEnv: 'ROBINHOOD_V3_REPAIR_RPC_URL', event: 'v3_archive_repair_progress',
+  }),
+  'stock-quote': Object.freeze({
+    rejection: 'quote_usd_unavailable',
+    protocols: ['uniswap-v2', 'uniswap-v3', 'uniswap-v4'],
+    stockOnly: true, lockKey: 'robinhood:stock-capture-repair',
+    rpcEnv: 'ROBINHOOD_STOCK_REPAIR_RPC_URL', event: 'stock_capture_repair_progress',
+  }),
+});
+const STOCKS = Object.freeze(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
+
+function targetConfig(value) {
+  const name = String(value || DEFAULT_TARGET).trim().toLowerCase();
+  const config = TARGETS[name];
+  if (!config) throw new Error(`target must be one of: ${Object.keys(TARGETS).join(', ')}`);
+  return { name, ...config };
+}
 
 function integer(value, fallback, min, max, label) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -43,27 +77,36 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
   const args = parseNamedArgs(argv);
   const mode = String(args.mode || 'dry-run').toLowerCase();
   if (!['dry-run', 'write'].includes(mode)) throw new Error('mode must be dry-run or write');
+  const target = targetConfig(args.target);
   return {
-    mode,
-    rpcUrl: String(args['rpc-url'] || env.ROBINHOOD_V3_REPAIR_RPC_URL || '').trim(),
+    mode, target: target.name,
+    rpcUrl: String(args['rpc-url'] || env[target.rpcEnv] || '').trim(),
     fromBlock: block(args['from-block'], '0', 'from-block'),
     toBlock: block(args['to-block'], '9223372036854775807', 'to-block'),
-    batchSize: integer(args['batch-size'], 100, 1, 500, 'batch-size'),
-    rpcConcurrency: integer(args['rpc-concurrency'], 2, 1, 8, 'rpc-concurrency'),
+    batchSize: integer(args['batch-size'], target.stockOnly ? 50 : 100, 1, 500, 'batch-size'),
+    rpcConcurrency: integer(args['rpc-concurrency'], target.stockOnly ? 1 : 2, 1, 8, 'rpc-concurrency'),
     rpcBatchSize: integer(args['rpc-batch-size'], 100, 1, 100, 'rpc-batch-size'),
-    maxBatches: integer(args['max-batches'], mode === 'dry-run' ? 1 : 0, 0, 1_000_000, 'max-batches'),
-    sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
+    maxBatches: integer(
+      args['max-batches'], mode === 'dry-run' || target.stockOnly ? 1 : 0,
+      0, 1_000_000, 'max-batches'
+    ),
+    sleepMs: integer(args['sleep-ms'], target.stockOnly ? 1000 : 100, 0, 60_000, 'sleep-ms'),
   };
 }
 
-function createCandidateRepository(database = db) {
+function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
+  const target = targetConfig(targetName);
+  const parameters = (fromBlock, toBlock) => [
+    fromBlock, toBlock, target.rejection, target.protocols, target.stockOnly, STOCKS,
+  ];
   const filter = `capture.chain = 'robinhood'
     AND capture.stream = 'market'
-    AND capture.protocol = 'uniswap-v3'
+    AND capture.protocol = ANY($4::text[])
     AND capture.processing_status = 'rejected'
-    AND capture.evidence->>'rejected' = '${REJECTION}'
+    AND capture.evidence->>'rejected' = $3
     AND COALESCE(capture.evidence #>> '{archiveRepair,status}', '') <> 'blocked'
-    AND capture.block_number BETWEEN $1::bigint AND $2::bigint`;
+    AND capture.block_number BETWEEN $1::bigint AND $2::bigint
+    AND ($5::boolean = FALSE OR registry.quote_address = ANY($6::text[]))`;
 
   async function summarize(fromBlock, toBlock) {
     const result = await database.query(
@@ -71,8 +114,11 @@ function createCandidateRepository(database = db) {
               MIN(capture.block_number)::text AS first_block,
               MAX(capture.block_number)::text AS last_block
          FROM robinhood_head_captures capture
+         LEFT JOIN robinhood_pool_registry registry
+           ON registry.chain = capture.chain AND registry.protocol = capture.protocol
+          AND registry.market_key = capture.market_key
         WHERE ${filter}`,
-      [fromBlock, toBlock]
+      parameters(fromBlock, toBlock)
     );
     return result.rows[0];
   }
@@ -96,8 +142,8 @@ function createCandidateRepository(database = db) {
         WHERE ${filter}
         ORDER BY capture.block_number, capture.transaction_index,
                  capture.log_index, capture.transaction_hash
-        LIMIT $3`,
-      [fromBlock, toBlock, limit]
+        LIMIT $7`,
+      [...parameters(fromBlock, toBlock), limit]
     );
     return result.rows;
   }
@@ -113,6 +159,7 @@ function createCandidateRepository(database = db) {
               evidence = capture.evidence || jsonb_build_object(
                 'archiveRepair', jsonb_build_object(
                   'status', 'completed',
+                  'target', $3::text,
                   'originalReason', $2::text,
                   'repairedAt', NOW()
                 )
@@ -130,7 +177,7 @@ function createCandidateRepository(database = db) {
           AND capture.processing_status = 'rejected'
           AND capture.evidence->>'rejected' = $2
         RETURNING capture.transaction_hash`,
-      [JSON.stringify(identities), REJECTION]
+      [JSON.stringify(identities), target.rejection, target.name]
     );
     if (result.rowCount !== rows.length) {
       throw new Error(`Archive repair finalized ${result.rowCount}/${rows.length} captures`);
@@ -150,12 +197,13 @@ function createCandidateRepository(database = db) {
           SET evidence = capture.evidence || jsonb_build_object(
                 'archiveRepair', jsonb_build_object(
                   'status', 'blocked',
+                  'target', $3::text,
                   'originalReason', $2::text,
                   'failedAt', NOW(),
                   'error', failed.error
                 )
               ),
-              last_error = LEFT('V3 archive repair blocked: ' || failed.error, 4000),
+              last_error = LEFT('Archive capture repair blocked: ' || failed.error, 4000),
               terminal_at = NOW(),
               retention_eligible_at = NOW() + INTERVAL '7 days',
               updated_at = NOW()
@@ -168,7 +216,7 @@ function createCandidateRepository(database = db) {
           AND capture.processing_status = 'rejected'
           AND capture.evidence->>'rejected' = $2
         RETURNING capture.transaction_hash`,
-      [JSON.stringify(identities), REJECTION]
+      [JSON.stringify(identities), target.rejection, target.name]
     );
     if (result.rowCount !== failures.length) {
       throw new Error(`Archive repair blocked ${result.rowCount}/${failures.length} captures`);
@@ -179,10 +227,12 @@ function createCandidateRepository(database = db) {
   async function withLock(callback) {
     const client = await database.getClient();
     try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [LOCK_KEY]);
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [target.lockKey]);
       return await callback();
     } finally {
-      try { await client.query('SELECT pg_advisory_unlock(hashtext($1))', [LOCK_KEY]); } catch (_) {}
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [target.lockKey]);
+      } catch (_) {}
       client.release();
     }
   }
@@ -246,6 +296,7 @@ async function buildPreparedEntries(prepared, results, adapter, concurrency) {
   const outcomes = await mapConcurrent(prepared, concurrency, async (item) => {
     try {
       const entry = await adapter.buildEntry({
+        claim: item.claim,
         context: item.context,
         results: results.get(item.id),
       });
@@ -263,8 +314,10 @@ async function buildPreparedEntries(prepared, results, adapter, concurrency) {
   };
 }
 
-function createArchiveClient(rpcUrl) {
-  if (!rpcUrl) throw new Error('ROBINHOOD_V3_REPAIR_RPC_URL is required in write mode');
+function createArchiveClient(rpcUrl, targetName = DEFAULT_TARGET) {
+  if (!rpcUrl) {
+    throw new Error(`${targetConfig(targetName).rpcEnv} is required in write mode`);
+  }
   return createEvmJsonRpcClient({
     providers: [{ name: 'archive', url: rpcUrl }],
     timeoutMs: 60_000,
@@ -273,17 +326,34 @@ function createArchiveClient(rpcUrl) {
   });
 }
 
-async function enrich(rows, rpcClient, options) {
+function createStockAdapterOptions(rpcClient, database) {
+  const metadataReader = createErc20MetadataReader({ rpcClient });
+  const wethQuoteReader = createRobinhoodWethUsdQuoteReader({ rpcClient });
+  const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database });
+  return {
+    v4LiquidityReader: createLiquidityHistoricalRangeRepository({ database }),
+    stockQuoteReader: createRobinhoodStockUsdQuoteReader({
+      rpcClient, repository, metadataReader, wethQuoteReader,
+    }),
+  };
+}
+
+async function enrich(rows, rpcClient, options, adapterOptions = {}) {
   const adapter = createRobinhoodBackfillEnrichmentAdapter({
     seedPools: poolSeeds(rows),
     rpcClient,
     rpcProvider: 'archive',
     timestampProvider: 'archive',
+    ...adapterOptions,
   });
   const prepared = rows.map((row) => {
-    const item = adapter.prepareClaim(claim(row));
-    return { row, ...item, id: `${row.transaction_hash}:${row.log_index}` };
+    const claimed = claim(row);
+    const item = adapter.prepareClaim(claimed);
+    return { row, claim: claimed, ...item, id: `${row.transaction_hash}:${row.log_index}` };
   });
+  await adapter.primeEntries(prepared.map((item) => ({
+    item: { id: item.id }, claim: item.claim, context: item.context,
+  })));
   const plan = planRobinhoodBackfillEnrichment(prepared.map((item) => ({
     id: item.id,
     tokenAddress: item.tokenAddress,
@@ -305,10 +375,12 @@ async function enrich(rows, rpcClient, options) {
 }
 
 async function runRepair(options, deps = {}) {
-  const candidates = deps.candidates || createCandidateRepository(deps.database || db);
+  const target = targetConfig(options.target);
+  const database = deps.database || db;
+  const candidates = deps.candidates || createCandidateRepository(database, target.name);
   const initial = await candidates.summarize(options.fromBlock, options.toBlock);
   const summary = {
-    mode: options.mode,
+    mode: options.mode, target: target.name,
     candidates: Number(initial.candidates || 0),
     remaining: Number(initial.candidates || 0),
     progressPct: Number(initial.candidates || 0) === 0 ? 100 : 0,
@@ -321,9 +393,12 @@ async function runRepair(options, deps = {}) {
     blocked: 0,
   };
   if (options.mode === 'dry-run' || summary.candidates === 0) return summary;
-  const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl);
-  const persistence = deps.persistence || createRobinhoodPersistenceRepository();
-  const enrichBatch = deps.enrichBatch || ((rows) => enrich(rows, rpcClient, options));
+  const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl, target.name);
+  const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database });
+  const adapterOptions = target.stockOnly
+    ? (deps.stockAdapterOptions || createStockAdapterOptions(rpcClient, database)) : {};
+  const enrichBatch = deps.enrichBatch
+    || ((rows) => enrich(rows, rpcClient, options, adapterOptions));
 
   return candidates.withLock(async () => {
     const chainId = await rpcClient.request('eth_chainId');
@@ -360,7 +435,7 @@ async function runRepair(options, deps = {}) {
         error: String(error?.message || error).slice(0, 500),
       }));
       scanFromBlock = summary.lastBlock;
-      console.log(JSON.stringify({ event: 'v3_archive_repair_progress', ...summary }));
+      console.log(JSON.stringify({ event: target.event, ...summary }));
       if (options.sleepMs) await delay(options.sleepMs);
     }
     return summary;
@@ -372,7 +447,7 @@ async function run() {
     const summary = await runRepair(parseArgs());
     console.log(JSON.stringify(summary, null, 2));
   } catch (error) {
-    console.error('[RobinhoodV3ArchiveRepair]', error.message);
+    console.error('[RobinhoodArchiveCaptureRepair]', error.message);
     process.exitCode = 1;
   } finally {
     await db.pool.end().catch(() => {});
@@ -385,6 +460,6 @@ module.exports = {
   runRepair,
   __private: {
     buildPreparedEntries, claim, createArchiveClient, createCandidateRepository,
-    enrich, parseArgs, poolSeeds,
+    createStockAdapterOptions, enrich, parseArgs, poolSeeds, targetConfig,
   },
 };

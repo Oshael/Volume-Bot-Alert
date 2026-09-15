@@ -227,6 +227,38 @@ describe('Robinhood backfill enrichment adapter', () => {
     assert.equal(entry.observation.liquidityStatus, 'spot_tvl_from_pool_balances');
   });
 
+  it('uses an exact-block stock/USD quote for historical stock markets', async () => {
+    const stock = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
+    const stockPool = seed(v3Fixture, 'uniswap-v3');
+    stockPool.quote_address = stock;
+    stockPool.currency0 = stock;
+    const calls = [];
+    const adapter = createRobinhoodBackfillEnrichmentAdapter({
+      seedPools: [stockPool],
+      stockQuoteReader: { async getSnapshot(input) {
+        calls.push(input);
+        return {
+          stockAddress: stock, priceUsd: '42', status: 'observed',
+          source: 'canonical-uniswap-v3-stock-usdg',
+        };
+      } },
+    });
+    const prepared = adapter.prepareClaim(claim(v3Fixture, 'uniswap-v3'));
+    const entry = await adapter.buildEntry({
+      context: prepared.context,
+      results: resultsFor(prepared, {
+        quoteMetadata: aggregateResult({
+          symbol: 'NVDA', decimals: 18, supply: 10n ** 27n,
+        }),
+      }),
+    });
+
+    assert.deepEqual(calls, [{ stockAddress: stock, blockTag: prepared.context.blockTag }]);
+    assert.equal(entry.observation.accepted, true);
+    assert.equal(entry.observation.quoteUsdPrice, '42');
+    assert.equal(entry.observation.quoteUsdSource, 'canonical-uniswap-v3-stock-usdg');
+  });
+
   it('keeps policy rejection terminal without decoding absent metadata', async () => {
     const details = marketDetails(v4Fixture, 'uniswap-v4');
     const adapter = createRobinhoodBackfillEnrichmentAdapter({

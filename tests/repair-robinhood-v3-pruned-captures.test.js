@@ -31,12 +31,27 @@ function row(number) {
 describe('targeted Robinhood V3 pruned-capture repair', () => {
   it('defaults to a bounded dry-run and validates write controls', () => {
     assert.deepEqual(__private.parseArgs([], {}), {
-      mode: 'dry-run', rpcUrl: '', fromBlock: '0', toBlock: '9223372036854775807',
+      mode: 'dry-run', target: 'v3-pruned', rpcUrl: '',
+      fromBlock: '0', toBlock: '9223372036854775807',
       batchSize: 100, rpcConcurrency: 2, rpcBatchSize: 100, maxBatches: 1, sleepMs: 100,
     });
     assert.throws(() => __private.parseArgs(['--batch-size=501'], {}), /between 1 and 500/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=9'], {}), /between 1 and 8/);
     assert.throws(() => __private.parseArgs(['--mode=erase'], {}), /dry-run or write/);
+  });
+
+  it('configures the stock repair as a throttled all-protocol canary', () => {
+    assert.deepEqual(__private.parseArgs(['--target=stock-quote', '--mode=write'], {
+      ROBINHOOD_STOCK_REPAIR_RPC_URL: 'http://archive',
+    }), {
+      mode: 'write', target: 'stock-quote', rpcUrl: 'http://archive',
+      fromBlock: '0', toBlock: '9223372036854775807', batchSize: 50,
+      rpcConcurrency: 1, rpcBatchSize: 100, maxBatches: 1, sleepMs: 1000,
+    });
+    assert.deepEqual(__private.targetConfig('stock-quote').protocols, [
+      'uniswap-v2', 'uniswap-v3', 'uniswap-v4',
+    ]);
+    assert.throws(() => __private.targetConfig('everything'), /target must be one of/);
   });
 
   it('commits observations before marking only the repaired captures complete', async () => {
@@ -175,9 +190,25 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     await repository.summarize('100', '200');
 
     assert.match(calls[0].sql, /'status', 'blocked'/);
-    assert.match(calls[0].sql, /V3 archive repair blocked/);
+    assert.match(calls[0].sql, /Archive capture repair blocked/);
     assert.match(calls[1].sql, /archiveRepair,status/);
     assert.match(calls[1].sql, /<> 'blocked'/);
+  });
+
+  it('limits stock candidates to official quotes and the stock rejection reason', async () => {
+    const calls = [];
+    const repository = __private.createCandidateRepository({
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rows: [{ candidates: '0', first_block: null, last_block: null }] };
+      },
+    }, 'stock-quote');
+    await repository.summarize('100', '200');
+    assert.match(calls[0].sql, /registry\.quote_address = ANY\(\$6::text\[\]\)/);
+    assert.equal(calls[0].params[2], 'quote_usd_unavailable');
+    assert.deepEqual(calls[0].params[3], ['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
+    assert.equal(calls[0].params[4], true);
+    assert.ok(calls[0].params[5].length > 1);
   });
 
   it('refuses to silently skip a capture whose pool registry entry is missing', () => {

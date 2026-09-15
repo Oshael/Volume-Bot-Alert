@@ -108,6 +108,7 @@
     "robinhood:holder-global-delta": "node src/utils/create-robinhood-holder-global-delta.js",
     "robinhood:backfill-staging-repair": "node src/utils/repair-robinhood-backfill-staging.js",
     "robinhood:repair-v3-pruned": "node src/utils/repair-robinhood-v3-pruned-captures.js",
+    "robinhood:repair-stock-captures": "node src/utils/repair-robinhood-v3-pruned-captures.js --target=stock-quote",
     "robinhood:reconstruct-v3-archive": "node src/utils/reconstruct-robinhood-v3-archive.js",
     "robinhood:audit-v3-stock-pairs": "node src/utils/audit-robinhood-v3-stock-pairs.js",
     "robinhood:audit-stock-pool-liquidity": "node src/utils/audit-robinhood-stock-pool-liquidity.js",

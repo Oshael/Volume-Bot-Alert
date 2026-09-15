@@ -117,6 +117,7 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
     || (options.rpcClient
       ? createRobinhoodWethUsdQuoteReader({ rpcClient: options.rpcClient })
       : null);
+  const stockQuoteReader = options.stockQuoteReader || null;
   const v4LiquidityReader = options.v4LiquidityReader || null;
   let primedV4Ranges = new Map();
 
@@ -153,6 +154,13 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
         if (error?.retryable === true) throw error;
       }
     }
+    let stockQuote = null;
+    if (hasMetadata && context.needsStockQuote) {
+      if (!stockQuoteReader) throw new Error('Stock quote reader is required for stock markets');
+      stockQuote = await stockQuoteReader.getSnapshot({
+        stockAddress: event.quoteAddress, blockTag: context.blockTag,
+      });
+    }
     const resolvedTokenMetadata = hasMetadata
       ? tokenMetadata(context, results)
       : null;
@@ -167,6 +175,12 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
       ...(wethQuote ? {
         wethUsdPrice: wethQuote.priceUsd,
         wethUsdSource: wethQuote.source,
+      } : {}),
+      ...(stockQuote ? {
+        quoteUsdAddress: stockQuote.stockAddress,
+        quoteUsdPrice: stockQuote.priceUsd,
+        quoteUsdSource: stockQuote.source,
+        quoteUsdStatus: stockQuote.status,
       } : {}),
     });
     if (event.protocol === 'uniswap-v3' && hasMetadata) {
