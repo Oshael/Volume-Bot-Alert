@@ -1217,8 +1217,13 @@ PostgreSQL em ranges de até `ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS` (defaul
 scan com refresh para não deixar a valoração live faminta durante o catch-up. A fila colapsa todos
 os eventos pendentes de cada pool; o refresher então faz uma única valoração no frontier atual do
 processing por meio de `eth_call`, usando somente o node pruned permanente configurado em
-`ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL` (loopback obrigatório; na VPS2, `127.0.0.1:8547`). Falhas
-recebem backoff durável e preservam o snapshot válido anterior. A telemetria da lease separa
+`ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL` (loopback obrigatório; na VPS2, `127.0.0.1:8547`). O claim
+prioriza `next_attempt_at` antes do bloco sujo para impedir que falhas antigas e recorrentes
+monopolizem o batch. Quotes sem fonte USD canônica recebem
+`liquidity_quote_usd_unsupported` e são adiados por
+`ROBINHOOD_CANONICAL_LIQUIDITY_UNSUPPORTED_QUOTE_RETRY_MS` (24 horas por padrão), enquanto falhas
+transientes continuam no backoff normal. Todas as falhas preservam o snapshot válido anterior.
+A telemetria da lease separa
 `scanner` e `refresher`, incluindo ranges/blocos/logs/pools enfileiradas e claims
 concluídas/retentadas. O fallback histórico de cotação WETH/USDG por eventos fica desabilitado
 nesse processo, e o `rpcGuard` da lease bloqueia qualquer tentativa futura de `eth_getLogs`;

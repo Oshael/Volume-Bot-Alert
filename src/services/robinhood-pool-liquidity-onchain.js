@@ -6,6 +6,7 @@ const {
   buildLiquidityAssessment,
 } = require('./robinhood-market-policy');
 const {
+  ROBINHOOD_USDG,
   ROBINHOOD_WETH,
   formatDecimal,
   multiply,
@@ -13,6 +14,8 @@ const {
   rational,
   resolveQuoteUsd,
 } = require('./evm-market-metrics');
+
+const QUOTE_USD_UNSUPPORTED_ERROR_CODE = 'liquidity_quote_usd_unsupported';
 
 const GET_RESERVES_SELECTOR = '0x0902f1ac';
 const SLOT0_SELECTOR = '0x3850c7bd';
@@ -149,8 +152,27 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
     const resolved = resolveQuoteUsd(pool.quoteAddress, {
       wethUsdPrice: options.priceUsd, wethUsdSource: options.source,
     });
-    if (!resolved) throw new Error('pool quote USD price is unavailable');
+    if (!resolved) {
+      const error = new Error('pool quote USD price is unavailable');
+      error.code = 'liquidity_quote_usd_unavailable';
+      error.details = {
+        anchor: { number: anchor.number, hash: anchor.hash },
+        quoteAddress: pool.quoteAddress,
+      };
+      throw error;
+    }
     return formatDecimal(resolved.price, 12);
+  }
+
+  function assertSupportedQuote(pool, anchor) {
+    if (pool.quoteAddress === ROBINHOOD_USDG || pool.quoteAddress === ROBINHOOD_WETH) return;
+    const error = new Error('pool quote USD price is unavailable');
+    error.code = QUOTE_USD_UNSUPPORTED_ERROR_CODE;
+    error.details = {
+      anchor: { number: anchor.number, hash: anchor.hash },
+      quoteAddress: pool.quoteAddress,
+    };
+    throw error;
   }
 
   async function rpcCall(to, data, anchor) {
@@ -231,6 +253,7 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
 
   async function valuePool(pool, anchorInput, prefetched) {
     const anchor = inputAnchor(anchorInput);
+    assertSupportedQuote(pool, anchor);
     const [resolvedMetadata, quoteUsdPrice] = await Promise.all([
       metadata(pool, anchor), quoteUsd(pool, anchor),
     ]);
@@ -279,6 +302,7 @@ module.exports = {
   SLOT0_SELECTOR,
   V4_GET_LIQUIDITY_SELECTOR,
   V4_GET_SLOT0_SELECTOR,
+  QUOTE_USD_UNSUPPORTED_ERROR_CODE,
   createRobinhoodPoolLiquidityOnchainReader,
   __private: { decodeWord, normalizeAnchor, quoteIndex, tokenUsdPrice },
 };

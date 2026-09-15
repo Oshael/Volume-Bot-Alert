@@ -163,6 +163,7 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
     limit: options.refreshBatchSize, leaseMs: options.claimLeaseMs,
     concurrency: options.refreshConcurrency,
     retryBaseMs: options.retryBaseMs, retryMaxMs: options.retryMaxMs,
+    unsupportedQuoteRetryMs: options.unsupportedQuoteRetryMs,
     quarantineRecheckMs: options.quarantineRecheckMs,
     maxAnchorLagBlocks: options.maxAnchorLagBlocks,
   });

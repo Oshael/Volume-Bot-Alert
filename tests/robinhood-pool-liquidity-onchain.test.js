@@ -7,6 +7,7 @@ const {
   SLOT0_SELECTOR,
   V4_GET_LIQUIDITY_SELECTOR,
   V4_GET_SLOT0_SELECTOR,
+  QUOTE_USD_UNSUPPORTED_ERROR_CODE,
   createRobinhoodPoolLiquidityOnchainReader,
 } = require('../src/services/robinhood-pool-liquidity-onchain');
 const { ROBINHOOD_USDG, ROBINHOOD_WETH } = require('../src/services/evm-market-metrics');
@@ -149,6 +150,28 @@ describe('Robinhood pool liquidity current-state reader', () => {
     }), ANCHOR);
     assert.equal(result.liquidityUsd, '20');
     assert.deepEqual(quoteTags, [ANCHOR.blockTag]);
+  });
+
+  it('rejects an unsupported quote before reading metadata or pool state', async () => {
+    let metadataReads = 0;
+    let rpcReads = 0;
+    const unsupportedQuote = `0x${'9'.repeat(40)}`;
+    const reader = createRobinhoodPoolLiquidityOnchainReader(dependencies(
+      async () => { rpcReads += 1; throw new Error('unexpected RPC read'); },
+      { metadataReader: {
+        async getMetadata() { metadataReads += 1; throw new Error('unexpected metadata read'); },
+        async getBalanceOf() { throw new Error('unexpected balance read'); },
+      } }
+    ));
+    await assert.rejects(reader.valuePool(pool('uniswap-v2', {
+      quoteAddress: unsupportedQuote, currency1: unsupportedQuote,
+    }), ANCHOR), (error) => {
+      assert.equal(error.code, QUOTE_USD_UNSUPPORTED_ERROR_CODE);
+      assert.equal(error.details.quoteAddress, unsupportedQuote);
+      return true;
+    });
+    assert.equal(metadataReads, 0);
+    assert.equal(rpcReads, 0);
   });
 
   it('values V3 from slot0 plus exact pool balances at the anchor', async () => {

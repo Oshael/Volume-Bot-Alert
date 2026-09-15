@@ -152,7 +152,7 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
            FROM robinhood_pool_liquidity_refresh_queue
           WHERE chain=$1 AND status IN ('pending', 'quarantined')
             AND next_attempt_at<=NOW()
-          ORDER BY dirty_from_block, protocol, market_key
+          ORDER BY next_attempt_at, dirty_from_block, protocol, market_key
           LIMIT $2 FOR UPDATE SKIP LOCKED
        ), leased AS (
          UPDATE robinhood_pool_liquidity_refresh_queue queue

@@ -5,6 +5,9 @@ const { describe, it } = require('node:test');
 const {
   createRobinhoodCanonicalLiquidityRefresher,
 } = require('../src/services/robinhood-canonical-liquidity-refresher');
+const {
+  QUOTE_USD_UNSUPPORTED_ERROR_CODE,
+} = require('../src/services/robinhood-pool-liquidity-onchain');
 
 function row(id, attemptCount = 1) {
   return {
@@ -147,9 +150,25 @@ describe('Robinhood canonical liquidity refresher', () => {
     });
   });
 
+  it('defers unsupported quote currencies without changing transient retry backoff', async () => {
+    const failedError = {
+      code: QUOTE_USD_UNSUPPORTED_ERROR_CODE,
+      message: 'pool quote USD price is unavailable',
+    };
+    const { calls, refresher } = fixture(
+      { failedError }, { unsupportedQuoteRetryMs: 123_000 }
+    );
+    const result = await refresher.runOnce();
+    assert.equal(result.retried, 1);
+    const retried = calls.find((call) => call.operation === 'retry');
+    assert.equal(retried.value.retryMs, 123_000);
+    assert.equal(retried.value.error, failedError);
+  });
+
   it('rejects incomplete dependencies and unsafe bounds', () => {
     assert.throws(() => createRobinhoodCanonicalLiquidityRefresher(), /dependencies/);
     assert.throws(() => fixture({}, { limit: 501 }), /between 1 and 500/);
     assert.throws(() => fixture({}, { retryBaseMs: 10, retryMaxMs: 5 }), /retryMaxMs/);
+    assert.throws(() => fixture({}, { unsupportedQuoteRetryMs: 59_999 }), /between/);
   });
 });

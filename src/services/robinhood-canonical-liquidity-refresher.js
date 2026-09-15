@@ -2,6 +2,9 @@
 
 const { valuePoolsAtBlock } = require('./robinhood-pool-liquidity-events');
 const {
+  QUOTE_USD_UNSUPPORTED_ERROR_CODE,
+} = require('./robinhood-pool-liquidity-onchain');
+const {
   QUARANTINE_ERROR_CODE,
 } = require('../models/robinhood-pool-liquidity-refresh-queue');
 
@@ -52,6 +55,9 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
     concurrency: integer(input.concurrency, 10, 1, 20),
     retryBaseMs: integer(input.retryBaseMs, 5_000, 1, 3_600_000),
     retryMaxMs: integer(input.retryMaxMs, 60_000, 1, 86_400_000),
+    unsupportedQuoteRetryMs: integer(
+      input.unsupportedQuoteRetryMs, 86_400_000, 60_000, 2_592_000_000
+    ),
     quarantineRecheckMs: integer(input.quarantineRecheckMs, 86_400_000, 60_000, 2_592_000_000),
     maxAnchorLagBlocks: integer(input.maxAnchorLagBlocks, 128, 0, 100_000),
   };
@@ -66,6 +72,7 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
       const error = errors.get(`${row.protocol}:${row.market_key}`)
         || new Error('liquidity refresh result is missing');
       const quarantine = error?.code === QUARANTINE_ERROR_CODE;
+      const unsupportedQuote = error?.code === QUOTE_USD_UNSUPPORTED_ERROR_CODE;
       const changed = await deps.refreshQueue[quarantine ? 'quarantine' : 'retry']({
         owner: options.owner,
         protocol: row.protocol,
@@ -73,7 +80,9 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
         generation: row.generation,
         ...(quarantine
           ? { recheckMs: options.quarantineRecheckMs }
-          : { retryMs: retryDelay(row.attempt_count, options.retryBaseMs, options.retryMaxMs) }),
+          : { retryMs: unsupportedQuote
+            ? options.unsupportedQuoteRetryMs
+            : retryDelay(row.attempt_count, options.retryBaseMs, options.retryMaxMs) }),
         error,
       });
       if (changed) {

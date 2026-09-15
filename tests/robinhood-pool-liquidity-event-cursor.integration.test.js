@@ -19,14 +19,18 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const HASH = `0x${'b'.repeat(64)}`;
 const ADDRESS = `0x${'a'.repeat(40)}`;
 const MARKET = `robinhood:uniswap-v2:${ADDRESS}`;
+const SECOND_ADDRESS = `0x${'d'.repeat(40)}`;
+const SECOND_MARKET = `robinhood:uniswap-v2:${SECOND_ADDRESS}`;
 
 async function clearState() {
   await db.query("DELETE FROM robinhood_pool_liquidity_refresh_queue WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain='robinhood'");
-  await db.query('DELETE FROM robinhood_pool_registry WHERE market_key=$1', [MARKET]);
+  await db.query('DELETE FROM robinhood_pool_registry WHERE market_key=ANY($1)', [
+    [MARKET, SECOND_MARKET],
+  ]);
 }
 
-async function insertPool() {
+async function insertPool(marketKey = MARKET, address = ADDRESS) {
   await db.query(
     `INSERT INTO robinhood_pool_registry(
        chain, protocol, market_key, pool_address, token_address, quote_address,
@@ -34,7 +38,7 @@ async function insertPool() {
        discovery_tx_hash, discovery_log_index, discovered_at
      ) VALUES ('robinhood', 'uniswap-v2', $1, $2, $2, $3, $2, $3,
                1, $4, $4, 0, NOW())`,
-    [MARKET, ADDRESS, `0x${'c'.repeat(40)}`, HASH]
+    [marketKey, address, `0x${'c'.repeat(40)}`, HASH]
   );
 }
 
@@ -175,6 +179,32 @@ describe('Robinhood liquidity event cursor persistence integration', () => {
     }), true);
     const newest = (await queue.claim({ owner: 'worker-2', limit: 1, leaseMs: 60_000 }))[0];
     assert.equal(newest.generation, '2');
+  });
+
+  it('claims the longest-due pool before an older dirty block', async () => {
+    await insertPool();
+    await insertPool(SECOND_MARKET, SECOND_ADDRESS);
+    const cursor = createRobinhoodPoolLiquidityEventCursorRepository({ database: db });
+    await cursor.initializeCursor({ startBlock: '100' });
+    const queue = createRobinhoodPoolLiquidityRefreshQueue({ database: db });
+    await queue.commitScannedRange({
+      fromBlock: '100', nextBlock: '101', safeHead: '100',
+      checkpoint: { number: '100', hash: HASH },
+      pools: [
+        { protocol: 'uniswap-v2', marketKey: MARKET },
+        { protocol: 'uniswap-v2', marketKey: SECOND_MARKET },
+      ],
+    });
+    await db.query(
+      `UPDATE robinhood_pool_liquidity_refresh_queue
+          SET dirty_from_block=CASE WHEN market_key=$1 THEN 1 ELSE 2 END,
+              next_attempt_at=CASE WHEN market_key=$1
+                THEN NOW()-INTERVAL '1 minute' ELSE NOW()-INTERVAL '2 minutes' END
+        WHERE market_key=ANY($2)`,
+      [MARKET, [MARKET, SECOND_MARKET]]
+    );
+    const claimed = await queue.claim({ owner: 'worker-1', limit: 1, leaseMs: 60_000 });
+    assert.equal(claimed[0].market_key, SECOND_MARKET);
   });
 
   it('quarantines only deterministic missing decimals and rechecks when due', async () => {
