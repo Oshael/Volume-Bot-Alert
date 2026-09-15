@@ -51,6 +51,10 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.deepEqual(__private.targetConfig('stock-quote').protocols, [
       'uniswap-v2', 'uniswap-v3', 'uniswap-v4',
     ]);
+    assert.equal(
+      __private.targetConfig('stock-quote').lockKey,
+      __private.targetConfig('v3-pruned').lockKey
+    );
     assert.throws(() => __private.targetConfig('everything'), /target must be one of/);
   });
 

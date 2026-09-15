@@ -536,8 +536,8 @@ antes dessa rota continuam exigindo o reparo direcionado de stock descrito abaix
 rejeitados com `quote_usd_unavailable` cuja quote no registry é uma stock oficial. O comando
 é dry-run por padrão e usa `ROBINHOOD_STOCK_REPAIR_RPC_URL` apenas em `--mode=write`; a fonte
 deve ser archive porque metadata, estado da pool de referência e saldos V3 são lidos no bloco
-exato. Ele compartilha o reparador idempotente de captures, mas usa advisory lock próprio,
-não move cursores live e começa conservadoramente com batch 50, concorrência RPC 1, pausa de
+exato. Ele compartilha o reparador idempotente e o advisory lock que suspende o pruning de
+captures, não move cursores live e começa com batch 50, concorrência RPC 1, pausa de
 1 segundo e `--max-batches=1`. Depois do canário e somente com os lags live estáveis, use
 `--max-batches=0` para drenar toda a coorte. Referência inexistente no bloco é isolada em
 `archiveRepair.status='blocked'`; falha RPC retentável interrompe o batch sem terminalizar a

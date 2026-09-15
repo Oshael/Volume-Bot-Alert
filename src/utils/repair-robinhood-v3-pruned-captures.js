@@ -37,7 +37,7 @@ const TARGETS = Object.freeze({
   'stock-quote': Object.freeze({
     rejection: 'quote_usd_unavailable',
     protocols: ['uniswap-v2', 'uniswap-v3', 'uniswap-v4'],
-    stockOnly: true, lockKey: 'robinhood:stock-capture-repair',
+    stockOnly: true, lockKey: 'robinhood:v3-pruned-capture-repair',
     rpcEnv: 'ROBINHOOD_STOCK_REPAIR_RPC_URL', event: 'stock_capture_repair_progress',
   }),
 });
