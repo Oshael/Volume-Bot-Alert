@@ -549,7 +549,11 @@ captures, não move cursores live e começa com batch 50, concorrência RPC 1, p
 1 segundo e `--max-batches=1`. Depois do canário e somente com os lags live estáveis, use
 `--max-batches=0` para drenar toda a coorte. Referência inexistente no bloco é isolada em
 `archiveRepair.status='blocked'`; falha RPC retentável interrompe o batch sem terminalizar a
-captura.
+captura. Antes de uma drenagem longa, aplique `node src/utils/db-init-stage223.js`; o índice
+parcial preserva a ordem da fila sem varrer a tabela inteira. Durante o processo, o reparador
+mantém em memória até 512 estados V4 recentes e lê apenas os deltas posteriores à última
+posição de cada pool. O cache é exclusivo desse reparo, some no restart e nunca substitui o
+estado persistido; uma posição anterior à armazenada força automaticamente o replay completo.
 
 `npm run robinhood:audit-stock-pool-liquidity -- --token-address=<token>
 --expected-total-usd=<comparação>` prova a contribuição corrente das pools V4 meme/stock

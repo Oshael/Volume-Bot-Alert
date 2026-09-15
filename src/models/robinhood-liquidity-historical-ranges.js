@@ -1,6 +1,8 @@
 const db = require('./db');
 const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
 
+const MAX_POSITION_CACHE_POOLS = 512;
+
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
   if (!/^\d+$/.test(raw) && !/^0x[0-9a-f]+$/i.test(raw)) throw new Error(`${label} is invalid`);
@@ -42,7 +44,73 @@ function snapshotRanges(state) {
     }));
 }
 
-function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
+function cloneRangeState(state) {
+  return new Map([...state].map(([key, value]) => [key, { ...value }]));
+}
+
+function groupByPool(items) {
+  const grouped = new Map();
+  for (const item of items) {
+    if (!grouped.has(item.poolId)) grouped.set(item.poolId, []);
+    grouped.get(item.poolId).push(item);
+  }
+  return grouped;
+}
+
+function selectBaselines(requestsByPool, positionCache, maxPositionCachePools) {
+  const baselines = new Map();
+  for (const [requestedPoolId, requests] of requestsByPool) {
+    requests.sort(comparePosition);
+    if (maxPositionCachePools <= 0) continue;
+    const cached = positionCache.get(requestedPoolId);
+    if (!cached || comparePosition(cached.position, requests[0]) > 0) continue;
+    positionCache.delete(requestedPoolId);
+    positionCache.set(requestedPoolId, cached);
+    baselines.set(requestedPoolId, cached);
+  }
+  return baselines;
+}
+
+function groupDeltaRows(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    if (row.row_kind !== 'delta') continue;
+    if (!grouped.has(row.pool_id)) grouped.set(row.pool_id, []);
+    grouped.get(row.pool_id).push({
+      blockNumber: String(row.block_number),
+      logIndex: String(row.log_index),
+      tickLower: Number(row.tick_lower),
+      tickUpper: Number(row.tick_upper),
+      liquidityDelta: BigInt(row.liquidity_delta),
+    });
+  }
+  return grouped;
+}
+
+function applyDelta(state, delta) {
+  const key = `${delta.tickLower}:${delta.tickUpper}`;
+  const current = state.get(key) || {
+    tickLower: delta.tickLower, tickUpper: delta.tickUpper, liquidityGross: 0n,
+  };
+  current.liquidityGross += delta.liquidityDelta;
+  state.set(key, current);
+}
+
+function createLiquidityHistoricalRangeRepository({
+  database = db,
+  maxPositionCachePools = 0,
+} = {}) {
+  const positionCache = new Map();
+
+  function rememberPosition(requestedPoolId, value) {
+    if (maxPositionCachePools <= 0) return;
+    positionCache.delete(requestedPoolId);
+    positionCache.set(requestedPoolId, value);
+    while (positionCache.size > maxPositionCachePools) {
+      positionCache.delete(positionCache.keys().next().value);
+    }
+  }
+
   async function listHistoricalV4LiquidityRangesAtPositions(input) {
     if (!Array.isArray(input) || input.length > 1000) {
       throw new RangeError('at most 1000 historical positions are allowed');
@@ -54,10 +122,18 @@ function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
       ids.add(item.id);
     }
     if (!positions.length) return new Map();
+    const requestsByPool = groupByPool(positions);
+    const baselines = selectBaselines(
+      requestsByPool, positionCache, maxPositionCachePools
+    );
     const { rows } = await database.query(
       `WITH positions AS MATERIALIZED (
          SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
            id text, pool_id text, block_number bigint, log_index bigint
+         )
+       ), baselines AS MATERIALIZED (
+         SELECT * FROM jsonb_to_recordset($2::jsonb) AS item(
+           pool_id text, block_number bigint, log_index bigint
          )
        ), requested AS MATERIALIZED (
          SELECT DISTINCT pool_id FROM positions
@@ -82,9 +158,13 @@ function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
                 deltas.tick_lower, deltas.tick_upper, deltas.liquidity_delta
          FROM robinhood_v4_liquidity_deltas deltas
          JOIN maxima USING (pool_id)
+         LEFT JOIN baselines baseline USING (pool_id)
          JOIN ready ON ready.chain = deltas.chain
          WHERE (deltas.block_number, deltas.log_index)
                < (maxima.block_number, maxima.log_index)
+           AND (baseline.pool_id IS NULL OR
+                (deltas.block_number, deltas.log_index)
+                  >= (baseline.block_number, baseline.log_index))
        )
        SELECT * FROM result
        ORDER BY pool_id, block_number NULLS FIRST, log_index NULLS FIRST`,
@@ -93,49 +173,38 @@ function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
         pool_id: item.poolId,
         block_number: item.blockNumber,
         log_index: item.logIndex,
+      }))), JSON.stringify([...baselines].map(([requestedPoolId, cached]) => ({
+        pool_id: requestedPoolId,
+        block_number: cached.position.blockNumber,
+        log_index: cached.position.logIndex,
       })))]
     );
     const available = new Set(rows.filter((row) => (
       row.row_kind === 'availability' && row.available
     )).map((row) => row.pool_id));
-    const requestsByPool = new Map();
-    for (const item of positions) {
-      if (!requestsByPool.has(item.poolId)) requestsByPool.set(item.poolId, []);
-      requestsByPool.get(item.poolId).push(item);
-    }
-    const deltasByPool = new Map();
-    for (const row of rows) {
-      if (row.row_kind !== 'delta') continue;
-      if (!deltasByPool.has(row.pool_id)) deltasByPool.set(row.pool_id, []);
-      deltasByPool.get(row.pool_id).push({
-        blockNumber: String(row.block_number),
-        logIndex: String(row.log_index),
-        tickLower: Number(row.tick_lower),
-        tickUpper: Number(row.tick_upper),
-        liquidityDelta: BigInt(row.liquidity_delta),
-      });
-    }
+    const deltasByPool = groupDeltaRows(rows);
     const result = new Map(positions.map(({ id }) => [id, null]));
-    for (const [id, requests] of requestsByPool) {
-      if (!available.has(id)) continue;
-      requests.sort(comparePosition);
-      const deltas = deltasByPool.get(id) || [];
+    for (const [requestedPoolId, requests] of requestsByPool) {
+      if (!available.has(requestedPoolId)) {
+        positionCache.delete(requestedPoolId);
+        continue;
+      }
+      const baseline = baselines.get(requestedPoolId);
+      const state = baseline ? cloneRangeState(baseline.state) : new Map();
+      const deltas = deltasByPool.get(requestedPoolId) || [];
       deltas.sort(comparePosition);
-      const state = new Map();
       let offset = 0;
       for (const request of requests) {
         while (offset < deltas.length && comparePosition(deltas[offset], request) < 0) {
-          const delta = deltas[offset];
-          const key = `${delta.tickLower}:${delta.tickUpper}`;
-          const current = state.get(key) || {
-            tickLower: delta.tickLower, tickUpper: delta.tickUpper, liquidityGross: 0n,
-          };
-          current.liquidityGross += delta.liquidityDelta;
-          state.set(key, current);
+          applyDelta(state, deltas[offset]);
           offset += 1;
         }
         result.set(request.id, snapshotRanges(state));
       }
+      rememberPosition(requestedPoolId, {
+        position: requests.at(-1),
+        state: cloneRangeState(state),
+      });
     }
     return result;
   }
@@ -212,4 +281,4 @@ function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
   };
 }
 
-module.exports = { createLiquidityHistoricalRangeRepository };
+module.exports = { MAX_POSITION_CACHE_POOLS, createLiquidityHistoricalRangeRepository };

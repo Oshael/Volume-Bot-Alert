@@ -4,6 +4,7 @@ const {
   createRobinhoodPersistenceRepository,
 } = require('../models/robinhood-persistence');
 const {
+  MAX_POSITION_CACHE_POOLS,
   createLiquidityHistoricalRangeRepository,
 } = require('../models/robinhood-liquidity-historical-ranges');
 const {
@@ -331,7 +332,10 @@ function createStockAdapterOptions(rpcClient, database) {
   const wethQuoteReader = createRobinhoodWethUsdQuoteReader({ rpcClient });
   const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database });
   return {
-    v4LiquidityReader: createLiquidityHistoricalRangeRepository({ database }),
+    v4LiquidityReader: createLiquidityHistoricalRangeRepository({
+      database,
+      maxPositionCachePools: MAX_POSITION_CACHE_POOLS,
+    }),
     stockQuoteReader: createRobinhoodStockUsdQuoteReader({
       rpcClient, repository, metadataReader, wethQuoteReader,
     }),

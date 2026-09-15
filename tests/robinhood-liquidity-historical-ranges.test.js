@@ -70,6 +70,60 @@ it('reconstructs many historical positions from one ordered V4 delta read', asyn
   assert.match(calls[0].sql, /jsonb_to_recordset/);
   assert.match(calls[0].sql, /JOIN maxima USING \(pool_id\)/);
   assert.equal(JSON.parse(calls[0].params[0]).length, 3);
+  assert.deepEqual(JSON.parse(calls[0].params[1]), []);
+});
+
+it('reuses the prior V4 range state and reads only the next delta tail', async () => {
+  const id = `0x${'c'.repeat(64)}`;
+  const calls = [];
+  const batches = [[
+    { row_kind: 'availability', pool_id: id, available: true },
+    {
+      row_kind: 'delta', pool_id: id, available: true,
+      block_number: '5', log_index: '1', tick_lower: -60, tick_upper: 60,
+      liquidity_delta: '10',
+    },
+  ], [
+    { row_kind: 'availability', pool_id: id, available: true },
+    {
+      row_kind: 'delta', pool_id: id, available: true,
+      block_number: '8', log_index: '1', tick_lower: -60, tick_upper: 60,
+      liquidity_delta: '-3',
+    },
+  ], [
+    { row_kind: 'availability', pool_id: id, available: true },
+    {
+      row_kind: 'delta', pool_id: id, available: true,
+      block_number: '5', log_index: '1', tick_lower: -60, tick_upper: 60,
+      liquidity_delta: '10',
+    },
+  ]];
+  const repository = createLiquidityHistoricalRangeRepository({
+    maxPositionCachePools: 1,
+    database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: batches.shift() };
+      },
+    },
+  });
+
+  assert.equal((await repository.listHistoricalV4LiquidityRangesAtPositions([
+    { id: 'first', poolId: id, blockNumber: '7', logIndex: '0' },
+  ])).get('first')[0].liquidity_gross, '10');
+  assert.equal((await repository.listHistoricalV4LiquidityRangesAtPositions([
+    { id: 'second', poolId: id, blockNumber: '9', logIndex: '0' },
+  ])).get('second')[0].liquidity_gross, '7');
+
+  assert.deepEqual(JSON.parse(calls[1].params[1]), [{
+    pool_id: id, block_number: '7', log_index: '0',
+  }]);
+  assert.match(calls[1].sql, />= \(baseline\.block_number, baseline\.log_index\)/);
+
+  assert.equal((await repository.listHistoricalV4LiquidityRangesAtPositions([
+    { id: 'earlier', poolId: id, blockNumber: '6', logIndex: '0' },
+  ])).get('earlier')[0].liquidity_gross, '10');
+  assert.deepEqual(JSON.parse(calls[2].params[1]), []);
 });
 
 it('registers a covering index for bounded V4 tail reads', () => {

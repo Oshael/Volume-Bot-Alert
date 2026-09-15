@@ -6144,6 +6144,21 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage223-robinhood-rejected-market-repair-index',
+    name: 'Stage 223 Robinhood rejected-market repair index',
+    repair: 'node src/utils/db-init-stage223.js',
+    tables: [{
+      table: 'robinhood_head_captures',
+      indexes: [{
+        name: 'idx_rh_head_captures_rejected_market_repair',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'transaction_hash',
+          'protocol', 'market_key', 'robinhood', 'market', 'rejected',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
