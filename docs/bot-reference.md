@@ -2121,9 +2121,11 @@ identidade predefinidas. A lease guarda contagens, formato, shape e caminho/form
 da identidade; o token e os valores das claims nunca são persistidos.
 
 Após observar um Bearer válido, a captura executa um probe read-only de
-`GET /auth/my-profile` em paralelo à espera pela identidade do browser. O probe
-não alimenta o follow: somente contagens, status HTTP, shapes, caminho/formato de
-identidade e categoria fixa de erro entram na lease; nenhum body ou ID é retido.
+`GET /auth/my-profile` pelo `APIRequestContext` compartilhado do browser, fora do
+renderer e das restrições CORS da página. O probe ocorre em paralelo à espera pela
+identidade do browser e não alimenta o follow: somente contagens, status HTTP,
+shapes, caminho/formato de identidade e categoria fixa de erro entram na lease;
+nenhum body ou ID é retido.
 
 A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros

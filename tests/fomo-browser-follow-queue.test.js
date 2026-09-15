@@ -29,6 +29,10 @@ function ok(responseObject) {
   return { status: 200, body: { statusCode: 200, responseObject } };
 }
 
+function contextResponse(body, status = 200) {
+  return { status: () => status, json: async () => body };
+}
+
 function apiFixture({ following = [], followStatus = 200, leaderboard = [] } = {}) {
   const calls = [];
   return {
@@ -69,9 +73,16 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
   };
   cdp.detach = async () => { detached += 1; };
   let evaluation;
+  let profileRequest;
   const page = new EventEmitter();
   page.url = () => 'https://fomo.family/alerts';
-  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  const context = {
+    pages: () => [page], newCDPSession: async () => cdp,
+    request: { get: async (url, options) => {
+      profileRequest = { url, options };
+      return contextResponse(ok({ id: USER }).body);
+    } },
+  };
   page.context = () => context;
   page.reload = async () => {
     cdp.emit('Network.webSocketFrameReceived', {
@@ -103,6 +114,10 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
 
   const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
   assert.equal(api.currentUserId, USER);
+  assert.equal(evaluation, undefined);
+  assert.equal(profileRequest.url, 'https://prod-api.fomo.family/auth/my-profile');
+  assert.equal(profileRequest.options.headers.Authorization, `Bearer ${USER_JWT}`);
+  assert.equal(profileRequest.options.timeout, 15_000);
   assert.deepEqual(api.diagnostics, {
     authSource: 'http_request', identitySource: 'user_response',
     userBootstrapRequests: 1, userBootstrapResponses: 1,
@@ -160,7 +175,10 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   let evaluationError = null;
   const page = new EventEmitter();
   page.url = () => 'https://fomo.family/alerts';
-  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  const context = {
+    pages: () => [page], newCDPSession: async () => cdp,
+    request: { get: async () => contextResponse(ok({}).body) },
+  };
   page.context = () => context;
   page.reload = async () => {
     cdp.emit('Network.webSocketFrameSent', {
@@ -275,7 +293,10 @@ test('Fomo browser API classifies a failed user bootstrap without exposing error
   cdp.detach = async () => {};
   const page = new EventEmitter();
   page.url = () => 'https://fomo.family/tokens/bnb/private-contract';
-  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  const context = {
+    pages: () => [page], newCDPSession: async () => cdp,
+    request: { get: async () => { throw new Error('private context request'); } },
+  };
   page.context = () => context;
   page.reload = async () => {
     cdp.emit('Network.webSocketFrameSent', {

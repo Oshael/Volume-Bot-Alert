@@ -105,6 +105,13 @@ function decodeJwtPayload(token) {
   }
 }
 
+function wrapBrowserRequestError(error) {
+  const requestError = new Error('Fomo browser request failed');
+  requestError.code = /timeout|timed out/i.test(String(error?.name || error?.message))
+    ? 'FOMO_FOLLOW_REQUEST_TIMEOUT' : 'FOMO_FOLLOW_REQUEST';
+  return requestError;
+}
+
 function parseRequestBody(request = {}) {
   const text = typeof request.postData === 'string' ? request.postData : '';
   if (!text) return { encoding: 'missing', body: null, parseError: false };
@@ -527,17 +534,29 @@ async function createFomoBrowserApi(options = {}) {
         requestInit: init, timeoutMs: requestTimeoutMs,
       });
     } catch (error) {
-      const requestError = new Error('Fomo browser request failed');
-      requestError.code = /timeout|timed out/i.test(String(error?.name || error?.message))
-        ? 'FOMO_FOLLOW_REQUEST_TIMEOUT' : 'FOMO_FOLLOW_REQUEST';
-      throw requestError;
+      throw wrapBrowserRequestError(error);
+    }
+  }
+
+  async function requestProfileFromContext(auth) {
+    try {
+      const headers = { Authorization: auth.authorization };
+      if (auth.supportedChains) headers['X-Supported-Chains'] = auth.supportedChains;
+      const response = await page.context().request.get(`${API_ORIGIN}/auth/my-profile`, {
+        headers, timeout: requestTimeoutMs,
+      });
+      let body = null;
+      try { body = await response.json(); } catch {}
+      return { status: response.status(), body };
+    } catch (error) {
+      throw wrapBrowserRequestError(error);
     }
   }
 
   async function runProfileProbe(auth) {
     diagnostics.profileProbeAttempts += 1;
     try {
-      const response = await requestFromBrowser(auth, '/auth/my-profile');
+      const response = await requestProfileFromContext(auth);
       diagnostics.profileProbeResponses += 1;
       const status = Number(response?.status);
       diagnostics.lastProfileProbeHttpStatus = Number.isInteger(status) ? status : null;
