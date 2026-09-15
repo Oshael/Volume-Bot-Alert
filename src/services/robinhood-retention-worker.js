@@ -6,6 +6,9 @@ const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('../models/robinhood-wallet-swap-realtime-outbox');
 const {
+  createRobinhoodHeadProcessingRepository,
+} = require('../models/robinhood-head-processing');
+const {
   DEFAULT_RETENTION_MS: DEFAULT_CHAIN_EVENT_RETENTION_MS,
   runPilot: pruneChainEvents,
 } = require('./robinhood-chain-event-pruner');
@@ -16,11 +19,15 @@ const DEFAULT_MAX_BATCHES = 5;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_REALTIME_OUTBOX_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_REALTIME_OUTBOX_TELEMETRY_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_CANONICAL_MAX_LAG_BLOCKS = 128;
+const DEFAULT_CAPTURE_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_CAPTURE_PRUNE_LIMIT = 5000;
 
 const realtimeOutboxTelemetryCache = {
   loadedAtMs: null,
   value: null,
 };
+const headCapturePruneState = { lastRunAtMs: null };
 
 let timer = null;
 let running = false;
@@ -32,6 +39,11 @@ let status = {
   lastRunAt: null,
   lastCompletedAt: null,
   lastRunDurationMs: 0,
+  lastMaintenanceAllowed: false,
+  lastMaintenancePauseReason: 'not_evaluated',
+  lastCapturedThroughBlock: null,
+  lastCanonicalThroughBlock: null,
+  lastCanonicalLagBlocks: null,
   lastExaminedProcessedLogs: 0,
   lastDeletedProcessedLogs: 0,
   lastProtectedProcessedLogs: 0,
@@ -54,10 +66,13 @@ let status = {
   lastDeletedRealtimeOutboxRows: 0,
   lastDeletedRealtimeOutboxCycles: 0,
   lastDeletedChainEvents: 0,
+  lastHeadCapturePruneStatus: 'not_evaluated',
+  lastDeletedHeadCaptures: 0,
   lastChainEventPruneStatus: 'not_evaluated',
   lastChainEventPruneBlockers: [],
   totalDeletedRealtimeOutboxRows: 0,
   totalDeletedChainEvents: 0,
+  totalDeletedHeadCaptures: 0,
   observedLagBlocks: null,
   finalizedLagBlocks: null,
   realtimeOutbox: null,
@@ -104,6 +119,19 @@ function normalizeOptions(options = {}) {
       DEFAULT_CHAIN_EVENT_RETENTION_MS,
       DEFAULT_CHAIN_EVENT_RETENTION_MS,
       30 * 24 * 60 * 60 * 1000
+    ),
+    canonicalMaxLagBlocks: boundedInteger(
+      options.canonicalMaxLagBlocks, DEFAULT_CANONICAL_MAX_LAG_BLOCKS, 0, 1_000_000
+    ),
+    capturePruneEnabled: options.capturePruneEnabled !== false,
+    capturePruneIntervalMs: boundedInteger(
+      options.capturePruneIntervalMs,
+      DEFAULT_CAPTURE_PRUNE_INTERVAL_MS,
+      30_000,
+      60 * 60 * 1000
+    ),
+    capturePruneLimit: boundedInteger(
+      options.capturePruneLimit, DEFAULT_CAPTURE_PRUNE_LIMIT, 100, 50_000
     ),
   };
 }
@@ -267,8 +295,14 @@ async function deleteExpiredTransferReorgJournal(database, options) {
   return Number(result.rows[0]?.deleted || 0);
 }
 
-function emptySummary(wallet = {}) {
+function emptySummary(wallet = {}, admission = {}) {
   return {
+    maintenanceAllowed: admission.allowed === true,
+    maintenancePauseReason: admission.allowed === true
+      ? null : (admission.reason || 'not_evaluated'),
+    capturedThroughBlock: admission.capturedThroughBlock || null,
+    canonicalThroughBlock: admission.canonicalThroughBlock || null,
+    canonicalLagBlocks: admission.canonicalLagBlocks || null,
     batches: 0,
     examinedProcessedLogs: 0,
     processedLogs: 0,
@@ -292,7 +326,67 @@ function emptySummary(wallet = {}) {
     realtimeOutboxCycles: 0,
     realtimeOutbox: null,
     chainEvents: null,
+    headCaptures: { status: 'not_evaluated', deleted: 0 },
   };
+}
+
+function evaluateMaintenanceAdmission(row, maxLagBlocks) {
+  if (row?.capture_next_block == null) {
+    return { allowed: false, reason: 'canonical_cursor_missing' };
+  }
+  try {
+    const nextBlock = BigInt(row.capture_next_block);
+    const capturedThrough = nextBlock > 0n ? nextBlock - 1n : 0n;
+    const firstUnsettled = row.first_unsettled_block == null
+      ? null : BigInt(row.first_unsettled_block);
+    if (firstUnsettled != null && (firstUnsettled < 0n || firstUnsettled > nextBlock)) {
+      return { allowed: false, reason: 'canonical_frontier_invalid' };
+    }
+    const canonicalThrough = firstUnsettled == null
+      ? capturedThrough : (firstUnsettled > 0n ? firstUnsettled - 1n : 0n);
+    const lag = capturedThrough > canonicalThrough ? capturedThrough - canonicalThrough : 0n;
+    const detail = {
+      capturedThroughBlock: capturedThrough.toString(),
+      canonicalThroughBlock: canonicalThrough.toString(),
+      canonicalLagBlocks: lag.toString(),
+    };
+    return lag > BigInt(maxLagBlocks)
+      ? { allowed: false, reason: 'canonical_lag_exceeded', ...detail }
+      : { allowed: true, reason: null, ...detail };
+  } catch (_) {
+    return { allowed: false, reason: 'canonical_frontier_invalid' };
+  }
+}
+
+async function loadMaintenanceAdmission(database, options, deps) {
+  if (typeof deps.loadMaintenanceAdmission === 'function') {
+    return deps.loadMaintenanceAdmission(options);
+  }
+  try {
+    const result = await queryWithTimeout(
+      database,
+      `SELECT capture.next_block AS capture_next_block,
+              frontier.block_number AS first_unsettled_block
+         FROM (VALUES (1)) anchor(value)
+         LEFT JOIN robinhood_chain_capture_cursor capture
+           ON capture.chain='robinhood'
+         LEFT JOIN LATERAL (
+           SELECT block_number
+             FROM robinhood_chain_domain_outbox
+            WHERE chain='robinhood' AND status<>'complete'
+            ORDER BY block_number LIMIT 1
+         ) frontier ON TRUE`,
+      [],
+      options.statementTimeoutMs
+    );
+    return evaluateMaintenanceAdmission(result.rows[0], options.canonicalMaxLagBlocks);
+  } catch (error) {
+    return {
+      allowed: false,
+      reason: 'canonical_admission_load_error',
+      error: String(error?.message || error).slice(0, 1000),
+    };
+  }
 }
 
 function lowerBlock(current, candidate) {
@@ -409,6 +503,34 @@ async function maintainChainEvents(database, options, deps) {
   }, { database, pause: deps.pause });
 }
 
+async function maintainHeadCaptures(database, options, deps) {
+  if (!options.capturePruneEnabled) return { status: 'disabled', deleted: 0 };
+  const state = deps.headCapturePruneState || headCapturePruneState;
+  const nowMs = (deps.now || Date.now)();
+  if (state.lastRunAtMs != null
+      && nowMs - state.lastRunAtMs < options.capturePruneIntervalMs) {
+    return { status: 'cooldown', deleted: 0 };
+  }
+  state.lastRunAtMs = nowMs;
+  const repository = deps.headProcessingRepository
+    || createRobinhoodHeadProcessingRepository({ database });
+  const deleted = await repository.pruneExpiredCaptures({ limit: options.capturePruneLimit });
+  return { status: 'completed', deleted };
+}
+
+function recordAdmission(admission) {
+  status.lastMaintenanceAllowed = admission.allowed === true;
+  status.lastMaintenancePauseReason = admission.allowed === true ? null : admission.reason;
+  status.lastCapturedThroughBlock = admission.capturedThroughBlock || null;
+  status.lastCanonicalThroughBlock = admission.canonicalThroughBlock || null;
+  status.lastCanonicalLagBlocks = admission.canonicalLagBlocks || null;
+}
+
+function completeRun(startedAtMs) {
+  status.lastCompletedAt = new Date().toISOString();
+  status.lastRunDurationMs = Date.now() - startedAtMs;
+}
+
 async function runOnce(options = {}, meta = {}, deps = {}) {
   const normalized = normalizeOptions(options);
   if (!normalized.enabled) return emptySummary();
@@ -425,6 +547,32 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
     status.lastError = null;
     try {
       const database = deps.database || db;
+      const admission = await loadMaintenanceAdmission(database, normalized, deps);
+      recordAdmission(admission);
+      if (!admission.allowed) {
+        const summary = emptySummary({}, admission);
+        summary.chainEvents = {
+          status: 'paused', reason: admission.reason, totalDeleted: 0, blockers: [],
+        };
+        summary.headCaptures = { status: 'paused', deleted: 0 };
+        status.lastExaminedProcessedLogs = 0;
+        status.lastDeletedProcessedLogs = 0;
+        status.lastProtectedProcessedLogs = 0;
+        status.lastCandidatesProtectedByWallet = 0;
+        status.lastCandidatesProtectedByBucketCoverage = 0;
+        status.lastCandidatesProtectedByAggregation = 0;
+        status.lastDeletedObservations = 0;
+        status.lastDeletedTransferReorgJournal = 0;
+        status.lastDeletedRealtimeOutboxRows = 0;
+        status.lastDeletedRealtimeOutboxCycles = 0;
+        status.lastDeletedHeadCaptures = 0;
+        status.lastHeadCapturePruneStatus = 'paused';
+        status.lastDeletedChainEvents = 0;
+        status.lastChainEventPruneStatus = 'paused';
+        status.lastChainEventPruneBlockers = [];
+        completeRun(startedAtMs);
+        return summary;
+      }
       const gate = await loadWalletGate(database, deps);
       const wallet = walletTelemetry(gate);
       if (wallet.valid) {
@@ -434,11 +582,19 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         ...normalized,
         walletCompleteThroughBlock: wallet.completeThroughBlock || null,
       }, wallet);
+      Object.assign(summary, {
+        maintenanceAllowed: true,
+        maintenancePauseReason: null,
+        capturedThroughBlock: admission.capturedThroughBlock,
+        canonicalThroughBlock: admission.canonicalThroughBlock,
+        canonicalLagBlocks: admission.canonicalLagBlocks,
+      });
       const realtime = await maintainRealtimeOutbox(database, normalized, deps);
       summary.realtimeOutboxRows = realtime.rows;
       summary.realtimeOutboxCycles = realtime.cycles;
       summary.realtimeOutbox = realtime.telemetry;
       summary.chainEvents = await maintainChainEvents(database, normalized, deps);
+      summary.headCaptures = await maintainHeadCaptures(database, normalized, deps);
       status.lastExaminedProcessedLogs = summary.examinedProcessedLogs;
       status.lastDeletedProcessedLogs = summary.processedLogs;
       status.lastProtectedProcessedLogs = summary.protectedProcessedLogs;
@@ -462,10 +618,13 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedRealtimeOutboxRows = summary.realtimeOutboxRows;
       status.lastDeletedRealtimeOutboxCycles = summary.realtimeOutboxCycles;
       status.lastDeletedChainEvents = summary.chainEvents.totalDeleted || 0;
+      status.lastHeadCapturePruneStatus = summary.headCaptures.status;
+      status.lastDeletedHeadCaptures = summary.headCaptures.deleted;
       status.lastChainEventPruneStatus = summary.chainEvents.status;
       status.lastChainEventPruneBlockers = summary.chainEvents.blockers || [];
       status.totalDeletedRealtimeOutboxRows += summary.realtimeOutboxRows;
       status.totalDeletedChainEvents += summary.chainEvents.totalDeleted || 0;
+      status.totalDeletedHeadCaptures += summary.headCaptures.deleted;
       status.observedLagBlocks = summary.realtimeOutbox.observedLagBlocks;
       status.finalizedLagBlocks = summary.realtimeOutbox.finalizedLagBlocks;
       status.realtimeOutbox = summary.realtimeOutbox;
@@ -473,8 +632,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.totalDeletedObservations += summary.observations;
       status.totalDeletedHourlyBuckets += summary.hourlyBuckets;
       status.totalDeletedTransferReorgJournal += summary.transferReorgJournal;
-      status.lastCompletedAt = new Date().toISOString();
-      status.lastRunDurationMs = Date.now() - startedAtMs;
+      completeRun(startedAtMs);
       return summary;
     } catch (error) {
       status.totalErrors += 1;
@@ -495,7 +653,7 @@ function schedule(options, delayMs) {
       const summary = await runOnce(options, { ifRunning: 'join' });
       if (summary.examinedProcessedLogs || summary.hourlyBuckets
           || summary.transferReorgJournal || summary.realtimeOutboxRows
-          || summary.chainEvents?.totalDeleted) {
+          || summary.chainEvents?.totalDeleted || summary.headCaptures?.deleted) {
         console.log(
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
@@ -511,6 +669,7 @@ function schedule(options, delayMs) {
           `realtimeOutbox=${summary.realtimeOutboxRows}/${summary.realtimeOutboxCycles}`,
           `chainEvents=${summary.chainEvents.totalDeleted || 0}`,
           `chainEventStatus=${summary.chainEvents.status}`,
+          `headCaptures=${summary.headCaptures.deleted}`,
           `observedLag=${summary.realtimeOutbox.observedLagBlocks ?? 'unknown'}`,
           `finalizedLag=${summary.realtimeOutbox.finalizedLagBlocks ?? 'unknown'}`,
           `batches=${summary.batches}`
@@ -558,6 +717,9 @@ module.exports = {
     deleteExpiredTransferReorgJournal,
     maintainRealtimeOutbox,
     maintainChainEvents,
+    maintainHeadCaptures,
+    evaluateMaintenanceAdmission,
+    loadMaintenanceAdmission,
     normalizeOptions,
   },
 };

@@ -1174,6 +1174,26 @@ module.exports = {
       3 * 24 * 60 * 60 * 1000,
       30 * 24 * 60 * 60 * 1000
     ),
+    canonicalMaxLagBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_RETENTION_CANONICAL_MAX_LAG_BLOCKS, 128, 0, 1_000_000
+    ),
+    capturePruneEnabled: parseBoolean(
+      process.env.ROBINHOOD_RETENTION_CAPTURE_PRUNE_ENABLED, true
+    ),
+    capturePruneIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_RETENTION_CAPTURE_PRUNE_INTERVAL_MS
+        ?? process.env.ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS,
+      5 * 60 * 1000,
+      30_000,
+      60 * 60 * 1000
+    ),
+    capturePruneLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_RETENTION_CAPTURE_PRUNE_LIMIT
+        ?? process.env.ROBINHOOD_PROCESSING_PRUNE_LIMIT,
+      5000,
+      100,
+      50_000
+    ),
   },
   robinhoodProcessingWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_ENABLED, true),
@@ -1192,8 +1212,6 @@ module.exports = {
     v4SwapPrefixLimit: parseIntegerInRange(
       process.env.ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT, 512, 1, 2000
     ),
-    pruneIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS, 5 * 60 * 1000, 30_000, 3_600_000),
-    pruneLimit: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_LIMIT, 5000, 100, 50_000),
     emitOutbox: parseBoolean(process.env.ROBINHOOD_DERIVED_OUTBOX_ENABLED, false),
     shadowAuditEnabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED, false),
     shadowAuditSampleLimit: parseIntegerInRange(

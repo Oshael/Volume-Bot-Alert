@@ -343,7 +343,7 @@ Grupos existentes:
 | `maintenance` | alias temporário de rollback com cleanup Solana, retention Robinhood e mock-trading take-profit |
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
-| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets, enfileira swaps aceitos na outbox durável e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
+| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e enfileira swaps aceitos na outbox durável; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
 | `robinhood-wallet-classification` | mantém as projeções e classificações de wallets; sob flags/leases separadas, também captura transfers ERC-20 e pode persistir `unified_transfer_v1` atomicamente após o handoff explícito |
@@ -393,6 +393,28 @@ participa dessa poda e mantém a referência histórica necessária após o raw 
 Linhas protegidas isoladas não encerram o ciclo: enquanto o prefixo limitado estiver
 cheio e houver exclusões, o worker continua até `ROBINHOOD_RETENTION_MAX_BATCHES`.
 Ele para ao esvaziar o prefixo ou quando um lote inteiro não consegue progredir.
+Esse mesmo worker é o único responsável por podar `robinhood_head_captures`;
+o processing live nunca executa retenção. A poda roda no máximo uma vez a cada
+`ROBINHOOD_RETENTION_CAPTURE_PRUNE_INTERVAL_MS` (default 5 minutos), limitada por
+`ROBINHOOD_RETENTION_CAPTURE_PRUNE_LIMIT` (default 5000), e pode ser desligada com
+`ROBINHOOD_RETENTION_CAPTURE_PRUNE_ENABLED=false`. Os nomes legados
+`ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS` e `ROBINHOOD_PROCESSING_PRUNE_LIMIT` são
+aceitos apenas como fallback de configuração durante o rollout.
+
+Antes de qualquer delete, o retention worker compara o cursor do journal com o
+primeiro item não concluído da domain outbox. Se o lag superar
+`ROBINHOOD_RETENTION_CANONICAL_MAX_LAG_BLOCKS` (default 128), ou se cursor/frontier
+forem inválidos ou indisponíveis, toda a rodada pausa em modo fail-closed. O status
+expõe `lastMaintenanceAllowed`, `lastMaintenancePauseReason`,
+`lastCapturedThroughBlock`, `lastCanonicalThroughBlock` e
+`lastCanonicalLagBlocks`; a retomada ocorre automaticamente quando o gate volta a
+abrir. Esse gate controla os deletes da aplicação, não inicia, cancela ou desativa
+autovacuum do PostgreSQL.
+No rollout, atualize e inicie primeiro `robinhood-maintenance` com
+`ROBINHOOD_RETENTION_ENABLED=true`; confirme no status que o gate foi avaliado e
+só depois reinicie `robinhood-processing`. Se o maintenance permanecer desligado,
+a captura continua correta, mas captures expirados deixam de ser podados e o uso
+de disco cresce.
 
 Os `DELETE`s tornam páginas antigas reutilizáveis pelo PostgreSQL; não devolvem
 imediatamente espaço ao filesystem. A Stage 200 configura autovacuum mais sensível
@@ -727,9 +749,8 @@ nem uma única query. `attempts`, `commits` e `failures` contam chamadas de pers
 não capturas. O `totalMs` interno inclui normalização e overhead e está contido em
 `persistMs`; não some esses totais às subetapas. A medição zera por tick, chega pela
 lease após sua conclusão e não acrescenta SQL, logs por evento ou flags de ativação.
-A limpeza da fila de captures roda fora da
-transação do batch, limitada por `ROBINHOOD_PROCESSING_PRUNE_LIMIT` (default 5000, máximo 50000)
-a cada `ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS`.
+A limpeza da fila de captures não pertence mais a esse processo; ela roda somente
+no `robinhood-maintenance`, sob o gate de lag canônico descrito na seção de grupos.
 
 O grupo `robinhood-derived` (Corte 5, systemd `trendscope-worker@robinhood-derived.service`,
 lease `robinhood-derived-worker`, `start:worker:robinhood-derived` na porta 3008) é o consumidor

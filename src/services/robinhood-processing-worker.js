@@ -2,10 +2,9 @@
  * robinhood-processing worker (Corte 4d).
  *
  * Wraps the processing runner in the singleton start/stop/getStatus lifecycle the
- * other Robinhood workers use, ticking the claim→decode→persist→settle loop and
- * pruning the capture queue on a slower cadence once its retention window
- * elapses. It composes its own persistence and processing repositories; it never
- * touches the capture cursor.
+ * other Robinhood workers use, ticking the claim→decode→persist→settle loop.
+ * Retention belongs to the isolated Robinhood maintenance worker so it cannot
+ * add delete pressure to this live path.
  */
 const db = require('../models/db');
 const { CURSOR_NOTIFY_CHANNEL } = require('../models/robinhood-head-capture');
@@ -25,7 +24,6 @@ const { createPostgresRealtimeListener } = require('./postgres-realtime-listener
 const NOTIFY_CHANNEL = CURSOR_NOTIFY_CHANNEL;
 const DEFAULT_INTERVAL_MS = 1000;
 const DEFAULT_IDLE_INTERVAL_MS = 5000;
-const DEFAULT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -39,7 +37,6 @@ let discoveryRunner = null;
 let repository = null;
 let listener = null;
 let activeOptions = null;
-let lastPruneAt = 0;
 let status = {
   running: false,
   enabled: true,
@@ -57,7 +54,6 @@ let status = {
   totalProcessed: 0,
   totalRejected: 0,
   totalBlocked: 0,
-  totalPrunedCaptures: 0,
   totalErrors: 0,
   totalWakes: 0,
   fallbackChecks: 0,
@@ -73,8 +69,6 @@ let status = {
   totalShadowMismatched: 0,
   totalShadowMissing: 0,
   totalShadowErrors: 0,
-  lastPrunedAt: null,
-  lastPrunedCaptures: 0,
   lastError: null,
 };
 
@@ -88,7 +82,6 @@ function normalizeOptions(options = {}) {
     enabled: options.enabled !== false,
     intervalMs: boundedInteger(options.intervalMs, DEFAULT_INTERVAL_MS, 100, 60_000),
     idleIntervalMs: boundedInteger(options.idleIntervalMs, DEFAULT_IDLE_INTERVAL_MS, 100, 300_000),
-    pruneIntervalMs: boundedInteger(options.pruneIntervalMs, DEFAULT_PRUNE_INTERVAL_MS, 30_000, 3_600_000),
     runner: {
       owner: options.owner,
       batchSize: normalizeProcessingBatchSize(options.batchSize),
@@ -102,7 +95,6 @@ function normalizeOptions(options = {}) {
       v4SwapPrefixLimit: boundedInteger(options.v4SwapPrefixLimit, 512, 1, 2000),
       emitOutbox: options.emitOutbox,
     },
-    pruneLimit: boundedInteger(options.pruneLimit, 5000, 100, 50_000),
     shadowAuditEnabled: options.shadowAuditEnabled === true,
     shadowAuditSampleLimit: boundedInteger(options.shadowAuditSampleLimit, 5, 1, 20),
     shadowAuditStatementTimeoutMs: boundedInteger(
@@ -143,15 +135,6 @@ function build(normalized, deps = {}) {
       emitOutbox: undefined,
     },
   });
-}
-
-async function maybePrune(normalized, nowMs) {
-  if (nowMs - lastPruneAt < normalized.pruneIntervalMs) return;
-  lastPruneAt = nowMs;
-  const pruned = await repository.pruneExpiredCaptures({ limit: normalized.pruneLimit });
-  status.lastPrunedAt = new Date(nowMs).toISOString();
-  status.lastPrunedCaptures = pruned;
-  status.totalPrunedCaptures += pruned;
 }
 
 async function runDiscoveryOnce() {
@@ -202,7 +185,6 @@ async function runOnce(normalized, trigger = {}) {
     status.totalShadowErrors += result.shadowAudit.errors || 0;
   }
   const discovery = await runDiscoveryOnce();
-  await maybePrune(normalized, Date.now());
   // Keep the tick loop hot while either stream still has claimable work.
   const combined = { ...result, claimed: result.claimed + discovery.claimed };
   if (combined.claimed > 0) status.lastProgressAt = new Date().toISOString();
@@ -285,7 +267,6 @@ function start(options = {}, deps = {}) {
   running = true;
   status.running = true;
   status.enabled = true;
-  lastPruneAt = 0;
   const listenerFactory = deps.listenerFactory || createPostgresRealtimeListener;
   listener = listenerFactory({
     channel: NOTIFY_CHANNEL,

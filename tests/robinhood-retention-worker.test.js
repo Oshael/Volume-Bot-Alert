@@ -13,11 +13,21 @@ const EMPTY_REALTIME_TELEMETRY = Object.freeze({
   observedLagBlocks: null,
   finalizedLagBlocks: null,
 });
+const OPEN_ADMISSION = Object.freeze({
+  allowed: true,
+  reason: null,
+  capturedThroughBlock: '1000',
+  canonicalThroughBlock: '1000',
+  canonicalLagBlocks: '0',
+});
 
 function dependencies(database, gate = VALID_WALLET_GATE) {
   return {
     database,
+    loadMaintenanceAdmission: async () => OPEN_ADMISSION,
     watermarkRepository: { loadRetentionGate: async () => gate },
+    headProcessingRepository: { pruneExpiredCaptures: async () => 0 },
+    headCapturePruneState: { lastRunAtMs: null },
     realtimeOutboxRepository: {
       pruneTerminalCycles: async () => ({ cycles: 0, rows: 0 }),
       loadTelemetry: async () => EMPTY_REALTIME_TELEMETRY,
@@ -80,7 +90,96 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
       chainEventRetentionEnabled: true,
       chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
+      canonicalMaxLagBlocks: 128,
+      capturePruneEnabled: true,
+      capturePruneIntervalMs: 5 * 60 * 1000,
+      capturePruneLimit: 5000,
     });
+  });
+
+  it('derives the canonical maintenance gate from the first unsettled block', () => {
+    assert.deepEqual(worker.__private.evaluateMaintenanceAdmission({
+      capture_next_block: '1001', first_unsettled_block: '900',
+    }, 128), {
+      allowed: true,
+      reason: null,
+      capturedThroughBlock: '1000',
+      canonicalThroughBlock: '899',
+      canonicalLagBlocks: '101',
+    });
+    assert.deepEqual(worker.__private.evaluateMaintenanceAdmission({
+      capture_next_block: '1001', first_unsettled_block: '800',
+    }, 128), {
+      allowed: false,
+      reason: 'canonical_lag_exceeded',
+      capturedThroughBlock: '1000',
+      canonicalThroughBlock: '799',
+      canonicalLagBlocks: '201',
+    });
+    assert.deepEqual(worker.__private.evaluateMaintenanceAdmission({}, 128), {
+      allowed: false, reason: 'canonical_cursor_missing',
+    });
+  });
+
+  it('loads the canonical frontier with the retention statement timeout', async () => {
+    const calls = [];
+    const database = { queryWithStatementTimeout: async (sql, params, timeoutMs) => {
+      calls.push({ sql, params, timeoutMs });
+      return { rows: [{ capture_next_block: '1001', first_unsettled_block: '900' }] };
+    } };
+    const options = worker.__private.normalizeOptions({ statementTimeoutMs: 2500 });
+
+    const admission = await worker.__private.loadMaintenanceAdmission(database, options, {});
+
+    assert.equal(admission.allowed, true);
+    assert.equal(admission.canonicalLagBlocks, '101');
+    assert.equal(calls[0].timeoutMs, 2500);
+    assert.match(calls[0].sql, /status<>'complete'/);
+    assert.match(calls[0].sql, /ORDER BY block_number LIMIT 1/);
+  });
+
+  it('fails closed before every delete when canonical lag exceeds the budget', async () => {
+    const database = createFakeDatabase();
+    const deps = dependencies(database);
+    deps.loadMaintenanceAdmission = async () => ({
+      allowed: false,
+      reason: 'canonical_lag_exceeded',
+      capturedThroughBlock: '1000',
+      canonicalThroughBlock: '799',
+      canonicalLagBlocks: '201',
+    });
+
+    const summary = await worker.runOnce({}, {}, deps);
+
+    assert.equal(summary.maintenanceAllowed, false);
+    assert.equal(summary.maintenancePauseReason, 'canonical_lag_exceeded');
+    assert.deepEqual(summary.headCaptures, { status: 'paused', deleted: 0 });
+    assert.equal(summary.chainEvents.status, 'paused');
+    assert.equal(database.calls.length, 0);
+    assert.equal(worker.getStatus().lastMaintenanceAllowed, false);
+    assert.equal(worker.getStatus().lastCanonicalLagBlocks, '201');
+  });
+
+  it('owns bounded head capture pruning and respects its cooldown', async () => {
+    const database = createFakeDatabase();
+    const deps = dependencies(database);
+    let nowMs = 10_000;
+    let calls = 0;
+    deps.now = () => nowMs;
+    deps.headProcessingRepository.pruneExpiredCaptures = async ({ limit }) => {
+      calls += 1;
+      assert.equal(limit, 700);
+      return 3;
+    };
+    const options = { capturePruneIntervalMs: 300_000, capturePruneLimit: 700 };
+
+    const first = await worker.runOnce(options, {}, deps);
+    nowMs += 299_999;
+    const second = await worker.runOnce(options, {}, deps);
+
+    assert.deepEqual(first.headCaptures, { status: 'completed', deleted: 3 });
+    assert.deepEqual(second.headCaptures, { status: 'cooldown', deleted: 0 });
+    assert.equal(calls, 1);
   });
 
   it('runs canonical raw pruning with a hard three-day minimum and preserves blockers', async () => {
@@ -130,6 +229,11 @@ describe('Robinhood retention worker', () => {
     }, {}, dependencies(database));
 
     assert.deepEqual(summary, {
+      maintenanceAllowed: true,
+      maintenancePauseReason: null,
+      capturedThroughBlock: '1000',
+      canonicalThroughBlock: '1000',
+      canonicalLagBlocks: '0',
       batches: 2,
       examinedProcessedLogs: 125,
       processedLogs: 125,
@@ -156,6 +260,7 @@ describe('Robinhood retention worker', () => {
         status: 'finished', stopReason: 'prefix_drained',
         retentionMs: 3 * 24 * 60 * 60 * 1000, batches: 1, totalDeleted: 0,
       },
+      headCaptures: { status: 'completed', deleted: 0 },
     });
     assert.equal(database.calls.length, 3);
     assert.ok(database.calls.every((call) => call.params[0] === 100));
@@ -212,6 +317,11 @@ describe('Robinhood retention worker', () => {
     const summary = await worker.runOnce({ enabled: false }, {}, { database });
 
     assert.deepEqual(summary, {
+      maintenanceAllowed: false,
+      maintenancePauseReason: 'not_evaluated',
+      capturedThroughBlock: null,
+      canonicalThroughBlock: null,
+      canonicalLagBlocks: null,
       batches: 0,
       examinedProcessedLogs: 0,
       processedLogs: 0,
@@ -235,6 +345,7 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxCycles: 0,
       realtimeOutbox: null,
       chainEvents: null,
+      headCaptures: { status: 'not_evaluated', deleted: 0 },
     });
     assert.equal(database.calls.length, 0);
   });

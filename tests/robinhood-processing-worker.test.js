@@ -65,11 +65,9 @@ describe('robinhood processing worker', () => {
 
   it('bounds its runtime options and honours the enabled flag', () => {
     const bounded = worker.__private.normalizeOptions({
-      intervalMs: 5, pruneIntervalMs: 10, pruneLimit: 99_999,
+      intervalMs: 5,
     });
     assert.equal(bounded.intervalMs, 100); // clamped up to the floor
-    assert.equal(bounded.pruneIntervalMs, 30_000); // clamped up to the floor
-    assert.equal(bounded.pruneLimit, 50_000);
     assert.equal(bounded.runner.v4ContinuationRounds, 8);
     assert.equal(bounded.runner.v4ContinuationPoolLimit, 8);
     assert.equal(bounded.runner.v4SwapPrefixLimit, 512);
@@ -88,8 +86,7 @@ describe('robinhood processing worker', () => {
     assert.equal(worker.__private.normalizeOptions({ enabled: false }).enabled, false);
   });
 
-  // Runs first so the module-level prune clock is still at its initial zero.
-  it('ticks both stream runners, aggregates counts into status, and prunes when due', async () => {
+  it('ticks both stream runners without running retention on the live path', async () => {
     const repository = fakeRepo();
     const discoveryRunner = fakeDiscoveryRunner();
     const normalized = worker.__private.normalizeOptions({});
@@ -110,20 +107,8 @@ describe('robinhood processing worker', () => {
     assert.equal(status.totalShadowCompared, 3);
     assert.equal(status.discovery.lastClaimed, 2);
     assert.equal(status.discovery.totalProcessed, 2);
-    assert.equal(repository._calls.prune, 1);
-    assert.equal(status.lastPrunedCaptures, 3);
-  });
-
-  it('does not prune again while still inside the retention window', async () => {
-    const repository = fakeRepo();
-    const normalized = worker.__private.normalizeOptions({ pruneIntervalMs: 3_600_000 });
-    worker.__private.build(normalized, {
-      runner: fakeRunner(), discoveryRunner: fakeDiscoveryRunner(), repository,
-    });
-
-    await worker.runOnce(normalized);
-
     assert.equal(repository._calls.prune, 0);
+    assert.equal('lastPrunedCaptures' in status, false);
   });
 
   it('keeps discovery claims capped at 2000 when market claims are enlarged', async () => {

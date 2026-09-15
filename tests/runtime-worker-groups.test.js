@@ -983,6 +983,10 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_RETENTION_REALTIME_TELEMETRY_INTERVAL_MS: '1',
       ROBINHOOD_CHAIN_EVENT_RETENTION_ENABLED: 'true',
       ROBINHOOD_CHAIN_EVENT_RETENTION_MS: '1',
+      ROBINHOOD_RETENTION_CANONICAL_MAX_LAG_BLOCKS: '9999999',
+      ROBINHOOD_RETENTION_CAPTURE_PRUNE_ENABLED: 'false',
+      ROBINHOOD_RETENTION_CAPTURE_PRUNE_INTERVAL_MS: '1',
+      ROBINHOOD_RETENTION_CAPTURE_PRUNE_LIMIT: '999999',
     }, (config) => {
       assert.deepEqual(config.robinhoodRetentionWorker, {
         enabled: true,
@@ -994,6 +998,10 @@ describe('runtime worker groups config', () => {
         realtimeOutboxTelemetryIntervalMs: 10_000,
         chainEventRetentionEnabled: true,
         chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
+        canonicalMaxLagBlocks: 1_000_000,
+        capturePruneEnabled: false,
+        capturePruneIntervalMs: 30_000,
+        capturePruneLimit: 50_000,
       });
     });
   });
