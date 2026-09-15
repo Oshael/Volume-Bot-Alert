@@ -171,6 +171,21 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
           assert.equal(pool.consecutiveFailures, pool.marketKey === fixtures[2].key ? 1 : 0);
         }
       }
+      const referenceKey = `robinhood:uniswap-v3:0x${'f'.repeat(40)}`;
+      await client.query(
+        `INSERT INTO robinhood_pool_registry (
+           protocol, market_key, pool_address, origin_address, token_address,
+           quote_address, currency0, currency1, discovery_block,
+           discovery_block_hash, discovery_tx_hash, discovery_log_index, discovered_at
+         ) VALUES ('uniswap-v3', $1, $2, $2, $3, $4, $3, $4, 20,
+           $5, $6, 0, '2026-08-22T10:00:00Z')`,
+        [referenceKey, referenceKey.split(':')[2], TOKEN, v3.ROBINHOOD_USDG,
+          `0x${'a'.repeat(64)}`, `0x${'b'.repeat(64)}`]
+      );
+      const references = await repository.listStockUsdReferences({
+        stockAddress: TOKEN, blockNumber: '20', limit: 5,
+      });
+      assert.deepEqual(references.map(({ marketKey }) => marketKey), [referenceKey]);
     } finally {
       await client.query('ROLLBACK');
       client.release();

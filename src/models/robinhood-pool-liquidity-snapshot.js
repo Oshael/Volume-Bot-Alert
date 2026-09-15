@@ -3,6 +3,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const v4 = require('../services/uniswap-v4-decoder');
 const { V4_DONATE_TOPIC } = require('../services/robinhood-pool-liquidity-events');
 const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
+const { ROBINHOOD_USDG, ROBINHOOD_WETH } = require('../services/evm-market-metrics');
 const {
   NOTIFY_CHANNEL: REALTIME_NOTIFY_CHANNEL,
 } = require('./robinhood-liquidity-realtime-outbox');
@@ -260,6 +261,35 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return Object.freeze(rows.map(normalizeCandidate));
   }
 
+  async function listStockUsdReferences(input = {}) {
+    const stockAddress = normalizeTokenAddress(CHAIN, input.stockAddress);
+    const blockNumber = input.blockNumber == null
+      ? null : quantity(input.blockNumber, 'blockNumber');
+    const limit = Number(input.limit ?? 20);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError('limit must be between 1 and 100');
+    }
+    const { rows } = await database.query(
+      `SELECT registry.protocol, registry.market_key, registry.pool_address,
+              registry.pool_id, registry.origin_address, registry.token_address,
+              registry.quote_address, registry.currency0, registry.currency1,
+              registry.discovered_at
+         FROM robinhood_pool_registry registry
+         LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
+           USING (chain, protocol, market_key)
+        WHERE registry.chain='${CHAIN}' AND registry.active=TRUE
+          AND registry.token_address=$1
+          AND registry.quote_address IN ($2, $3)
+          AND ($4::bigint IS NULL OR registry.discovery_block<=$4::bigint)
+        ORDER BY CASE WHEN registry.quote_address=$2 THEN 0 ELSE 1 END,
+                 snapshot.liquidity_usd DESC NULLS LAST,
+                 registry.discovery_block, registry.protocol, registry.market_key
+        LIMIT $5`,
+      [stockAddress, ROBINHOOD_USDG, ROBINHOOD_WETH, blockNumber, limit]
+    );
+    return Object.freeze(rows.map(normalizeCandidate));
+  }
+
   async function invalidateSnapshotsFromBlock(input = {}) {
     const rewindBlock = quantity(input.rewindBlock, 'rewindBlock');
     const { rows } = await database.query(
@@ -409,7 +439,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
 
   return Object.freeze({
     invalidateSnapshotsFromBlock, listDuePools, listPoolsForLiquidityEvents,
-    recordFailure, recordSnapshot, recordSnapshots, resolveAnchorBlock,
+    listStockUsdReferences, recordFailure, recordSnapshot, recordSnapshots, resolveAnchorBlock,
     resolveCanonicalAnchorWindow,
   });
 }

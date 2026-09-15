@@ -153,6 +153,30 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('orders stock/USD references by direct route and known liquidity', async () => {
+    const calls = [];
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{
+          protocol: 'uniswap-v3', market_key: 'stock-reference', pool_address: QUOTE,
+          pool_id: null, origin_address: null, token_address: TOKEN,
+          quote_address: v3.ROBINHOOD_USDG, currency0: TOKEN,
+          currency1: v3.ROBINHOOD_USDG,
+          discovered_at: new Date('2026-08-22T10:00:00Z'),
+        }] };
+      },
+    } });
+    const references = await repository.listStockUsdReferences({
+      stockAddress: TOKEN, blockNumber: '123', limit: 7,
+    });
+    assert.equal(references[0].marketKey, 'stock-reference');
+    assert.match(calls[0].sql, /registry\.quote_address IN \(\$2, \$3\)/);
+    assert.match(calls[0].sql, /CASE WHEN registry\.quote_address=\$2 THEN 0 ELSE 1 END/);
+    assert.match(calls[0].sql, /snapshot\.liquidity_usd DESC NULLS LAST/);
+    assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, v3.ROBINHOOD_WETH, '123', 7]);
+  });
+
   it('invalidates orphaned snapshots and returns their active pools for repair', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
