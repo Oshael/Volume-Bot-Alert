@@ -23,6 +23,10 @@ function dependencies(database, gate = VALID_WALLET_GATE) {
       loadTelemetry: async () => EMPTY_REALTIME_TELEMETRY,
     },
     realtimeOutboxTelemetryCache: { loadedAtMs: null, value: null },
+    chainEventPruner: async () => ({
+      status: 'finished', stopReason: 'prefix_drained',
+      retentionMs: 3 * 24 * 60 * 60 * 1000, batches: 1, totalDeleted: 0,
+    }),
   };
 }
 
@@ -74,7 +78,41 @@ describe('Robinhood retention worker', () => {
       statementTimeoutMs: 1000,
       realtimeOutboxRetentionMs: 3 * 24 * 60 * 60 * 1000,
       realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
+      chainEventRetentionEnabled: true,
+      chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
     });
+  });
+
+  it('runs canonical raw pruning with a hard three-day minimum and preserves blockers', async () => {
+    const database = createFakeDatabase();
+    let received = null;
+    const deps = dependencies(database);
+    deps.chainEventPruner = async (options, nestedDeps) => {
+      received = { options, database: nestedDeps.database };
+      return {
+        status: 'blocked', reason: 'retention_safety_audit', totalDeleted: 0,
+        blockers: [{ code: 'capture_lag_exceeded' }],
+      };
+    };
+
+    const summary = await worker.runOnce({
+      batchLimit: 10_000,
+      maxBatches: 2,
+      chainEventRetentionMs: 1,
+    }, {}, deps);
+
+    assert.deepEqual(received, {
+      options: {
+        batchLimit: 5_000,
+        maxBatches: 2,
+        retentionMs: 3 * 24 * 60 * 60 * 1000,
+      },
+      database,
+    });
+    assert.equal(summary.chainEvents.status, 'blocked');
+    assert.deepEqual(worker.getStatus().lastChainEventPruneBlockers, [
+      { code: 'capture_lag_exceeded' },
+    ]);
   });
 
   it('deletes expired raw rows through the cascading ledger in bounded batches', async () => {
@@ -114,6 +152,10 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxRows: 0,
       realtimeOutboxCycles: 0,
       realtimeOutbox: EMPTY_REALTIME_TELEMETRY,
+      chainEvents: {
+        status: 'finished', stopReason: 'prefix_drained',
+        retentionMs: 3 * 24 * 60 * 60 * 1000, batches: 1, totalDeleted: 0,
+      },
     });
     assert.equal(database.calls.length, 3);
     assert.ok(database.calls.every((call) => call.params[0] === 100));
@@ -192,6 +234,7 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxRows: 0,
       realtimeOutboxCycles: 0,
       realtimeOutbox: null,
+      chainEvents: null,
     });
     assert.equal(database.calls.length, 0);
   });

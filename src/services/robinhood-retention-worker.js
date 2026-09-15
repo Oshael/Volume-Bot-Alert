@@ -5,6 +5,10 @@ const {
 const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('../models/robinhood-wallet-swap-realtime-outbox');
+const {
+  DEFAULT_RETENTION_MS: DEFAULT_CHAIN_EVENT_RETENTION_MS,
+  runPilot: pruneChainEvents,
+} = require('./robinhood-chain-event-pruner');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 2000;
@@ -49,7 +53,11 @@ let status = {
   lastDeletedTransferReorgJournal: 0,
   lastDeletedRealtimeOutboxRows: 0,
   lastDeletedRealtimeOutboxCycles: 0,
+  lastDeletedChainEvents: 0,
+  lastChainEventPruneStatus: 'not_evaluated',
+  lastChainEventPruneBlockers: [],
   totalDeletedRealtimeOutboxRows: 0,
+  totalDeletedChainEvents: 0,
   observedLagBlocks: null,
   finalizedLagBlocks: null,
   realtimeOutbox: null,
@@ -89,6 +97,13 @@ function normalizeOptions(options = {}) {
       DEFAULT_REALTIME_OUTBOX_TELEMETRY_INTERVAL_MS,
       10 * 1000,
       60 * 60 * 1000
+    ),
+    chainEventRetentionEnabled: options.chainEventRetentionEnabled !== false,
+    chainEventRetentionMs: boundedInteger(
+      options.chainEventRetentionMs,
+      DEFAULT_CHAIN_EVENT_RETENTION_MS,
+      DEFAULT_CHAIN_EVENT_RETENTION_MS,
+      30 * 24 * 60 * 60 * 1000
     ),
   };
 }
@@ -276,6 +291,7 @@ function emptySummary(wallet = {}) {
     realtimeOutboxRows: 0,
     realtimeOutboxCycles: 0,
     realtimeOutbox: null,
+    chainEvents: null,
   };
 }
 
@@ -381,6 +397,18 @@ async function maintainRealtimeOutbox(database, options, deps) {
   return { cycles, rows, telemetry: telemetryCache.value };
 }
 
+async function maintainChainEvents(database, options, deps) {
+  if (!options.chainEventRetentionEnabled) {
+    return { status: 'disabled', totalDeleted: 0, blockers: [] };
+  }
+  const prune = deps.chainEventPruner || pruneChainEvents;
+  return prune({
+    batchLimit: Math.min(options.batchLimit, 5_000),
+    maxBatches: options.maxBatches,
+    retentionMs: options.chainEventRetentionMs,
+  }, { database, pause: deps.pause });
+}
+
 async function runOnce(options = {}, meta = {}, deps = {}) {
   const normalized = normalizeOptions(options);
   if (!normalized.enabled) return emptySummary();
@@ -410,6 +438,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       summary.realtimeOutboxRows = realtime.rows;
       summary.realtimeOutboxCycles = realtime.cycles;
       summary.realtimeOutbox = realtime.telemetry;
+      summary.chainEvents = await maintainChainEvents(database, normalized, deps);
       status.lastExaminedProcessedLogs = summary.examinedProcessedLogs;
       status.lastDeletedProcessedLogs = summary.processedLogs;
       status.lastProtectedProcessedLogs = summary.protectedProcessedLogs;
@@ -432,7 +461,11 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedTransferReorgJournal = summary.transferReorgJournal;
       status.lastDeletedRealtimeOutboxRows = summary.realtimeOutboxRows;
       status.lastDeletedRealtimeOutboxCycles = summary.realtimeOutboxCycles;
+      status.lastDeletedChainEvents = summary.chainEvents.totalDeleted || 0;
+      status.lastChainEventPruneStatus = summary.chainEvents.status;
+      status.lastChainEventPruneBlockers = summary.chainEvents.blockers || [];
       status.totalDeletedRealtimeOutboxRows += summary.realtimeOutboxRows;
+      status.totalDeletedChainEvents += summary.chainEvents.totalDeleted || 0;
       status.observedLagBlocks = summary.realtimeOutbox.observedLagBlocks;
       status.finalizedLagBlocks = summary.realtimeOutbox.finalizedLagBlocks;
       status.realtimeOutbox = summary.realtimeOutbox;
@@ -461,7 +494,8 @@ function schedule(options, delayMs) {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
       if (summary.examinedProcessedLogs || summary.hourlyBuckets
-          || summary.transferReorgJournal || summary.realtimeOutboxRows) {
+          || summary.transferReorgJournal || summary.realtimeOutboxRows
+          || summary.chainEvents?.totalDeleted) {
         console.log(
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
@@ -475,6 +509,8 @@ function schedule(options, delayMs) {
           `protectedHourlyBuckets=${summary.protectedHourlyBuckets}`,
           `transferReorgJournal=${summary.transferReorgJournal}`,
           `realtimeOutbox=${summary.realtimeOutboxRows}/${summary.realtimeOutboxCycles}`,
+          `chainEvents=${summary.chainEvents.totalDeleted || 0}`,
+          `chainEventStatus=${summary.chainEvents.status}`,
           `observedLag=${summary.realtimeOutbox.observedLagBlocks ?? 'unknown'}`,
           `finalizedLag=${summary.realtimeOutbox.finalizedLagBlocks ?? 'unknown'}`,
           `batches=${summary.batches}`
@@ -521,6 +557,7 @@ module.exports = {
     deleteExpiredProcessedLogs,
     deleteExpiredTransferReorgJournal,
     maintainRealtimeOutbox,
+    maintainChainEvents,
     normalizeOptions,
   },
 };

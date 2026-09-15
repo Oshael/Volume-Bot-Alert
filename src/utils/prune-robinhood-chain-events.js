@@ -11,10 +11,10 @@ function parseArgs(args = []) {
   for (const arg of args) {
     if (arg === '--write' && !write) { write = true; continue; }
     if (arg === '--until-drained' && !untilDrained) { untilDrained = true; continue; }
-    const match = /^--(batch-limit|max-batches|pause-ms)=(.+)$/.exec(arg);
+    const match = /^--(batch-limit|max-batches|pause-ms|retention-ms)=(.+)$/.exec(arg);
     if (!match) throw new Error(`unknown or repeated argument: ${arg}`);
     const key = { 'batch-limit': 'batchLimit', 'max-batches': 'maxBatches',
-      'pause-ms': 'pauseMs' }[match[1]];
+      'pause-ms': 'pauseMs', 'retention-ms': 'retentionMs' }[match[1]];
     if (values[key] != null) throw new Error(`unknown or repeated argument: ${arg}`);
     values[key] = Number(match[2]);
   }

@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  normalizeOptions, runPilot,
+  DEFAULT_RETENTION_MS, normalizeOptions, runPilot,
 } = require('../src/services/robinhood-chain-event-pruner');
 const { parseArgs } = require('../src/utils/prune-robinhood-chain-events');
 
@@ -18,6 +18,9 @@ function harness(input = {}) {
       }
       if (sql.includes('chain-event-prune:lock')) return { rows: [{ locked: true }] };
       if (sql.includes('chain-event-prune:indexes')) return { rows: [{ ready_indexes: 2 }] };
+      if (sql.includes('chain-event-prune:retention-cutoff')) {
+        return { rows: [{ cutoff_block: '56397387' }] };
+      }
       if (sql.includes('chain-event-prune:delete')) return { rows: [{
         deleted_events: Array.isArray(input.deletedEvents)
           ? input.deletedEvents[deletion++] : input.deletedEvents ?? 1000,
@@ -32,23 +35,29 @@ function harness(input = {}) {
 
 function safety(overrides = {}) {
   return { chain_events: {
-    ready_for_pilot: true, candidate_cutoff_block: '56397387', blockers: [], ...overrides,
+    ready_for_pilot: true, journal_start_block: '1',
+    candidate_cutoff_block: '56397387', blockers: [], ...overrides,
   } };
 }
 
 describe('Robinhood chain event pruner', () => {
   it('requires an explicit write flag and bounded pilot options', () => {
     assert.deepEqual(parseArgs(['--write']), {
-      batchLimit: 1000, maxBatches: 1, pauseMs: 1000, untilDrained: false,
+      batchLimit: 1000, maxBatches: 1, pauseMs: 1000,
+      retentionMs: DEFAULT_RETENTION_MS, untilDrained: false,
     });
     assert.deepEqual(parseArgs([
       '--write', '--batch-limit=5000', '--max-batches=2', '--pause-ms=500',
-    ]), { batchLimit: 5000, maxBatches: 2, pauseMs: 500, untilDrained: false });
+      `--retention-ms=${DEFAULT_RETENTION_MS}`,
+    ]), { batchLimit: 5000, maxBatches: 2, pauseMs: 500,
+      retentionMs: DEFAULT_RETENTION_MS, untilDrained: false });
     assert.deepEqual(parseArgs(['--write', '--until-drained', '--pause-ms=100']), {
-      batchLimit: 1000, maxBatches: 1, pauseMs: 100, untilDrained: true,
+      batchLimit: 1000, maxBatches: 1, pauseMs: 100,
+      retentionMs: DEFAULT_RETENTION_MS, untilDrained: true,
     });
     assert.throws(() => parseArgs([]), /--write is required/);
     assert.throws(() => parseArgs(['--write', '--batch-limit=5001']), /between 1 and 5000/);
+    assert.throws(() => parseArgs(['--write', '--retention-ms=1']), /between/);
     assert.throws(() => parseArgs(['--write', '--write']), /unknown or repeated/);
     assert.throws(() => parseArgs([
       '--write', '--until-drained', '--max-batches=2',
@@ -66,7 +75,7 @@ describe('Robinhood chain event pruner', () => {
     });
     assert.deepEqual(report, {
       status: 'finished', stopReason: 'prefix_drained', cutoffBlock: '56397387',
-      batches: 3, totalDeleted: 2012,
+      retentionMs: DEFAULT_RETENTION_MS, batches: 3, totalDeleted: 2012,
     });
   });
 
@@ -80,14 +89,23 @@ describe('Robinhood chain event pruner', () => {
     });
     assert.deepEqual(report, {
       status: 'finished', stopReason: 'batch_limit', cutoffBlock: '56397387',
-      batches: 1, totalDeleted: 1000,
+      retentionMs: DEFAULT_RETENTION_MS, batches: 1, totalDeleted: 1000,
     });
     const deletion = context.calls.find(({ sql }) => sql.includes('chain-event-prune:delete'));
-    assert.deepEqual(deletion.params, ['robinhood', '56397387', 1000]);
+    assert.deepEqual(deletion.params, [
+      'robinhood', '56397387', 1000, DEFAULT_RETENTION_MS,
+    ]);
     assert.match(deletion.sql, /ORDER BY event\.block_number/);
+    assert.match(deletion.sql, /block\.block_timestamp < NOW\(\)/);
     assert.match(deletion.sql, /FOR UPDATE OF event SKIP LOCKED/);
     assert.equal(progress[0].deletedEvents, 1000);
     assert.ok(context.calls.some(({ sql }) => sql === 'COMMIT'));
+    const cutoff = context.calls.find(({ sql }) => (
+      sql.includes('chain-event-prune:retention-cutoff')
+    ));
+    assert.deepEqual(cutoff.params, [
+      'robinhood', '1', '56397387', DEFAULT_RETENTION_MS,
+    ]);
   });
 
   it('refuses all writes when the chain-specific audit is blocked', async () => {

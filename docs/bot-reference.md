@@ -374,14 +374,22 @@ As units de manutenção usam nomes simétricos:
 `trendscope-worker@robinhood-maintenance.service` na porta `3011`. A unit
 Robinhood deve subir inicialmente com `ROBINHOOD_RETENTION_ENABLED=false`.
 
-Antes de habilitar a retenção Robinhood, aplique a Stage 200 com
-`node src/utils/db-init-stage200.js`. O worker remove em lotes apenas
+Antes de habilitar a retenção Robinhood, aplique as Stages 200 e 201 com
+`node src/utils/db-init-stage200.js` e `node src/utils/db-init-stage201.js`. O worker
+remove em lotes apenas
 `robinhood_processed_logs` expirados e as respectivas
 `robinhood_market_observations`: observações aceitas exigem fronteira de wallet
 concluída, cobertura no bucket de 1 minuto e nenhuma tarefa de agregação
 `pending`, `leased` ou `blocked`. A tarefa de agregação `completed` é removida por
-cascade junto da observação. Buckets permanentes, agregados, projeções de wallet,
-holders e o journal canônico não participam dessa retenção.
+cascade junto da observação. Buckets permanentes, agregados, projeções de wallet e
+holders não participam dessa retenção. O mesmo worker também poda
+`robinhood_chain_events` em lotes, mas nunca antes de 3 dias pelo timestamp canônico
+do bloco. O limite pode ser ampliado com `ROBINHOOD_CHAIN_EVENT_RETENTION_MS`, nunca
+reduzido abaixo de 3 dias, e a poda pode ser isoladamente desativada com
+`ROBINHOOD_CHAIN_EVENT_RETENTION_ENABLED=false`. Antes de cada ciclo, o audit exige
+captura saudável, checkpoints canônicos e nenhuma frontier de outbox ou liquidity
+anterior ao cutoff. O journal compacto `robinhood_stock_usd_reference_events` não
+participa dessa poda e mantém a referência histórica necessária após o raw expirar.
 Linhas protegidas isoladas não encerram o ciclo: enquanto o prefixo limitado estiver
 cheio e houver exclusões, o worker continua até `ROBINHOOD_RETENTION_MAX_BATCHES`.
 Ele para ao esvaziar o prefixo ou quando um lote inteiro não consegue progredir.
@@ -389,7 +397,7 @@ Ele para ao esvaziar o prefixo ou quando um lote inteiro não consegue progredir
 Os `DELETE`s tornam páginas antigas reutilizáveis pelo PostgreSQL; não devolvem
 imediatamente espaço ao filesystem. A Stage 200 configura autovacuum mais sensível
 em `robinhood_processed_logs` e `robinhood_market_observations`. Reclaim físico e
-retenção do journal canônico são operações separadas.
+retenção física de blocos/transações do journal canônico são operações separadas.
 
 Após os vacuums em andamento terminarem, aplique
 `node src/utils/db-init-stage202.js`. A Stage 202 configura as seis tabelas grandes
@@ -4766,7 +4774,8 @@ Com os índices válidos, o primeiro piloto roda com
 cutoff pelo audit, recusa a execução se `chain_events.ready_for_pilot` não for
 verdadeiro e apaga por default apenas 1.000 eventos em uma transação com
 `statement_timeout` de 30 segundos e `lock_timeout` de 500 ms. `--batch-limit`,
-`--max-batches` e `--pause-ms` são limitados; cada batch usa advisory lock e
+`--max-batches`, `--pause-ms` e `--retention-ms` são limitados; a retenção temporal
+usa 3 dias por default e não aceita valor menor. Cada batch usa advisory lock e
 confirma novamente que ambos os índices da Stage 201 estão válidos.
 `--until-drained` é mutuamente exclusivo com `--max-batches`: ele fixa o cutoff
 aprovado no início, continua até esvaziar integralmente esse prefixo e ainda

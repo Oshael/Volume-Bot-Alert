@@ -132,6 +132,31 @@ describe('Robinhood retention safety audit', () => {
     assert.equal(queries.at(-1), 'ROLLBACK');
   });
 
+  it('can audit chain-event retention without scanning the holder mint proof', async () => {
+    const queries = [];
+    const client = { async query(sql) {
+      queries.push(sql);
+      if (sql.startsWith('BEGIN') || sql.startsWith('SET LOCAL') || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.startsWith('/* retention-safety:state */')) return { rows: [state()] };
+      throw new Error(`unexpected query: ${sql}`);
+    }, release() {} };
+    const audit = createRobinhoodRetentionSafetyAudit({
+      database: { async getClient() { return client; } },
+      chainRetentionBlocks: 100,
+      holderRetentionBlocks: 200,
+      includeHolderProof: false,
+    });
+
+    const report = await audit.inspect();
+
+    assert.equal(report.chain_events.ready_for_pilot, true);
+    assert.equal(report.holder_journal.ready_for_pilot, false);
+    assert.equal(report.holder_journal.blockers.at(-1).code, 'holder_mint_proof_not_requested');
+    assert.equal(queries.some((sql) => sql.startsWith('/* retention-safety:mint */')), false);
+  });
+
   it('parses options and prints the report', async () => {
     assert.deepEqual(parseArgs([]), {
       chainRetentionBlocks: 20000, holderRetentionBlocks: 20000,

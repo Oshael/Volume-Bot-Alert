@@ -110,6 +110,7 @@ describe('Robinhood retention safety integration', () => {
               backlogRows: 3, blockedRows: 0,
             }),
           },
+          chainEventPruner: async () => ({ status: 'finished', totalDeleted: 0 }),
         }
       );
 

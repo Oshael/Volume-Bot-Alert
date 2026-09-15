@@ -1148,6 +1148,16 @@ module.exports = {
       10 * 1000,
       60 * 60 * 1000
     ),
+    chainEventRetentionEnabled: parseBoolean(
+      process.env.ROBINHOOD_CHAIN_EVENT_RETENTION_ENABLED,
+      true
+    ),
+    chainEventRetentionMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_EVENT_RETENTION_MS,
+      3 * 24 * 60 * 60 * 1000,
+      3 * 24 * 60 * 60 * 1000,
+      30 * 24 * 60 * 60 * 1000
+    ),
   },
   robinhoodProcessingWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_ENABLED, true),

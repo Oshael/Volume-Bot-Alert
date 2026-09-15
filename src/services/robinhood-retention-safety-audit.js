@@ -52,6 +52,7 @@ function sharedBlockers({ captureNext, captureHead, captureLag }) {
 
 function holderRisks(row, holderCutoff) {
   const blockers = [];
+  add(blockers, row.holder_mint_proof_skipped === true, 'holder_mint_proof_not_requested');
   add(blockers, row.global_run_id != null, 'holder_global_backfill_active', {
     run_id: text(row.global_run_id), status: row.global_run_status,
     next_block: text(row.global_run_next_block),
@@ -142,6 +143,7 @@ function evaluate(input = {}) {
 
 function createRobinhoodRetentionSafetyAudit(options = {}) {
   const database = options.database || db;
+  const includeHolderProof = options.includeHolderProof !== false;
   const chainRetentionBlocks = Number(options.chainRetentionBlocks ?? DEFAULT_RETENTION_BLOCKS);
   const holderRetentionBlocks = Number(options.holderRetentionBlocks ?? DEFAULT_RETENTION_BLOCKS);
   async function inspect() {
@@ -216,7 +218,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
       )).rows[0] || {};
       // An active global campaign already blocks holder retention. Avoid an
       // expensive journal proof whose result cannot change that decision.
-      if (state.global_run_id == null) {
+      if (includeHolderProof && state.global_run_id == null) {
         const mint = await client.query(
           `/* retention-safety:mint */ SELECT MIN(journal.block_number) AS block_number
              FROM robinhood_holder_transfer_journal journal
@@ -231,6 +233,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
         state.oldest_pending_deployment_mint_block = mint.rows[0]?.block_number ?? null;
       } else {
         state.oldest_pending_deployment_mint_block = null;
+        state.holder_mint_proof_skipped = !includeHolderProof;
       }
       await client.query('ROLLBACK');
     } catch (error) {
