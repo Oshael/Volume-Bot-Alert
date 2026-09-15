@@ -313,6 +313,58 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     });
   });
 
+  it('uses the larger economic batch and skips realtime work in catch-up mode', async () => {
+    const lifecycle = { promoteFinalized: async () => { throw new Error('must be skipped'); } };
+    let runnerInput;
+    const runtime = await buildRuntime({
+      sourceMode: DURABLE_OUTBOX_SOURCE,
+      outboxBatchSize: 2000,
+      catchupMode: true,
+      catchupBatchSize: 5000,
+      outboxLeaseMs: 120_000,
+      outboxMaxAttempts: 5,
+      realtimeAuditBatchSize: 2000,
+      realtimeAuditMaxBatchesPerTick: 5,
+      realtimeAuditStatementTimeoutMs: 5000,
+      realtimeV2ObservedEnabled: false,
+      realtimeV2ActivationBlock: null,
+    }, {
+      database: {},
+      outboxRepositoryFactory: () => ({
+        discardLegacyCovered: async () => 0,
+        advanceCompatibilityWatermark: async () => '200',
+        readFinalizedBlock: async () => '200',
+      }),
+      realtimeOutboxRepositoryFactory: () => lifecycle,
+      walletRepositoryFactory: () => ({}),
+      transactionPositionRepositoryFactory: () => ({}),
+      outboxRunnerFactory: (input) => {
+        runnerInput = input;
+        return { runOnce: async () => ({
+          status: 'delivered', throughBlock: '200', claimed: 5000, delivered: 5000,
+        }) };
+      },
+      realtimeAuditRunnerFactory: () => ({
+        runOnce: async () => { throw new Error('audit must be skipped'); },
+      }),
+      realtimePublisherRunnerFactory: () => ({
+        runOnce: async () => { throw new Error('publication must be skipped'); },
+      }),
+      marketTradeRealtime: {
+        publishRows: async () => { throw new Error('legacy publish must be skipped'); },
+        publishFinalityRows: async () => { throw new Error('v2 publish must be skipped'); },
+      },
+    });
+
+    assert.equal(runnerInput.options.batchSize, 5000);
+    assert.equal(await runnerInput.lifecycleRepository.promoteFinalized(), 0);
+    assert.equal(await runnerInput.publishRows([]), true);
+    const result = await runtime.runOnce();
+    assert.equal(result.completeThroughBlock, '200');
+    assert.equal(result.audit.status, 'skipped-catchup');
+    assert.equal(result.publication.status, 'skipped-catchup');
+  });
+
   it('fails closed when observed publication lacks an activation watermark', () => {
     const context = harness([]);
     assert.throws(() => context.worker.start({

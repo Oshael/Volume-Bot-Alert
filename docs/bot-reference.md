@@ -787,6 +787,16 @@ impedindo que o PostgreSQL transforme um `LIMIT` pequeno em hash join e sort de 
 mesmo índice torna o `MIN(block_number)` usado pelo watermark uma busca de fronteira, em vez de
 uma varredura completa da outbox.
 
+Quando não houver audiência e a prioridade operacional for alcançar a fronteira canônica, use
+`ROBINHOOD_WALLET_SWAP_CATCHUP_MODE=true`. Nesse modo o worker continua validando identidade,
+gravando posições e swaps e removendo da outbox econômica somente o que foi persistido, mas pula
+promoção lifecycle, `pg_notify`, shadow audit e publisher v2. O lote econômico passa a usar
+`ROBINHOOD_WALLET_SWAP_CATCHUP_BATCH_SIZE` (default 5000, máximo 10000); configure uma lease que
+cubra o lote inteiro. Depois que o cursor alcançar a chain, desligue a flag e reinicie o worker:
+novos swaps voltam a emitir realtime e o lifecycle v2 retoma a reconciliação do backlog. Eventos
+legados processados durante catch-up não são reproduzidos por websocket, mas permanecem
+consultáveis nas tabelas duráveis.
+
 O publisher v2 reclama somente linhas já aprovadas pelo auditor e é composto no runtime do grupo
 `robinhood-wallet`. Novos `observed` exigem
 `ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED=true` e um bloco decimal ou hexadecimal em

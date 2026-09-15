@@ -39,6 +39,10 @@ const {
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const FATAL_CODES = new Set(['configuration_error', 'persistent_reorg', 'source_contract_error']);
+const CATCHUP_SKIPPED_RESULT = Object.freeze({
+  status: 'skipped-catchup', claimed: 0, audited: 0, delivered: 0,
+  retried: 0, blocked: 0, reclaimed: 0, batches: 0,
+});
 const NESTED_RESULT_METRICS = Object.freeze({
   audit: Object.freeze({
     result: 'lastAuditResult', errors: 'auditErrors',
@@ -85,6 +89,8 @@ function normalizeOptions(options = {}, env = process.env) {
     reorgDepth: boundedInteger(options.reorgDepth, 12, 1, 1000),
     maxConsecutiveFailures: boundedInteger(options.maxConsecutiveFailures, 5, 1, 100),
     outboxBatchSize: boundedInteger(options.outboxBatchSize, 200, 1, 2000),
+    catchupMode: options.catchupMode === true,
+    catchupBatchSize: boundedInteger(options.catchupBatchSize, 5000, 1, 10_000),
     outboxLeaseMs: boundedInteger(options.outboxLeaseMs, 60_000, 5000, 600_000),
     outboxMaxAttempts: boundedInteger(options.outboxMaxAttempts, 5, 1, 50),
     realtimeAuditBatchSize: boundedInteger(options.realtimeAuditBatchSize, 200, 1, 5000),
@@ -158,15 +164,20 @@ async function buildRuntime(options, deps = {}) {
       || createRobinhoodWalletSwapRepository)({ database });
     const transactionPositionRepository = (deps.transactionPositionRepositoryFactory
       || createRobinhoodTransactionPositionRepository)({ database });
+    const realtime = dependency(deps.marketTradeRealtime, marketTradeRealtime);
+    const economicBatchSize = options.catchupMode
+      ? options.catchupBatchSize : options.outboxBatchSize;
     const runner = (deps.outboxRunnerFactory || createRobinhoodWalletSwapOutboxRunner)({
       repository: outbox,
-      lifecycleRepository: lifecycle,
+      lifecycleRepository: options.catchupMode
+        ? { promoteFinalized: async () => 0 }
+        : lifecycle,
       walletRepository,
       transactionPositionRepository,
       readFinalizedBlock: outbox.readFinalizedBlock,
-      publishRows: (deps.marketTradeRealtime || marketTradeRealtime).publishRows,
+      publishRows: options.catchupMode ? async () => true : realtime.publishRows,
       options: {
-        batchSize: options.outboxBatchSize,
+        batchSize: economicBatchSize,
         leaseMs: options.outboxLeaseMs,
         maxAttempts: options.outboxMaxAttempts,
       },
@@ -185,7 +196,6 @@ async function buildRuntime(options, deps = {}) {
     const publisherFactory = dependency(
       deps.realtimePublisherRunnerFactory, createRobinhoodWalletSwapRealtimePublisherRunner
     );
-    const realtime = dependency(deps.marketTradeRealtime, marketTradeRealtime);
     const publisherRunner = publisherFactory({
       repository: lifecycle,
       publishRows: realtime.publishFinalityRows,
@@ -204,6 +214,14 @@ async function buildRuntime(options, deps = {}) {
         const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
           result.throughBlock
         );
+        if (options.catchupMode) {
+          return {
+            ...result,
+            completeThroughBlock,
+            audit: { ...CATCHUP_SKIPPED_RESULT },
+            publication: { ...CATCHUP_SKIPPED_RESULT },
+          };
+        }
         const audit = await drainAuditRunner(auditRunner, {
           activationBlock: options.realtimeV2ActivationBlock,
           maxBatches: options.realtimeAuditMaxBatchesPerTick,
@@ -306,6 +324,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
   let onFatal = null;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
+    catchupMode: false,
     sourceMode: null, providerChainIds: null, lastResult: null, lagBlocks: null,
     batches: 0, processedBlocks: 0, attributed: 0, inserted: 0, duplicateInserts: 0,
     missing: 0, unresolved: 0, retries: 0, conflicts: 0,
@@ -441,6 +460,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
   function start(input = {}) {
     if (running) return false;
     options = normalizeOptions(input, env);
+    status.catchupMode = options.catchupMode;
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     status.enabled = options.enabled;
     if (!options.enabled) return false;

@@ -1899,6 +1899,12 @@ module.exports = {
     outboxBatchSize: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_BATCH_SIZE, 200, 1, 2000
     ),
+    catchupMode: parseBoolean(
+      process.env.ROBINHOOD_WALLET_SWAP_CATCHUP_MODE, false
+    ),
+    catchupBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_CATCHUP_BATCH_SIZE, 5000, 1, 10_000
+    ),
     outboxLeaseMs: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_LEASE_MS, 60_000, 5000, 600_000
     ),
