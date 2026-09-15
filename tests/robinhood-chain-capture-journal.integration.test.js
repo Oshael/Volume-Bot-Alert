@@ -2119,4 +2119,38 @@ describe('Robinhood canonical chain capture journal', () => {
       status: 'blocked', last_error: { code: 'test_failure' },
     });
   });
+
+  it('keeps an exhausted transient retry pending instead of blocking the frontier', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(
+      `INSERT INTO robinhood_head_capture_cursors(chain, stream, next_block)
+       VALUES ('robinhood', 'discovery', 101)`
+    );
+    const repository = createRobinhoodChainDomainOutboxRepository({ database: db });
+    await repository.claimShadow({
+      domain: 'discovery', owner: 'shadow-a', limit: 10, leaseMs: 60_000,
+    });
+    const settled = await repository.settle({
+      owner: 'shadow-a', maxAttempts: 1, retry: [{
+        domain: 'discovery', blockHash: HASH, logIndex: 0,
+        error: {
+          code: 'timeout', message: 'eth_call timeout', retryable: true,
+          provider: 'robinhood-public', method: 'eth_call', attempt: 1,
+        },
+        backoffMs: 1_000,
+      }],
+    });
+    assert.deepEqual(settled, { completed: 0, blocked: 0, retried: 1 });
+    const result = await db.query(
+      `SELECT status, attempt_count, last_error
+         FROM robinhood_chain_domain_outbox
+        WHERE domain='discovery' AND block_hash=$1 AND log_index=0`, [HASH]
+    );
+    assert.equal(result.rows[0].status, 'pending');
+    assert.equal(result.rows[0].attempt_count, 1);
+    assert.deepEqual(result.rows[0].last_error, {
+      code: 'timeout', message: 'eth_call timeout', retryable: true,
+      provider: 'robinhood-public', method: 'eth_call', attempt: 1,
+    });
+  });
 });

@@ -71,6 +71,10 @@ describe('Robinhood canonical head runner', () => {
 
   it('retries the entire block when either domain fails', async () => {
     let settlement;
+    const transient = Object.assign(new Error('eth_call timeout'), {
+      code: 'timeout', retryable: true, provider: 'robinhood-public',
+      method: 'eth_call', attempt: 1,
+    });
     const runner = createRobinhoodCanonicalHeadRunner({
       outbox: {
         reclaimExpiredLeases: async () => 0,
@@ -81,7 +85,7 @@ describe('Robinhood canonical head runner', () => {
       },
       pipeline: {
         processDiscoveryRange: async () => [],
-        processMarketRange: async () => { throw new Error('state unavailable'); },
+        processMarketRange: async () => { throw transient; },
       },
       headRepository: { appendCaptureEntries: async () => assert.fail('must not append') },
     });
@@ -91,6 +95,10 @@ describe('Robinhood canonical head runner', () => {
     assert.equal(result.timing.marketMs >= 0, true);
     assert.equal(result.timing.totalMs >= result.timing.marketMs, true);
     assert.deepEqual(settlement.retry.map((item) => item.domain), ['discovery', 'market']);
+    assert.deepEqual(settlement.retry[0].error, {
+      code: 'timeout', message: 'eth_call timeout', retryable: true,
+      provider: 'robinhood-public', method: 'eth_call', attempt: 1,
+    });
   });
 
   it('publishes an atomic dual-stream cursor at the settled frontier', async () => {

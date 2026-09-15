@@ -16,6 +16,22 @@ function captureEntry(entry, stream) {
 function backoff(attempt, baseMs, maxMs) {
   return Math.min(maxMs, baseMs * (2 ** Math.max(0, Number(attempt) - 1)));
 }
+function retryError(error) {
+  const retryableCodes = new Set(['timeout', 'transport_error', 'rate_limited']);
+  const httpStatus = Number(error?.httpStatus);
+  const retryable = error?.retryable === true
+    || retryableCodes.has(error?.code)
+    || httpStatus === 408 || httpStatus === 429 || httpStatus >= 500;
+  const output = {
+    code: error?.code || 'capture_failed',
+    message: String(error?.message || error).slice(0, 1000),
+    retryable,
+  };
+  for (const field of ['provider', 'method', 'attempt', 'httpStatus', 'rpcCode']) {
+    if (error?.[field] != null) output[field] = error[field];
+  }
+  return output;
+}
 function frontierOf(rows, throughBlock) {
   const row = rows.findLast((candidate) => String(candidate.block_number) === throughBlock);
   return {
@@ -102,8 +118,9 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
         ignored: rows.length - entries.length, ...settled, timing,
       };
     } catch (error) {
+      const persistedError = retryError(error);
       const retry = rows.map((row) => ({
-        ...identity(row), error: { code: error.code || 'capture_failed', message: error.message },
+        ...identity(row), error: persistedError,
         backoffMs: backoff(row.attempt_count, baseBackoffMs, maxBackoffMs),
       }));
       const settled = await measured(timing, 'settleMs', () => (
@@ -121,4 +138,4 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
   return Object.freeze({ owner, runOnce });
 }
 
-module.exports = { backoff, createRobinhoodCanonicalHeadRunner };
+module.exports = { backoff, createRobinhoodCanonicalHeadRunner, retryError };

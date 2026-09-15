@@ -4884,8 +4884,13 @@ idempotente da outbox, portanto crash entre as duas etapas gera retry seguro.
 Como o market legado mantém o registry de pools em memória a partir do poller de
 discovery, os dois pollers não podem ser separados no cutover. O consumidor
 canônico combinado reclama um bloco completo, entrega discovery antes de market,
-insere as evidências e somente então conclui todos os itens. Qualquer falha
-retenta o bloco inteiro e um `blocked` impede avanço para blocos posteriores.
+insere as evidências e somente então conclui todos os itens. Falha RPC transitória
+retenta o bloco inteiro com backoff limitado e permanece `pending` mesmo depois de
+`maxAttempts`; ela nunca terminaliza a frontier nem hala o publisher. O lote é
+repetido como unidade para não publicar um cursor com buraco. Erro determinístico
+ou sem classificação transitória ainda pode chegar a `blocked` depois de
+`maxAttempts` e impedir avanço para blocos posteriores. O `last_error` preserva,
+quando disponíveis, provider, método, tentativa e status/código RPC.
 Sua composição restaura o registry de pools persistido antes do primeiro claim,
 usa o pipeline somente em `captureMode` e envolve o RPC com a role
 `canonical-head`: `eth_getLogs` simples ou em batch é rejeitado localmente e

@@ -232,7 +232,11 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
       );
       const retried = await client.query(
         `UPDATE robinhood_chain_domain_outbox outbox
-            SET status=CASE WHEN outbox.attempt_count >= $4 THEN 'blocked' ELSE 'pending' END,
+            SET status=CASE
+                  WHEN item.error @> '{"retryable":true}'::jsonb THEN 'pending'
+                  WHEN outbox.attempt_count >= $4 THEN 'blocked'
+                  ELSE 'pending'
+                END,
                 lease_owner=NULL, lease_until=NULL, last_error=item.error,
                 next_attempt_at=NOW() + (item."backoffMs" * INTERVAL '1 millisecond'),
                 updated_at=NOW()
