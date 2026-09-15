@@ -13,6 +13,7 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const STREAMS = new Set(['discovery', 'market']);
 const DEFAULT_MAX_ATTEMPTS = 5;
+const MIN_CAPTURE_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
 const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
@@ -480,7 +481,10 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
 
   async function settleClaims(input = {}) {
     const owner = requireOwner(input.owner);
-    const retentionMs = requirePositiveInt(input.retentionMs, 'retentionMs');
+    const retentionMs = Math.max(
+      MIN_CAPTURE_RETENTION_MS,
+      requirePositiveInt(input.retentionMs, 'retentionMs')
+    );
     const maxAttempts = requirePositiveInt(input.maxAttempts ?? defaultMaxAttempts, 'maxAttempts');
     const processed = Array.isArray(input.processed) ? input.processed : [];
     const rejected = Array.isArray(input.rejected) ? input.rejected : [];
@@ -618,9 +622,9 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     };
   }
 
-  // Prunes captures whose retention window has elapsed (Q3: 1 day after
+  // Prunes captures whose retention window has elapsed (at least 3 days after
   // terminal). The queue is a passage corridor; permanent observations/buckets
-  // live in their own tables, so a processed/rejected capture is disposable.
+  // live in their own tables, so an expired processed/rejected capture is disposable.
   async function pruneExpiredCaptures(input = {}) {
     const limit = requirePositiveInt(input.limit ?? 5000, 'limit');
     const result = await database.query(
@@ -634,6 +638,7 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
          WHERE chain = $1
            AND processing_status IN ('processed', 'rejected')
            AND repair_guard.acquired
+           AND terminal_at <= NOW() - INTERVAL '3 days'
            AND retention_eligible_at IS NOT NULL
            AND retention_eligible_at <= NOW()
          ORDER BY retention_eligible_at

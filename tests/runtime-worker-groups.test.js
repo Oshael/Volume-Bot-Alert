@@ -142,6 +142,17 @@ describe('runtime worker groups config', () => {
     }
   });
 
+  it('retains completed head-capture evidence for at least three days', () => {
+    for (const [value, expected] of [
+      [undefined, 259_200_000], ['60000', 259_200_000],
+      ['259200001', 259_200_001], ['999999999', 604_800_000],
+    ]) {
+      withEnv({ ROBINHOOD_PROCESSING_RETENTION_MS: value }, (config) => {
+        assert.equal(config.robinhoodProcessingWorker.retentionMs, expected);
+      });
+    }
+  });
+
   it('bounds the V4 processing swap-prefix limit', () => {
     withEnv({
       ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT: '9999',

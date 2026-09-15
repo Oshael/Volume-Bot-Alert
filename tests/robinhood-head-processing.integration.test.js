@@ -421,19 +421,28 @@ describe('Robinhood head processing repository integration', () => {
     const pending = await seedPending({ block: 102 });
     await repository.claimCaptures({ owner: 'worker-a', limit: 2, leaseMs: LEASE_MS }); // leases 100, 101
     await repository.settleClaims({ owner: 'worker-a', retentionMs: RETENTION_MS, processed: [expired, fresh] });
+    const terminal = await statusOf(expired);
+    assert.equal(terminal.retention_eligible_at - terminal.terminal_at, 259_200_000);
     await db.query(
       `UPDATE robinhood_head_captures
-         SET terminal_at = NOW() - INTERVAL '2 minutes',
+         SET terminal_at = NOW() - INTERVAL '4 days',
              retention_eligible_at = NOW() - INTERVAL '1 minute'
          WHERE transaction_hash = $1 AND log_index = $2`,
       [expired.transactionHash, expired.logIndex]
+    );
+    await db.query(
+      `UPDATE robinhood_head_captures
+         SET terminal_at = NOW() - INTERVAL '2 days',
+             retention_eligible_at = NOW() - INTERVAL '1 minute'
+         WHERE transaction_hash = $1 AND log_index = $2`,
+      [fresh.transactionHash, fresh.logIndex]
     );
 
     const pruned = await repository.pruneExpiredCaptures({ limit: 100 });
 
     assert.equal(pruned, 1);
     assert.equal(await statusOf(expired), undefined);
-    assert.equal((await statusOf(fresh)).processing_status, 'processed'); // retention still in the future
+    assert.equal((await statusOf(fresh)).processing_status, 'processed'); // three-day floor
     assert.equal((await statusOf(pending)).processing_status, 'pending'); // never terminal
   });
 
@@ -446,7 +455,7 @@ describe('Robinhood head processing repository integration', () => {
     });
     await db.query(
       `UPDATE robinhood_head_captures
-          SET terminal_at = NOW() - INTERVAL '2 minutes',
+          SET terminal_at = NOW() - INTERVAL '4 days',
               retention_eligible_at = NOW() - INTERVAL '1 minute'
         WHERE transaction_hash = $1 AND log_index = $2`,
       [expired.transactionHash, expired.logIndex]

@@ -400,6 +400,12 @@ o processing live nunca executa retenção. A poda roda no máximo uma vez a cad
 `ROBINHOOD_RETENTION_CAPTURE_PRUNE_ENABLED=false`. Os nomes legados
 `ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS` e `ROBINHOOD_PROCESSING_PRUNE_LIMIT` são
 aceitos apenas como fallback de configuração durante o rollout.
+Captures `processed` ou `rejected` preservam log e evidência congelada por no
+mínimo 3 dias antes de se tornarem elegíveis para essa poda. A janela é definida
+por `ROBINHOOD_PROCESSING_RETENTION_MS`, com default e piso de 259200000 ms e
+limite máximo de 7 dias. A query de poda também verifica `terminal_at + 3 dias`,
+protegendo linhas antigas que tenham sido terminalizadas com a configuração
+anterior sem exigir um update massivo.
 
 Antes de qualquer delete, o retention worker compara o cursor do journal com o
 primeiro item não concluído da domain outbox. Se o lag superar
@@ -606,7 +612,8 @@ de pool sintetizado da evidência e lê metadata/quote/saldos da própria evidê
 `eth_call` histórico**. Persiste logs, deltas V4, observações e buckets em transações limitadas
 (`commitHeadProcessingBatch`) que **não** commita cursor nem emite socket/alert (derivados são
 etapa posterior); erro isola a claim (retry com backoff ou dead-letter `blocked`) sem tocar o
-cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`). Watermark de
+cursor de captura. Poda a fila no mínimo 3 dias após o terminal
+(`retention_eligible_at`). Watermark de
 processamento independente do cursor de captura. O processo escuta
 `LISTEN robinhood_head_capture_cursor`: o `NOTIFY` do capturador é confirmado na mesma
 transação que grava as capturas e avança o cursor, e acorda imediatamente os runners de

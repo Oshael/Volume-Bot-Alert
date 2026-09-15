@@ -1201,7 +1201,12 @@ module.exports = {
     idleIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_IDLE_INTERVAL_MS, 5000, 100, 300_000),
     batchSize: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_BATCH_SIZE, 200, 1, 8000),
     leaseMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_LEASE_MS, 60_000, 5000, 600_000),
-    retentionMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_RETENTION_MS, 86_400_000, 60_000, 604_800_000),
+    retentionMs: parseIntegerInRange(
+      process.env.ROBINHOOD_PROCESSING_RETENTION_MS,
+      3 * 24 * 60 * 60 * 1000,
+      3 * 24 * 60 * 60 * 1000,
+      7 * 24 * 60 * 60 * 1000
+    ),
     maxAttempts: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_MAX_ATTEMPTS, 5, 1, 50),
     v4ContinuationRounds: parseIntegerInRange(
       process.env.ROBINHOOD_PROCESSING_V4_CONTINUATION_ROUNDS, 8, 0, 100

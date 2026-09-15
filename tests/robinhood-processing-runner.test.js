@@ -161,13 +161,16 @@ describe('robinhood processing runner', () => {
       return rows;
     };
     const persistence = fakePersistence();
-    const result = await runner(rows, persistence, { batchSize: 8000 }, { repository }).runOnce();
+    const result = await runner(rows, persistence, {
+      batchSize: 8000, retentionMs: 60_000,
+    }, { repository }).runOnce();
     assert.deepEqual(persistence._calls.commit.map(({ entries }) => entries.length), [2000, 2000, 2000, 2000]);
     assert.deepEqual(persistence._calls.commit.flatMap(({ entries }) => entries.map((entry) => (
       entry.log.transactionHash
     ))), rows.map((item) => item.transaction_hash));
     assert.deepEqual([result.claimed, result.processed, result.retried], [8000, 8000, 0]);
     assert.equal(repository._calls.settle.processed.length, 8000);
+    assert.equal(repository._calls.settle.retentionMs, 259_200_000);
     assert.deepEqual([
       result.timing.persistence.attempts, result.timing.persistence.commits,
       result.timing.persistence.failures,

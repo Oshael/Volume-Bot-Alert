@@ -85,7 +85,7 @@ describe('robinhood discovery processing runner', () => {
     const repo = fakeRepo(rows);
     const theRunner = createRobinhoodDiscoveryProcessingRunner({
       repository: repo, persistence, decoder, logger: { error: () => {} },
-      options: { owner: 'test-worker' },
+      options: { owner: 'test-worker', retentionMs: 60_000 },
     });
 
     const result = await theRunner.runOnce();
@@ -96,6 +96,7 @@ describe('robinhood discovery processing runner', () => {
       { log: { l: 2 }, event: { e: 2 } },
     ]);
     assert.deepEqual([result.processed, result.rejected, result.retried], [2, 0, 0]);
+    assert.equal(repo._calls.settle.retentionMs, 259_200_000);
   });
 
   it('does not reclaim by default (the co-located market runner owns chain-wide reclaim)', async () => {

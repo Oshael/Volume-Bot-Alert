@@ -68,6 +68,8 @@ Todos os cortes devem preservar:
    nunca libera uma limpeza especulativa.
 7. Fluxos live e catch-up têm precedência sobre retenção e compactação.
 8. Nenhum corte depende de `VACUUM FULL` ou `REINDEX` como rotina operacional.
+9. Logs e evidências imutáveis de `robinhood_head_captures` permanecem retidos
+   por pelo menos 3 dias depois do estado terminal.
 
 ## Como medir os cortes
 

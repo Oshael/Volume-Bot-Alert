@@ -23,7 +23,9 @@ const defaultDecoder = require('./robinhood-head-processing-decoder');
 
 const DEFAULT_BATCH_SIZE = 200;
 const DEFAULT_LEASE_MS = 60_000;
-const DEFAULT_RETENTION_MS = 86_400_000;
+const MIN_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const MAX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_RETENTION_MS = MIN_RETENTION_MS;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 300_000;
@@ -37,6 +39,13 @@ function backoffFor(attempt, baseMs, maxMs) {
   return Math.max(1, Math.min(maxMs, exponential));
 }
 
+function normalizeRetentionMs(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed)
+    ? Math.max(MIN_RETENTION_MS, Math.min(parsed, MAX_RETENTION_MS))
+    : DEFAULT_RETENTION_MS;
+}
+
 function createRobinhoodDiscoveryProcessingRunner(deps = {}) {
   const repository = deps.repository;
   const persistence = deps.persistence;
@@ -48,7 +57,7 @@ function createRobinhoodDiscoveryProcessingRunner(deps = {}) {
   const owner = String(options.owner || `robinhood-discovery:${process.pid}`);
   const batchSize = Number(options.batchSize) || DEFAULT_BATCH_SIZE;
   const leaseMs = Number(options.leaseMs) || DEFAULT_LEASE_MS;
-  const retentionMs = Number(options.retentionMs) || DEFAULT_RETENTION_MS;
+  const retentionMs = normalizeRetentionMs(options.retentionMs);
   const maxAttempts = Number(options.maxAttempts) || DEFAULT_MAX_ATTEMPTS;
   const baseBackoffMs = Number(options.baseBackoffMs) || DEFAULT_BASE_BACKOFF_MS;
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
