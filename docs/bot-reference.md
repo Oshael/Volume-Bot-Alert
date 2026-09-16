@@ -658,6 +658,14 @@ estados ativos e prova dos novos planos de claim. Estados terminais históricos
 ficam sem roteamento até eventual reativação pelo fluxo legado; o payload bruto e
 sua retenção mínima de três dias não mudam.
 
+Depois do backfill, rode o mesmo comando com
+`--audit --checkpoint-file=<outro-caminho>` para percorrer as páginas fixadas sem writes
+na base. O checkpoint de auditoria é separado do checkpoint de escrita. O resumo
+conta estados ativos, payloads ausentes, rotas divergentes e rotas incompletas;
+`parityObserved=true` só aparece após a varredura completa sem anomalias.
+Como cada lote lê uma fotografia diferente enquanto o processing roda, isso
+**não** substitui o gate final de paridade na ativação do 3B.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

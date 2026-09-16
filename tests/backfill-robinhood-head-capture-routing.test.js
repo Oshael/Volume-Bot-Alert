@@ -8,7 +8,7 @@ const {
 
 function options(overrides = {}) {
   return {
-    write: true, checkpointFile: '/tmp/unused-routing.json',
+    write: true, audit: false, checkpointFile: '/tmp/unused-routing.json',
     pageBatch: 100, maxBatches: 10, pauseMs: 0,
     statementTimeoutMs: 30_000, maxCanonicalLagBlocks: 128,
     ...overrides,
@@ -30,11 +30,14 @@ function repository(overrides = {}) {
 describe('Robinhood head capture routing backfill', () => {
   it('defaults to one bounded read-only page batch', () => {
     assert.deepEqual(parseArgs([]), {
-      write: false, checkpointFile: null, pageBatch: 256, maxBatches: 1,
+      write: false, audit: false, checkpointFile: null, pageBatch: 256, maxBatches: 1,
       pauseMs: 500, statementTimeoutMs: 30_000, maxCanonicalLagBlocks: 128,
     });
     assert.throws(() => parseArgs(['--write']), /checkpoint-file is required/);
     assert.throws(() => parseArgs(['--checkpoint-file=x']), /requires --write/);
+    assert.throws(() => parseArgs(['--audit']), /checkpoint-file is required/);
+    assert.throws(() => parseArgs(['--write', '--audit', '--checkpoint-file=x']), /mutually exclusive/);
+    assert.equal(parseArgs(['--audit', '--checkpoint-file=x']).audit, true);
     assert.throws(() => parseArgs(['--page-batch=4097']), /page-batch must be between/);
     assert.throws(() => parseArgs(['--unknown']), /unknown argument/);
   });
@@ -54,6 +57,10 @@ describe('Robinhood head capture routing backfill', () => {
       () => restore(saved, source, options({ write: false })),
       /mode or version is invalid/
     );
+    const auditOptions = options({ write: false, audit: true });
+    const auditSaved = { ...restore(null, source, auditOptions), nextHeapBlock: 100 };
+    assert.equal(restore(auditSaved, source, auditOptions).nextHeapBlock, 100);
+    assert.throws(() => restore(auditSaved, source, options()), /mode or version is invalid/);
   });
 
   it('checks lag per batch and checkpoints only completed batches', async () => {
@@ -107,5 +114,42 @@ describe('Robinhood head capture routing backfill', () => {
     assert.equal(saved, false);
     assert.equal(report.updated, 0);
     assert.equal(report.completed, false);
+  });
+
+  it('audits every fixed page range without approving a divergent result', async () => {
+    const saved = [];
+    const report = await runRoutingBackfill(options({ write: false, audit: true }), {
+      repository: repository({
+        auditRoutingPhysicalBatch: async ({ startBlock, endBlock }) => ({
+          startBlock, endBlock, active: 10, missingPayload: 0,
+          divergent: startBlock === 100 ? 1 : 0, incomplete: 0,
+        }),
+      }),
+      checkpoint: {
+        load: async () => null,
+        save: async (value) => saved.push(structuredClone(value)),
+      },
+      logger: { log: () => {} },
+    });
+    assert.deepEqual([saved.length, report.completed, report.active, report.divergent],
+      [3, true, 30, 1]);
+    assert.equal(report.parityObserved, false);
+    assert.equal(report.requiresFinalAudit, true);
+    assert.equal(report.requiresPointInTimeGate, true);
+  });
+
+  it('reports clean full coverage without granting cutover approval', async () => {
+    const report = await runRoutingBackfill(options({ write: false, audit: true }), {
+      repository: repository({
+        auditRoutingPhysicalBatch: async () => ({
+          active: 1, missingPayload: 0, divergent: 0, incomplete: 0,
+        }),
+      }),
+      checkpoint: { load: async () => null, save: async () => {} },
+      logger: { log: () => {} },
+    });
+    assert.equal(report.parityObserved, true);
+    assert.equal(report.requiresFinalAudit, false);
+    assert.equal(report.requiresPointInTimeGate, true);
   });
 });

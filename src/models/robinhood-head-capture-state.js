@@ -190,6 +190,62 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
     }
   }
 
+  async function auditRoutingPhysicalBatch(input = {}) {
+    const startBlock = heapBlock(input.startBlock ?? 0, 'startBlock');
+    const endBlock = heapBlock(input.endBlock, 'endBlock');
+    if (endBlock <= startBlock) throw new Error('endBlock must be greater than startBlock');
+    const statementTimeoutMs = positiveInt(
+      input.statementTimeoutMs || 30_000, 'statementTimeoutMs', 300_000
+    );
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN READ ONLY');
+      await client.query('SET LOCAL enable_seqscan = off');
+      await client.query("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      const result = await client.query(
+        `WITH active AS MATERIALIZED (
+           SELECT chain, transaction_hash, log_index, stream, protocol,
+                  market_key, block_number, transaction_index
+             FROM robinhood_head_capture_states
+            WHERE ctid >= $1::tid AND ctid < $2::tid
+              AND processing_status IN ('pending', 'leased', 'blocked')
+         )
+         SELECT COUNT(*)::int AS active,
+                COUNT(*) FILTER (WHERE capture.transaction_hash IS NULL)::int
+                  AS missing_payload,
+                COUNT(*) FILTER (WHERE capture.transaction_hash IS NOT NULL AND (
+                  active.stream IS DISTINCT FROM capture.stream
+                  OR active.protocol IS DISTINCT FROM capture.protocol
+                  OR active.market_key IS DISTINCT FROM capture.market_key
+                  OR active.block_number IS DISTINCT FROM capture.block_number
+                  OR active.transaction_index IS DISTINCT FROM capture.transaction_index
+                ))::int AS divergent,
+                COUNT(*) FILTER (WHERE active.stream IS NULL
+                  OR active.block_number IS NULL OR active.transaction_index IS NULL
+                  OR (active.protocol = 'uniswap-v4' AND active.market_key IS NULL))::int
+                  AS incomplete
+           FROM active LEFT JOIN robinhood_head_captures capture
+             USING (chain, transaction_hash, log_index)`,
+        [`(${startBlock},0)`, `(${endBlock},0)`]
+      );
+      await client.query('COMMIT');
+      return {
+        startBlock, endBlock,
+        active: Number(result.rows[0].active),
+        missingPayload: Number(result.rows[0].missing_payload),
+        divergent: Number(result.rows[0].divergent),
+        incomplete: Number(result.rows[0].incomplete),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function processPhysicalBatch(input = {}) {
     const startBlock = heapBlock(input.startBlock ?? 0, 'startBlock');
     const endBlock = heapBlock(input.endBlock, 'endBlock');
@@ -389,7 +445,7 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
 
   return Object.freeze({
     assertMaintenanceAllowed, assertMirrorReady, assertRoutingMirrorReady,
-    describePhysicalSource, describeRoutingPhysicalSource,
+    auditRoutingPhysicalBatch, describePhysicalSource, describeRoutingPhysicalSource,
     processBatch, processPhysicalBatch, processRoutingPhysicalBatch,
   });
 }

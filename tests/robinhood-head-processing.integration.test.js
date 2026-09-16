@@ -428,6 +428,18 @@ describe('Robinhood head processing repository integration', () => {
     });
     assert.equal(result.rows[1].transaction_hash, terminal.transactionHash);
     assert.equal(result.rows[1].stream, null);
+    const clean = await states.auditRoutingPhysicalBatch(bounds);
+    assert.deepEqual(
+      [clean.active, clean.missingPayload, clean.divergent, clean.incomplete],
+      [1, 0, 0, 0]
+    );
+    await db.query(
+      `UPDATE robinhood_head_capture_states SET market_key='wrong', stream=NULL
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [active.transactionHash, active.logIndex]
+    );
+    const dirty = await states.auditRoutingPhysicalBatch(bounds);
+    assert.deepEqual([dirty.active, dirty.divergent, dirty.incomplete], [1, 1, 1]);
   });
 
   it('backfills a bounded missing state and verifies lifecycle parity', async () => {
