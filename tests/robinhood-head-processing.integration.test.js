@@ -10,6 +10,9 @@ const {
 const {
   createRobinhoodHeadCaptureStateRepository,
 } = require('../src/models/robinhood-head-capture-state');
+const {
+  createRobinhoodHeadClaimShadowRepository,
+} = require('../src/models/robinhood-head-claim-shadow');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage186 = require('../src/utils/db-init-stage186');
 const stage224 = require('../src/utils/db-init-stage224');
@@ -395,6 +398,36 @@ describe('Robinhood head processing repository integration', () => {
       [identity.transactionHash, identity.logIndex]
     )).rows[0];
     assert.equal(parity.matches, true);
+  });
+
+  it('matches market and discovery claim decisions against narrow state', async () => {
+    await seedPending({ block: 100, protocol: 'uniswap-v2' });
+    await seedPending({ block: 101, protocol: 'uniswap-v3' });
+    await seedPending({
+      block: 102, protocol: 'uniswap-v4', marketKey: 'robinhood:uniswap-v4:pool-a',
+      dueInMs: 3_600_000,
+    });
+    await seedPending({
+      block: 103, protocol: 'uniswap-v4', marketKey: 'robinhood:uniswap-v4:pool-a',
+    });
+    await seedPending({
+      block: 104, protocol: 'uniswap-v4', marketKey: 'robinhood:uniswap-v4:pool-b',
+    });
+    await seedPending({ block: 105, stream: 'discovery', protocol: null, marketKey: null });
+    const shadow = createRobinhoodHeadClaimShadowRepository({ database: db });
+    const report = await shadow.auditClaimDecisions({ limit: 20 });
+    assert.equal(report.safe, true);
+    assert.deepEqual(
+      [report.streams.market.legacyCount, report.streams.discovery.legacyCount], [3, 1]
+    );
+
+    await db.query(
+      `UPDATE robinhood_head_capture_states SET processing_status='blocked'
+        WHERE block_number=101`
+    );
+    const divergent = await shadow.auditClaimDecisions({ limit: 20 });
+    assert.equal(divergent.safe, false);
+    assert.equal(divergent.streams.market.firstMismatch.legacy.blockNumber, '101');
   });
 
   it('repairs active routing without touching historical terminal states', async () => {

@@ -679,6 +679,15 @@ contiver seu índice estreito esperado. Índices prontos e planos seguros ainda
 não mudam a autoridade do lifecycle nem permitem reiniciar em state-only; a
 troca das consultas e o gate pontual pertencem aos subcortes seguintes.
 
+O primeiro gate shadow do 3B.2 é
+`npm run robinhood:audit-head-claim-shadow -- --samples=10`. Cada amostra abre
+uma transação `REPEATABLE READ READ ONLY` e compara, na mesma fotografia, a
+identidade, ordem e roteamento das decisões de claim de `market` e `discovery`
+entre o payload legado e o estado estreito. O comando não bloqueia, não faz
+lease, pausa 500 ms entre amostras e para na primeira divergência; `safe=true`
+não autoriza o cutover porque continuação V4 e os demais leitores/writers ainda
+têm gates próprios.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.
