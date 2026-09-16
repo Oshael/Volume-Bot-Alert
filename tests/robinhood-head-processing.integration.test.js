@@ -13,6 +13,9 @@ const {
 const {
   createRobinhoodHeadClaimShadowRepository,
 } = require('../src/models/robinhood-head-claim-shadow');
+const {
+  createRobinhoodHeadLifecycleShadowRepository,
+} = require('../src/models/robinhood-head-lifecycle-shadow');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage186 = require('../src/utils/db-init-stage186');
 const stage224 = require('../src/utils/db-init-stage224');
@@ -466,6 +469,42 @@ describe('Robinhood head processing repository integration', () => {
     });
     assert.equal(divergent.safe, false);
     assert.equal(divergent.decisions.firstMismatch.state.blockNumber, '102');
+  });
+
+  it('matches lifecycle watermarks, frontiers, recovery and retention candidates', async () => {
+    const pending = await seedPending({ block: 100 });
+    await seedPending({ block: 101, stream: 'discovery', protocol: null, marketKey: null });
+    const blocked = await seedPending({
+      block: 102, protocol: 'uniswap-v4', marketKey: 'robinhood:uniswap-v4:pool-a',
+    });
+    const expired = await seedPending({ block: 103 });
+    await db.query(
+      `UPDATE robinhood_head_captures
+          SET processing_status='blocked', last_error=$1
+        WHERE transaction_hash=$2 AND log_index=$3`,
+      [RANGE_ERROR, blocked.transactionHash, blocked.logIndex]
+    );
+    await db.query(
+      `UPDATE robinhood_head_captures
+          SET processing_status='processed', terminal_at=NOW()-INTERVAL '4 days',
+              retention_eligible_at=NOW()-INTERVAL '1 day'
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [expired.transactionHash, expired.logIndex]
+    );
+    const shadow = createRobinhoodHeadLifecycleShadowRepository({ database: db });
+    const report = await shadow.auditAuxiliaryReads({ limit: 20 });
+    assert.equal(report.safe, true);
+    assert.equal(report.recovery.legacyCount, 1);
+    assert.equal(report.retention.legacyCount, 1);
+
+    await db.query(
+      `UPDATE robinhood_head_capture_states SET block_number=999
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [pending.transactionHash, pending.logIndex]
+    );
+    const divergent = await shadow.auditAuxiliaryReads({ limit: 20 });
+    assert.equal(divergent.safe, false);
+    assert.equal(divergent.streams.market.watermark.safe, false);
   });
 
   it('repairs active routing without touching historical terminal states', async () => {

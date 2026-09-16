@@ -699,6 +699,14 @@ Se a saída terminar com `completed=false`, repita após o próximo pull usando
 `--after-market-key=<afterMarketKey do summary>` para continuar sem repetir os
 pools já auditados.
 
+O gate final de leitura do 3B.2 é
+`npm run robinhood:audit-head-lifecycle-shadow -- --samples=3`. Ele compara, na
+mesma fotografia read-only, watermark e frontier de `market`/`discovery`,
+preview de recovery bloqueado e candidatos de retenção. O frontier é decidido
+no estado estreito, mas continua buscando `timestampMs` no payload imutável pela
+identidade. A saída informa tempos separados por fonte e para na primeira
+divergência; ainda não altera a autoridade dos writers.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.
