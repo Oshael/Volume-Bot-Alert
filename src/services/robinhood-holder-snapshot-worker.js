@@ -25,6 +25,10 @@ function normalizeOptions(input = {}) {
       input.maxErrorBackoffMs, 300_000, 10_000, 3_600_000, 'maxErrorBackoffMs'
     ),
     batchSize: boundedInteger(input.batchSize, 500, 1, 5000, 'batchSize'),
+    pagePauseMs: boundedInteger(input.pagePauseMs, 1000, 0, 60_000, 'pagePauseMs'),
+    statementTimeoutMs: boundedInteger(
+      input.statementTimeoutMs, 60_000, 5000, 300_000, 'statementTimeoutMs'
+    ),
   });
 }
 
@@ -41,6 +45,8 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
   const cancelSchedule = deps.cancelSchedule || clearTimeout;
   const logger = deps.logger || console;
   const now = deps.now || Date.now;
+  const clock = deps.clock || Date.now;
+  const wait = deps.wait || ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
   const repository = deps.repository
     || (deps.repositoryFactory || createRobinhoodTokenHolderSummaryRepository)({
       database: deps.database || db,
@@ -54,7 +60,7 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
     enabled: false, running: false, inFlight: false,
     totalRuns: 0, totalSaved: 0, totalErrors: 0, consecutiveErrors: 0,
     totalWaitingLive: 0,
-    lastResult: null, lastError: null, lastCompletedAt: null,
+    currentPass: null, lastResult: null, lastError: null, lastCompletedAt: null,
   };
 
   async function execute() {
@@ -78,23 +84,51 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
         let dailyCount = 0;
         let scannedCount = 0;
         let complete = false;
+        let lastPageMs = 0;
+        let maxPageMs = 0;
+        status.currentPass = {
+          asOf, page: 0, afterToken: null, scannedCount: 0,
+          savedCount: 0, dailyCount: 0, lastPageMs: 0, maxPageMs: 0,
+        };
         while (!complete) {
+          const pageStartedAt = clock();
           const page = await repository.materializeLiveTemporalSnapshots({
             asOf, limit: options.batchSize, afterToken,
+            statementTimeoutMs: options.statementTimeoutMs,
           });
+          lastPageMs = Math.max(0, clock() - pageStartedAt);
+          maxPageMs = Math.max(maxPageMs, lastPageMs);
           pages += 1;
           savedCount += Number(page.savedCount) || 0;
           dailyCount += Number(page.dailyCount) || 0;
           scannedCount += Number(page.scannedCount) || 0;
           complete = page.complete === true;
+          status.currentPass = {
+            asOf, page: pages, afterToken: page.nextToken || afterToken,
+            scannedCount, savedCount, dailyCount, lastPageMs, maxPageMs,
+          };
           if (complete) break;
           if (!page.nextToken || page.nextToken === afterToken) {
             throw new Error('holder snapshot pagination did not advance');
           }
           afterToken = page.nextToken;
+          if (options.pagePauseMs > 0) await wait(options.pagePauseMs);
+        }
+        const audit = typeof repository.auditLiveTemporalSnapshots === 'function'
+          ? await repository.auditLiveTemporalSnapshots({
+            asOf, statementTimeoutMs: options.statementTimeoutMs,
+          })
+          : null;
+        if (audit && audit.safe !== true) {
+          const error = new Error(
+            `holder snapshot parity failed: daily=${audit.missingDaily}, hourly=${audit.missingHourly}`
+          );
+          error.code = 'holder_snapshot_parity_failed';
+          throw error;
         }
         result = Object.freeze({
           savedCount, dailyCount, scannedCount, pages, complete: true, asOf,
+          pagePauseMs: options.pagePauseMs, lastPageMs, maxPageMs, audit,
         });
       } else {
         result = await repository.syncLiveDailySnapshots({ asOf, limit: options.batchSize });
@@ -112,6 +146,7 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
       return null;
     } finally {
       status.inFlight = false;
+      status.currentPass = null;
       status.lastCompletedAt = new Date(now()).toISOString();
     }
   }

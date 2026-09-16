@@ -250,11 +250,23 @@ describe('Robinhood token holder summary repository integration', () => {
       const transactionRepository = createRobinhoodTokenHolderSummaryRepository({
         database: { query: client.query.bind(client) },
       });
+      assert.deepEqual(await transactionRepository.auditLiveTemporalSnapshots({
+        asOf: '2026-08-10T23:59:00Z', statementTimeoutMs: 5000,
+      }), {
+        eligibleCount: 1, missingDaily: 1, missingHourly: 1,
+        safe: false, asOf: '2026-08-10T23:59:00.000Z',
+      });
       assert.deepEqual(await transactionRepository.materializeLiveTemporalSnapshots({
-        asOf: '2026-08-10T23:59:00Z', limit: 500,
+        asOf: '2026-08-10T23:59:00Z', limit: 500, statementTimeoutMs: 5000,
       }), {
         savedCount: 1, dailyCount: 1, scannedCount: 1, nextToken: TOKEN,
         complete: true, asOf: '2026-08-10T23:59:00.000Z',
+      });
+      assert.deepEqual(await transactionRepository.auditLiveTemporalSnapshots({
+        asOf: '2026-08-10T23:59:00Z', statementTimeoutMs: 5000,
+      }), {
+        eligibleCount: 1, missingDaily: 0, missingHourly: 0,
+        safe: true, asOf: '2026-08-10T23:59:00.000Z',
       });
       assert.deepEqual(await transactionRepository.materializeLiveTemporalSnapshots({
         asOf: '2026-08-10T23:59:30Z', limit: 500,

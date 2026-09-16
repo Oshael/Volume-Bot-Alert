@@ -62,6 +62,14 @@ function historyDays(value) {
   return parsed;
 }
 
+function statementTimeout(value) {
+  const parsed = Number(value ?? 60_000);
+  if (!Number.isSafeInteger(parsed) || parsed < 5000 || parsed > 300_000) {
+    throw new RangeError('statementTimeoutMs must be between 5000 and 300000');
+  }
+  return parsed;
+}
+
 function normalizeSnapshotDate(value) {
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const parsed = value instanceof Date ? value : new Date(value);
@@ -448,13 +456,17 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
 
   async function materializeLiveTemporalSnapshots(input = {}) {
     const asOf = timestamp(input.asOf || new Date(), 'snapshot asOf');
+    const statementTimeoutMs = statementTimeout(input.statementTimeoutMs);
     const limit = Number(input.limit ?? 500);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) {
       throw new RangeError('snapshot limit must be between 1 and 5000');
     }
     const afterToken = input.afterToken == null
       ? null : normalizeTokenAddress(CHAIN, input.afterToken);
-    const { rows } = await database.query(
+    const execute = typeof database.queryWithStatementTimeout === 'function'
+      ? (sql, params) => database.queryWithStatementTimeout(sql, params, statementTimeoutMs)
+      : (sql, params) => database.query(sql, params);
+    const { rows } = await execute(
       `WITH candidates AS MATERIALIZED (
          SELECT state.chain, state.token_address, state.holder_count,
                 state.updated_at AS source_observed_at,
@@ -537,6 +549,47 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     });
   }
 
+  async function auditLiveTemporalSnapshots(input = {}) {
+    const asOf = timestamp(input.asOf || new Date(), 'snapshot audit asOf');
+    const statementTimeoutMs = statementTimeout(input.statementTimeoutMs);
+    const execute = typeof database.queryWithStatementTimeout === 'function'
+      ? (sql, params) => database.queryWithStatementTimeout(sql, params, statementTimeoutMs)
+      : (sql, params) => database.query(sql, params);
+    const { rows } = await execute(
+      `SELECT COUNT(*)::int AS eligible_count,
+              COUNT(*) FILTER (WHERE snapshot.token_address IS NULL
+                OR snapshot.source<>'ledger_live'
+                OR snapshot.observed_at < state.updated_at)::int AS missing_daily,
+              COUNT(*) FILTER (WHERE bucket.token_address IS NULL
+                OR bucket.source<>'ledger_live'
+                OR bucket.observed_at < state.updated_at)::int AS missing_hourly
+         FROM robinhood_holder_token_states state
+         JOIN robinhood_holder_cursors cursor
+           ON cursor.chain=state.chain AND cursor.stream='live'
+         LEFT JOIN robinhood_token_holder_daily_snapshots snapshot
+           ON snapshot.chain=state.chain AND snapshot.token_address=state.token_address
+          AND snapshot.snapshot_date=($1::timestamptz AT TIME ZONE 'UTC')::date
+         LEFT JOIN robinhood_token_holder_buckets bucket
+           ON bucket.chain=state.chain AND bucket.token_address=state.token_address
+          AND bucket.bucket_start=(
+            date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+          )
+        WHERE state.chain='${CHAIN}' AND state.ledger_status='live'
+          AND state.holder_count IS NOT NULL AND state.updated_at <= $1::timestamptz`,
+      [asOf]
+    );
+    const result = Object.freeze({
+      eligibleCount: Number(rows[0]?.eligible_count) || 0,
+      missingDaily: Number(rows[0]?.missing_daily) || 0,
+      missingHourly: Number(rows[0]?.missing_hourly) || 0,
+      asOf,
+    });
+    return Object.freeze({
+      ...result,
+      safe: result.missingDaily === 0 && result.missingHourly === 0,
+    });
+  }
+
   async function listDailySnapshots(input = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
     const days = historyDays(input.days);
@@ -576,7 +629,7 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
   return Object.freeze({
     listRefreshCandidates, recordSuccess, recordFailure, getSummaries,
     getPublishedSummaries, syncLiveDailySnapshots, recordLiveCountEvents,
-    materializeLiveTemporalSnapshots,
+    materializeLiveTemporalSnapshots, auditLiveTemporalSnapshots,
     listDailySnapshots, listHourlyBuckets,
   });
 }
@@ -586,6 +639,6 @@ module.exports = {
   __private: {
     addressBatch, errorCode, historyDays, holderCount,
     normalizeDailySnapshotRow, normalizeHourlyBucketRow, normalizeLiveCountEvent,
-    normalizeSummaryRow,
+    normalizeSummaryRow, statementTimeout,
   },
 };

@@ -1649,6 +1649,12 @@ module.exports = {
     batchSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE, 5000, 1, 5000
     ),
+    pagePauseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_PAGE_PAUSE_MS, 1000, 0, 60_000
+    ),
+    statementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_STATEMENT_TIMEOUT_MS, 60_000, 5000, 300_000
+    ),
   },
 
   robinhoodPoolLiquidityWorker: {

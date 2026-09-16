@@ -187,6 +187,32 @@ describe('Robinhood token holder summaries', () => {
     assert.equal(fake.calls.length, 0);
   });
 
+  it('bounds temporal pages and their parity audit with a statement timeout', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenHolderSummaryRepository({ database: {
+      async query() { throw new Error('unbounded query path used'); },
+      async queryWithStatementTimeout(sql, params, timeoutMs) {
+        calls.push({ sql, params, timeoutMs });
+        return sql.includes('eligible_count')
+          ? { rows: [{ eligible_count: 2, missing_daily: 0, missing_hourly: 0 }] }
+          : { rows: [{ scanned_count: 0, next_token: null, daily_count: 0, saved_count: 0 }] };
+      },
+    } });
+
+    await repository.materializeLiveTemporalSnapshots({
+      asOf: '2026-08-10T23:59:00Z', limit: 250, statementTimeoutMs: 15_000,
+    });
+    const audit = await repository.auditLiveTemporalSnapshots({
+      asOf: '2026-08-10T23:59:00Z', statementTimeoutMs: 15_000,
+    });
+
+    assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [15_000, 15_000]);
+    assert.deepEqual(audit, {
+      eligibleCount: 2, missingDaily: 0, missingHourly: 0,
+      asOf: '2026-08-10T23:59:00.000Z', safe: true,
+    });
+  });
+
   it('reads one baseline plus the requested daily range in chronological order', async () => {
     const calls = [];
     const repository = createRobinhoodTokenHolderSummaryRepository({

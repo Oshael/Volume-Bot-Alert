@@ -3006,8 +3006,14 @@ fica fixado em 1 hora. Enquanto a captura live ainda inicializa, o worker repete
 verificação de readiness a cada 10 segundos e só adota a cadência horária após a
 primeira projeção. `ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE` limita cada transação
 (padrão e máximo 5.000); uma passagem conserva o mesmo `asOf` e continua por
-keyset até completar a hora. Crash ou retry recomeça com segurança porque páginas
-já materializadas deixam de ser candidatas. O endpoint
+keyset até completar a hora. Entre commits, o worker cede I/O por
+`ROBINHOOD_HOLDER_SNAPSHOT_PAGE_PAUSE_MS` (padrão 1 s), e cada página e a auditoria
+final usam `ROBINHOOD_HOLDER_SNAPSHOT_STATEMENT_TIMEOUT_MS` (padrão 60 s). A
+telemetria `currentPass` expõe página, cursor, contagens e duração enquanto a
+passagem está ativa. A passagem só é aceita após auditoria de paridade diária e
+horária no mesmo `asOf`; uma lacuna gera `holder_snapshot_parity_failed` e retry
+idempotente. Crash ou retry recomeça com segurança porque páginas já materializadas
+deixam de ser candidatas. O endpoint
 `GET /api/robinhood/holder-count-series` é uma leitura PostgreSQL isolada da lista
 paginada: devolve séries selecionáveis de 1h/4h/12h/24h alinhadas em UTC, cada uma
 desde o primeiro bucket disponível e com sua barra corrente aberta, além de deltas
