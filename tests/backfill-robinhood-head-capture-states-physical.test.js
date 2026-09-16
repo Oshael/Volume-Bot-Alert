@@ -10,6 +10,7 @@ function options(overrides = {}) {
   return {
     write: true, pageBatch: 100, maxBatches: 10, pauseMs: 0,
     statementTimeoutMs: 30_000, maxCanonicalLagBlocks: 128,
+    shardCount: 1, shardIndex: 0, targetHeapBlocks: null,
     checkpointFile: '/tmp/unused-physical.json', ...overrides,
   };
 }
@@ -19,27 +20,40 @@ describe('Robinhood physical head capture state backfill', () => {
     assert.deepEqual(parseArgs([]), {
       write: false, pageBatch: 2048, maxBatches: 1, pauseMs: 0,
       statementTimeoutMs: 30_000, maxCanonicalLagBlocks: 128,
+      shardCount: 1, shardIndex: 0, targetHeapBlocks: null,
       checkpointFile: null,
     });
     assert.throws(() => parseArgs(['--write']), /checkpoint-file is required/);
     assert.throws(() => parseArgs(['--page-batch=65537']), /page-batch must be between/);
+    assert.throws(() => parseArgs(['--shard-count=4', '--shard-index=4']), /lower/);
+    assert.throws(() => parseArgs(['--shard-count=4']), /target-heap-blocks is required/);
   });
 
   it('rejects a checkpoint after a relation rewrite', () => {
     const saved = {
-      version: 1, mode: 'write', relationFileNode: '100', targetHeapBlocks: 1000,
-      nextHeapBlock: 100, completed: false, batches: 1, scanned: 10, inserted: 10,
+      version: 2, mode: 'write', relationFileNode: '100', shardCount: 1, shardIndex: 0,
+      sourceHeapBlocks: 1000, startHeapBlock: 0, targetHeapBlocks: 1000,
+      nextHeapBlock: 100,
+      completed: false, batches: 1, scanned: 10, inserted: 10,
     };
     assert.throws(
-      () => restore(saved, { relationFileNode: '101', heapBlocks: 1000 }, true),
+      () => restore(saved, { relationFileNode: '101', heapBlocks: 1000 }, options()),
       /relation was rewritten/
     );
     assert.throws(
       () => restore({ ...saved, nextHeapBlock: 1001 }, {
         relationFileNode: '100', heapBlocks: 1000,
-      }, true),
+      }, options()),
       /checkpoint progress is invalid/
     );
+  });
+
+  it('partitions heap pages into disjoint complete shards', () => {
+    const source = { relationFileNode: '100', heapBlocks: 10 };
+    const ranges = Array.from({ length: 4 }, (_, shardIndex) => restore(
+      null, source, options({ shardCount: 4, shardIndex, targetHeapBlocks: 10 })
+    )).map(({ startHeapBlock, targetHeapBlocks }) => [startHeapBlock, targetHeapBlocks]);
+    assert.deepEqual(ranges, [[0, 2], [2, 5], [5, 7], [7, 10]]);
   });
 
   it('checkpoints each page range and approves only the completed write', async () => {

@@ -655,7 +655,11 @@ e mantém o mesmo gate de lag, rollback e auditoria integral por faixa. O
 checkpoint registra o `relfilenode` e aborta se ocorrer rewrite; não execute
 `VACUUM FULL`, `CLUSTER` ou outra reescrita de `robinhood_head_captures` durante
 essa operação. Autovacuum comum é compatível. Inserts e updates concorrentes
-continuam cobertos pelo trigger da Stage 224.
+continuam cobertos pelo trigger da Stage 224. Para paralelismo controlado,
+`--shard-count` divide o heap em até oito faixas disjuntas e cada processo usa
+seu próprio `--shard-index` e arquivo de checkpoint. Todos os shards devem
+receber o mesmo `--target-heap-blocks`, obtido no resumo do canário, para não
+criar lacunas se o heap crescer enquanto os processos são iniciados.
 
 A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
