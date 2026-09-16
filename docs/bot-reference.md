@@ -718,6 +718,16 @@ watermark, frontier, recovery e retention permite repetir o gate shadow. A
 stage pode ser retomada após interrupção e não deve ser executada em paralelo.
 Esse passo não muda os writers nem autoriza state-only.
 
+O primeiro artefato inativo do 3B.3 é
+`createRobinhoodHeadProcessingStateRepository`. Ele implementa claim de market
+e discovery, continuação V4 e reclaim exclusivamente em
+`robinhood_head_capture_states`, mas devolve ao runner o payload imutável por
+join de identidade e sobrepõe os campos de lifecycle com o estado recém-gravado.
+Nenhum worker instancia esse repositório ainda. Claim concorrente usa
+`FOR UPDATE SKIP LOCKED`; predecessor V4 `leased`, `blocked` ou em backoff
+continua sendo barreira. Settle, retry e recovery state-only ainda não fazem
+parte deste artefato, portanto ele não pode ser ativado isoladamente.
+
 Se os planos auxiliares estiverem seguros, aplique a Stage 227 antes de repetir
 o gate de lifecycle: `node src/utils/db-init-stage227.js`. Ela cria
 `idx_rh_head_capture_states_retention_v2` com `terminal_at` coberto, valida o

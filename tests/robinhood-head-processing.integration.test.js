@@ -8,6 +8,9 @@ const {
   createRobinhoodHeadProcessingRepository,
 } = require('../src/models/robinhood-head-processing');
 const {
+  createRobinhoodHeadProcessingStateRepository,
+} = require('../src/models/robinhood-head-processing-state');
+const {
   createRobinhoodHeadCaptureStateRepository,
 } = require('../src/models/robinhood-head-capture-state');
 const {
@@ -32,6 +35,7 @@ const RETENTION_MS = 86_400_000;
 const RANGE_ERROR = 'V4 liquidity range update conflicted or became negative';
 
 const repository = createRobinhoodHeadProcessingRepository({ database: db });
+const stateRepository = createRobinhoodHeadProcessingStateRepository({ database: db });
 
 function hashFor(block, logIndex) {
   return `0x${(BigInt(block) * 1000n + BigInt(logIndex)).toString(16).padStart(64, '0')}`;
@@ -63,6 +67,16 @@ async function statusOf(identity) {
     `SELECT processing_status, attempt_count, lease_owner, lease_until,
             terminal_at, retention_eligible_at, next_attempt_at, last_error
        FROM robinhood_head_captures WHERE transaction_hash = $1 AND log_index = $2`,
+    [identity.transactionHash, identity.logIndex]
+  );
+  return result.rows[0];
+}
+
+async function stateStatusOf(identity) {
+  const result = await db.query(
+    `SELECT processing_status, attempt_count, lease_owner, lease_until,
+            terminal_at, retention_eligible_at, next_attempt_at, last_error
+       FROM robinhood_head_capture_states WHERE transaction_hash=$1 AND log_index=$2`,
     [identity.transactionHash, identity.logIndex]
   );
   return result.rows[0];
@@ -117,6 +131,85 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(first.attempt_count, 1);
     assert.equal(first.lease_owner, 'worker-a');
     assert.ok(first.lease_until > new Date());
+  });
+
+  it('prepares a state-only claim without mutating the immutable payload lifecycle', async () => {
+    const identity = await seedPending({ block: 100, evidence: { marker: 'kept' } });
+    const claimed = await stateRepository.claimCaptures({
+      owner: 'state-worker', limit: 1, leaseMs: LEASE_MS, stream: 'market',
+    });
+
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0].evidence.marker, 'kept');
+    assert.equal(claimed[0].processing_status, 'leased');
+    assert.equal(claimed[0].attempt_count, 1);
+    assert.equal((await stateStatusOf(identity)).processing_status, 'leased');
+    assert.equal((await statusOf(identity)).processing_status, 'pending');
+  });
+
+  it('claims disjoint state-only batches for concurrent consumers', async () => {
+    await Promise.all(Array.from({ length: 12 }, (_, index) => (
+      seedPending({ block: 200 + index })
+    )));
+    const [first, second] = await Promise.all([
+      stateRepository.claimCaptures({
+        owner: 'state-a', limit: 4, leaseMs: LEASE_MS, stream: 'market',
+      }),
+      stateRepository.claimCaptures({
+        owner: 'state-b', limit: 4, leaseMs: LEASE_MS, stream: 'market',
+      }),
+    ]);
+    const identities = [...first, ...second]
+      .map((row) => `${row.transaction_hash}:${row.log_index}`);
+    assert.equal(first.length, 4);
+    assert.equal(second.length, 4);
+    assert.equal(new Set(identities).size, 8);
+  });
+
+  it('preserves V4 barriers and claims a bounded state-only continuation', async () => {
+    const pool = 'robinhood:uniswap-v4:state-pool';
+    const first = await seedPending({ block: 300, protocol: 'uniswap-v4', marketKey: pool });
+    await seedPending({ block: 301, protocol: 'uniswap-v4', marketKey: pool });
+    await seedPending({ block: 302, protocol: 'uniswap-v4', marketKey: pool });
+
+    const initial = await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 10, leaseMs: LEASE_MS, stream: 'market',
+    });
+    assert.deepEqual(initial.map((row) => Number(row.block_number)), [300]);
+    assert.deepEqual(await stateRepository.claimV4Continuations({
+      owner: 'state-a', marketKeys: [pool], limit: 10, leaseMs: LEASE_MS,
+    }), []);
+
+    await db.query(
+      `UPDATE robinhood_head_capture_states
+          SET processing_status='processed', lease_owner=NULL, lease_until=NULL,
+              terminal_at=NOW(), retention_eligible_at=NOW()+INTERVAL '3 days'
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [first.transactionHash, first.logIndex]
+    );
+    const continuation = await stateRepository.claimV4Continuations({
+      owner: 'state-a', marketKeys: [pool], limit: 10,
+      perPoolLimit: 2, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(continuation.map((row) => Number(row.block_number)), [301, 302]);
+  });
+
+  it('reclaims only expired state leases without mutating payload lifecycle', async () => {
+    const expired = await seedPending({ block: 400 });
+    const active = await seedPending({ block: 401 });
+    await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 2, leaseMs: LEASE_MS, stream: 'market',
+    });
+    await db.query(
+      `UPDATE robinhood_head_capture_states SET lease_until=NOW()-INTERVAL '1 second'
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [expired.transactionHash, expired.logIndex]
+    );
+
+    assert.equal(await stateRepository.reclaimExpiredLeases(), 1);
+    assert.equal((await stateStatusOf(expired)).processing_status, 'pending');
+    assert.equal((await stateStatusOf(active)).processing_status, 'leased');
+    assert.equal((await statusOf(expired)).processing_status, 'pending');
   });
 
   it('does not claim a capture whose next attempt is still in the future', async () => {
