@@ -6265,6 +6265,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage229-robinhood-holder-journal-prune-scan',
+    name: 'Stage 229 Robinhood holder journal prune scan cursor',
+    repair: 'node src/utils/db-init-stage229.js',
+    tables: [{
+      table: 'robinhood_holder_journal_prune_scans',
+      columns: [
+        'chain', 'scan_cutoff_block', 'cursor_block_number',
+        'cursor_transaction_index', 'cursor_log_index', 'cursor_transaction_hash',
+        'completed_passes', 'last_pass_completed_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'robinhood_holder_journal_prune_scans_pkey',
+        includes: ['PRIMARY KEY', 'chain'],
+      }, {
+        name: 'rh_holder_journal_prune_scans_chain_check',
+        includes: ['chain', 'robinhood'],
+      }, {
+        name: 'rh_holder_journal_prune_scans_cursor_check',
+        includes: ['scan_cutoff_block', 'cursor_block_number', 'completed_passes'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
