@@ -212,6 +212,90 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal((await statusOf(expired)).processing_status, 'pending');
   });
 
+  it('settles terminal, retry and blocked outcomes only in narrow state', async () => {
+    const processed = await seedPending({ block: 500 });
+    const rejected = await seedPending({ block: 501 });
+    const retried = await seedPending({ block: 502 });
+    const blocked = await seedPending({ block: 503, attemptCount: 4 });
+    await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 4, leaseMs: LEASE_MS, stream: 'market',
+    });
+
+    const result = await stateRepository.settleClaims({
+      owner: 'state-a', retentionMs: RETENTION_MS, maxAttempts: 5,
+      processed: [processed],
+      rejected: [{ ...rejected, reason: 'terminal' }],
+      retry: [
+        { ...retried, error: 'temporary', backoffMs: 1000 },
+        { ...blocked, error: RANGE_ERROR, backoffMs: 1000 },
+      ],
+    });
+
+    assert.deepEqual(result, { processed: 1, rejected: 1, retried: 1, blocked: 1 });
+    const processedState = await stateStatusOf(processed);
+    assert.equal(processedState.processing_status, 'processed');
+    assert.equal(processedState.retention_eligible_at - processedState.terminal_at, 259_200_000);
+    assert.equal((await stateStatusOf(rejected)).processing_status, 'rejected');
+    assert.equal((await stateStatusOf(retried)).processing_status, 'pending');
+    assert.equal((await stateStatusOf(blocked)).processing_status, 'blocked');
+    assert.equal((await statusOf(processed)).processing_status, 'pending');
+    assert.equal((await statusOf(blocked)).processing_status, 'pending');
+  });
+
+  it('rolls back every state settlement when one input is invalid', async () => {
+    const processed = await seedPending({ block: 510 });
+    await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 1, leaseMs: LEASE_MS, stream: 'market',
+    });
+    await assert.rejects(stateRepository.settleClaims({
+      owner: 'state-a', retentionMs: RETENTION_MS,
+      processed: [processed],
+      retry: [{ transactionHash: 'invalid', logIndex: 0, error: 'bad', backoffMs: 1 }],
+    }), /transactionHash must be 32 bytes/);
+    assert.equal((await stateStatusOf(processed)).processing_status, 'leased');
+  });
+
+  it('previews and requeues only bounded recoverable state dead-letters', async () => {
+    const blocked = await seedPending({ block: 520, attemptCount: 4 });
+    await seedPending({ block: 521 });
+    await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 2, leaseMs: LEASE_MS, stream: 'market',
+    });
+    await stateRepository.settleClaims({
+      owner: 'state-a', retentionMs: RETENTION_MS, maxAttempts: 5,
+      retry: [{ ...blocked, error: RANGE_ERROR, backoffMs: 1000 }],
+    });
+
+    const preview = await stateRepository.previewBlockedRecovery({
+      limit: 1, throughBlock: '520',
+    });
+    assert.deepEqual(preview, {
+      workerActive: false, candidates: 1,
+      oldestBlock: '520', newestBlock: '520', hasMore: false,
+    });
+    assert.deepEqual(await stateRepository.requeueBlockedRecoveryBatch({
+      limit: 1, throughBlock: '520',
+    }), { requeued: 1, oldestBlock: '520', newestBlock: '520' });
+    const recovered = await stateStatusOf(blocked);
+    assert.equal(recovered.processing_status, 'pending');
+    assert.equal(recovered.attempt_count, 0);
+    assert.equal((await statusOf(blocked)).processing_status, 'pending');
+  });
+
+  it('refuses state recovery while the processing worker lease is active', async () => {
+    await db.query(
+      `INSERT INTO worker_leases (
+         lease_key, owner_id, owner_pid, owner_hostname, acquired_at,
+         heartbeat_at, lease_until, metadata
+       ) VALUES ($1, 'test', 1, 'test', NOW(), NOW(), NOW()+INTERVAL '1 minute', '{}'::jsonb)`,
+      ['robinhood-processing-worker']
+    );
+    await assert.rejects(
+      stateRepository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '999' }),
+      { code: 'robinhood_processing_worker_active' }
+    );
+  });
+
   it('does not claim a capture whose next attempt is still in the future', async () => {
     await seedPending({ block: 100, dueInMs: 3_600_000 });
     const claimed = await repository.claimCaptures({ owner: 'worker-a', limit: 5, leaseMs: LEASE_MS });

@@ -725,8 +725,12 @@ e discovery, continuação V4 e reclaim exclusivamente em
 join de identidade e sobrepõe os campos de lifecycle com o estado recém-gravado.
 Nenhum worker instancia esse repositório ainda. Claim concorrente usa
 `FOR UPDATE SKIP LOCKED`; predecessor V4 `leased`, `blocked` ou em backoff
-continua sendo barreira. Settle, retry e recovery state-only ainda não fazem
-parte deste artefato, portanto ele não pode ser ativado isoladamente.
+continua sendo barreira. Settle terminal, retry/dead-letter e recovery também
+escrevem somente no estado estreito; settlement é transacional e mantém a
+retenção mínima de três dias, enquanto recovery continua exigindo o processing
+parado e usando o advisory lock existente. O repositório permanece inativo até
+que seus leitores auxiliares e o procedimento de cutover sejam ligados como uma
+unidade.
 
 Se os planos auxiliares estiverem seguros, aplique a Stage 227 antes de repetir
 o gate de lifecycle: `node src/utils/db-init-stage227.js`. Ela cria
