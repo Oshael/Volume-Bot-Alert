@@ -245,6 +245,62 @@ linhas do repositório e recebe commit e validação próprios.
   precisa ser provada antes do cutover. Se exigir schema ou backfill adicional,
   apresentar custo, impacto no canonical e rollback antes de executar.
 
+##### Decisão de desenho proposta: roteamento estreito antes do cutover
+
+Medição de 2026-09-16 após `ANALYZE` da coluna de status: a tabela 224 estima
+4.066.520 linhas, o índice parcial de `pending` estima 95.428 entradas e o de
+`leased` estima zero. São estimativas, não contagens atuais nem prova de que
+`blocked` seja pequeno. O `EXPLAIN` read-only da primeira captura V4 ativa
+escolheu varrer estados por `chain`, buscar cada payload por PK e ordenar por
+pool/bloco/transação/log. Estimou apenas ~20 mil estados com `chain='robinhood'`,
+embora o CHECK da tabela imponha essa chain a todas as ~4 milhões de linhas.
+Logo, nem custo estimado nem `LIMIT 1` tornam esse plano seguro; não executar
+`EXPLAIN ANALYZE` no live para descobri-lo.
+
+Proposta para um subcorte de schema separado, **ainda não autorizado para
+execução**:
+
+1. Adicionar ao estado os campos imutáveis mínimos de roteamento (`stream`,
+   `protocol`, `market_key`, `block_number`, `transaction_index`), inicialmente
+   nullable. O payload continua fonte da evidência bruta e desses valores no
+   insert; não se apagam `topics`, `data` ou `evidence`, nem se reduz a retenção
+   mínima de três dias. O trigger legado deve copiar os campos no insert e em
+   qualquer reativação; após o cutover, a escrita estado-only deve preenchê-los
+   antes de reativar uma linha histórica.
+2. Backfill limitado e retomável dos estados `pending`, `leased` e `blocked`,
+   com chave/checkpoint, batches pequenos, auditoria de identidade/roteamento
+   e pausa automática por lag/timeout. Estados terminais antigos podem manter
+   roteamento nulo; toda rota que reabre terminal deve hidratá-lo do payload
+   na mesma transação. Antes da ativação, nenhum estado ativo pode ter rota
+   incompleta. Não assumir que 95.428 seja o total ativo: medir `blocked` e
+   candidatos de reabertura antes de dimensionar o trabalho.
+3. Criar **um índice por vez, CONCURRENTLY**: fronteira V4 no estado por
+   `(market_key, block_number, transaction_index, log_index)`, incluindo a
+   identidade, parcial para `stream='market'`, `protocol='uniswap-v4'` e status
+   ativo; claim independente ordenado por bloco/transação/log, parcial para
+   `pending` fora de V4. Avaliar discovery separadamente antes de acrescentar
+   outro índice. O índice existente por `next_attempt_at` permanece para retry.
+   A presença de `leased`/`blocked` na fronteira V4 é obrigatória para impedir
+   que um sucessor ultrapasse o predecessor. Provar com `EXPLAIN` e paridade
+   shadow, inclusive continuação por pool, antes de apontar claims a eles.
+
+Impacto esperado: `ALTER TABLE` nullable evita rewrite do payload, mas ainda
+requer lock breve; backfill faz updates/WAL na tabela estreita, e cada
+`CREATE INDEX CONCURRENTLY` lê essa tabela inteira e pode competir por I/O com
+canonical e autovacuum. Não prometer duração com base nas estimativas do
+planner. Serializar os passos, medir `claim_ms`, `settle_ms`, blocos/s, WAL,
+I/O, dead tuples e lag dos demais workers; interromper se houver cascata de
+lag ou timeout recorrente. Não acelerar via `VACUUM FULL`, parada de autovacuum
+ou aumento irrestrito do gate de lag.
+
+Rollback antes de 3B.4: o consumidor legado e o status do payload continuam
+autoridade; parar o backfill/índice em andamento e manter colunas/índices
+inertes até uma janela segura para eventual remoção. Não fazer `DROP` durante
+o incidente. Após 3B.4, vale a reconciliação estado→payload descrita abaixo,
+não simples troca de flag. Este desenho só avança para implementação após
+aprovação específica do schema, do limite operacional de lag e da prova do
+plano de claim.
+
 #### 3B.2 — consultas shadow e paridade de decisões
 
 - Implementar consultas estado+payload para claim, continuação V4 e frontiers
