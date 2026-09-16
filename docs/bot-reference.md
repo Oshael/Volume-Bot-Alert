@@ -761,6 +761,15 @@ a autoridade permanece `legacy`. Por isso a ordem de deploy é obrigatória:
 pull, `node src/utils/db-init-stage228.js` e só então restart dos serviços. O
 registro continua `legacy`; esse restart não faz o cutover.
 
+O cutover é explícito e dry-run por padrão:
+`npm run robinhood:activate-head-processing-state`. Pare os serviços cujas
+leases o relatório enumera e repita até `safe=true`; então execute o mesmo
+comando com `-- --write`. A transação faz a última paridade da fronteira ativa,
+exige zero leases de captures, cerca recovery/repairs, muda o espelho para
+somente-insert e persiste a autoridade `state`. Reinicie canonical, processing,
+retention, derived e wallet-live somente após sucesso. Não tente retornar a
+`legacy`: isso exige o procedimento separado de reconciliação estado→payload.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

@@ -199,6 +199,23 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.match(calls[1].sql, /<> 'blocked'/);
   });
 
+  it('refuses the legacy archive repair after state authority activation', async () => {
+    let ran = false; let released = false;
+    const client = {
+      query: async (sql) => (sql.includes('head_processing_authority')
+        ? { rows: [{ authority: 'state', generation: '1', activated_at: new Date(),
+          activation_report: {} }] } : { rows: [] }),
+      release: () => { released = true; },
+    };
+    const repository = __private.createCandidateRepository({
+      getClient: async () => client,
+    });
+    await assert.rejects(repository.withLock(async () => { ran = true; }),
+      /Legacy head lifecycle repair is disabled/);
+    assert.equal(ran, false);
+    assert.equal(released, true);
+  });
+
   it('limits stock candidates to official quotes and the stock rejection reason', async () => {
     const calls = [];
     const repository = __private.createCandidateRepository({

@@ -1,6 +1,9 @@
 const { setTimeout: delay } = require('node:timers/promises');
 const db = require('../models/db');
 const {
+  assertLegacyHeadProcessingAuthority,
+} = require('../models/robinhood-head-processing-authority');
+const {
   createRobinhoodPersistenceRepository,
 } = require('../models/robinhood-persistence');
 const {
@@ -229,6 +232,7 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
     const client = await database.getClient();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [target.lockKey]);
+      await assertLegacyHeadProcessingAuthority(client);
       return await callback();
     } finally {
       try {

@@ -23,6 +23,10 @@ it('repairs atomically with exact balances, fences the worker, and retries witho
     }
     await client.query(`CREATE TEMP TABLE worker_leases
       (lease_key text PRIMARY KEY, lease_until timestamptz, owner_id text DEFAULT 'repair-test');
+      CREATE TEMP TABLE robinhood_head_processing_authority
+      (chain text PRIMARY KEY, authority text, generation bigint, activated_at timestamptz,
+       activation_report jsonb);
+      INSERT INTO robinhood_head_processing_authority VALUES ('robinhood','legacy',0,NULL,NULL);
       INSERT INTO worker_leases (lease_key, lease_until)
         VALUES ('robinhood-processing-worker', NOW() + INTERVAL '1 minute');
       CREATE TEMP TABLE robinhood_pool_registry (chain text, protocol text, market_key text, pool_id text,
@@ -81,5 +85,7 @@ it('repairs atomically with exact balances, fences the worker, and retries witho
     assert.equal(commit.insertedLiquidityDeltas, 1);
     assert.equal((await client.query('SELECT liquidity_gross::text AS n FROM robinhood_v4_liquidity_ranges')).rows[0].n, '0');
     assert.equal((await repairPool(client, item, { write: true })).status, 'already-repaired');
+    await client.query("UPDATE robinhood_head_processing_authority SET authority='state'");
+    await assert.rejects(repairPool(client, item), /Legacy head lifecycle repair is disabled/);
   } finally { await client.query('ROLLBACK'); client.release(); await db.pool.end(); }
 });

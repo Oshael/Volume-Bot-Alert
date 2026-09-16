@@ -28,7 +28,11 @@ const stage227 = require('../src/utils/db-init-stage227');
 const stage228 = require('../src/utils/db-init-stage228');
 const {
   inspectStateRuntimePrerequisites, loadHeadProcessingAuthority,
+  selectHeadProcessingRepository,
 } = require('../src/models/robinhood-head-processing-authority');
+const {
+  activateHeadProcessingState, previewHeadProcessingActivation,
+} = require('../src/models/robinhood-head-processing-activation');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK_HASH = `0x${'b'.repeat(64)}`;
@@ -110,6 +114,11 @@ describe('Robinhood head processing repository integration', () => {
     await stage226.init({ closePool: false });
     await stage227.init({ closePool: false });
     await stage228.init({ closePool: false });
+    await db.query(`DELETE FROM robinhood_head_processing_authority;
+      INSERT INTO robinhood_head_processing_authority (chain, authority)
+      VALUES ('robinhood', 'legacy');
+      DROP TRIGGER IF EXISTS rh_head_capture_state_sync ON robinhood_head_captures`);
+    await db.query(stage224.TRIGGER_STATEMENT);
   });
 
   beforeEach(async () => {
@@ -1113,6 +1122,29 @@ describe('Robinhood head processing repository integration', () => {
     await assert.rejects(
       repository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '100' }),
       (error) => error.code === 'robinhood_processing_worker_active'
+    );
+  });
+
+  it('atomically activates state authority and leaves payload lifecycle immutable', async () => {
+    const identity = await seedPending({ block: 900 });
+    const preview = await previewHeadProcessingActivation({ database: db });
+    assert.equal(preview.safe, true);
+
+    const activated = await activateHeadProcessingState({ database: db });
+    assert.equal(activated.authority.authority, 'state');
+    assert.equal(Number(activated.authority.generation), 1);
+    assert.equal((await inspectStateRuntimePrerequisites(db)).safe, true);
+    assert.equal((await selectHeadProcessingRepository({ database: db })).authority.authority, 'state');
+
+    await db.query(`UPDATE robinhood_head_captures SET processing_status='blocked',
+      last_error='must not mirror' WHERE transaction_hash=$1 AND log_index=$2`,
+    [identity.transactionHash, identity.logIndex]);
+    assert.equal((await stateStatusOf(identity)).processing_status, 'pending');
+    const inserted = await seedPending({ block: 901 });
+    assert.equal((await stateStatusOf(inserted)).processing_status, 'pending');
+    await assert.rejects(
+      repository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '901' }),
+      /Legacy blocked recovery is disabled/
     );
   });
 });

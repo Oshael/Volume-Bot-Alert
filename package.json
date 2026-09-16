@@ -123,6 +123,7 @@
     "robinhood:audit-head-claim-shadow": "node src/utils/audit-robinhood-head-claim-shadow.js",
     "robinhood:audit-head-v4-continuation-shadow": "node src/utils/audit-robinhood-head-v4-continuation-shadow.js",
     "robinhood:audit-head-lifecycle-shadow": "node src/utils/audit-robinhood-head-lifecycle-shadow.js",
+    "robinhood:activate-head-processing-state": "node src/utils/activate-robinhood-head-processing-state.js",
     "robinhood:canonical-liquidity-audit": "node src/utils/audit-robinhood-canonical-liquidity.js",
     "robinhood:canonical-holder-audit": "node src/utils/audit-robinhood-canonical-holder.js",
     "robinhood:canonical-holder-canary": "node src/utils/audit-robinhood-canonical-holder-canary.js",

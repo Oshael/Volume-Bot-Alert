@@ -10,7 +10,12 @@ const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 function databaseWith(rows) {
   let call = 0;
-  return { query: async () => ({ rows: rows[call++] }) };
+  const client = {
+    query: async (sql) => (/^(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/.test(sql)
+      ? { rows: [] } : { rows: rows[call++] }),
+    release() {},
+  };
+  return { getClient: async () => client };
 }
 
 describe('Robinhood head processing authority', () => {

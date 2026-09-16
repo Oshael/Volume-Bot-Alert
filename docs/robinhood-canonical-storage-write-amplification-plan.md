@@ -334,6 +334,16 @@ O subcorte seguinte torna todos os consumidores runtime de lifecycle
 authority-aware e aponta os frontiers SQL compartilhados ao estado estreito,
 sem alterar a linha de autoridade. A Stage 228 precisa existir antes do restart;
 com `authority='legacy'`, claims e settles continuam no payload.
+O subcorte de ativação adiciona
+`npm run robinhood:activate-head-processing-state`: sem argumentos ele é
+read-only e só aprova se os workers envolvidos estiverem sem lease, não houver
+claims leased, toda a fronteira ativa tiver paridade exata e os índices/trigger
+estiverem válidos. `--write` cerca startup e repairs com advisory locks, bloqueia
+as duas tabelas durante a fotografia final, troca o trigger para somente-insert
+e grava `authority='state'` com o relatório na mesma transação. Canonical,
+processing, retention, derived, wallet-live e os heads legados precisam estar
+parados apenas durante essa operação. Repairs V3/V4 e recovery legado passam a
+falhar fechado depois da ativação.
 
 - Só ativar após auditoria de identidade/lifecycle, prova dos planos de claim,
   migração de todos os leitores/writers relevantes e parada limpa do processing.

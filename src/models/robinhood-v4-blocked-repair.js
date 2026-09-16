@@ -2,6 +2,9 @@ const v4 = require('../services/uniswap-v4-decoder');
 const { matchesLedger } = require('../utils/preview-robinhood-v4-blocked');
 const { createV4BlockedPreviewRepository } = require('./robinhood-v4-blocked-preview');
 const { BLOCKED_RECOVERY_ERROR } = require('./robinhood-head-processing');
+const {
+  assertLegacyHeadProcessingAuthority,
+} = require('./robinhood-head-processing-authority');
 
 const key = (e) => `${e.transactionHash}:${e.logIndex}`;
 const rangeKey = (e) => `${e.tickLower}:${e.tickUpper}`;
@@ -136,6 +139,7 @@ async function repairPool(client, item, { write = false, verifyCanonical = async
   try {
     await client.query("SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '30s'");
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['robinhood-processing-blocked-recovery']);
+    await assertLegacyHeadProcessingAuthority(client);
     const lease = (await client.query(`SELECT lease_until > clock_timestamp() AS active
       FROM worker_leases WHERE lease_key = 'robinhood-processing-worker' FOR UPDATE`)).rows[0];
     // Graceful worker shutdown deletes its lease row; absence is a released lease.

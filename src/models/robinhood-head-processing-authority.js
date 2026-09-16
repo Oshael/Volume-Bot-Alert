@@ -9,6 +9,7 @@ const {
 } = require('./robinhood-head-processing-state');
 
 const CHAIN = 'robinhood';
+const AUTHORITY_LOCK_KEY = 'robinhood-head-processing-authority';
 const REQUIRED_STATE_INDEXES = Object.freeze([
   'idx_rh_head_capture_states_claim',
   'idx_rh_head_capture_states_lease',
@@ -33,7 +34,7 @@ async function loadHeadProcessingAuthority(database) {
   return row;
 }
 
-async function inspectStateRuntimePrerequisites(database) {
+async function inspectStateRuntimePrerequisites(database, options = {}) {
   const result = await database.query(
     `WITH expected(name) AS (SELECT unnest($1::text[])), indexes AS (
        SELECT expected.name, index.indisvalid, index.indisready
@@ -53,7 +54,9 @@ async function inspectStateRuntimePrerequisites(database) {
                    ORDER BY name) AS invalid_indexes,
             COALESCE((SELECT tgenabled <> 'D' FROM mirror), false) AS trigger_enabled,
             COALESCE((SELECT definition ~* 'AFTER INSERT ON' FROM mirror), false)
-              AS trigger_insert_only`,
+              AS trigger_insert_only,
+            COALESCE((SELECT definition ~* 'AFTER INSERT OR UPDATE' FROM mirror), false)
+              AS trigger_full_mirror`,
     [REQUIRED_STATE_INDEXES]
   );
   const row = result.rows[0] || {};
@@ -62,26 +65,50 @@ async function inspectStateRuntimePrerequisites(database) {
     blockers.push(`invalid indexes: ${row.invalid_indexes.join(', ')}`);
   }
   if (!row.trigger_enabled) blockers.push('head state sync trigger is disabled or missing');
-  if (!row.trigger_insert_only) blockers.push('head state sync trigger is not insert-only');
+  const expectedTrigger = options.triggerMode === 'full-mirror' ? 'full-mirror' : 'insert-only';
+  if (expectedTrigger === 'insert-only' && !row.trigger_insert_only) {
+    blockers.push('head state sync trigger is not insert-only');
+  }
+  if (expectedTrigger === 'full-mirror' && !row.trigger_full_mirror) {
+    blockers.push('head state sync trigger is not a full lifecycle mirror');
+  }
   return { safe: blockers.length === 0, blockers };
+}
+
+async function assertLegacyHeadProcessingAuthority(database) {
+  const authority = await loadHeadProcessingAuthority(database);
+  if (authority.authority !== 'legacy') {
+    throw new Error('Legacy head lifecycle repair is disabled after state authority activation');
+  }
+  return authority;
 }
 
 async function selectHeadProcessingRepository(options = {}) {
   const database = options.database || db;
-  const authority = await loadHeadProcessingAuthority(database);
-  if (authority.authority === 'legacy') {
-    const factory = options.legacyFactory || createRobinhoodHeadProcessingRepository;
+  const client = await database.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock_shared(hashtext($1))', [AUTHORITY_LOCK_KEY]);
+    const authority = await loadHeadProcessingAuthority(client);
+    let factory = options.legacyFactory || createRobinhoodHeadProcessingRepository;
+    if (authority.authority === 'state') {
+      if (!authority.activated_at || !authority.activation_report) {
+        throw new Error('State authority is missing its durable activation evidence');
+      }
+      const gate = await inspectStateRuntimePrerequisites(client);
+      if (!gate.safe) {
+        throw new Error(`State authority runtime gate failed: ${gate.blockers.join('; ')}`);
+      }
+      factory = options.stateFactory || createRobinhoodHeadProcessingStateRepository;
+    }
+    await client.query('COMMIT');
     return { authority, repository: factory({ database }) };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
-  if (!authority.activated_at || !authority.activation_report) {
-    throw new Error('State authority is missing its durable activation evidence');
-  }
-  const gate = await inspectStateRuntimePrerequisites(database);
-  if (!gate.safe) {
-    throw new Error(`State authority runtime gate failed: ${gate.blockers.join('; ')}`);
-  }
-  const factory = options.stateFactory || createRobinhoodHeadProcessingStateRepository;
-  return { authority, repository: factory({ database }) };
 }
 
 async function resolveHeadProcessingRepository(options = {}) {
@@ -89,7 +116,8 @@ async function resolveHeadProcessingRepository(options = {}) {
 }
 
 module.exports = {
-  REQUIRED_STATE_INDEXES, inspectStateRuntimePrerequisites,
+  AUTHORITY_LOCK_KEY, REQUIRED_STATE_INDEXES, assertLegacyHeadProcessingAuthority,
+  inspectStateRuntimePrerequisites,
   loadHeadProcessingAuthority, resolveHeadProcessingRepository,
   selectHeadProcessingRepository,
 };

@@ -686,6 +686,12 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [BLOCKED_RECOVERY_LOCK_KEY]);
+      const authority = await client.query(
+        `SELECT authority FROM robinhood_head_processing_authority WHERE chain=$1`, [CHAIN]
+      );
+      if (authority.rows[0]?.authority !== 'legacy') {
+        throw new Error('Legacy blocked recovery is disabled after state authority activation');
+      }
       const lease = await client.query(
         `SELECT lease_until > NOW() AS active
          FROM worker_leases WHERE lease_key = $1 FOR UPDATE`,
