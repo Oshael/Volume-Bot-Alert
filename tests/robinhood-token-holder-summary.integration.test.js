@@ -233,7 +233,7 @@ describe('Robinhood token holder summary repository integration', () => {
     }]);
   });
 
-  it('materializes current live continuity in one set-based projection', async () => {
+  it('materializes a bounded live continuity page without rewriting it', async () => {
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
@@ -251,8 +251,17 @@ describe('Robinhood token holder summary repository integration', () => {
         database: { query: client.query.bind(client) },
       });
       assert.deepEqual(await transactionRepository.materializeLiveTemporalSnapshots({
-        asOf: '2026-08-10T23:59:00Z',
-      }), { savedCount: 1, asOf: '2026-08-10T23:59:00.000Z' });
+        asOf: '2026-08-10T23:59:00Z', limit: 500,
+      }), {
+        savedCount: 1, dailyCount: 1, scannedCount: 1, nextToken: TOKEN,
+        complete: true, asOf: '2026-08-10T23:59:00.000Z',
+      });
+      assert.deepEqual(await transactionRepository.materializeLiveTemporalSnapshots({
+        asOf: '2026-08-10T23:59:30Z', limit: 500,
+      }), {
+        savedCount: 0, dailyCount: 0, scannedCount: 0, nextToken: null,
+        complete: true, asOf: '2026-08-10T23:59:30.000Z',
+      });
       assert.deepEqual(await transactionRepository.listHourlyBuckets({
         tokenAddress: TOKEN, asOf: '2026-08-10T23:59:00Z',
       }), [{

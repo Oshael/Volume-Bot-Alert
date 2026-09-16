@@ -22,22 +22,35 @@ function scheduler() {
 }
 
 describe('Robinhood holder snapshot worker', () => {
-  it('prefers the set-based temporal projector when available', async () => {
+  it('drains temporal continuity in ordered transaction-sized pages', async () => {
     const clock = scheduler();
     const calls = [];
+    const cursor = `0x${'1'.repeat(40)}`;
     const worker = createRobinhoodHolderSnapshotWorker({
       ...clock, now: () => NOW,
       repository: { materializeLiveTemporalSnapshots: async (input) => {
         calls.push(input);
-        return { savedCount: 3, asOf: input.asOf };
+        return calls.length === 1
+          ? { savedCount: 2, dailyCount: 1, scannedCount: 2,
+            nextToken: cursor, complete: false, asOf: input.asOf }
+          : { savedCount: 1, dailyCount: 0, scannedCount: 1,
+            nextToken: `0x${'2'.repeat(40)}`, complete: true, asOf: input.asOf };
       } },
     });
 
-    worker.start({ enabled: true, isLiveReady: () => true });
+    worker.start({ enabled: true, batchSize: 250, isLiveReady: () => true });
     await clock.scheduled[0].callback();
 
-    assert.deepEqual(calls, [{ asOf: '2026-08-10T12:00:00.000Z' }]);
+    assert.deepEqual(calls, [{
+      asOf: '2026-08-10T12:00:00.000Z', limit: 250, afterToken: null,
+    }, {
+      asOf: '2026-08-10T12:00:00.000Z', limit: 250, afterToken: cursor,
+    }]);
     assert.equal(worker.getStatus().totalSaved, 3);
+    assert.deepEqual(worker.getStatus().lastResult, {
+      savedCount: 3, dailyCount: 1, scannedCount: 3,
+      pages: 2, complete: true, asOf: '2026-08-10T12:00:00.000Z',
+    });
     await worker.stop();
   });
 

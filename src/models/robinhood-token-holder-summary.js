@@ -448,27 +448,54 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
 
   async function materializeLiveTemporalSnapshots(input = {}) {
     const asOf = timestamp(input.asOf || new Date(), 'snapshot asOf');
+    const limit = Number(input.limit ?? 500);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) {
+      throw new RangeError('snapshot limit must be between 1 and 5000');
+    }
+    const afterToken = input.afterToken == null
+      ? null : normalizeTokenAddress(CHAIN, input.afterToken);
     const { rows } = await database.query(
       `WITH candidates AS MATERIALIZED (
-         SELECT published.chain, published.token_address, published.holder_count
-           FROM robinhood_published_holder_summaries published
-          WHERE published.source = 'ledger_live'
-            AND published.holder_count IS NOT NULL
-            AND published.observed_at <= $1::timestamptz
+         SELECT state.chain, state.token_address, state.holder_count,
+                state.updated_at AS source_observed_at,
+                (snapshot.token_address IS NULL OR snapshot.source<>'ledger_live'
+                  OR snapshot.observed_at < state.updated_at) AS daily_due,
+                (bucket.token_address IS NULL OR bucket.source<>'ledger_live'
+                  OR bucket.observed_at < state.updated_at) AS hourly_due
+           FROM robinhood_holder_token_states state
+           JOIN robinhood_holder_cursors cursor
+             ON cursor.chain=state.chain AND cursor.stream='live'
+           LEFT JOIN robinhood_token_holder_daily_snapshots snapshot
+             ON snapshot.chain=state.chain AND snapshot.token_address=state.token_address
+            AND snapshot.snapshot_date=($1::timestamptz AT TIME ZONE 'UTC')::date
+           LEFT JOIN robinhood_token_holder_buckets bucket
+             ON bucket.chain=state.chain AND bucket.token_address=state.token_address
+            AND bucket.bucket_start=(
+              date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+            )
+          WHERE state.chain='${CHAIN}' AND state.ledger_status='live'
+            AND state.holder_count IS NOT NULL AND state.updated_at <= $1::timestamptz
+            AND ($3::varchar IS NULL OR state.token_address > $3::varchar)
+            AND ((snapshot.token_address IS NULL OR snapshot.source<>'ledger_live'
+                  OR snapshot.observed_at < state.updated_at)
+              OR (bucket.token_address IS NULL OR bucket.source<>'ledger_live'
+                  OR bucket.observed_at < state.updated_at))
+          ORDER BY state.token_address
+          LIMIT $2::int
        ), saved_daily AS (
          INSERT INTO robinhood_token_holder_daily_snapshots (
            chain, token_address, snapshot_date, holder_count, source, observed_at
          )
          SELECT chain, token_address, ($1::timestamptz AT TIME ZONE 'UTC')::date,
-                holder_count, 'ledger_live', $1::timestamptz
-           FROM candidates
+                holder_count, 'ledger_live', source_observed_at
+           FROM candidates WHERE daily_due
          ON CONFLICT (chain, token_address, snapshot_date) DO UPDATE SET
            holder_count = EXCLUDED.holder_count,
            source = EXCLUDED.source,
            observed_at = EXCLUDED.observed_at,
            updated_at = NOW()
          WHERE robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
-            OR EXCLUDED.observed_at >= robinhood_token_holder_daily_snapshots.observed_at
+            OR EXCLUDED.observed_at > robinhood_token_holder_daily_snapshots.observed_at
          RETURNING 1
        ), saved_hourly AS (
          INSERT INTO robinhood_token_holder_buckets (
@@ -477,7 +504,7 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
          SELECT chain, token_address,
                 date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
                 holder_count, 'ledger_live', $1::timestamptz
-           FROM candidates
+           FROM candidates WHERE hourly_due
          ON CONFLICT (chain, token_address, bucket_start) DO UPDATE SET
            holder_count = EXCLUDED.holder_count,
            source = EXCLUDED.source,
@@ -488,14 +515,26 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
            AND EXCLUDED.source = 'ledger_live'
          ) OR (
            robinhood_token_holder_buckets.source = EXCLUDED.source
-           AND EXCLUDED.observed_at >= robinhood_token_holder_buckets.observed_at
+           AND EXCLUDED.observed_at > robinhood_token_holder_buckets.observed_at
          )
          RETURNING 1
        )
-       SELECT COUNT(*)::int AS saved_count FROM saved_hourly`,
-      [asOf]
+       SELECT (SELECT COUNT(*)::int FROM candidates) AS scanned_count,
+              (SELECT token_address FROM candidates
+                ORDER BY token_address DESC LIMIT 1) AS next_token,
+              (SELECT COUNT(*)::int FROM saved_daily) AS daily_count,
+              (SELECT COUNT(*)::int FROM saved_hourly) AS saved_count`,
+      [asOf, limit, afterToken]
     );
-    return Object.freeze({ savedCount: Number(rows[0]?.saved_count) || 0, asOf });
+    const scannedCount = Number(rows[0]?.scanned_count) || 0;
+    return Object.freeze({
+      savedCount: Number(rows[0]?.saved_count) || 0,
+      dailyCount: Number(rows[0]?.daily_count) || 0,
+      scannedCount,
+      nextToken: rows[0]?.next_token || afterToken,
+      complete: scannedCount < limit,
+      asOf,
+    });
   }
 
   async function listDailySnapshots(input = {}) {

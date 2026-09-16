@@ -70,9 +70,35 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
         return result;
       }
       const asOf = new Date(now()).toISOString();
-      const result = typeof repository.materializeLiveTemporalSnapshots === 'function'
-        ? await repository.materializeLiveTemporalSnapshots({ asOf })
-        : await repository.syncLiveDailySnapshots({ asOf, limit: options.batchSize });
+      let result;
+      if (typeof repository.materializeLiveTemporalSnapshots === 'function') {
+        let afterToken = null;
+        let pages = 0;
+        let savedCount = 0;
+        let dailyCount = 0;
+        let scannedCount = 0;
+        let complete = false;
+        while (!complete) {
+          const page = await repository.materializeLiveTemporalSnapshots({
+            asOf, limit: options.batchSize, afterToken,
+          });
+          pages += 1;
+          savedCount += Number(page.savedCount) || 0;
+          dailyCount += Number(page.dailyCount) || 0;
+          scannedCount += Number(page.scannedCount) || 0;
+          complete = page.complete === true;
+          if (complete) break;
+          if (!page.nextToken || page.nextToken === afterToken) {
+            throw new Error('holder snapshot pagination did not advance');
+          }
+          afterToken = page.nextToken;
+        }
+        result = Object.freeze({
+          savedCount, dailyCount, scannedCount, pages, complete: true, asOf,
+        });
+      } else {
+        result = await repository.syncLiveDailySnapshots({ asOf, limit: options.batchSize });
+      }
       status.lastResult = result;
       status.totalSaved += result.savedCount;
       status.lastError = null;
