@@ -1042,6 +1042,14 @@ payload antes de mirar a sala `market-trade-v2:<identidade>:canary`. Apenas usu�
 positivos estejam em `ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS` entram nessa sala;
 clientes fora da lista permanecem na sala v2 finalizada-only. Sucesso no `NOTIFY` marca
 `status='complete'`; falha mantém retry/backoff e lease expirada é recuperada.
+Antes de reiniciar `trendscope-worker@robinhood-wallet` com a Stage 230, rode
+`node src/utils/db-init-stage230.js`. Ela cria concorrentemente um índice parcial
+ordenado apenas sobre publicação `pending` já auditada como `complete`, permitindo
+que o `LIMIT` do claim pare no prefixo elegível em vez de ordenar toda a outbox.
+Não remova `idx_rh_wallet_swap_realtime_outbox_claim` no mesmo rollout: primeiro
+confirme por `EXPLAIN` o uso do índice novo e meça a latência do claim. A Stage 230
+não cria tabela nem duplica payload; durante a validação, porém, os dois índices
+coexistem e consomem espaço.
 Em ambiente pré-lançamento, `ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED=true` admite todas
 as sessões, inclusive anônimas, nessa mesma sala. O default permanece `false`; essa flag controla
 somente a audiência, enquanto `...OBSERVED_ENABLED` continua controlando a produção dos eventos.
@@ -2704,6 +2712,7 @@ Stages confirmados:
 | 208 | preimages reversíveis dos agregados de transfers ainda não finalizados |
 | 215 | âncora canônica durável do mint no outbox de resolução de deployment |
 | 229 | cursor persistente da varredura limitada do prune automático do journal holder |
+| 230 | índice parcial ordenado do claim de publicação lifecycle auditada |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local

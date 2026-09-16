@@ -8,6 +8,7 @@ const stage209 = require('../src/utils/db-init-stage209');
 const stage210 = require('../src/utils/db-init-stage210');
 const stage211 = require('../src/utils/db-init-stage211');
 const stage220 = require('../src/utils/db-init-stage220');
+const stage230 = require('../src/utils/db-init-stage230');
 const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('../src/models/robinhood-wallet-swap-realtime-outbox');
@@ -162,6 +163,38 @@ describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
 
     assert.equal(calls[1], stage220.CREATE_STATEMENT);
     assert.match(calls.at(-1), new RegExp(stage220.LEGACY_INDEX_NAME));
+  });
+
+  it('adds an ordered partial index for audited publication claims', async () => {
+    assert.match(stage230.CREATE_STATEMENT, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    assert.match(stage230.CREATE_STATEMENT,
+      /block_number, transaction_index, log_index/);
+    assert.match(stage230.CREATE_STATEMENT, /CASE event_kind/);
+    assert.match(stage230.CREATE_STATEMENT,
+      /status='pending' AND audit_status='complete'/);
+
+    const calls = [];
+    let inspection = 0;
+    await stage230.init({
+      database: { query: async (statement) => {
+        calls.push(statement);
+        if (statement.startsWith('SELECT indisvalid')) {
+          inspection += 1;
+          return inspection === 1
+            ? { rows: [] }
+            : { rows: [{ indisvalid: true, indisready: true }] };
+        }
+        return { rows: [] };
+      } },
+      closePool: false,
+    });
+
+    assert.equal(calls[1], stage230.CREATE_STATEMENT);
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage230-robinhood-wallet-swap-publication-claim'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage230.js');
+    assert.equal(group.tables[0].indexes[0].name, stage230.INDEX_NAME);
   });
 
   it('adds bounded retention and telemetry indexes without deleting data', () => {

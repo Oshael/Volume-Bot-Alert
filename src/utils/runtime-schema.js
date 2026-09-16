@@ -6288,6 +6288,21 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage230-robinhood-wallet-swap-publication-claim',
+    name: 'Stage 230 Robinhood wallet-swap ordered publication claim',
+    repair: 'node src/utils/db-init-stage230.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      indexes: [{
+        name: 'idx_rh_wallet_swap_realtime_outbox_publication_claim_ordered',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'event_kind',
+          'next_attempt_at', 'robinhood', 'pending', 'complete',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
