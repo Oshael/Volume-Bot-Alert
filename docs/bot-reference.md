@@ -642,6 +642,22 @@ auditoria de paridade serem concluídos, claim, settle, retry, retenção e reco
 continuam lendo e alterando exclusivamente `robinhood_head_captures`; a tabela
 shadow não autoriza o cutover do Corte 3B.
 
+O roteamento histórico dos estados ativos é preenchido separadamente por
+`npm run robinhood:backfill-head-capture-routing`. Sem `--write`, o comando só
+mostra quantos candidatos há em um lote físico de 256 páginas da tabela estreita.
+Para escrever, use `--write --checkpoint-file=<caminho>`; por padrão roda um
+lote, com pausa de 500 ms entre lotes quando `--max-batches` for aumentado.
+Cada lote tem timeout, lock timeout de 1 segundo, gate de lag canônico de 128
+blocos (ajustável por `--max-canonical-lag-blocks`) e verifica a versão do
+trigger. O checkpoint avança somente após a atualização e paridade do lote.
+Não rode junto com o backfill antigo de lifecycle nem reescreva a tabela de
+estados (`VACUUM FULL`/`CLUSTER`) durante o percurso: o `relfilenode` é fixado
+no checkpoint. `completed=true` significa que as páginas fixadas foram
+percorridas, **não** aprovação do cutover; ainda falta auditoria global dos
+estados ativos e prova dos novos planos de claim. Estados terminais históricos
+ficam sem roteamento até eventual reativação pelo fluxo legado; o payload bruto e
+sua retenção mínima de três dias não mudam.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

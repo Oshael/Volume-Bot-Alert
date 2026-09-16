@@ -87,6 +87,109 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
     };
   }
 
+  async function assertRoutingMirrorReady() {
+    const result = await database.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM pg_trigger trigger
+         JOIN pg_proc function ON function.oid=trigger.tgfoid
+        WHERE trigger.tgrelid='robinhood_head_captures'::regclass
+          AND trigger.tgname='rh_head_capture_state_sync'
+          AND trigger.tgenabled<>'D' AND NOT trigger.tgisinternal
+          AND pg_get_functiondef(function.oid) LIKE '%NEW.market_key%'
+       ) AS ready`
+    );
+    if (result.rows[0]?.ready !== true) {
+      throw new Error('Stage 224 routing mirror is unavailable');
+    }
+  }
+
+  async function describeRoutingPhysicalSource() {
+    const result = await database.query(
+      `SELECT pg_relation_filenode('robinhood_head_capture_states'::regclass)::text
+                AS relation_file_node,
+              CEIL(pg_relation_size('robinhood_head_capture_states'::regclass)::numeric
+                / current_setting('block_size')::numeric)::bigint::text AS heap_blocks`
+    );
+    return {
+      relationFileNode: result.rows[0].relation_file_node,
+      heapBlocks: Number(result.rows[0].heap_blocks),
+    };
+  }
+
+  async function processRoutingPhysicalBatch(input = {}) {
+    const startBlock = heapBlock(input.startBlock ?? 0, 'startBlock');
+    const endBlock = heapBlock(input.endBlock, 'endBlock');
+    if (endBlock <= startBlock) throw new Error('endBlock must be greater than startBlock');
+    const statementTimeoutMs = positiveInt(
+      input.statementTimeoutMs || 30_000, 'statementTimeoutMs', 300_000
+    );
+    const write = input.write === true;
+    const lock = write ? 'FOR UPDATE OF state' : '';
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL enable_seqscan = off');
+      await client.query("SET LOCAL lock_timeout = '1s'");
+      await client.query("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      const result = await client.query(
+        `WITH candidates AS MATERIALIZED (
+           SELECT state.ctid AS state_tid, state.chain, state.transaction_hash,
+                  state.log_index, capture.stream, capture.protocol,
+                  capture.market_key, capture.block_number, capture.transaction_index
+             FROM robinhood_head_capture_states state
+             JOIN robinhood_head_captures capture
+               USING (chain, transaction_hash, log_index)
+            WHERE state.ctid >= $1::tid AND state.ctid < $2::tid
+              AND state.processing_status IN ('pending', 'leased', 'blocked')
+              AND (state.stream IS DISTINCT FROM capture.stream
+                OR state.protocol IS DISTINCT FROM capture.protocol
+                OR state.market_key IS DISTINCT FROM capture.market_key
+                OR state.block_number IS DISTINCT FROM capture.block_number
+                OR state.transaction_index IS DISTINCT FROM capture.transaction_index)
+            ${lock}
+         ), updated AS (
+           UPDATE robinhood_head_capture_states state
+              SET stream = candidate.stream, protocol = candidate.protocol,
+                  market_key = candidate.market_key,
+                  block_number = candidate.block_number,
+                  transaction_index = candidate.transaction_index
+             FROM candidates candidate
+            WHERE $3::boolean AND state.ctid = candidate.state_tid
+              AND state.chain = candidate.chain
+              AND state.transaction_hash = candidate.transaction_hash
+              AND state.log_index = candidate.log_index
+           RETURNING state.stream IS NOT DISTINCT FROM candidate.stream
+             AND state.protocol IS NOT DISTINCT FROM candidate.protocol
+             AND state.market_key IS NOT DISTINCT FROM candidate.market_key
+             AND state.block_number IS NOT DISTINCT FROM candidate.block_number
+             AND state.transaction_index IS NOT DISTINCT FROM candidate.transaction_index
+               AS matches
+         )
+         SELECT (SELECT COUNT(*)::int FROM candidates) AS candidates,
+                (SELECT COUNT(*)::int FROM updated) AS updated,
+                (SELECT COUNT(*)::int FROM updated WHERE NOT matches) AS divergent`,
+        [`(${startBlock},0)`, `(${endBlock},0)`, write]
+      );
+      const progress = result.rows[0];
+      if (write && (Number(progress.updated) !== Number(progress.candidates)
+          || Number(progress.divergent) > 0)) {
+        throw new Error('head routing backfill parity failed');
+      }
+      await client.query('COMMIT');
+      return {
+        startBlock, endBlock, candidates: Number(progress.candidates),
+        updated: Number(progress.updated), divergent: Number(progress.divergent),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function processPhysicalBatch(input = {}) {
     const startBlock = heapBlock(input.startBlock ?? 0, 'startBlock');
     const endBlock = heapBlock(input.endBlock, 'endBlock');
@@ -285,8 +388,9 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
   }
 
   return Object.freeze({
-    assertMaintenanceAllowed, assertMirrorReady, describePhysicalSource,
-    processBatch, processPhysicalBatch,
+    assertMaintenanceAllowed, assertMirrorReady, assertRoutingMirrorReady,
+    describePhysicalSource, describeRoutingPhysicalSource,
+    processBatch, processPhysicalBatch, processRoutingPhysicalBatch,
   });
 }
 

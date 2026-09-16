@@ -395,6 +395,41 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(parity.matches, true);
   });
 
+  it('repairs active routing without touching historical terminal states', async () => {
+    const terminal = await seedPending({ block: 99 });
+    const active = await seedPending({
+      block: 100, protocol: 'uniswap-v4', marketKey: 'robinhood:uniswap-v4:pool-a',
+    });
+    await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS, processed: [terminal],
+    });
+    await db.query(
+      `UPDATE robinhood_head_capture_states
+          SET stream=NULL, protocol=NULL, market_key=NULL,
+              block_number=NULL, transaction_index=NULL`
+    );
+    const states = createRobinhoodHeadCaptureStateRepository({ database: db });
+    await states.assertRoutingMirrorReady();
+    const source = await states.describeRoutingPhysicalSource();
+    const bounds = { startBlock: 0, endBlock: source.heapBlocks, statementTimeoutMs: 30_000 };
+    const preview = await states.processRoutingPhysicalBatch({ ...bounds, write: false });
+    assert.deepEqual([preview.candidates, preview.updated], [1, 0]);
+    const written = await states.processRoutingPhysicalBatch({ ...bounds, write: true });
+    assert.deepEqual([written.candidates, written.updated, written.divergent], [1, 1, 0]);
+    const result = await db.query(
+      `SELECT transaction_hash, stream, protocol, market_key, block_number
+         FROM robinhood_head_capture_states ORDER BY block_number NULLS LAST`
+    );
+    assert.deepEqual(result.rows[0], {
+      transaction_hash: active.transactionHash, stream: 'market',
+      protocol: 'uniswap-v4', market_key: 'robinhood:uniswap-v4:pool-a',
+      block_number: '100',
+    });
+    assert.equal(result.rows[1].transaction_hash, terminal.transactionHash);
+    assert.equal(result.rows[1].stream, null);
+  });
+
   it('backfills a bounded missing state and verifies lifecycle parity', async () => {
     const identity = await seedPending({ block: 100 });
     await db.query(

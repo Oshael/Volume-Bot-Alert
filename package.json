@@ -117,6 +117,7 @@
     "robinhood:canonical-head-audit": "node src/utils/audit-robinhood-canonical-head-canary.js",
     "robinhood:backfill-head-capture-states": "node src/utils/backfill-robinhood-head-capture-states.js",
     "robinhood:backfill-head-capture-states-physical": "node src/utils/backfill-robinhood-head-capture-states-physical.js",
+    "robinhood:backfill-head-capture-routing": "node src/utils/backfill-robinhood-head-capture-routing.js",
     "robinhood:canonical-liquidity-audit": "node src/utils/audit-robinhood-canonical-liquidity.js",
     "robinhood:canonical-holder-audit": "node src/utils/audit-robinhood-canonical-holder.js",
     "robinhood:canonical-holder-canary": "node src/utils/audit-robinhood-canonical-holder-canary.js",
