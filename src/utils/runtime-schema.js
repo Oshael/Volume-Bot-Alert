@@ -6166,7 +6166,8 @@ const SCHEMA_GROUPS = [
     tables: [{
       table: 'robinhood_head_capture_states',
       columns: [
-        'chain', 'transaction_hash', 'log_index', 'processing_status',
+        'chain', 'transaction_hash', 'log_index', 'stream', 'protocol',
+        'market_key', 'block_number', 'transaction_index', 'processing_status',
         'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
         'last_error', 'terminal_at', 'retention_eligible_at', 'created_at', 'updated_at',
       ],

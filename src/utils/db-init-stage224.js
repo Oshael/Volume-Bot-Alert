@@ -16,6 +16,11 @@ const TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
   chain VARCHAR(16) NOT NULL DEFAULT 'robinhood',
   transaction_hash VARCHAR(66) NOT NULL,
   log_index BIGINT NOT NULL,
+  stream VARCHAR(16),
+  protocol VARCHAR(16),
+  market_key VARCHAR(160),
+  block_number BIGINT,
+  transaction_index BIGINT,
   processing_status VARCHAR(16) NOT NULL DEFAULT 'pending',
   lease_owner VARCHAR(128),
   lease_until TIMESTAMPTZ,
@@ -57,6 +62,13 @@ const TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
   )
 )`;
 
+const ROUTING_COLUMNS_STATEMENT = `ALTER TABLE ${TABLE_NAME}
+  ADD COLUMN IF NOT EXISTS stream VARCHAR(16),
+  ADD COLUMN IF NOT EXISTS protocol VARCHAR(16),
+  ADD COLUMN IF NOT EXISTS market_key VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS block_number BIGINT,
+  ADD COLUMN IF NOT EXISTS transaction_index BIGINT`;
+
 const FUNCTION_STATEMENT = `CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -64,16 +76,23 @@ SET search_path = pg_catalog, public
 AS $function$
 BEGIN
   INSERT INTO ${TABLE_NAME} (
-    chain, transaction_hash, log_index, processing_status,
+    chain, transaction_hash, log_index, stream, protocol, market_key,
+    block_number, transaction_index, processing_status,
     lease_owner, lease_until, attempt_count, next_attempt_at,
     last_error, terminal_at, retention_eligible_at, created_at, updated_at
   ) VALUES (
-    NEW.chain, NEW.transaction_hash, NEW.log_index, NEW.processing_status,
+    NEW.chain, NEW.transaction_hash, NEW.log_index, NEW.stream, NEW.protocol,
+    NEW.market_key, NEW.block_number, NEW.transaction_index, NEW.processing_status,
     NEW.lease_owner, NEW.lease_until, NEW.attempt_count, NEW.next_attempt_at,
     NEW.last_error, NEW.terminal_at, NEW.retention_eligible_at,
     NEW.created_at, NEW.updated_at
   )
   ON CONFLICT (chain, transaction_hash, log_index) DO UPDATE SET
+    stream = EXCLUDED.stream,
+    protocol = EXCLUDED.protocol,
+    market_key = EXCLUDED.market_key,
+    block_number = EXCLUDED.block_number,
+    transaction_index = EXCLUDED.transaction_index,
     processing_status = EXCLUDED.processing_status,
     lease_owner = EXCLUDED.lease_owner,
     lease_until = EXCLUDED.lease_until,
@@ -107,6 +126,7 @@ $block$`;
 
 const STATEMENTS = Object.freeze([
   TABLE_STATEMENT,
+  ROUTING_COLUMNS_STATEMENT,
   `ALTER TABLE ${TABLE_NAME} SET (
     autovacuum_vacuum_scale_factor = 0.001,
     autovacuum_vacuum_threshold = 100000,
@@ -131,7 +151,23 @@ const STATEMENTS = Object.freeze([
 async function init(options = {}) {
   const database = options.database || db;
   try {
-    for (const statement of STATEMENTS) await database.query(statement);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout = '1s'");
+      for (const statement of STATEMENTS.slice(0, -INDEX_NAMES.length)) {
+        await client.query(statement);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+    for (const statement of STATEMENTS.slice(-INDEX_NAMES.length)) {
+      await database.query(statement);
+    }
     console.log('Stage 224 Robinhood head capture shadow state created successfully');
   } finally {
     if (options.closePool !== false) await database.pool.end().catch(() => {});
@@ -145,5 +181,6 @@ if (require.main === module) init().catch((error) => {
 
 module.exports = {
   FUNCTION_NAME, FUNCTION_STATEMENT, INDEX_NAMES, STATEMENTS,
-  TABLE_NAME, TABLE_STATEMENT, TRIGGER_NAME, TRIGGER_STATEMENT, init,
+  ROUTING_COLUMNS_STATEMENT, TABLE_NAME, TABLE_STATEMENT, TRIGGER_NAME,
+  TRIGGER_STATEMENT, init,
 };

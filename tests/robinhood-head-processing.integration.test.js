@@ -349,13 +349,17 @@ describe('Robinhood head processing repository integration', () => {
   it('mirrors insert, lease and terminal lifecycle into the narrow shadow state', async () => {
     const identity = await seedPending({ block: 100 });
     let state = (await db.query(
-      `SELECT processing_status, lease_owner, attempt_count
+      `SELECT processing_status, lease_owner, attempt_count,
+              stream, protocol, market_key, block_number, transaction_index
          FROM robinhood_head_capture_states
         WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
       [identity.transactionHash, identity.logIndex]
     )).rows[0];
     assert.deepEqual(state, {
       processing_status: 'pending', lease_owner: null, attempt_count: 0,
+      stream: 'market', protocol: 'uniswap-v3',
+      market_key: 'robinhood:uniswap-v3:test',
+      block_number: '100', transaction_index: '0',
     });
 
     await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
@@ -375,7 +379,12 @@ describe('Robinhood head processing repository integration', () => {
     const parity = (await db.query(
       `SELECT capture.processing_status = state.processing_status
                 AND capture.terminal_at = state.terminal_at
-                AND capture.retention_eligible_at = state.retention_eligible_at AS matches
+                AND capture.retention_eligible_at = state.retention_eligible_at
+                AND capture.stream = state.stream
+                AND capture.protocol IS NOT DISTINCT FROM state.protocol
+                AND capture.market_key IS NOT DISTINCT FROM state.market_key
+                AND capture.block_number = state.block_number
+                AND capture.transaction_index = state.transaction_index AS matches
          FROM robinhood_head_captures capture
          JOIN robinhood_head_capture_states state
            USING (chain, transaction_hash, log_index)

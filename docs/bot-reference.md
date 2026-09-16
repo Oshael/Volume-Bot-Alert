@@ -626,12 +626,18 @@ O corte não exige schema nem flag nova e requer reiniciar apenas
 `trendscope-worker@robinhood-processing.service`.
 
 A Stage 224 inicia a separação do lifecycle mutável com
-`robinhood_head_capture_states`, que contém somente identidade, lease, tentativa,
-erro e datas operacionais. Aplique `node src/utils/db-init-stage224.js` antes de
+`robinhood_head_capture_states`, que contém identidade, lifecycle e os campos
+imutáveis mínimos de roteamento (`stream`, `protocol`, `market_key`, bloco e índice
+da transação), mas não o payload bruto. Aplique ou reaplique
+`node src/utils/db-init-stage224.js` antes de
 subir código que exige o novo runtime schema. Um trigger transacional temporário
-espelha inserts e updates de lifecycle de `robinhood_head_captures`; portanto
+espelha roteamento nos inserts e nos updates de lifecycle de
+`robinhood_head_captures`; portanto
 writers e reparos existentes continuam oficiais e não precisam de dual-write
-próprio. A stage não copia as linhas históricas. Até o backfill limitado e a
+próprio. A alteração nullable do schema e do trigger usa transação com
+`lock_timeout` de 1 segundo; se não obtiver o lock, falha sem iniciar o cutover.
+A stage não preenche o roteamento das linhas históricas, inclusive daquelas cujo
+lifecycle já foi backfilled. Até o backfill limitado desse roteamento e a
 auditoria de paridade serem concluídos, claim, settle, retry, retenção e recovery
 continuam lendo e alterando exclusivamente `robinhood_head_captures`; a tabela
 shadow não autoriza o cutover do Corte 3B.
