@@ -225,9 +225,64 @@ Aceite do 3A:
 
 ### Corte 3B — cutover do claim e settle
 
-Claim, lease, reclaim, retry e settle passam a atualizar somente a tabela
-estreita. O payload pesado deixa de receber uma nova versão a cada mudança de
-status. Leituras que precisam do evento fazem join pela identidade.
+O 3B será entregue nos subcortes abaixo. Nenhum subcorte preparatório altera
+sozinho a autoridade do lifecycle em produção; a ativação é uma operação
+separada, reversível e auditada. Cada fatia de código respeita o limite de 500
+linhas do repositório e recebe commit e validação próprios.
+
+#### 3B.1 — prova de cobertura e plano de claim
+
+- Registrar os quatro checkpoints físicos concluídos, a amostra independente
+  sem ausências/divergências, o trigger ativo e a FK validada. A amostra não é
+  apresentada como auditoria exaustiva.
+- Inventariar **todos** os leitores e writers de lifecycle, inclusive V4
+  continuation, recovery, replay/reorg, watermark, cobertura e retenção.
+- Medir, em produção e sem writes, a cardinalidade ativa e o plano para obter
+  o primeiro capture por pool. A tabela 224 tem status, mas não tem `market_key`,
+  `block_number` nem `transaction_index`; o índice V4 atual é parcial sobre o
+  status do payload. Quando esse status parar de mudar, o índice deixará de
+  representar a fronteira ativa. Uma nova estratégia de índice/roteamento
+  precisa ser provada antes do cutover. Se exigir schema ou backfill adicional,
+  apresentar custo, impacto no canonical e rollback antes de executar.
+
+#### 3B.2 — consultas shadow e paridade de decisões
+
+- Implementar consultas estado+payload para claim, continuação V4 e frontiers
+  sem alterar a autoridade ou criar uma segunda claim real.
+- Comparar, sob a mesma fotografia transacional, identidade e ordem das
+  decisões legadas e shadow, incluindo predecessor `leased`/`blocked`, retry
+  ainda não vencido e bloqueio entre pools. Planos de execução precisam ter
+  limites e índices seguros com backlog representativo.
+- Cobrir também watermark, cobertura, recuperação e candidatos de retenção.
+  Nenhum leitor pode depender do status antigo depois da ativação.
+
+#### 3B.3 — escrita estreita pronta, porém inativa
+
+- Preparar claim, lease, reclaim, retry, settle terminal e recovery para
+  atualizar `robinhood_head_capture_states` e buscar o payload por identidade.
+- Testar transações, crash, lease vencida, concorrência, ordenação V4,
+  idempotência, reorg e retenção mínima de três dias no PostgreSQL.
+- Proteger a direção do espelho: o trigger atual copia payload→estado. Um
+  update legado do payload após a troca pode sobrescrever o estado novo.
+  Instalação e ativação precisam ser cercadas por parada/lease e auditoria,
+  mantendo o caminho antigo disponível apenas enquanto for coerente.
+
+#### 3B.4 — ativação, rollback e observação
+
+- Só ativar após auditoria de identidade/lifecycle, prova dos planos de claim,
+  migração de todos os leitores/writers relevantes e parada limpa do processing.
+  Confirmar que nenhuma claim antiga permanece em voo.
+- Fazer canário reversível, medir claim/settle, blocos/s, WAL, dead tuples,
+  waits e lag do canonical e dos demais workers. Voltar se houver regressão,
+  divergência ou ordem V4 incorreta; não remover colunas/índices legados aqui.
+- A fase estado-only deixa as colunas de lifecycle do payload desatualizadas.
+  Portanto, rollback para o consumidor legado **não** é apenas trocar uma flag:
+  exige parar o processing e reconciliar, de forma limitada e auditada, os
+  estados alterados desde a ativação antes de reabrir claims legadas.
+
+Após a ativação, claim, lease, reclaim, retry e settle atualizam somente a
+tabela estreita. O payload pesado deixa de receber uma nova versão a cada
+mudança de status; leituras do evento fazem join pela identidade.
 
 Aceite do 3B:
 
@@ -241,9 +296,11 @@ Aceite do 3B:
 
 ### Rollback
 
-Durante a janela de validação, a escrita compatível é mantida. O consumidor
-pode voltar ao estado legado sem reconstruir o payload. A remoção de colunas ou
-índices antigos não pertence ao Corte 3.
+Antes da ativação estado-only, o consumidor ainda pode voltar ao estado legado
+sem reconstruir payload. Depois dela, o retorno exige o procedimento de
+reconciliação do 3B.4; escrita dupla permanente anularia a redução de WAL e
+autovacuum procurada pelo corte. A remoção de colunas ou índices antigos não
+pertence ao Corte 3.
 
 ## Gate de decisão após o Corte 3
 
