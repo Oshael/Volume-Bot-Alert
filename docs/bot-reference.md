@@ -688,6 +688,14 @@ lease, pausa 500 ms entre amostras e para na primeira divergência; `safe=true`
 não autoriza o cutover porque continuação V4 e os demais leitores/writers ainda
 têm gates próprios.
 
+O gate shadow da continuação V4 é
+`npm run robinhood:audit-head-v4-continuation-shadow -- --samples=5
+--statement-timeout-ms=120000`. Ele usa os limites runtime de oito pools e 512
+eventos por prefixo, avança um cursor de pools entre amostras, compara
+inventário, ordem e barreiras de retry/lease/blocked e reporta tempos separados
+para payload e estado. Também é read-only e não autoriza state-only enquanto os
+writers de lifecycle não estiverem preparados.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

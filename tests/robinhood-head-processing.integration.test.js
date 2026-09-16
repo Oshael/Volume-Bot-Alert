@@ -430,6 +430,44 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(divergent.streams.market.firstMismatch.legacy.blockNumber, '101');
   });
 
+  it('matches bounded V4 continuation prefixes and retry barriers against state', async () => {
+    const poolA = 'robinhood:uniswap-v4:pool-a';
+    const poolB = 'robinhood:uniswap-v4:pool-b';
+    await seedPending({ block: 100, protocol: 'uniswap-v4', marketKey: poolA });
+    await seedPending({ block: 101, protocol: 'uniswap-v4', marketKey: poolA });
+    await seedPending({
+      block: 102, protocol: 'uniswap-v4', marketKey: poolA, dueInMs: 3_600_000,
+    });
+    await seedPending({ block: 103, protocol: 'uniswap-v4', marketKey: poolA });
+    const blocked = await seedPending({
+      block: 104, protocol: 'uniswap-v4', marketKey: poolB,
+    });
+    await seedPending({ block: 105, protocol: 'uniswap-v4', marketKey: poolB });
+    await db.query(
+      `UPDATE robinhood_head_captures
+          SET processing_status='blocked', last_error='test barrier'
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [blocked.transactionHash, blocked.logIndex]
+    );
+    const shadow = createRobinhoodHeadClaimShadowRepository({ database: db });
+    const report = await shadow.auditV4ContinuationDecisions({
+      poolLimit: 8, limit: 20, perPoolLimit: 10,
+    });
+    assert.equal(report.safe, true);
+    assert.equal(report.requestedPoolCount, 2);
+    assert.equal(report.decisions.legacyCount, 2);
+
+    await db.query(
+      `UPDATE robinhood_head_capture_states SET next_attempt_at=NOW()
+        WHERE block_number=102`
+    );
+    const divergent = await shadow.auditV4ContinuationDecisions({
+      poolLimit: 8, limit: 20, perPoolLimit: 10,
+    });
+    assert.equal(divergent.safe, false);
+    assert.equal(divergent.decisions.firstMismatch.state.blockNumber, '102');
+  });
+
   it('repairs active routing without touching historical terminal states', async () => {
     const terminal = await seedPending({ block: 99 });
     const active = await seedPending({

@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
   DECISION_SQL,
+  V4_CONTINUATION_SQL,
   compareDecisions,
+  comparePoolKeys,
   createRobinhoodHeadClaimShadowRepository,
 } = require('../src/models/robinhood-head-claim-shadow');
 
@@ -22,8 +24,23 @@ describe('Robinhood head claim shadow', () => {
     assert.match(DECISION_SQL.market.state, /WITH RECURSIVE first_v4_by_pool/);
     assert.match(DECISION_SQL.market.state, /protocol IS DISTINCT FROM 'uniswap-v4'/);
     assert.match(DECISION_SQL.discovery.state, /stream='discovery'/);
+    assert.match(V4_CONTINUATION_SQL.decisions.state, /marked_prefix AS MATERIALIZED/);
+    assert.match(V4_CONTINUATION_SQL.decisions.state, /BOOL_OR/);
+    assert.match(V4_CONTINUATION_SQL.pools.state, /processing_status IN/);
     Object.values(DECISION_SQL).forEach((streams) => Object.values(streams)
       .forEach((sql) => assert.doesNotMatch(sql, /UPDATE|FOR UPDATE/i)));
+    Object.values(V4_CONTINUATION_SQL).forEach((branches) => Object.values(branches)
+      .forEach((sql) => assert.doesNotMatch(sql, /UPDATE|FOR UPDATE/i)));
+  });
+
+  it('reports V4 pool routing divergence before comparing prefixes', () => {
+    const legacy = [{ market_key: 'pool-a' }, { market_key: 'pool-b' }];
+    const state = [{ market_key: 'pool-a' }, { market_key: 'pool-c' }];
+    const report = comparePoolKeys(legacy, state);
+    assert.equal(report.safe, false);
+    assert.deepEqual(report.firstMismatch, {
+      index: 1, legacy: 'pool-b', state: 'pool-c',
+    });
   });
 
   it('reports the first identity or ordering divergence', () => {
@@ -59,5 +76,32 @@ describe('Robinhood head claim shadow', () => {
     assert.equal(calls.at(-2), 'COMMIT');
     assert.equal(calls.at(-1), 'release');
     assert.equal(calls.filter((sql) => sql.includes('head-claim-shadow')).length, 4);
+  });
+
+  it('compares V4 continuation prefixes and pool inventories in one snapshot', async () => {
+    const calls = [];
+    const client = {
+      async query(sql) {
+        calls.push(sql);
+        if (sql.includes('transaction_timestamp')) {
+          return { rows: [{ snapshot_at: new Date('2026-09-16T12:00:00Z') }] };
+        }
+        if (sql.includes(':v4-pools')) return { rows: [{ market_key: 'pool-a' }] };
+        if (sql.includes(':v4-continuation')) return { rows: [row(101)] };
+        return { rows: [] };
+      },
+      release() { calls.push('release'); },
+    };
+    const repository = createRobinhoodHeadClaimShadowRepository({
+      database: { async getClient() { return client; } },
+    });
+    const report = await repository.auditV4ContinuationDecisions({ limit: 10 });
+    assert.equal(report.safe, true);
+    assert.equal(report.requestedPoolCount, 1);
+    assert.equal(report.complete, true);
+    assert.equal(report.nextMarketKey, 'pool-a');
+    assert.equal(report.decisions.legacyCount, 1);
+    assert.equal(calls.filter((sql) => sql.includes(':v4-pools')).length, 2);
+    assert.equal(calls.filter((sql) => sql.includes(':v4-continuation')).length, 2);
   });
 });
