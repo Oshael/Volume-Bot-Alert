@@ -22,6 +22,14 @@ function cursor(value) {
   return { transactionHash, logIndex };
 }
 
+function heapBlock(value, label) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`);
+  }
+  return parsed;
+}
+
 function maintenanceLag(row, maxLagBlocks) {
   if (row?.capture_next_block == null) throw new Error('canonical cursor is unavailable');
   const next = BigInt(row.capture_next_block);
@@ -64,6 +72,109 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
          FROM robinhood_chain_capture_cursor capture WHERE capture.chain=$1`, [CHAIN]
     );
     return maintenanceLag(result.rows[0], maxLagBlocks);
+  }
+
+  async function describePhysicalSource() {
+    const result = await database.query(
+      `SELECT pg_relation_filenode('robinhood_head_captures'::regclass)::text
+                AS relation_file_node,
+              CEIL(pg_relation_size('robinhood_head_captures'::regclass)::numeric
+                / current_setting('block_size')::numeric)::bigint::text AS heap_blocks`
+    );
+    return {
+      relationFileNode: result.rows[0].relation_file_node,
+      heapBlocks: Number(result.rows[0].heap_blocks),
+    };
+  }
+
+  async function processPhysicalBatch(input = {}) {
+    const startBlock = heapBlock(input.startBlock ?? 0, 'startBlock');
+    const endBlock = heapBlock(input.endBlock, 'endBlock');
+    if (endBlock <= startBlock) throw new Error('endBlock must be greater than startBlock');
+    const statementTimeoutMs = positiveInt(
+      input.statementTimeoutMs || 30_000, 'statementTimeoutMs', 300_000
+    );
+    const write = input.write === true;
+    const parentLock = write ? 'FOR KEY SHARE OF capture' : '';
+    const tids = [`(${startBlock},0)`, `(${endBlock},0)`];
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL enable_seqscan = off');
+      await client.query("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      const copied = await client.query(
+        `WITH batch AS MATERIALIZED (
+           SELECT capture.chain, capture.transaction_hash, capture.log_index,
+                  capture.processing_status, capture.lease_owner, capture.lease_until,
+                  capture.attempt_count, capture.next_attempt_at, capture.last_error,
+                  capture.terminal_at, capture.retention_eligible_at,
+                  capture.created_at, capture.updated_at
+             FROM robinhood_head_captures capture
+            WHERE capture.ctid >= $1::tid AND capture.ctid < $2::tid
+            ${parentLock}
+         ), inserted AS (
+           INSERT INTO robinhood_head_capture_states(
+             chain, transaction_hash, log_index, processing_status,
+             lease_owner, lease_until, attempt_count, next_attempt_at,
+             last_error, terminal_at, retention_eligible_at, created_at, updated_at
+           )
+           SELECT chain, transaction_hash, log_index, processing_status,
+                  lease_owner, lease_until, attempt_count, next_attempt_at,
+                  last_error, terminal_at, retention_eligible_at, created_at, updated_at
+             FROM batch WHERE $3::boolean
+           ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
+           RETURNING 1
+         )
+         SELECT COUNT(*)::int AS scanned,
+                (SELECT COUNT(*)::int FROM inserted) AS inserted
+           FROM batch`,
+        [...tids, write]
+      );
+      let parity = { checked: 0, missing: 0, divergent: 0 };
+      if (Number(copied.rows[0].scanned) > 0) {
+        parity = (await client.query(
+          `SELECT COUNT(*)::int AS checked,
+                  COUNT(*) FILTER (WHERE state.transaction_hash IS NULL)::int AS missing,
+                  COUNT(*) FILTER (WHERE state.transaction_hash IS NOT NULL AND (
+                    state.processing_status IS DISTINCT FROM capture.processing_status
+                    OR state.lease_owner IS DISTINCT FROM capture.lease_owner
+                    OR state.lease_until IS DISTINCT FROM capture.lease_until
+                    OR state.attempt_count IS DISTINCT FROM capture.attempt_count
+                    OR state.next_attempt_at IS DISTINCT FROM capture.next_attempt_at
+                    OR state.last_error IS DISTINCT FROM capture.last_error
+                    OR state.terminal_at IS DISTINCT FROM capture.terminal_at
+                    OR state.retention_eligible_at IS DISTINCT FROM capture.retention_eligible_at
+                    OR state.created_at IS DISTINCT FROM capture.created_at
+                    OR state.updated_at IS DISTINCT FROM capture.updated_at
+                  ))::int AS divergent
+             FROM robinhood_head_captures capture
+             LEFT JOIN robinhood_head_capture_states state
+               USING (chain, transaction_hash, log_index)
+            WHERE capture.ctid >= $1::tid AND capture.ctid < $2::tid`, tids
+        )).rows[0];
+      }
+      if (Number(parity.missing) > 0 || Number(parity.divergent) > 0) {
+        await client.query('ROLLBACK');
+        return {
+          startBlock, endBlock, scanned: Number(copied.rows[0].scanned), inserted: 0,
+          checked: Number(parity.checked), missing: Number(parity.missing),
+          divergent: Number(parity.divergent),
+        };
+      }
+      await client.query('COMMIT');
+      return {
+        startBlock, endBlock, scanned: Number(copied.rows[0].scanned),
+        inserted: Number(copied.rows[0].inserted), checked: Number(parity.checked),
+        missing: 0, divergent: 0,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function processBatch(input = {}) {
@@ -173,7 +284,10 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ assertMaintenanceAllowed, assertMirrorReady, processBatch });
+  return Object.freeze({
+    assertMaintenanceAllowed, assertMirrorReady, describePhysicalSource,
+    processBatch, processPhysicalBatch,
+  });
 }
 
 module.exports = {

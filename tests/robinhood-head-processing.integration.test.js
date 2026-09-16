@@ -412,6 +412,28 @@ describe('Robinhood head processing repository integration', () => {
     );
   });
 
+  it('backfills and audits a bounded physical heap range', async () => {
+    const identity = await seedPending({ block: 100 });
+    await db.query(
+      `DELETE FROM robinhood_head_capture_states
+        WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
+      [identity.transactionHash, identity.logIndex]
+    );
+    const states = createRobinhoodHeadCaptureStateRepository({ database: db });
+    const source = await states.describePhysicalSource();
+    assert.ok(source.heapBlocks > 0);
+    assert.match(source.relationFileNode, /^\d+$/);
+
+    const written = await states.processPhysicalBatch({
+      startBlock: 0, endBlock: source.heapBlocks,
+      write: true, statementTimeoutMs: 30_000,
+    });
+    assert.deepEqual(
+      [written.scanned, written.inserted, written.missing, written.divergent],
+      [1, 1, 0, 0]
+    );
+  });
+
   it('keeps retention from deleting a payload while its state is backfilled', async () => {
     const identity = await seedPending({ block: 100 });
     await db.query(

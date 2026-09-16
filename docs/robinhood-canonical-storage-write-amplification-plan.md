@@ -204,6 +204,13 @@ paridade integral do lifecycle copiado. Falha de paridade reverte o lote e não
 avança o checkpoint. O modo padrão é read-only; escrita exige `--write` e um
 checkpoint explícito.
 
+Se a correlação física da chave lógica tornar esse percurso dominado por I/O
+aleatório, o modo físico percorre faixas CTID limitadas com checkpoint separado.
+Ele conserva o gate de lag e a auditoria de lifecycle por faixa, rejeita qualquer
+mudança de `relfilenode` e depende do trigger ativo para cobrir linhas que mudem
+enquanto páginas já percorridas ficam para trás. Não é compatível com
+`VACUUM FULL`, `CLUSTER` ou outro rewrite durante a execução.
+
 O writer grava payload e estado na mesma transação. O consumidor antigo ainda
 permanece oficial. Uma auditoria compara identidades e estados antes de qualquer
 cutover.

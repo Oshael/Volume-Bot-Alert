@@ -648,6 +648,15 @@ todos os campos de lifecycle. Paridade ausente ou divergente faz rollback do lot
 e não avança o checkpoint. Somente um write que percorreu toda a tabela retorna
 `approved=true`; isso ainda não muda a autoridade nem autoriza o Corte 3B.
 
+Quando a baixa correlação física tornar o cursor keyset proibitivamente lento,
+use `npm run robinhood:backfill-head-capture-states-physical`. Esse modo percorre
+faixas de páginas do heap (`--page-batch`, default 2.048), usa checkpoint próprio
+e mantém o mesmo gate de lag, rollback e auditoria integral por faixa. O
+checkpoint registra o `relfilenode` e aborta se ocorrer rewrite; não execute
+`VACUUM FULL`, `CLUSTER` ou outra reescrita de `robinhood_head_captures` durante
+essa operação. Autovacuum comum é compatível. Inserts e updates concorrentes
+continuam cobertos pelo trigger da Stage 224.
+
 A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
 vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200. A Stage 107
