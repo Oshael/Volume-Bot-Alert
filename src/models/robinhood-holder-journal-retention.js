@@ -3,6 +3,7 @@ const { pruneJournalPrefix } = require('./robinhood-holder-journal-prefix-prune'
 
 const DEFAULT_RETENTION_BLOCKS = 20_000;
 const DEFAULT_BATCH_LIMIT = 5_000;
+const DEFAULT_SCAN_PAGE_LIMIT = 20_000;
 
 function boundedInteger(value, fallback, min, max, label) {
   if (value == null) return fallback;
@@ -29,6 +30,10 @@ function normalizeOptions(options = {}) {
     batchLimit: boundedInteger(
       options.batchLimit, DEFAULT_BATCH_LIMIT,
       1, 50_000, 'holderJournal.batchLimit'
+    ),
+    scanPageLimit: boundedInteger(
+      options.scanPageLimit, DEFAULT_SCAN_PAGE_LIMIT,
+      1, 50_000, 'holderJournal.scanPageLimit'
     ),
   });
 }
@@ -88,38 +93,134 @@ async function hasOldPendingEvent(client, cutoffBlock) {
   return result.rowCount > 0;
 }
 
-async function deleteExpiredBufferedBatch(client, cutoffBlock, batchLimit) {
+async function lockPruneScan(client) {
   const result = await client.query(
-    `/* holder-prune:delete_buffered */ WITH candidates AS MATERIALIZED (
-       SELECT journal.chain, journal.transaction_hash, journal.log_index
+    `SELECT scan_cutoff_block, cursor_block_number, cursor_transaction_index,
+            cursor_log_index, cursor_transaction_hash
+       FROM robinhood_holder_journal_prune_scans
+      WHERE chain = 'robinhood' FOR UPDATE`
+  );
+  if (result.rowCount) return result.rows[0];
+  const error = new Error('holder journal prune scan cursor is missing; apply Stage 229');
+  error.code = 'holder_journal_prune_scan_missing';
+  throw error;
+}
+
+async function scanExpiredBufferedPage(client, cutoffBlock, cursor, pageLimit, batchLimit) {
+  const cursorFilter = cursor == null ? '' : `AND (
+            journal.block_number, journal.transaction_index,
+            journal.log_index, journal.transaction_hash
+          ) > ($4::bigint, $5::integer, $6::integer, $7::varchar(66))`;
+  const params = [cutoffBlock, pageLimit, batchLimit];
+  if (cursor != null) params.push(
+    cursor.blockNumber, cursor.transactionIndex, cursor.logIndex, cursor.transactionHash
+  );
+  const result = await client.query(
+    `/* holder-prune:delete_buffered_page */ WITH page AS MATERIALIZED (
+       SELECT journal.chain, journal.block_number, journal.transaction_index,
+              journal.log_index, journal.transaction_hash, journal.token_address
          FROM robinhood_holder_transfer_journal journal
         WHERE journal.chain = 'robinhood' AND journal.applied = false
           AND journal.block_number < $1
-          AND NOT EXISTS (
-            SELECT 1 FROM robinhood_holder_token_states state
-             WHERE state.chain = journal.chain AND state.token_address = journal.token_address
-               AND state.ledger_status <> 'drifted'
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM robinhood_holder_global_backfill_tokens token
-            INNER JOIN robinhood_holder_global_backfill_runs run
-               ON run.id = token.run_id AND run.chain = token.chain
-             WHERE token.chain = journal.chain AND token.token_address = journal.token_address
-               AND token.status = 'active' AND run.barrier_block IS NOT NULL
-               AND run.status <> 'completed'
-          )
-        ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+          ${cursorFilter}
+        ORDER BY journal.block_number, journal.transaction_index,
+                 journal.log_index, journal.transaction_hash
         LIMIT $2::int
-        FOR UPDATE OF journal
-     )
+     ), eligible AS MATERIALIZED (
+       SELECT page.chain, page.block_number, page.transaction_index,
+              page.log_index, page.transaction_hash
+         FROM page
+         LEFT JOIN LATERAL (
+           SELECT true AS protected
+             FROM robinhood_holder_token_states state
+            WHERE state.chain = page.chain AND state.token_address = page.token_address
+              AND state.ledger_status <> 'drifted'
+            LIMIT 1
+         ) state_guard ON true
+         LEFT JOIN LATERAL (
+           SELECT true AS protected
+             FROM robinhood_holder_global_backfill_tokens token
+             JOIN robinhood_holder_global_backfill_runs run
+               ON run.id = token.run_id AND run.chain = token.chain
+            WHERE token.chain = page.chain AND token.token_address = page.token_address
+              AND token.status = 'active' AND run.barrier_block IS NOT NULL
+              AND run.status <> 'completed'
+            LIMIT 1
+         ) backfill_guard ON true
+        WHERE state_guard.protected IS NULL AND backfill_guard.protected IS NULL
+        ORDER BY page.block_number, page.transaction_index,
+                 page.log_index, page.transaction_hash
+        LIMIT $3::int
+     ), deleted AS (
      DELETE FROM robinhood_holder_transfer_journal journal
-     USING candidates
-      WHERE journal.chain = candidates.chain
-        AND journal.transaction_hash = candidates.transaction_hash
-        AND journal.log_index = candidates.log_index`,
-    [cutoffBlock, batchLimit]
+     USING eligible
+      WHERE journal.chain = eligible.chain
+        AND journal.transaction_hash = eligible.transaction_hash
+        AND journal.log_index = eligible.log_index
+        AND journal.applied = false AND journal.block_number < $1
+      RETURNING 1
+     )
+     SELECT (SELECT COUNT(*)::int FROM page) AS scanned,
+            (SELECT COUNT(*)::int FROM eligible) AS selected,
+            (SELECT COUNT(*)::int FROM deleted) AS deleted,
+            (SELECT jsonb_build_object(
+              'blockNumber', block_number::text,
+              'transactionIndex', transaction_index,
+              'logIndex', log_index,
+              'transactionHash', transaction_hash
+            ) FROM page ORDER BY block_number DESC, transaction_index DESC,
+                 log_index DESC, transaction_hash DESC LIMIT 1) AS page_cursor,
+            (SELECT jsonb_build_object(
+              'blockNumber', block_number::text,
+              'transactionIndex', transaction_index,
+              'logIndex', log_index,
+              'transactionHash', transaction_hash
+            ) FROM eligible ORDER BY block_number DESC, transaction_index DESC,
+                 log_index DESC, transaction_hash DESC LIMIT 1) AS eligible_cursor`,
+    params
   );
-  return result.rowCount;
+  return result.rows[0];
+}
+
+async function savePruneScan(client, cutoffBlock, cursor) {
+  await client.query(
+    `UPDATE robinhood_holder_journal_prune_scans
+        SET scan_cutoff_block = $1, cursor_block_number = $2,
+            cursor_transaction_index = $3, cursor_log_index = $4,
+            cursor_transaction_hash = $5, updated_at = NOW()
+      WHERE chain = 'robinhood'`,
+    [cutoffBlock, cursor.blockNumber, cursor.transactionIndex,
+      cursor.logIndex, cursor.transactionHash]
+  );
+}
+
+async function completePruneScan(client) {
+  await client.query(
+    `UPDATE robinhood_holder_journal_prune_scans
+        SET scan_cutoff_block = NULL, cursor_block_number = NULL,
+            cursor_transaction_index = NULL, cursor_log_index = NULL,
+            cursor_transaction_hash = NULL, completed_passes = completed_passes + 1,
+            last_pass_completed_at = NOW(), updated_at = NOW()
+      WHERE chain = 'robinhood'`
+  );
+}
+
+function scanPosition(scanState, floorBlock, cutoffBlock) {
+  const savedCutoff = scanState.scan_cutoff_block == null
+    ? null : BigInt(scanState.scan_cutoff_block);
+  const resume = savedCutoff !== null && savedCutoff > floorBlock
+    && savedCutoff <= cutoffBlock
+    && (scanState.cursor_block_number == null
+      || BigInt(scanState.cursor_block_number) >= floorBlock);
+  return {
+    cutoff: resume ? savedCutoff : cutoffBlock,
+    cursor: !resume || scanState.cursor_block_number == null ? null : {
+      blockNumber: String(scanState.cursor_block_number),
+      transactionIndex: Number(scanState.cursor_transaction_index),
+      logIndex: Number(scanState.cursor_log_index),
+      transactionHash: scanState.cursor_transaction_hash,
+    },
+  };
 }
 
 async function deleteAppliedBatch(client, cutoffBlock, batchLimit) {
@@ -195,29 +296,49 @@ function createRobinhoodHolderJournalRetention(options = {}) {
           batchLimit: normalized.batchLimit,
         }));
       }
-      const discardedBufferedEvents = await deleteExpiredBufferedBatch(
-        client, cutoffBlock.toString(), normalized.batchLimit
+      const scanState = await lockPruneScan(client);
+      const { cutoff: scanCutoff, cursor: scanCursor } = scanPosition(
+        scanState, floorBlock, cutoffBlock
       );
-      if (await hasOldPendingEvent(client, cutoffBlock.toString())) {
+      const scan = await scanExpiredBufferedPage(
+        client, scanCutoff.toString(), scanCursor,
+        normalized.scanPageLimit, normalized.batchLimit
+      );
+      const discardedBufferedEvents = Number(scan.deleted);
+      const scannedBufferedEvents = Number(scan.scanned);
+      const bounded = Number(scan.selected) === normalized.batchLimit
+        || scannedBufferedEvents === normalized.scanPageLimit;
+      if (bounded) {
+        const nextCursor = Number(scan.selected) === normalized.batchLimit
+          ? scan.eligible_cursor : scan.page_cursor;
+        await savePruneScan(client, scanCutoff.toString(), nextCursor);
+        return Object.freeze({
+          status: 'draining', deletedEvents: 0, discardedBufferedEvents,
+          scannedBufferedEvents, cutoffBlock: scanCutoff.toString(),
+          journalFloorBlock: floorBlock.toString(),
+        });
+      }
+      await completePruneScan(client);
+      if (await hasOldPendingEvent(client, scanCutoff.toString())) {
         return Object.freeze({
           status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
-          discardedBufferedEvents,
-          cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
+          discardedBufferedEvents, scannedBufferedEvents,
+          cutoffBlock: scanCutoff.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
       const deletedEvents = await deleteAppliedBatch(
-        client, cutoffBlock.toString(), normalized.batchLimit
+        client, scanCutoff.toString(), normalized.batchLimit
       );
-      if (await hasOlderJournalEvent(client, cutoffBlock.toString())) {
+      if (await hasOlderJournalEvent(client, scanCutoff.toString())) {
         return Object.freeze({
-          status: 'draining', deletedEvents, discardedBufferedEvents,
-          cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
+          status: 'draining', deletedEvents, discardedBufferedEvents, scannedBufferedEvents,
+          cutoffBlock: scanCutoff.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
-      const journalFloorBlock = await advanceFloor(client, cutoffBlock.toString());
+      const journalFloorBlock = await advanceFloor(client, scanCutoff.toString());
       return Object.freeze({
-        status: 'pruned', deletedEvents, discardedBufferedEvents,
-        cutoffBlock: cutoffBlock.toString(), journalFloorBlock,
+        status: 'pruned', deletedEvents, discardedBufferedEvents, scannedBufferedEvents,
+        cutoffBlock: scanCutoff.toString(), journalFloorBlock,
       });
     });
   }
@@ -228,6 +349,7 @@ function createRobinhoodHolderJournalRetention(options = {}) {
 module.exports = {
   DEFAULT_BATCH_LIMIT,
   DEFAULT_RETENTION_BLOCKS,
+  DEFAULT_SCAN_PAGE_LIMIT,
   createRobinhoodHolderJournalRetention,
   __private: { normalizeOptions },
 };

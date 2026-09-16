@@ -1204,6 +1204,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_ERROR_BACKOFF_MS: '1',
       ROBINHOOD_HOLDER_JOURNAL_RETENTION_BLOCKS: '9999999',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT: '999999',
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_SCAN_PAGE_LIMIT: '999999',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES: '999',
       ROBINHOOD_HOLDER_SNAPSHOT_ENABLED: 'true',
       ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS: '1',
@@ -1265,6 +1266,7 @@ describe('runtime worker groups config', () => {
         maxErrorBackoffMs: 10_000,
         retentionBlocks: 1_000_000,
         batchLimit: 50_000,
+        scanPageLimit: 50_000,
         maxBatches: 50,
       });
       assert.deepEqual(config.robinhoodHolderSnapshotWorker, {

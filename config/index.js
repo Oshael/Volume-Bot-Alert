@@ -1627,6 +1627,9 @@ module.exports = {
     batchLimit: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT, 5000, 1, 50_000
     ),
+    scanPageLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_JOURNAL_PRUNE_SCAN_PAGE_LIMIT, 20_000, 1, 50_000
+    ),
     maxBatches: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES, 5, 1, 50
     ),

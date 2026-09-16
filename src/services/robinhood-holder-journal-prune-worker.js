@@ -26,6 +26,7 @@ function normalizeOptions(input = {}) {
       input.retentionBlocks, 20_000, 1, 1_000_000, 'retentionBlocks'
     ),
     batchLimit: boundedInteger(input.batchLimit, 5000, 1, 50_000, 'batchLimit'),
+    scanPageLimit: boundedInteger(input.scanPageLimit, 20_000, 1, 50_000, 'scanPageLimit'),
     maxBatches: boundedInteger(input.maxBatches, 5, 1, 50, 'maxBatches'),
   });
 }
@@ -50,19 +51,26 @@ function validatePruneResult(result) {
 async function runPruneTick(retention, options) {
   let batches = 0;
   let deletedEvents = 0;
+  let discardedBufferedEvents = 0;
+  let scannedBufferedEvents = 0;
   let last = null;
   while (batches < options.maxBatches) {
     last = validatePruneResult(await retention.pruneOnce({
       retentionBlocks: options.retentionBlocks, batchLimit: options.batchLimit,
+      scanPageLimit: options.scanPageLimit,
     }));
     batches += 1;
     deletedEvents += Number(last.deletedEvents) || 0;
+    discardedBufferedEvents += Number(last.discardedBufferedEvents) || 0;
+    scannedBufferedEvents += Number(last.scannedBufferedEvents) || 0;
     if (TERMINAL_STATUSES.has(last.status)) break;
   }
   return Object.freeze({
     status: last.status,
     batches,
     deletedEvents,
+    discardedBufferedEvents,
+    scannedBufferedEvents,
     reason: last.reason || null,
     cutoffBlock: last.cutoffBlock ?? null,
     journalFloorBlock: last.journalFloorBlock ?? null,
@@ -87,6 +95,7 @@ function createRobinhoodHolderJournalPruneWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, halted: false,
     lastResult: null, lastError: null, totalRuns: 0, totalErrors: 0,
     consecutiveErrors: 0, totalBatches: 0, totalDeletedEvents: 0,
+    totalDiscardedBufferedEvents: 0, totalScannedBufferedEvents: 0,
     totalBlockedRuns: 0, lastCompletedAt: null,
   };
 
@@ -112,6 +121,8 @@ function createRobinhoodHolderJournalPruneWorker(deps = {}) {
       status.consecutiveErrors = 0;
       status.totalBatches += result.batches;
       status.totalDeletedEvents += result.deletedEvents;
+      status.totalDiscardedBufferedEvents += result.discardedBufferedEvents;
+      status.totalScannedBufferedEvents += result.scannedBufferedEvents;
       if (result.status === 'blocked') status.totalBlockedRuns += 1;
       return result;
     } catch (error) {

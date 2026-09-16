@@ -2703,6 +2703,7 @@ Stages confirmados:
 | 207 | identidade do lifecycle de swaps isolada por `block_hash` |
 | 208 | preimages reversíveis dos agregados de transfers ainda não finalizados |
 | 215 | âncora canônica durável do mint no outbox de resolução de deployment |
+| 229 | cursor persistente da varredura limitada do prune automático do journal holder |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -2739,6 +2740,17 @@ a consumi-las, então somente eventos abaixo do cutoff são descartados em batch
 Qualquer estado diferente de `drifted` e qualquer membro de campanha global ativa
 continua protegendo seu journal e bloqueia o avanço do floor enquanto houver
 pendencia anterior ao cutoff.
+O prune automático requer `node src/utils/db-init-stage229.js` antes do restart
+do worker. Ele lê no máximo `ROBINHOOD_HOLDER_JOURNAL_PRUNE_SCAN_PAGE_LIMIT`
+eventos pendentes por transação (padrão 20.000; máximo 50.000), seleciona no
+máximo `ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT` para exclusão e persiste a
+posição no mesmo commit. Ao completar uma passagem, recomeça do início para
+reavaliar eventos que deixaram de ser protegidos. O cutoff fica fixo durante a
+passagem e nunca avança o `journal_floor_block` antes de revalidar pendências;
+reinício, erro ou reorg não pulam eventos. A lease continua única, com até
+`ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES` páginas por tick, intervalo e
+backoff existentes. A telemetria expõe linhas examinadas e buffers descartados.
+O comando manual com `--before-block` mantém a lógica de prefixo auditado abaixo.
 
 Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js
 --before-block=BLOCO_EXCLUSIVO --batch-limit=5000 --max-batches=100 --pause-ms=1000

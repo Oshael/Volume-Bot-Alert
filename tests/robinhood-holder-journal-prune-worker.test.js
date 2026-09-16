@@ -43,12 +43,13 @@ describe('Robinhood holder journal prune worker', () => {
     await clock.scheduled[0].callback();
 
     assert.deepEqual(calls, [
-      { retentionBlocks: 20_000, batchLimit: 5000 },
-      { retentionBlocks: 20_000, batchLimit: 5000 },
+      { retentionBlocks: 20_000, batchLimit: 5000, scanPageLimit: 20_000 },
+      { retentionBlocks: 20_000, batchLimit: 5000, scanPageLimit: 20_000 },
     ]);
     assert.equal(clock.scheduled[1].delayMs, 90_000);
     assert.deepEqual(worker.getStatus().lastResult, {
-      status: 'pruned', batches: 2, deletedEvents: 7, reason: null,
+      status: 'pruned', batches: 2, deletedEvents: 7,
+      discardedBufferedEvents: 0, scannedBufferedEvents: 0, reason: null,
       cutoffBlock: '100', journalFloorBlock: '100', batchBudgetExhausted: false,
     });
     assert.equal(worker.getStatus().totalDeletedEvents, 7);
