@@ -1392,6 +1392,94 @@ describe('Dashboard routes', () => {
     }
   });
 
+  it('serves unified radar bootstrap with user blocks, pins and RH payload semantics', async () => {
+    const originals = [dashboardRadarReader.listExactRadar, dashboardRadarReader.listRadarPins,
+      userBlocklist.getAllForChains, alertTickerPeers.listTickerPeerSummariesForTokens];
+    const blocked = `robinhood:0x${'9'.repeat(40)}`;
+    const dismissed = `robinhood:0x${'8'.repeat(40)}`;
+    const pin = `robinhood:0x${'2'.repeat(40)}`;
+    dashboardRadarReader.listExactRadar = async (input) => {
+      assert.equal(input.bucket, 'all');
+      assert.deepEqual(input.chains, ['robinhood']);
+      assert.deepEqual(input.dismissedIdentities.map((value) => value.key || value), [dismissed, blocked]);
+      assert.deepEqual([input.ageMinMinutes, input.ageMaxMinutes, input.minFdv], [0, null, 45_000]);
+      assert.equal(input.starredOnly, true);
+      assert.equal(input.starredIdentities[0].key, pin);
+      return { total: 2, page: 0, perPage: 30, hasMore: false, rows: [
+        normalizedMonitoredRow('robinhood', { symbol: 'OLD' }),
+        normalizedMonitoredRow('robinhood', { symbol: 'NEW',
+          identity: { chain: 'robinhood', address: `0x${'b'.repeat(40)}` },
+          tokenCreatedAt: Date.parse('2026-07-15T17:00:00Z') }),
+      ] };
+    };
+    dashboardRadarReader.listRadarPins = async (input) => {
+      assert.deepEqual(input.excludedIdentities, [blocked]);
+      assert.deepEqual(input.pinnedIdentities, [pin, blocked]);
+      assert.equal(input.pageRows.length, 2);
+      return [normalizedMonitoredRow('robinhood', {
+        identity: { chain: 'robinhood', address: pin.split(':')[1] }, symbol: 'PIN',
+      })];
+    };
+    userBlocklist.getAllForChains = async (id, chains) => {
+      assert.equal(id, userId);
+      assert.deepEqual(chains, ['robinhood']);
+      return [{ chain: 'robinhood', address: blocked.split(':')[1] }];
+    };
+    alertTickerPeers.listTickerPeerSummariesForTokens = async () => new Map();
+    try {
+      const res = await request(app).post('/api/dashboard/radar-bootstrap')
+        .set('Authorization', `Bearer ${token}`).send({
+          asOf: '2026-07-15T18:00:45Z', minFdv: 45_000, starredOnly: true,
+          starredIdentities: [pin], dismissedIdentities: [dismissed],
+          pinnedIdentities: [pin, blocked],
+        });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.source, 'workspace-radar-v1');
+      assert.equal(res.body.asOf, '2026-07-15T18:00:00.000Z');
+      assert.deepEqual(res.body.chains, ['robinhood']);
+      assert.deepEqual(res.body.all.tokens.map((item) => item.symbol), ['OLD', 'NEW']);
+      assert.equal(res.body.all.total, 2);
+      assert.equal(res.body.all.tokens[0].mcap, null);
+      assert.equal(res.body.all.tokens[0].fdv, 150_000);
+      assert.equal(res.body.all.pinnedTokens[0].symbol, 'PIN');
+      assert.equal(res.body.recent, undefined);
+      assert.equal(res.body.oldWeek, undefined);
+      dashboardRadarReader.listExactRadar = async () => { throw new Error('test reader failure'); };
+      const failed = await request(app).post('/api/dashboard/radar-bootstrap')
+        .set('Authorization', `Bearer ${token}`).send({});
+      assert.equal(failed.status, 500);
+      assert.equal(failed.body.error, 'Failed to load radar workspace bootstrap');
+    } finally {
+      [dashboardRadarReader.listExactRadar, dashboardRadarReader.listRadarPins,
+        userBlocklist.getAllForChains, alertTickerPeers.listTickerPeerSummariesForTokens] = originals;
+    }
+  });
+
+  it('rejects unauthorized, unavailable and malformed unified radar bootstrap requests', async () => {
+    assert.equal((await request(app).post('/api/dashboard/radar-bootstrap').send({})).status, 401);
+    const runtimeConfig = require('../config');
+    const visible = runtimeConfig.robinhoodUserVisibility.enabled;
+    try {
+      runtimeConfig.robinhoodUserVisibility.enabled = false;
+      const hidden = await request(app).post('/api/dashboard/radar-bootstrap')
+        .set('Authorization', `Bearer ${token}`).send({});
+      assert.equal(hidden.status, 400);
+      assert.equal(hidden.body.code, 'CHAIN_NOT_AVAILABLE');
+    } finally {
+      runtimeConfig.robinhoodUserVisibility.enabled = visible;
+    }
+    for (const payload of [
+      { chains: ['solana'] }, { chains: ['base'] }, { page: 5, perPage: 100 },
+      { ageMinMinutes: 10081, ageMaxMinutes: 1440 }, { pinnedIdentities: ['bad'] },
+      { starredOnly: 'false' }, { page: true }, { asOf: 'bad' },
+      { sorts: [{ mode: 'vol', window: '30d' }] },
+    ]) {
+      const res = await request(app).post('/api/dashboard/radar-bootstrap')
+        .set('Authorization', `Bearer ${token}`).send(payload);
+      assert.equal(res.status, 400, JSON.stringify(payload));
+    }
+  });
+
   it('rejects malformed history bootstrap payloads', async () => {
     const res = await request(app)
       .post('/api/dashboard/history-bootstrap')

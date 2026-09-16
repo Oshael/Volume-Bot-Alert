@@ -1,6 +1,6 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: primeiro corte implementado no reader interno; API e interface ainda pendentes.
+Status: consulta unificada disponível no reader e na API; interface ainda pendente.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -211,13 +211,21 @@ misturadas, contagem, ordem, identidade, filtros e isolamento de Solana. O adapt
 Solana também conserva compatibilidade com o contrato multichain. Essa validação
 não comprova plano de execução ou desempenho em PostgreSQL com dados reais.
 
-Próximo corte: expor a consulta unificada na API com autorização/blocklist/pins
-existentes e integração HTTP/SQL direcionada; depois conectar a tabela única.
+Continuação implementada no corte 1B abaixo; falta conectar a tabela única.
 O frontend e `history-bootstrap` ainda exibem/retornam os dois grupos antigos.
 As decisões da etapa 0 sobre UPNL, altas e contrapartes continuam pendentes para
 suas respectivas etapas e não bloqueiam o contrato unificado de tokens.
 
 ### Dimensionamento e sequência
+
+Corte 1B: `POST /api/dashboard/radar-bootstrap` registrado no dashboard com
+handler/validação em `src/services/dashboard-radar-bootstrap.js`. O endpoint é
+autenticado, respeita visibilidade RH, limita o rollout à RH e reutiliza o
+reader, bloqueios do usuário, pins e serialização existentes. Validação HTTP
+em `tests/dashboard.test.js`; SQL real com tabelas temporárias em
+`tests/dashboard-radar-sql.integration.test.js`, sem migrações ou dados de
+produção. O teste SQL cobre seleção/paginação e filtros; não mede desempenho
+do catálogo de produção. Próximo corte: frontend da tabela única e preferências.
 
 O escopo ampliado inclui Radar, consultas de wallet, contabilidade temporal,
 transfers, gráficos e conteúdo social. Estimativa preliminar: 3.500–5.500 linhas

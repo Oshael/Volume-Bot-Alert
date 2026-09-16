@@ -1656,6 +1656,21 @@ Os modos `recent`/`oldWeek`, defaults e seleção explícita de chains continuam
 compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstrap`
 nem unifica automaticamente as tabelas do frontend.
 
+`POST /api/dashboard/radar-bootstrap` expõe a lista unificada com autenticação,
+rate limit e validação de origem existentes. O rollout aceita somente
+`chains: ['robinhood']` (também o default), sujeito a
+`ROBINHOOD_USER_VISIBILITY_ENABLED`; Solana é rejeitada nessa rota. O body usa
+`page` (default 0), `perPage` (30), `sorts`, `searchQuery`, `ageMinMinutes`,
+`ageMaxMinutes`, `minFdv`/`maxFdv`, `minMcap`/`maxMcap`, `starredOnly` boolean,
+`starredIdentities`, `dismissedIdentities` e `pinnedIdentities` (até 500 chaves
+`chain:address`). Campos numéricos devem ser números JSON; máximo de idade
+`null` é aberto. A resposta contém `source: 'workspace-radar-v1'`, `asOf`,
+`generatedAt`, `chains` e `all`, com `total`, `page`, `perPage`, `count`,
+`hasMore`, `tokens` e `pinnedTokens`. Bloqueios do usuário excluem resultados
+e pins; pins preservam a semântica de order-lock fora dos filtros, sem repetir
+a página. Payload inválido retorna 400; falha de leitura retorna 500 sem lista
+parcial. `history-bootstrap` continua compatível com o frontend atual.
+
 Rotas web principais:
 
 | Rota | Função |

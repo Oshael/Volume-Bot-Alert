@@ -13,6 +13,7 @@ const INTEGRATION_TESTS = [
   'catalog.test.js',
   'config.test.js',
   'dashboard.test.js',
+  'dashboard-radar-sql.integration.test.js',
   'mock-trading-routes.test.js',
   'telegram-routes.test.js',
   'telegram-alert-delivery.integration.test.js',

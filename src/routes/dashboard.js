@@ -14,6 +14,7 @@ const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
 const dashboardChainReader = require('../services/dashboard-chain-reader');
 const dashboardRadarReader = require('../services/dashboard-radar-reader');
+const { createRadarBootstrapHandler } = require('../services/dashboard-radar-bootstrap');
 const dashboardTokenViewReader = require('../services/dashboard-token-view-reader');
 const marketTickerService = require('../services/market-ticker-service');
 const {
@@ -41,7 +42,7 @@ const {
   getAvailableTokenChains,
   isRobinhoodUserVisible,
 } = require('../utils/token-chain-availability');
-const { rejectHiddenRobinhoodRequests } = require('../middleware/token-chain-visibility');
+const { rejectHiddenRobinhoodRequests, rejectHiddenRobinhoodRoute } = require('../middleware/token-chain-visibility');
 const {
   normalizeTokenAddress,
   normalizeTokenChain,
@@ -1415,6 +1416,13 @@ router.get('/top-performers', dashboardLimiter, async (req, res) => {
     return res.status(500).json({ error: 'Failed to load top performers' });
   }
 });
+
+router.post('/radar-bootstrap', dashboardLimiter, requireTrustedOrigin, rejectHiddenRobinhoodRoute,
+  createRadarBootstrapHandler({
+    reader: dashboardRadarReader, blocklist: userBlocklist,
+    loadTickerPeers: loadTickerPeerSummariesSafe,
+    buildToken: buildRadarTokenPayload, buildPage: buildRadarBucketPayload,
+  }));
 
 router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   const parsed = parseHistoryBootstrapRequestPayload(req.body);
