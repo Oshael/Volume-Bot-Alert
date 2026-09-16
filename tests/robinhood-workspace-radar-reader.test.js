@@ -4,6 +4,7 @@ const {
   createRobinhoodWorkspaceRadarReader,
   __private,
 } = require('../src/services/robinhood-workspace-radar-reader');
+const { createDashboardRadarReader } = require('../src/services/dashboard-radar-reader');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const DISMISSED = `0x${'a'.repeat(40)}`;
@@ -40,6 +41,47 @@ function metrics(overrides = {}) {
 }
 
 describe('Robinhood workspace radar reader', () => {
+  it('paginates one unified RH prefix across recent and old ages through the dashboard reader', async () => {
+    const dates = ['2026-07-01', '2026-07-15', '2026-07-08'];
+    const addresses = [TOKEN, `0x${'2'.repeat(40)}`, `0x${'3'.repeat(40)}`];
+    const database = { async query(sql, params) {
+      // Exercise the real dashboard/adapter/normalizer composition; only I/O is stubbed.
+      assert.deepEqual(params.slice(1, 9), [
+        30_000, null, 0, null, '%persistent%', [DISMISSED], true, addresses,
+      ]);
+      assert.match(sql, /\$5::numeric IS NULL/);
+      return { rows: dates.slice(0, params[9]).map((date, index) => catalogRow({
+        address: addresses[index], first_seen_at: `${date}T18:00:00.000Z`, total_count: '3',
+      })) };
+    } };
+    const dashboard = createDashboardRadarReader({
+      robinhoodReader: createRobinhoodWorkspaceRadarReader({
+        database,
+        windowRead: { async getMetricsByAddresses(input) {
+          return input.addresses.map((address) => metrics({
+            address, volume1hUsd: 300 - addresses.indexOf(address) * 100,
+          }));
+        } },
+      }),
+      solanaReader: { async listRadarPrefix() { assert.fail('RH query must not read Solana'); } },
+    });
+    const input = {
+      asOf: AS_OF, bucket: 'all', chains: ['robinhood'], perPage: 2,
+      searchQuery: 'persistent', sorts: [{ mode: 'vol', window: '1h' }],
+      dismissedIdentities: [`robinhood:${DISMISSED}`], starredOnly: true,
+      starredIdentities: addresses.map((address) => `robinhood:${address}`),
+    };
+    const first = await dashboard.listExactRadar(input);
+    const last = await dashboard.listExactRadar({ ...input, page: 1 });
+    const beyond = await dashboard.listExactRadar({ ...input, page: 2 });
+    assert.deepEqual([first.bucket, first.total, first.hasMore], ['all', 3, true]);
+    assert.deepEqual([last.total, last.hasMore, beyond.total, beyond.rows.length], [3, false, 3, 0]);
+    const combined = [...first.rows, ...last.rows];
+    assert.deepEqual(combined.map((item) => item.identity.address), addresses);
+    assert.equal(new Set(combined.map((item) => item.identity.key)).size, 3);
+    assert.deepEqual(combined.map((item) => item.volume1hUsd), [300, 200, 100]);
+  });
+
   it('keeps a stale persistent row with first-seen age and FDV semantics', async () => {
     const calls = [];
     const reader = createRobinhoodWorkspaceRadarReader({

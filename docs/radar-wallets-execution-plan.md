@@ -1,6 +1,6 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: planejamento; nenhuma funcionalidade deste plano foi implementada.
+Status: primeiro corte implementado no reader interno; API e interface ainda pendentes.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -197,6 +197,27 @@ Qualquer exceção precisa dos limites e garantias exigidos no AGENTS.md. Nenhum
 serviço VPS novo está aprovado; se necessário, ler o runbook de serviços antes.
 
 ## 9. Etapas de execução e aprovação
+
+### Corte 1A — contrato interno de consulta unificada
+
+Implementado `bucket: 'all'` no normalizador compartilhado, reutilizando a
+consulta por chain e a composição paginada existentes. Aceita faixas que cruzam
+7 dias; sem máximo informado, abrange todas as idades conhecidas. Preserva os
+modos Recent/Old e não muda as chains selecionadas pelos consumidores atuais.
+
+Cobertura: limites 24h/7d, intervalo inválido, teto de paginação e composição do
+reader real com o adapter RH (I/O simulado), incluindo páginas com idades
+misturadas, contagem, ordem, identidade, filtros e isolamento de Solana. O adapter
+Solana também conserva compatibilidade com o contrato multichain. Essa validação
+não comprova plano de execução ou desempenho em PostgreSQL com dados reais.
+
+Próximo corte: expor a consulta unificada na API com autorização/blocklist/pins
+existentes e integração HTTP/SQL direcionada; depois conectar a tabela única.
+O frontend e `history-bootstrap` ainda exibem/retornam os dois grupos antigos.
+As decisões da etapa 0 sobre UPNL, altas e contrapartes continuam pendentes para
+suas respectivas etapas e não bloqueiam o contrato unificado de tokens.
+
+### Dimensionamento e sequência
 
 O escopo ampliado inclui Radar, consultas de wallet, contabilidade temporal,
 transfers, gráficos e conteúdo social. Estimativa preliminar: 3.500–5.500 linhas

@@ -1646,6 +1646,16 @@ silenciar alertas, pois isso elimina o histórico e pode gerar reabertura imedia
 
 ## 7. Superfícies do produto
 
+O reader interno `dashboard-radar-reader.listExactRadar` aceita `bucket: 'all'`
+para ordenar e paginar tokens de todas as idades conhecidas numa consulta por
+chain. O intervalo padrão é `ageMinMinutes: 0`, `ageMaxMinutes: null`; limites
+explícitos são inclusivos, em minutos. Neste modo, máximo `0` significa idade
+zero, não intervalo aberto. Idades desconhecidas ou futuras ficam fora da lista.
+Continuam valendo até 100 itens por página e prefixo de até 500 por chain.
+Os modos `recent`/`oldWeek`, defaults e seleção explícita de chains continuam
+compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstrap`
+nem unifica automaticamente as tabelas do frontend.
+
 Rotas web principais:
 
 | Rota | Função |

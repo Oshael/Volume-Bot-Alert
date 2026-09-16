@@ -86,6 +86,54 @@ describe('dashboard radar query contract', () => {
     ] }), /duplicates/);
   });
 
+  it('accepts an explicit all bucket without changing legacy defaults', () => {
+    for (const [bucket, minimum, maximum] of [
+      ['all', 0, null], ['recent', 0, 10_080], ['oldWeek', 10_080, null],
+    ]) {
+      const query = normalizeRadarQuery({ asOf: AS_OF, bucket, chains: ['robinhood'] });
+      assert.equal(query.bucket, bucket);
+      assert.deepEqual([query.ageMinMinutes, query.ageMaxMinutes], [minimum, maximum]);
+      assert.deepEqual(query.chains, ['robinhood']);
+    }
+    for (const maximum of [undefined, null, '']) {
+      assert.equal(normalizeRadarQuery({ bucket: 'all', ageMaxMinutes: maximum }).ageMaxMinutes, null);
+    }
+    assert.equal(normalizeRadarQuery({ bucket: 'all', ageMaxMinutes: 0 }).ageMaxMinutes, 0);
+  });
+
+  it('filters unified ages inclusively across 24h and seven days', () => {
+    const cases = [
+      { range: {}, included: [0, 1440, 10_080, 10_081, 43_200], excluded: [-1] },
+      { range: { ageMaxMinutes: 1440 }, included: [0, 1439, 1440], excluded: [1441, 10_080] },
+      { range: { ageMinMinutes: 10_079, ageMaxMinutes: 10_081 },
+        included: [10_079, 10_080, 10_081], excluded: [1440, 10_078, 10_082] },
+      { range: { ageMinMinutes: 10_081 }, included: [10_081, 43_200], excluded: [0, 10_080] },
+    ];
+    for (const { range, included, excluded } of cases) {
+      const query = normalizeRadarQuery({ asOf: AS_OF, bucket: 'all', ...range });
+      for (const [ages, expected] of [[included, true], [excluded, false]]) {
+        for (const minutes of ages) {
+          const age = resolveRadarTokenAge({
+            tokenCreatedAt: Date.parse(query.asOf) - minutes * 60_000,
+          });
+          assert.equal(isRadarAgeInQuery(age, query), expected, `age=${minutes}, ${JSON.stringify(range)}`);
+        }
+      }
+      assert.equal(isRadarAgeInQuery(resolveRadarTokenAge({}), query), false);
+    }
+  });
+
+  it('retains bounded validation for unified age filters and pages', () => {
+    for (const range of [
+      { ageMinMinutes: -1 }, { ageMaxMinutes: -1 }, { ageMinMinutes: 0.5 },
+      { ageMinMinutes: 1441, ageMaxMinutes: 1440 },
+      { ageMaxMinutes: 100 * 365 * 24 * 60 + 1 },
+    ]) {
+      assert.throws(() => normalizeRadarQuery({ bucket: 'all', ...range }), /age/);
+    }
+    assert.throws(() => normalizeRadarQuery({ bucket: 'all', page: 5, perPage: 100 }), /prefix/);
+  });
+
   it('uses chain-native age, falls back to first seen and preserves unknown', () => {
     const native = resolveRadarTokenAge({
       tokenCreatedAt: String(Date.parse('2026-07-10T00:00:00.000Z')),

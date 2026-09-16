@@ -37,6 +37,22 @@ function metrics(overrides = {}) {
 }
 
 describe('Solana workspace radar reader', () => {
+  it('supports the unified age contract without changing the chain adapter', async () => {
+    const reader = createSolanaWorkspaceRadarReader({
+      database: { async query(_sql, params) {
+        assert.deepEqual(params.slice(3, 5), [0, null]);
+        return { rows: [catalogRow({
+          last_token_created_at_ms: String(Date.parse('2026-06-01T00:00:00.000Z')),
+        })] };
+      } },
+      windowRead: { async getMetricsByAddresses() { return [metrics()]; } },
+    });
+    const result = await reader.listRadarPrefix({ asOf: AS_OF, bucket: 'all' });
+    assert.equal(result.total, 1);
+    assert.equal(result.rows[0].identity.chain, 'solana');
+    assert.equal(result.rows[0].tokenAge.timestampMs, Date.parse('2026-06-01T00:00:00.000Z'));
+  });
+
   it('reads an inactive persistent row with normalized age, valuation and coverage', async () => {
     const calls = [];
     const reader = createSolanaWorkspaceRadarReader({

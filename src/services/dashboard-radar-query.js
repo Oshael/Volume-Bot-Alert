@@ -108,7 +108,7 @@ function normalizeAgeRange(input, bucket) {
 }
 
 function normalizeRadarQuery(input = {}) {
-  const bucket = input.bucket === 'oldWeek' ? 'oldWeek' : 'recent';
+  const bucket = ['all', 'oldWeek'].includes(input.bucket) ? input.bucket : 'recent';
   const page = integer(input.page, 0, 'radar page');
   const perPage = integer(input.perPage, 30, 'radar page size', 1);
   if (perPage > MAX_PAGE_SIZE || ((page + 1) * perPage) > MAX_PREFIX) {
