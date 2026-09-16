@@ -119,7 +119,7 @@ describe('robinhood derived live sinks', () => {
       alertsRequested: true,
       now: () => NOW,
       workerLease: { list: async () => healthyLeases() },
-      processingRepository: { getOldestActiveCapture: async () => null },
+      processingRepositorySelector: async () => ({ getOldestActiveCapture: async () => null }),
       liveCatalogWorker: fakeWorker('catalog', calls),
       realtimeAlertWorker: fakeWorker('alerts', calls),
       marketAggregateWorker: fakeWorker('aggregates', calls),

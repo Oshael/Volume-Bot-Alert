@@ -2,8 +2,8 @@ require('dotenv').config();
 
 const db = require('../models/db');
 const {
-  createRobinhoodHeadProcessingRepository,
-} = require('../models/robinhood-head-processing');
+  resolveHeadProcessingRepository,
+} = require('../models/robinhood-head-processing-authority');
 
 const APPLY_FLAG = '--apply';
 const BATCH_SIZE_PREFIX = '--batch-size=';
@@ -94,7 +94,7 @@ async function runBlockedRecovery(input = {}) {
 
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
-  const repository = createRobinhoodHeadProcessingRepository({ database: db });
+  const repository = await resolveHeadProcessingRepository({ database: db });
   const result = await runBlockedRecovery({
     repository,
     ...options,

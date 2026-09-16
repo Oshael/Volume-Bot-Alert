@@ -6,8 +6,8 @@ const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('../models/robinhood-wallet-swap-realtime-outbox');
 const {
-  createRobinhoodHeadProcessingRepository,
-} = require('../models/robinhood-head-processing');
+  resolveHeadProcessingRepository,
+} = require('../models/robinhood-head-processing-authority');
 const {
   DEFAULT_RETENTION_MS: DEFAULT_CHAIN_EVENT_RETENTION_MS,
   runPilot: pruneChainEvents,
@@ -512,8 +512,10 @@ async function maintainHeadCaptures(database, options, deps) {
     return { status: 'cooldown', deleted: 0 };
   }
   state.lastRunAtMs = nowMs;
+  const selectRepository = deps.headProcessingRepositorySelector
+    || resolveHeadProcessingRepository;
   const repository = deps.headProcessingRepository
-    || createRobinhoodHeadProcessingRepository({ database });
+    || await selectRepository({ database });
   const deleted = await repository.pruneExpiredCaptures({ limit: options.capturePruneLimit });
   return { status: 'completed', deleted };
 }

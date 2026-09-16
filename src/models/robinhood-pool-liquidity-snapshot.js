@@ -183,7 +183,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     const { rows } = await database.query(
       `SELECT cursor.checkpoint_block,
               (SELECT MIN(capture.block_number)
-                 FROM robinhood_head_captures capture
+                 FROM robinhood_head_capture_states capture
                 WHERE capture.chain = cursor.chain AND capture.stream = cursor.stream
                   AND capture.processing_status IN ('pending', 'leased', 'blocked')
               ) AS pending_block

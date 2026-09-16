@@ -204,11 +204,11 @@ function createRobinhoodCanonicalWalletSwapAudit(options = {}) {
       const stateResult = await client.query(
         `WITH leased AS MATERIALIZED (
            SELECT block_number, transaction_index, log_index
-             FROM robinhood_head_captures
+             FROM robinhood_head_capture_states
             WHERE chain=$1 AND stream='market' AND processing_status='leased'
          ), active AS (
            (SELECT block_number, transaction_index, log_index
-              FROM robinhood_head_captures
+              FROM robinhood_head_capture_states
              WHERE chain=$1 AND stream='market' AND processing_status='pending'
              ORDER BY block_number, transaction_index, log_index LIMIT 1)
            UNION ALL

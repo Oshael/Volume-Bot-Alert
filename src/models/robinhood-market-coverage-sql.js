@@ -26,19 +26,23 @@ market_head_cursor AS (
   WHERE chain = 'robinhood' AND stream = 'market'
 ),
 leased_market_frontier AS MATERIALIZED (
-  SELECT block_number, transaction_index, log_index,
-    COALESCE(evidence->>'timestampMs', evidence#>>'{event,timestampMs}') AS timestamp_ms
-  FROM robinhood_head_captures
-  WHERE chain = 'robinhood' AND stream = 'market'
-    AND processing_status = 'leased'
+  SELECT state.block_number, state.transaction_index, state.log_index,
+    COALESCE(payload.evidence->>'timestampMs', payload.evidence#>>'{event,timestampMs}')
+      AS timestamp_ms
+  FROM robinhood_head_capture_states state
+  JOIN robinhood_head_captures payload USING (chain, transaction_hash, log_index)
+  WHERE state.chain = 'robinhood' AND state.stream = 'market'
+    AND state.processing_status = 'leased'
 ),
 active_market_frontier AS (
-  (SELECT block_number, transaction_index, log_index,
-      COALESCE(evidence->>'timestampMs', evidence#>>'{event,timestampMs}') AS timestamp_ms
-   FROM robinhood_head_captures
-   WHERE chain = 'robinhood' AND stream = 'market'
-     AND processing_status = 'pending'
-   ORDER BY block_number, transaction_index, log_index
+  (SELECT state.block_number, state.transaction_index, state.log_index,
+      COALESCE(payload.evidence->>'timestampMs', payload.evidence#>>'{event,timestampMs}')
+        AS timestamp_ms
+   FROM robinhood_head_capture_states state
+   JOIN robinhood_head_captures payload USING (chain, transaction_hash, log_index)
+   WHERE state.chain = 'robinhood' AND state.stream = 'market'
+     AND state.processing_status = 'pending'
+   ORDER BY state.block_number, state.transaction_index, state.log_index
    LIMIT 1)
   UNION ALL
   (SELECT block_number, transaction_index, log_index, timestamp_ms

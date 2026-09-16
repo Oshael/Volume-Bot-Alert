@@ -96,14 +96,15 @@ test('round monitor reads both streams and only due pending work, then rolls bac
       (chain text, stream text, next_block bigint, safe_head bigint, updated_at timestamptz);
     CREATE TEMP TABLE worker_leases (lease_key text, owner_id text, lease_until timestamptz,
       heartbeat_at timestamptz, metadata jsonb);
-    CREATE TEMP TABLE robinhood_head_captures
+    CREATE TEMP TABLE robinhood_head_capture_states
       (chain text, stream text, processing_status text, next_attempt_at timestamptz);
-    CREATE INDEX ON robinhood_head_captures(next_attempt_at) WHERE processing_status = 'pending';
+    CREATE INDEX ON robinhood_head_capture_states(next_attempt_at)
+      WHERE processing_status = 'pending';
     INSERT INTO robinhood_head_capture_cursors VALUES
       ('robinhood','discovery',100,99,NOW()), ('robinhood','market',100,99,NOW());
     INSERT INTO worker_leases VALUES ('robinhood-processing-worker','test',NOW()+INTERVAL '2 minutes',
       NOW(),'{}');
-    INSERT INTO robinhood_head_captures VALUES
+    INSERT INTO robinhood_head_capture_states VALUES
       ('robinhood','discovery','leased',NOW()), ('robinhood','discovery','pending',NOW()+INTERVAL '1 hour'),
       ('robinhood','market','pending',NOW());`);
   const health = await readHealth(client, database, 'pg_temp');

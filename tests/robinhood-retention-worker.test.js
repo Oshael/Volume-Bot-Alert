@@ -166,7 +166,14 @@ describe('Robinhood retention worker', () => {
     let nowMs = 10_000;
     let calls = 0;
     deps.now = () => nowMs;
-    deps.headProcessingRepository.pruneExpiredCaptures = async ({ limit }) => {
+    const selectedRepository = deps.headProcessingRepository;
+    delete deps.headProcessingRepository;
+    let selections = 0;
+    deps.headProcessingRepositorySelector = async () => {
+      selections += 1;
+      return selectedRepository;
+    };
+    selectedRepository.pruneExpiredCaptures = async ({ limit }) => {
       calls += 1;
       assert.equal(limit, 700);
       return 3;
@@ -180,6 +187,7 @@ describe('Robinhood retention worker', () => {
     assert.deepEqual(first.headCaptures, { status: 'completed', deleted: 3 });
     assert.deepEqual(second.headCaptures, { status: 'cooldown', deleted: 0 });
     assert.equal(calls, 1);
+    assert.equal(selections, 1);
   });
 
   it('runs canonical raw pruning with a hard three-day minimum and preserves blockers', async () => {

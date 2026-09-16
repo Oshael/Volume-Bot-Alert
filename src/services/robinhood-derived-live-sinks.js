@@ -1,7 +1,7 @@
 const workerLease = require('../models/worker-lease');
 const {
-  createRobinhoodHeadProcessingRepository,
-} = require('../models/robinhood-head-processing');
+  resolveHeadProcessingRepository,
+} = require('../models/robinhood-head-processing-authority');
 const robinhoodLiveCatalogWorker = require('./robinhood-live-catalog-worker');
 const robinhoodRealtimeAlertWorker = require('./robinhood-realtime-alert-worker');
 const robinhoodMarketAggregateWorker = require('./robinhood-market-aggregate-worker');
@@ -15,7 +15,8 @@ const HEALTH_CACHE_MS = 5000;
 
 function createRobinhoodDerivedLiveSinks(options = {}) {
   const leases = options.workerLease || workerLease;
-  const processing = options.processingRepository || createRobinhoodHeadProcessingRepository();
+  let processing = options.processingRepository
+    ? Promise.resolve(options.processingRepository) : null;
   const catalog = options.liveCatalogWorker || robinhoodLiveCatalogWorker;
   const alerts = options.realtimeAlertWorker || robinhoodRealtimeAlertWorker;
   const aggregates = options.marketAggregateWorker || robinhoodMarketAggregateWorker;
@@ -30,11 +31,28 @@ function createRobinhoodDerivedLiveSinks(options = {}) {
   let lastHealthAt = 0;
   let healthQuery = null;
 
+  function getProcessingRepository() {
+    if (!processing) {
+      processing = Promise.resolve(
+        (options.processingRepositorySelector || resolveHeadProcessingRepository)({
+          database: options.database,
+        })
+      ).catch((error) => {
+        processing = null;
+        throw error;
+      });
+    }
+    return processing;
+  }
+
   async function getPipelineHealth() {
     const nowMs = now();
     if (lastHealthAt && nowMs - lastHealthAt < HEALTH_CACHE_MS) return lastHealth;
     if (healthQuery) return healthQuery;
-    healthQuery = Promise.all([leases.list(), processing.getOldestActiveCapture('market')])
+    healthQuery = Promise.all([
+      leases.list(),
+      getProcessingRepository().then((repository) => repository.getOldestActiveCapture('market')),
+    ])
       .then(([rows, processingBacklog]) => evaluateRobinhoodPipelineHealth(rows, {
         nowMs, maxAgeMs: healthMaxAgeMs, processingBacklog,
       }))

@@ -11,6 +11,9 @@ const { CURSOR_NOTIFY_CHANNEL } = require('../models/robinhood-head-capture');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const {
+  selectHeadProcessingRepository,
+} = require('../models/robinhood-head-processing-authority');
+const {
   createRobinhoodProcessingRunner, normalizeProcessingBatchSize,
 } = require('./robinhood-processing-runner');
 const {
@@ -70,6 +73,7 @@ let status = {
   totalShadowMissing: 0,
   totalShadowErrors: 0,
   lastError: null,
+  lifecycleAuthority: null,
 };
 
 function boundedInteger(value, fallback, min, max) {
@@ -258,11 +262,20 @@ function handleNotification(message) {
   wake(wakeAtMs);
 }
 
-function start(options = {}, deps = {}) {
+async function start(options = {}, deps = {}) {
   if (running) return;
   const normalized = normalizeOptions(options);
   if (!normalized.enabled) return;
-  build(normalized, deps);
+  let selectedRepository = deps.repository;
+  if (!selectedRepository) {
+    const selectRepository = deps.repositorySelector || selectHeadProcessingRepository;
+    const selected = await selectRepository({ database: deps.database || db });
+    selectedRepository = selected.repository;
+    status.lifecycleAuthority = selected.authority.authority;
+  } else {
+    status.lifecycleAuthority = 'injected';
+  }
+  build(normalized, { ...deps, repository: selectedRepository });
   activeOptions = normalized;
   running = true;
   status.running = true;

@@ -51,7 +51,7 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     ); CREATE TEMP TABLE robinhood_chain_transactions (
       chain text, block_hash text, transaction_hash text,
       transaction_index integer, from_address text
-    ); CREATE TEMP TABLE robinhood_head_captures (
+    ); CREATE TEMP TABLE robinhood_head_capture_states (
       chain text, stream text, block_number bigint, processing_status text
     ); CREATE TEMP TABLE robinhood_wallet_swap_cursors (
       chain text, stream text, next_block bigint, safe_head bigint,

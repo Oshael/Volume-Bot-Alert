@@ -81,7 +81,7 @@ function createRobinhoodV4LiquidityReplayRepository(options = {}) {
         }
         const frontier = await client.query(
           `SELECT MIN(block_number) AS block_number
-             FROM robinhood_head_captures
+             FROM robinhood_head_capture_states
             WHERE chain = 'robinhood'
               AND processing_status IN ('pending', 'leased', 'blocked')`
         );

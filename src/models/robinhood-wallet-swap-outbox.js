@@ -184,7 +184,7 @@ function createRobinhoodWalletSwapOutboxRepository(options = {}) {
       `WITH frontier AS MATERIALIZED (
          SELECT LEAST(
            $2::bigint,
-           COALESCE((SELECT MIN(block_number)-1 FROM robinhood_head_captures
+           COALESCE((SELECT MIN(block_number)-1 FROM robinhood_head_capture_states
              WHERE chain=$1 AND stream='market'
                AND processing_status IN ('pending','leased','blocked')), $2::bigint),
            COALESCE((SELECT MIN(block_number)-1 FROM robinhood_wallet_swap_outbox

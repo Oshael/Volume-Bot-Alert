@@ -150,7 +150,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       cursorFactory: () => cursor,
       sourceReaderFactory: () => reader,
       marketRepositoryFactory: () => marketRepository,
-      headProcessingRepositoryFactory: () => headProcessingRepository,
+      headProcessingRepositorySelector: async () => headProcessingRepository,
       attributorFactory: (input) => {
         attributorInput = input;
         return attributor;

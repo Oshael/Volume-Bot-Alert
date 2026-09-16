@@ -1,6 +1,8 @@
 const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
-const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
+const {
+  resolveHeadProcessingRepository,
+} = require('../models/robinhood-head-processing-authority');
 const { createRobinhoodWalletSwapCursorRepository } = require('../models/robinhood-wallet-swap-cursor');
 const { createRobinhoodWalletSwapRepository } = require('../models/robinhood-wallet-swap-persistence');
 const {
@@ -68,6 +70,13 @@ function boundedInteger(value, fallback, min, max) {
 
 function dependency(value, fallback) {
   return value || fallback;
+}
+
+async function resolveHeadProcessing(deps) {
+  if (deps.headProcessingRepositoryFactory) return deps.headProcessingRepositoryFactory();
+  const selectRepository = deps.headProcessingRepositorySelector
+    || resolveHeadProcessingRepository;
+  return selectRepository({ database: deps.database || db });
 }
 
 function optionalBlock(value) {
@@ -246,9 +255,7 @@ async function buildRuntime(options, deps = {}) {
   const marketRepository = (
     deps.marketRepositoryFactory || createRobinhoodPersistenceRepository
   )({ emitMarketBucketUpdate: () => false });
-  const headProcessingRepository = (
-    deps.headProcessingRepositoryFactory || createRobinhoodHeadProcessingRepository
-  )();
+  const headProcessingRepository = await resolveHeadProcessing(deps);
   const attributor = (deps.attributorFactory || createRobinhoodWalletSwapAttributor)({
     repository: walletRepository,
     transactionPositionRepository,

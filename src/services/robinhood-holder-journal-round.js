@@ -35,7 +35,7 @@ async function readHealth(client, database, schema = 'public') {
       (SELECT to_jsonb(l) FROM ${schema}.worker_leases l
         WHERE lease_key = 'robinhood-processing-worker') AS lease,
       (SELECT jsonb_object_agg(stream, pending) FROM (
-        SELECT stream, EXISTS(SELECT 1 FROM ${schema}.robinhood_head_captures c
+        SELECT stream, EXISTS(SELECT 1 FROM ${schema}.robinhood_head_capture_states c
           WHERE c.chain = 'robinhood' AND c.stream = s.stream
             AND c.processing_status = 'pending' AND c.next_attempt_at <= NOW()) AS pending
         FROM (VALUES ('discovery'), ('market')) s(stream)) q) AS pending`);

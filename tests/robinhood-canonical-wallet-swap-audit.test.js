@@ -126,6 +126,7 @@ describe('Robinhood canonical wallet-swap audit', () => {
     assert.equal((await audit.inspect()).ready, true);
     assert.match(queries[0].sql, /REPEATABLE READ READ ONLY/);
     assert.match(queries[1].sql, /WHEN frontier\.block_number IS NULL THEN NULL/);
+    assert.match(queries[1].sql, /FROM robinhood_head_capture_states/);
     assert.deepEqual(queries[2].params, ['robinhood', '240', '288']);
     assert.match(queries[2].sql, /BETWEEN \$2::bigint AND \$3::bigint/);
     assert.equal(queries.at(-2).sql, 'ROLLBACK');

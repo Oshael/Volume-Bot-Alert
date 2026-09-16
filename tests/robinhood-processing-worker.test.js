@@ -111,6 +111,22 @@ describe('robinhood processing worker', () => {
     assert.equal('lastPrunedCaptures' in status, false);
   });
 
+  it('resolves the durable lifecycle authority before starting', async () => {
+    const listener = listenerHarness();
+    const selected = fakeRepo();
+    let selections = 0;
+    await worker.start({ intervalMs: 60_000 }, {
+      repositorySelector: async () => {
+        selections += 1;
+        return { authority: { authority: 'state' }, repository: selected };
+      },
+      runner: fakeRunner(), discoveryRunner: fakeDiscoveryRunner(),
+      listenerFactory: listener.factory,
+    });
+    assert.equal(selections, 1);
+    assert.equal(worker.getStatus().lifecycleAuthority, 'state');
+  });
+
   it('keeps discovery claims capped at 2000 when market claims are enlarged', async () => {
     const repository = { ...fakeRepo(), claimCaptures: async ({ stream, limit }) => {
       assert.equal(stream, 'discovery');

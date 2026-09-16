@@ -74,6 +74,7 @@ describe('Robinhood current pool liquidity snapshots', () => {
   it('anchors snapshots before the oldest unfinished market capture', async () => {
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
       async query(sql) {
+        assert.match(sql, /FROM robinhood_head_capture_states capture/);
         assert.match(sql, /processing_status IN \('pending', 'leased', 'blocked'\)/);
         return { rows: [{ checkpoint_block: '200', pending_block: '151' }] };
       },

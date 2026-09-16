@@ -330,6 +330,10 @@ repositório. A autoridade persistida nasce em `legacy`; a stage, isoladamente,
 não muda o worker. A transição futura para `state` exige relatório de gate,
 geração monotônica, índices válidos e trigger somente-insert. Retorno direto a
 `legacy` é proibido porque requer a reconciliação descrita abaixo.
+O subcorte seguinte torna todos os consumidores runtime de lifecycle
+authority-aware e aponta os frontiers SQL compartilhados ao estado estreito,
+sem alterar a linha de autoridade. A Stage 228 precisa existir antes do restart;
+com `authority='legacy'`, claims e settles continuam no payload.
 
 - Só ativar após auditoria de identidade/lifecycle, prova dos planos de claim,
   migração de todos os leitores/writers relevantes e parada limpa do processing.

@@ -753,6 +753,13 @@ reconciliação estado→payload. O seletor state-only também falha fechado se 
 oito índices estreitos não estiverem válidos ou se o espelho temporário ainda
 aceitar updates de lifecycle; a troca do trigger para somente-insert e a
 auditoria pontual pertencem ao comando de ativação, não à instalação da stage.
+Depois deste subcorte, processing, retenção de captures, frontier do wallet-live,
+health dos derived sinks e o comando de recovery resolvem o repositório por essa
+autoridade. Os leitores SQL de coverage, wallet watermark, liquidity anchor e
+health também usam a tabela estreita, que ainda é mantida pelo espelho enquanto
+a autoridade permanece `legacy`. Por isso a ordem de deploy é obrigatória:
+pull, `node src/utils/db-init-stage228.js` e só então restart dos serviços. O
+registro continua `legacy`; esse restart não faz o cutover.
 
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe

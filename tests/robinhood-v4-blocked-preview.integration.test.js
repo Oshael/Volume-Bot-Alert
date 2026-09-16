@@ -12,8 +12,10 @@ it('compares ledger/captures/processed under read-only transactions without losi
   try {
     await client.query(`
       CREATE TEMP TABLE robinhood_head_captures (
+        chain text, block_hash text, transaction_hash text, log_index bigint);
+      CREATE TEMP TABLE robinhood_head_capture_states (
         chain text, stream text, protocol text, market_key text, block_number bigint,
-        block_hash text, transaction_hash text, log_index bigint, processing_status text, last_error text);
+        transaction_hash text, log_index bigint, processing_status text, last_error text);
       CREATE TEMP TABLE robinhood_pool_registry (
         chain text, protocol text, market_key text, pool_id text, discovery_block bigint,
         tick_spacing int, origin_address text);
@@ -24,8 +26,11 @@ it('compares ledger/captures/processed under read-only transactions without losi
         chain text, pool_id text, tick_lower int, tick_upper int, liquidity_gross numeric(78,0));
     `);
     await client.query(`INSERT INTO robinhood_head_captures VALUES
-      ('robinhood','market','uniswap-v4','pool',12,'hash','tx',3,'blocked',$1),
-      ('robinhood','market','uniswap-v4','later',99,'hash','later-tx',1,'blocked',$1)`, [BLOCKED_RECOVERY_ERROR]);
+      ('robinhood','hash','tx',3), ('robinhood','hash','later-tx',1)`);
+    await client.query(`INSERT INTO robinhood_head_capture_states VALUES
+      ('robinhood','market','uniswap-v4','pool',12,'tx',3,'blocked',$1),
+      ('robinhood','market','uniswap-v4','later',99,'later-tx',1,'blocked',$1)`,
+    [BLOCKED_RECOVERY_ERROR]);
     await client.query("INSERT INTO robinhood_pool_registry VALUES ('robinhood','uniswap-v4','pool','id',10,60,'manager')");
     await client.query("INSERT INTO robinhood_v4_liquidity_deltas VALUES ('robinhood','old-tx',1,10,90071992547409931234)");
     await client.query("INSERT INTO robinhood_processed_logs VALUES ('robinhood','old-tx',1)");

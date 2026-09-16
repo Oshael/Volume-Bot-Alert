@@ -1,5 +1,6 @@
 'use strict';
 
+const db = require('./db');
 const {
   createRobinhoodHeadProcessingRepository,
 } = require('./robinhood-head-processing');
@@ -66,8 +67,7 @@ async function inspectStateRuntimePrerequisites(database) {
 }
 
 async function selectHeadProcessingRepository(options = {}) {
-  const { database } = options;
-  if (!database) throw new Error('database is required');
+  const database = options.database || db;
   const authority = await loadHeadProcessingAuthority(database);
   if (authority.authority === 'legacy') {
     const factory = options.legacyFactory || createRobinhoodHeadProcessingRepository;
@@ -84,7 +84,12 @@ async function selectHeadProcessingRepository(options = {}) {
   return { authority, repository: factory({ database }) };
 }
 
+async function resolveHeadProcessingRepository(options = {}) {
+  return (await selectHeadProcessingRepository(options)).repository;
+}
+
 module.exports = {
   REQUIRED_STATE_INDEXES, inspectStateRuntimePrerequisites,
-  loadHeadProcessingAuthority, selectHeadProcessingRepository,
+  loadHeadProcessingAuthority, resolveHeadProcessingRepository,
+  selectHeadProcessingRepository,
 };
