@@ -13,6 +13,7 @@ const {
 const stage103 = require('../src/utils/db-init-stage103');
 const stage186 = require('../src/utils/db-init-stage186');
 const stage224 = require('../src/utils/db-init-stage224');
+const stage225 = require('../src/utils/db-init-stage225');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK_HASH = `0x${'b'.repeat(64)}`;
@@ -79,6 +80,7 @@ describe('Robinhood head processing repository integration', () => {
     await stage103.init({ closePool: false });
     await stage186.init({ closePool: false });
     await stage224.init({ closePool: false });
+    await stage225.init({ closePool: false });
   });
 
   beforeEach(async () => {

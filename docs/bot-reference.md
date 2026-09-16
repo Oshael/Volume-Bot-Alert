@@ -666,6 +666,19 @@ conta estados ativos, payloads ausentes, rotas divergentes e rotas incompletas;
 Como cada lote lê uma fotografia diferente enquanto o processing roda, isso
 **não** substitui o gate final de paridade na ativação do 3B.
 
+Após `parityObserved=true`, a Stage 225 prepara os três caminhos estreitos de
+claim: fronteira ativa V4, market independente e discovery. Execute
+`node src/utils/db-init-stage225.js`; ela cria um índice `CONCURRENTLY` por vez,
+remove índice inválido deixado por interrupção e só conclui quando todos estão
+`indisvalid/indisready`. Cada criação ainda lê a tabela de estados inteira e
+pode competir por I/O, portanto não execute cópias paralelas da stage. Em caso
+de erro, repita o mesmo comando; não derrube manualmente um índice válido.
+Depois rode `npm run robinhood:verify-head-state-claim-plans`. O verificador usa
+somente `EXPLAIN`, não executa claims, e retorna `safe=true` apenas se cada plano
+contiver seu índice estreito esperado. Índices prontos e planos seguros ainda
+não mudam a autoridade do lifecycle nem permitem reiniciar em state-only; a
+troca das consultas e o gate pontual pertencem aos subcortes seguintes.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

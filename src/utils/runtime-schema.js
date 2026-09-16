@@ -6196,6 +6196,33 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage225-robinhood-head-state-claim-indexes',
+    name: 'Stage 225 Robinhood head-state claim indexes',
+    repair: 'node src/utils/db-init-stage225.js',
+    tables: [{
+      table: 'robinhood_head_capture_states',
+      indexes: [{
+        name: 'idx_rh_head_capture_states_v4_active_frontier',
+        includes: [
+          'market_key', 'block_number', 'transaction_index', 'log_index',
+          'transaction_hash', 'pending', 'leased', 'blocked', 'uniswap-v4',
+        ],
+      }, {
+        name: 'idx_rh_head_capture_states_market_independent_claim',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'next_attempt_at',
+          'transaction_hash', 'market', 'pending', 'uniswap-v4',
+        ],
+      }, {
+        name: 'idx_rh_head_capture_states_discovery_claim',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'next_attempt_at',
+          'transaction_hash', 'discovery', 'pending',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
