@@ -59,6 +59,20 @@ async function statusOf(identity) {
   return result.rows[0];
 }
 
+async function waitForActivity(predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await db.query(
+      `SELECT application_name, wait_event_type, wait_event, query
+         FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid()`
+    );
+    if (result.rows.some(predicate)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 describe('Robinhood head processing repository integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
@@ -396,6 +410,73 @@ describe('Robinhood head processing repository integration', () => {
       [written.scanned, written.inserted, written.missing, written.divergent, written.complete],
       [1, 1, 0, 0, true]
     );
+  });
+
+  it('keeps retention from deleting a payload while its state is backfilled', async () => {
+    const identity = await seedPending({ block: 100 });
+    await db.query(
+      `DELETE FROM robinhood_head_capture_states
+        WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
+      [identity.transactionHash, identity.logIndex]
+    );
+    const gate = await db.getClient();
+    const deleter = await db.getClient();
+    const lockKey = 224103;
+    let backfill;
+    let deletion;
+    try {
+      await gate.query('SELECT pg_advisory_lock($1)', [lockKey]);
+      await db.query(
+        `CREATE OR REPLACE FUNCTION test_block_head_state_insert()
+         RETURNS trigger LANGUAGE plpgsql AS $function$
+         BEGIN
+           PERFORM pg_advisory_xact_lock(${lockKey});
+           RETURN NEW;
+         END
+         $function$`
+      );
+      await db.query(
+        `CREATE TRIGGER test_block_head_state_insert
+         BEFORE INSERT ON robinhood_head_capture_states
+         FOR EACH ROW EXECUTE FUNCTION test_block_head_state_insert()`
+      );
+
+      const states = createRobinhoodHeadCaptureStateRepository({ database: db });
+      backfill = states.processBatch({
+        limit: 100, write: true, statementTimeoutMs: 30_000,
+      });
+      assert.equal(await waitForActivity((row) => (
+        row.wait_event === 'advisory' && row.query.includes('WITH batch AS MATERIALIZED')
+      )), true);
+
+      await deleter.query("SET application_name = 'head-state-retention-race-test'");
+      deletion = deleter.query(
+        `DELETE FROM robinhood_head_captures
+          WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=$2`,
+        [identity.transactionHash, identity.logIndex]
+      );
+      assert.equal(await waitForActivity((row) => (
+        row.application_name === 'head-state-retention-race-test'
+          && row.wait_event_type === 'Lock'
+      )), true);
+
+      await gate.query('SELECT pg_advisory_unlock($1)', [lockKey]);
+      const [written, removed] = await Promise.all([backfill, deletion]);
+      assert.deepEqual(
+        [written.scanned, written.inserted, written.missing, written.divergent],
+        [1, 1, 0, 0]
+      );
+      assert.equal(removed.rowCount, 1);
+    } finally {
+      await gate.query('SELECT pg_advisory_unlock($1)', [lockKey]).catch(() => {});
+      await Promise.allSettled([backfill, deletion].filter(Boolean));
+      await db.query(
+        'DROP TRIGGER IF EXISTS test_block_head_state_insert ON robinhood_head_capture_states'
+      );
+      await db.query('DROP FUNCTION IF EXISTS test_block_head_state_insert()');
+      gate.release();
+      deleter.release();
+    }
   });
 
   it('refuses to settle a claim leased by a different owner', async () => {

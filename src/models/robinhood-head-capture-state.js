@@ -73,6 +73,7 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
     );
     const after = cursor(input.after);
     const write = input.write === true;
+    const parentLock = write ? 'FOR KEY SHARE OF capture' : '';
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
@@ -92,6 +93,7 @@ function createRobinhoodHeadCaptureStateRepository(options = {}) {
                     > ($2::text, $3::bigint))
             ORDER BY capture.transaction_hash, capture.log_index
             LIMIT $4
+            ${parentLock}
          ), inserted AS (
            INSERT INTO robinhood_head_capture_states(
              chain, transaction_hash, log_index, processing_status,
