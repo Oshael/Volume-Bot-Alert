@@ -6246,6 +6246,25 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage228-robinhood-head-processing-authority',
+    name: 'Stage 228 Robinhood head processing authority',
+    repair: 'node src/utils/db-init-stage228.js',
+    tables: [{
+      table: 'robinhood_head_processing_authority',
+      columns: [
+        'chain', 'authority', 'generation', 'activated_at',
+        'activation_report', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_head_processing_authority_values_check',
+        includes: ['robinhood', 'legacy', 'state', 'generation'],
+      }, {
+        name: 'rh_head_processing_authority_activation_check',
+        includes: ['authority', 'legacy', 'activated_at', 'activation_report'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

@@ -325,6 +325,12 @@ plano de claim.
 
 #### 3B.4 — ativação, rollback e observação
 
+O primeiro subcorte de 3B.4 instala a Stage 228 e o seletor inativo de
+repositório. A autoridade persistida nasce em `legacy`; a stage, isoladamente,
+não muda o worker. A transição futura para `state` exige relatório de gate,
+geração monotônica, índices válidos e trigger somente-insert. Retorno direto a
+`legacy` é proibido porque requer a reconciliação descrita abaixo.
+
 - Só ativar após auditoria de identidade/lifecycle, prova dos planos de claim,
   migração de todos os leitores/writers relevantes e parada limpa do processing.
   Confirmar que nenhuma claim antiga permanece em voo.

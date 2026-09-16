@@ -25,6 +25,10 @@ const stage224 = require('../src/utils/db-init-stage224');
 const stage225 = require('../src/utils/db-init-stage225');
 const stage226 = require('../src/utils/db-init-stage226');
 const stage227 = require('../src/utils/db-init-stage227');
+const stage228 = require('../src/utils/db-init-stage228');
+const {
+  inspectStateRuntimePrerequisites, loadHeadProcessingAuthority,
+} = require('../src/models/robinhood-head-processing-authority');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK_HASH = `0x${'b'.repeat(64)}`;
@@ -105,6 +109,7 @@ describe('Robinhood head processing repository integration', () => {
     await stage225.init({ closePool: false });
     await stage226.init({ closePool: false });
     await stage227.init({ closePool: false });
+    await stage228.init({ closePool: false });
   });
 
   beforeEach(async () => {
@@ -114,6 +119,17 @@ describe('Robinhood head processing repository integration', () => {
 
   after(async () => {
     await db.pool.end();
+  });
+
+  it('keeps lifecycle authority on legacy after installing its control plane', async () => {
+    const authority = await loadHeadProcessingAuthority(db);
+    assert.equal(authority.authority, 'legacy');
+    assert.equal(Number(authority.generation), 0);
+    assert.equal(authority.activated_at, null);
+    assert.equal(authority.activation_report, null);
+    const gate = await inspectStateRuntimePrerequisites(db);
+    assert.equal(gate.safe, false);
+    assert.ok(gate.blockers.includes('head state sync trigger is not insert-only'));
   });
 
   it('leases due pending captures in on-chain order and counts the attempt', async () => {

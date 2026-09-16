@@ -744,6 +744,16 @@ da tabela já fixam a chain e exigem estado terminal quando há data de retenç�
 o filtro explícito de três dias permanece. A stage é retomável, usa
 `CREATE/DROP INDEX CONCURRENTLY` e não deve ser executada em paralelo.
 
+A Stage 228 adiciona `robinhood_head_processing_authority`, uma autoridade
+durável que nasce em `legacy`; sua instalação não troca o repositório do worker.
+Execute `node src/utils/db-init-stage228.js` antes do subcorte de ativação. O
+registro exige geração e relatório persistido para entrar em `state` e bloqueia
+retorno direto a `legacy`, pois depois da ativação esse rollback requer parada e
+reconciliação estado→payload. O seletor state-only também falha fechado se os
+oito índices estreitos não estiverem válidos ou se o espelho temporário ainda
+aceitar updates de lifecycle; a troca do trigger para somente-insert e a
+auditoria pontual pertencem ao comando de ativação, não à instalação da stage.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.
