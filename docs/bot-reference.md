@@ -695,6 +695,9 @@ eventos por prefixo, avança um cursor de pools entre amostras, compara
 inventário, ordem e barreiras de retry/lease/blocked e reporta tempos separados
 para payload e estado. Também é read-only e não autoriza state-only enquanto os
 writers de lifecycle não estiverem preparados.
+Se a saída terminar com `completed=false`, repita após o próximo pull usando
+`--after-market-key=<afterMarketKey do summary>` para continuar sem repetir os
+pools já auditados.
 
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe

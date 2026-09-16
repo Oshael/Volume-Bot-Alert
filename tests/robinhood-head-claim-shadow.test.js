@@ -9,6 +9,9 @@ const {
   comparePoolKeys,
   createRobinhoodHeadClaimShadowRepository,
 } = require('../src/models/robinhood-head-claim-shadow');
+const {
+  textOption,
+} = require('../src/utils/audit-robinhood-head-v4-continuation-shadow');
 
 function row(block, hash = `0x${'a'.repeat(64)}`) {
   return {
@@ -19,6 +22,16 @@ function row(block, hash = `0x${'a'.repeat(64)}`) {
 }
 
 describe('Robinhood head claim shadow', () => {
+  it('accepts a validated continuation cursor from the CLI', () => {
+    assert.equal(textOption(
+      'after-market-key', null, 256, ['node', '--after-market-key=POOL-A']
+    ), 'pool-a');
+    assert.throws(
+      () => textOption('after-market-key', null, 256, ['node', '--after-market-key=']),
+      /after-market-key is invalid/
+    );
+  });
+
   it('uses the narrow state routes for every read-only claim branch', () => {
     assert.match(DECISION_SQL.market.state, /FROM robinhood_head_capture_states capture/);
     assert.match(DECISION_SQL.market.state, /WITH RECURSIVE first_v4_by_pool/);

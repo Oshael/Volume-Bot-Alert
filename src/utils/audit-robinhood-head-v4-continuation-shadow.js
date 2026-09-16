@@ -16,6 +16,15 @@ function option(name, fallback, maximum) {
   return value;
 }
 
+function textOption(name, fallback, maximum, argv = process.argv) {
+  const prefix = `--${name}=`;
+  const raw = argv.find((entry) => entry.startsWith(prefix))?.slice(prefix.length);
+  if (raw == null) return fallback;
+  const value = String(raw).trim().toLowerCase();
+  if (!value || value.length > maximum) throw new Error(`${name} is invalid`);
+  return value;
+}
+
 async function main() {
   const samples = option('samples', 1, 100);
   const poolLimit = option('pool-limit', 8, 64);
@@ -25,7 +34,7 @@ async function main() {
   const statementTimeoutMs = option('statement-timeout-ms', 30_000, 120_000);
   const repository = createRobinhoodHeadClaimShadowRepository({ database: db });
   let safe = true;
-  let afterMarketKey = null;
+  let afterMarketKey = textOption('after-market-key', null, 256);
   let completed = false;
   for (let sample = 1; sample <= samples; sample += 1) {
     const report = await repository.auditV4ContinuationDecisions({
@@ -50,4 +59,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { main, option };
+module.exports = { main, option, textOption };
