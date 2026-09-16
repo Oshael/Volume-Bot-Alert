@@ -119,6 +119,7 @@
     "robinhood:backfill-head-capture-states-physical": "node src/utils/backfill-robinhood-head-capture-states-physical.js",
     "robinhood:backfill-head-capture-routing": "node src/utils/backfill-robinhood-head-capture-routing.js",
     "robinhood:verify-head-state-claim-plans": "node src/utils/verify-robinhood-head-state-claim-plans.js",
+    "robinhood:verify-head-state-auxiliary-plans": "node src/utils/verify-robinhood-head-state-auxiliary-plans.js",
     "robinhood:audit-head-claim-shadow": "node src/utils/audit-robinhood-head-claim-shadow.js",
     "robinhood:audit-head-v4-continuation-shadow": "node src/utils/audit-robinhood-head-v4-continuation-shadow.js",
     "robinhood:audit-head-lifecycle-shadow": "node src/utils/audit-robinhood-head-lifecycle-shadow.js",

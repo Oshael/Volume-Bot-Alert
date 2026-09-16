@@ -81,14 +81,13 @@ SELECT chain, transaction_hash, log_index, block_number, transaction_index,
  LIMIT ($3::int + 1)`);
 
 const RETENTION_SQL = sourceSql((table, source) => `/* head-lifecycle-shadow:${source}:retention */
-SELECT chain, transaction_hash, log_index, processing_status,
-       terminal_at, retention_eligible_at
+SELECT retention_eligible_at
   FROM ${table}
  WHERE chain='${CHAIN}' AND processing_status IN ('processed', 'rejected')
    AND terminal_at <= $1::timestamptz - INTERVAL '3 days'
    AND retention_eligible_at IS NOT NULL
    AND retention_eligible_at <= $1::timestamptz
- ORDER BY retention_eligible_at, transaction_hash, log_index
+ ORDER BY retention_eligible_at
  LIMIT $2`);
 
 const AUXILIARY_SQL = Object.freeze({
@@ -128,11 +127,6 @@ function normalizeLifecycleRow(row = {}) {
 
 function normalizeRetentionRow(row = {}) {
   return {
-    chain: String(row.chain),
-    transactionHash: String(row.transaction_hash).toLowerCase(),
-    logIndex: String(row.log_index),
-    processingStatus: String(row.processing_status),
-    terminalAt: iso(row.terminal_at),
     retentionEligibleAt: iso(row.retention_eligible_at),
   };
 }

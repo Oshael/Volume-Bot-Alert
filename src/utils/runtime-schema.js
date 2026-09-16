@@ -6223,6 +6223,27 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage226-robinhood-head-state-auxiliary-indexes',
+    name: 'Stage 226 Robinhood head-state auxiliary indexes',
+    repair: 'node src/utils/db-init-stage226.js',
+    tables: [{
+      table: 'robinhood_head_capture_states',
+      indexes: [{
+        name: 'idx_rh_head_capture_states_active_frontier',
+        includes: [
+          'stream', 'processing_status', 'block_number', 'transaction_index',
+          'log_index', 'transaction_hash', 'pending', 'leased', 'blocked',
+        ],
+      }, {
+        name: 'idx_rh_head_capture_states_blocked_recovery',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'transaction_hash',
+          'market', 'blocked', 'V4 liquidity range update conflicted or became negative',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

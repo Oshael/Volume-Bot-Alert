@@ -707,6 +707,17 @@ no estado estreito, mas continua buscando `timestampMs` no payload imutável pel
 identidade. A saída informa tempos separados por fonte e para na primeira
 divergência; ainda não altera a autoridade dos writers.
 
+Antes de aceitar o desempenho desse gate, aplique a Stage 226 com
+`node src/utils/db-init-stage226.js`. Ela cria, sequencialmente e com
+`CONCURRENTLY`, um índice parcial para watermark/frontier ativos e outro somente
+para o erro V4 recuperável. A ordenação do preview de retenção segue apenas
+`retention_eligible_at`, igual ao prune real, para usar o índice de retenção da
+Stage 224 sem impor uma ordenação histórica por identidade. Depois execute
+`npm run robinhood:verify-head-state-auxiliary-plans`; somente `safe=true` para
+watermark, frontier, recovery e retention permite repetir o gate shadow. A
+stage pode ser retomada após interrupção e não deve ser executada em paralelo.
+Esse passo não muda os writers nem autoriza state-only.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

@@ -21,6 +21,10 @@ describe('Robinhood head lifecycle shadow', () => {
     }
     assert.match(AUXILIARY_SQL.frontier.state, /JOIN robinhood_head_captures payload/);
     assert.match(AUXILIARY_SQL.recovery.state, /LIMIT \(\$3::int \+ 1\)/);
+    assert.match(AUXILIARY_SQL.retention.state, /ORDER BY retention_eligible_at\s+LIMIT/);
+    assert.doesNotMatch(
+      AUXILIARY_SQL.retention.state, /ORDER BY[^\n]*transaction_hash/
+    );
   });
 
   it('detects watermark count and frontier identity divergence', () => {
@@ -34,7 +38,7 @@ describe('Robinhood head lifecycle shadow', () => {
     assert.equal(watermark.firstMismatch.state.pending, 1);
   });
 
-  it('does not require historical terminal routing for retention parity', () => {
+  it('compares retention eligibility without imposing an identity tie-break sort', () => {
     const base = {
       chain: 'robinhood', transaction_hash: `0x${'a'.repeat(64)}`, log_index: '0',
       processing_status: 'processed', terminal_at: '2026-09-10T00:00:00Z',
