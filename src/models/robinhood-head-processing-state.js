@@ -10,6 +10,7 @@ const MIN_CAPTURE_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
 const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
+const V3_ARCHIVE_REPAIR_LOCK_KEY = 'robinhood:v3-pruned-capture-repair';
 
 const RETURN_CLAIMED_SQL = `
 SELECT payload.*, claimed.stream, claimed.protocol, claimed.market_key,
@@ -433,9 +434,93 @@ function createRobinhoodHeadProcessingStateRepository(options = {}) {
     }
   }
 
+  async function getProcessingWatermark(streamValue) {
+    const stream = streamOf(streamValue);
+    const result = await database.query(
+      `SELECT MIN(block_number) AS pending_block,
+              COUNT(*) FILTER (WHERE processing_status='pending') AS pending,
+              COUNT(*) FILTER (WHERE processing_status='leased') AS leased,
+              COUNT(*) FILTER (WHERE processing_status='blocked') AS blocked
+         FROM robinhood_head_capture_states
+        WHERE chain=$1 AND stream=$2
+          AND processing_status IN ('pending', 'leased', 'blocked')`,
+      [CHAIN, stream]
+    );
+    const row = result.rows[0] || {};
+    return {
+      pendingBlock: row.pending_block == null ? null : String(row.pending_block),
+      pending: Number(row.pending || 0), leased: Number(row.leased || 0),
+      blocked: Number(row.blocked || 0),
+    };
+  }
+
+  async function getOldestActiveCapture(streamValue) {
+    const stream = streamOf(streamValue);
+    const result = await database.query(
+      `WITH leased AS MATERIALIZED (
+         SELECT chain, transaction_hash, log_index, block_number, transaction_index
+           FROM robinhood_head_capture_states
+          WHERE chain=$1 AND stream=$2 AND processing_status='leased'
+       ), active AS (
+         (SELECT chain, transaction_hash, log_index, block_number, transaction_index
+            FROM robinhood_head_capture_states
+           WHERE chain=$1 AND stream=$2 AND processing_status='pending'
+           ORDER BY block_number, transaction_index, log_index LIMIT 1)
+         UNION ALL
+         (SELECT * FROM leased
+           ORDER BY block_number, transaction_index, log_index LIMIT 1)
+       ), selected AS (
+         SELECT * FROM active
+          ORDER BY block_number, transaction_index, log_index LIMIT 1
+       )
+       SELECT selected.block_number, payload.evidence->>'timestampMs' AS timestamp_ms
+         FROM selected
+         JOIN robinhood_head_captures payload
+           USING (chain, transaction_hash, log_index)`,
+      [CHAIN, stream]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const timestampMs = String(row.timestamp_ms || '');
+    const timestamp = /^\d+$/.test(timestampMs) ? Number(timestampMs) : NaN;
+    return {
+      blockNumber: String(row.block_number),
+      observedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null,
+    };
+  }
+
+  async function pruneExpiredCaptures(input = {}) {
+    const limit = positiveInt(input.limit ?? 5000, 'limit');
+    const result = await database.query(
+      `WITH repair_guard AS MATERIALIZED (
+         SELECT pg_try_advisory_xact_lock(hashtext($3)) AS acquired
+       ), targets AS MATERIALIZED (
+         SELECT state.chain, state.transaction_hash, state.log_index
+           FROM robinhood_head_capture_states state, repair_guard
+          WHERE state.chain=$1 AND state.processing_status IN ('processed', 'rejected')
+            AND repair_guard.acquired
+            AND state.terminal_at <= NOW()-INTERVAL '3 days'
+            AND state.retention_eligible_at IS NOT NULL
+            AND state.retention_eligible_at <= NOW()
+          ORDER BY state.retention_eligible_at
+          LIMIT $2 FOR UPDATE OF state SKIP LOCKED
+       ), deleted AS (
+         DELETE FROM robinhood_head_captures payload USING targets
+          WHERE payload.chain=targets.chain
+            AND payload.transaction_hash=targets.transaction_hash
+            AND payload.log_index=targets.log_index
+         RETURNING payload.transaction_hash
+       )
+       SELECT COUNT(*)::int AS deleted FROM deleted`,
+      [CHAIN, limit, V3_ARCHIVE_REPAIR_LOCK_KEY]
+    );
+    return Number(result.rows[0]?.deleted || 0);
+  }
+
   return Object.freeze({
     claimCaptures, claimV4Continuations, reclaimExpiredLeases, settleClaims,
     previewBlockedRecovery, requeueBlockedRecoveryBatch,
+    getProcessingWatermark, getOldestActiveCapture, pruneExpiredCaptures,
   });
 }
 

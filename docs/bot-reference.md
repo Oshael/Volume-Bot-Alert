@@ -729,8 +729,11 @@ continua sendo barreira. Settle terminal, retry/dead-letter e recovery também
 escrevem somente no estado estreito; settlement é transacional e mantém a
 retenção mínima de três dias, enquanto recovery continua exigindo o processing
 parado e usando o advisory lock existente. O repositório permanece inativo até
-que seus leitores auxiliares e o procedimento de cutover sejam ligados como uma
-unidade.
+que o procedimento de cutover seja ligado como uma unidade. Seu contrato já
+inclui watermark, frontier e prune: os dois primeiros leem o estado estreito e
+o frontier busca apenas `timestampMs` no payload; o prune escolhe estados
+terminais vencidos, respeita três dias e remove o payload pela identidade sob o
+mesmo advisory lock de repair. A FK então remove o estado correspondente.
 
 Se os planos auxiliares estiverem seguros, aplique a Stage 227 antes de repetir
 o gate de lifecycle: `node src/utils/db-init-stage227.js`. Ela cria

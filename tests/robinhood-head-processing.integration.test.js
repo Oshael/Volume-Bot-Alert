@@ -296,6 +296,63 @@ describe('Robinhood head processing repository integration', () => {
     );
   });
 
+  it('reads state-only watermark and frontier while keeping evidence in payload', async () => {
+    const observedAt = Date.parse('2026-09-16T12:00:00.000Z');
+    const blocked = await seedPending({ block: 599, timestampMs: observedAt - 1000 });
+    await seedPending({ block: 600, timestampMs: observedAt });
+    await seedPending({ block: 601, timestampMs: observedAt + 1000 });
+    await db.query(
+      `UPDATE robinhood_head_capture_states
+          SET processing_status='blocked', last_error='terminal'
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [blocked.transactionHash, blocked.logIndex]
+    );
+    await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 1, leaseMs: LEASE_MS, stream: 'market',
+    });
+
+    assert.deepEqual(await stateRepository.getProcessingWatermark('market'), {
+      pendingBlock: '599', pending: 1, leased: 1, blocked: 1,
+    });
+    assert.deepEqual(await stateRepository.getOldestActiveCapture('market'), {
+      blockNumber: '600', observedAt: new Date(observedAt).toISOString(),
+    });
+    assert.equal((await statusOf(blocked)).processing_status, 'pending');
+  });
+
+  it('prunes expired state-only terminal payloads under the repair fence', async () => {
+    const expired = await seedPending({ block: 610 });
+    const fresh = await seedPending({ block: 611 });
+    const pending = await seedPending({ block: 612 });
+    await stateRepository.claimCaptures({
+      owner: 'state-a', limit: 2, leaseMs: LEASE_MS, stream: 'market',
+    });
+    await stateRepository.settleClaims({
+      owner: 'state-a', retentionMs: RETENTION_MS, processed: [expired, fresh],
+    });
+    await db.query(
+      `UPDATE robinhood_head_capture_states
+          SET terminal_at=NOW()-INTERVAL '4 days',
+              retention_eligible_at=NOW()-INTERVAL '1 minute'
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [expired.transactionHash, expired.logIndex]
+    );
+
+    const fence = await db.getClient();
+    try {
+      await fence.query("SELECT pg_advisory_lock(hashtext('robinhood:v3-pruned-capture-repair'))");
+      assert.equal(await stateRepository.pruneExpiredCaptures({ limit: 100 }), 0);
+    } finally {
+      await fence.query("SELECT pg_advisory_unlock(hashtext('robinhood:v3-pruned-capture-repair'))");
+      fence.release();
+    }
+    assert.equal(await stateRepository.pruneExpiredCaptures({ limit: 100 }), 1);
+    assert.equal(await statusOf(expired), undefined);
+    assert.equal(await stateStatusOf(expired), undefined);
+    assert.equal((await stateStatusOf(fresh)).processing_status, 'processed');
+    assert.equal((await stateStatusOf(pending)).processing_status, 'pending');
+  });
+
   it('does not claim a capture whose next attempt is still in the future', async () => {
     await seedPending({ block: 100, dueInMs: 3_600_000 });
     const claimed = await repository.claimCaptures({ owner: 'worker-a', limit: 5, leaseMs: LEASE_MS });
