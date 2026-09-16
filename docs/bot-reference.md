@@ -718,6 +718,15 @@ watermark, frontier, recovery e retention permite repetir o gate shadow. A
 stage pode ser retomada após interrupção e não deve ser executada em paralelo.
 Esse passo não muda os writers nem autoriza state-only.
 
+Se os planos auxiliares estiverem seguros, aplique a Stage 227 antes de repetir
+o gate de lifecycle: `node src/utils/db-init-stage227.js`. Ela cria
+`idx_rh_head_capture_states_retention_v2` com `terminal_at` coberto, valida o
+índice e só então remove `idx_rh_head_capture_states_retention`. O número final
+de índices não aumenta. A consulta state omite `chain` e status porque os CHECKs
+da tabela já fixam a chain e exigem estado terminal quando há data de retenção;
+o filtro explícito de três dias permanece. A stage é retomável, usa
+`CREATE/DROP INDEX CONCURRENTLY` e não deve ser executada em paralelo.
+
 Depois da Stage 224, execute primeiro o preview read-only:
 `npm run robinhood:backfill-head-capture-states`. Para escrever, informe
 `--write --checkpoint-file=/var/lib/volume-bot-alert/rh-head-state.json`.

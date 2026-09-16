@@ -6192,7 +6192,9 @@ const SCHEMA_GROUPS = [
           'next_attempt_at', 'transaction_hash', 'log_index', 'pending',
         ] },
         { name: 'idx_rh_head_capture_states_lease', includes: ['lease_until', 'leased'] },
-        { name: 'idx_rh_head_capture_states_retention', includes: ['retention_eligible_at'] },
+        { name: 'idx_rh_head_capture_states_retention_v2', includes: [
+          'retention_eligible_at', 'terminal_at',
+        ] },
       ],
     }],
   },

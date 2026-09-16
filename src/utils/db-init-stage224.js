@@ -9,7 +9,7 @@ const FUNCTION_NAME = 'sync_robinhood_head_capture_state';
 const INDEX_NAMES = Object.freeze([
   'idx_rh_head_capture_states_claim',
   'idx_rh_head_capture_states_lease',
-  'idx_rh_head_capture_states_retention',
+  'idx_rh_head_capture_states_retention_v2',
 ]);
 
 const TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
@@ -144,7 +144,7 @@ const STATEMENTS = Object.freeze([
      ON ${TABLE_NAME}(lease_until)
      WHERE processing_status = 'leased'`,
   `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${INDEX_NAMES[2]}
-     ON ${TABLE_NAME}(retention_eligible_at)
+     ON ${TABLE_NAME}(retention_eligible_at) INCLUDE (terminal_at)
      WHERE retention_eligible_at IS NOT NULL`,
 ]);
 

@@ -80,15 +80,25 @@ SELECT chain, transaction_hash, log_index, block_number, transaction_index,
  ORDER BY block_number, transaction_index, log_index
  LIMIT ($3::int + 1)`);
 
-const RETENTION_SQL = sourceSql((table, source) => `/* head-lifecycle-shadow:${source}:retention */
+const RETENTION_SQL = Object.freeze({
+  legacy: `/* head-lifecycle-shadow:legacy:retention */
 SELECT retention_eligible_at
-  FROM ${table}
+  FROM ${SOURCES.legacy}
  WHERE chain='${CHAIN}' AND processing_status IN ('processed', 'rejected')
    AND terminal_at <= $1::timestamptz - INTERVAL '3 days'
    AND retention_eligible_at IS NOT NULL
    AND retention_eligible_at <= $1::timestamptz
  ORDER BY retention_eligible_at
- LIMIT $2`);
+ LIMIT $2`,
+  state: `/* head-lifecycle-shadow:state:retention */
+SELECT retention_eligible_at
+  FROM ${SOURCES.state}
+ WHERE terminal_at <= $1::timestamptz - INTERVAL '3 days'
+   AND retention_eligible_at IS NOT NULL
+   AND retention_eligible_at <= $1::timestamptz
+ ORDER BY retention_eligible_at
+ LIMIT $2`,
+});
 
 const AUXILIARY_SQL = Object.freeze({
   watermark: WATERMARK_SQL,

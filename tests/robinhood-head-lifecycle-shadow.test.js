@@ -25,6 +25,9 @@ describe('Robinhood head lifecycle shadow', () => {
     assert.doesNotMatch(
       AUXILIARY_SQL.retention.state, /ORDER BY[^\n]*transaction_hash/
     );
+    assert.match(AUXILIARY_SQL.retention.legacy, /chain='robinhood'/);
+    assert.doesNotMatch(AUXILIARY_SQL.retention.state, /chain=|processing_status/);
+    assert.match(AUXILIARY_SQL.retention.state, /INTERVAL '3 days'/);
   });
 
   it('detects watermark count and frontier identity divergence', () => {

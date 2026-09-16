@@ -5,6 +5,7 @@ const db = require('../models/db');
 const { BLOCKED_RECOVERY_ERROR } = require('../models/robinhood-head-processing');
 const { AUXILIARY_SQL } = require('../models/robinhood-head-lifecycle-shadow');
 const stage226 = require('./db-init-stage226');
+const stage224 = require('./db-init-stage224');
 const { collectIndexNames } = require('./verify-robinhood-head-state-claim-plans');
 
 const PLAN_QUERIES = Object.freeze({
@@ -21,7 +22,7 @@ const EXPECTED_INDEX = Object.freeze({
   watermark: stage226.INDEX_NAMES[0],
   frontier: stage226.INDEX_NAMES[0],
   recovery: stage226.INDEX_NAMES[1],
-  retention: 'idx_rh_head_capture_states_retention',
+  retention: stage224.INDEX_NAMES[2],
 });
 
 async function verifyPlans(options = {}) {
