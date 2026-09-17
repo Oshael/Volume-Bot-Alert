@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const {
-  resolveRetentionCutoff,
+  pruneBatch, resolveRetentionCutoff,
   runPilot,
 } = require('../src/services/robinhood-chain-event-pruner');
 
@@ -98,6 +98,7 @@ describe('Robinhood chain event pruner integration', () => {
       resolveRetentionCutoff: async () => '30',
     });
     assert.equal(report.totalDeleted, 2);
+    await assert.rejects(pruneBatch(database, '30', 10, 0), /retentionMs must be between/);
     for (const table of [
       'robinhood_chain_events', 'robinhood_chain_domain_outbox',
       'robinhood_canonical_head_candidates', 'robinhood_chain_v3_balance_snapshots',

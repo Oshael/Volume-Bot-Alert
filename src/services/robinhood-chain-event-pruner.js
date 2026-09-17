@@ -91,6 +91,10 @@ async function resolveRetentionCutoff(database, input) {
 }
 
 async function pruneBatch(database, cutoffBlock, batchLimit, retentionMs = DEFAULT_RETENTION_MS) {
+  const protectedRetentionMs = boundedInteger(
+    retentionMs, DEFAULT_RETENTION_MS, DEFAULT_RETENTION_MS,
+    30 * 24 * 60 * 60 * 1000, 'retentionMs'
+  );
   const client = await database.getClient();
   try {
     await client.query('BEGIN');
@@ -129,7 +133,7 @@ async function pruneBatch(database, cutoffBlock, batchLimit, retentionMs = DEFAU
               MIN(block_number) AS first_deleted_block,
               MAX(block_number) AS last_deleted_block
          FROM removed`,
-      [CHAIN, cutoffBlock, batchLimit, retentionMs]
+      [CHAIN, cutoffBlock, batchLimit, protectedRetentionMs]
     );
     await client.query('COMMIT');
     const row = deleted.rows[0] || {};

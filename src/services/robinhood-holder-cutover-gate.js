@@ -7,6 +7,7 @@ const {
   acquireRobinhoodHolderReorgFence, normalizeHolderTransfer,
 } = require('../models/robinhood-holder-ledger');
 const { compareEvidence } = require('./robinhood-holder-universal-coverage-audit');
+const { createRobinhoodHolderCutoverRetention } = require('./robinhood-holder-cutover-retention');
 
 const CHAIN = 'robinhood';
 const SAMPLE_BLOCKS = 10n;
@@ -177,11 +178,12 @@ async function readContext(client, apply) {
   return { cursor, policy, capture, canonical };
 }
 
-async function assess(client, context) {
+async function assess(client, context, retentionGuard) {
   const { cursor, policy, capture, canonical } = context;
   const blockers = contextBlockers(policy, cursor, capture, canonical);
   let stateCoverage = null;
   let parity = null;
+  let protection = null;
   if (!blockers.length) {
     stateCoverage = await coverage(client, cursor.checkpoint_block);
     blockers.push(...coverageBlockers(stateCoverage));
@@ -192,15 +194,21 @@ async function assess(client, context) {
     if (parity && (parity.missing || parity.excess || parity.divergent)) {
       blockers.push('recent_parity_divergent');
     }
+    try {
+      protection = await retentionGuard.assertProtected(client, {
+        nextBlock: String(cursor.next_block), checkpointBlock: String(cursor.checkpoint_block),
+        checkpointHash: cursor.checkpoint_hash,
+      });
+    } catch (error) {
+      if (error.code !== 'holder_cutover_retention_unavailable') throw error;
+      blockers.push(error.reason);
+    }
   }
-  return { blockers, stateCoverage, parity };
+  return { blockers, stateCoverage, parity, protection };
 }
 
-async function applyCutover(client, context, retentionGuard) {
+async function applyCutover(client, context) {
   const { cursor, policy } = context;
-  await retentionGuard.assertProtected(client, {
-    nextBlock: String(cursor.next_block), checkpointBlock: String(cursor.checkpoint_block),
-  });
   const updatedCursor = await client.query(
     `UPDATE robinhood_holder_cursors SET version=version+1, updated_at=NOW()
       WHERE chain=$1 AND stream='live' AND version=$2::bigint RETURNING version`,
@@ -222,11 +230,10 @@ async function applyCutover(client, context, retentionGuard) {
 
 function createRobinhoodHolderCutoverGate(options = {}) {
   const database = options.database || db;
-  const retentionGuard = options.retentionGuard || null;
+  const retentionGuard = options.retentionGuard || createRobinhoodHolderCutoverRetention();
 
   async function inspect(input = {}) {
     const apply = input.apply === true;
-    if (apply && !retentionGuard) throw fail('retention_guard_unavailable');
     const client = await database.getClient();
     try {
       await client.query(apply ? 'BEGIN' : 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -234,10 +241,16 @@ function createRobinhoodHolderCutoverGate(options = {}) {
       await client.query("SET LOCAL statement_timeout = '15000ms'");
       if (apply) await acquireRobinhoodHolderReorgFence(client, 'shared');
       const context = await readContext(client, apply);
-      const { blockers, stateCoverage, parity } = await assess(client, context);
+      const { blockers, stateCoverage, parity, protection } = await assess(
+        client, context, retentionGuard
+      );
       if (apply) {
         if (blockers.length) throw fail(blockers[0]);
-        await applyCutover(client, context, retentionGuard);
+        if (String(input.expectedNextBlock) !== String(context.cursor.next_block)
+            || String(input.expectedCheckpointHash) !== context.cursor.checkpoint_hash) {
+          throw fail('expected_anchor_changed_or_missing');
+        }
+        await applyCutover(client, context);
         await client.query('COMMIT');
       } else await client.query('ROLLBACK');
       const { cursor, policy } = context;
@@ -247,7 +260,8 @@ function createRobinhoodHolderCutoverGate(options = {}) {
           checkpointBlock: cursor?.checkpoint_block == null
             ? null : String(cursor.checkpoint_block), checkpointHash: cursor?.checkpoint_hash,
           policyVersion: policy == null ? null : String(policy.version) },
-        coverage: stateCoverage, recentParity: parity });
+        coverage: stateCoverage, recentParity: parity,
+        recoveryWindowUntil: protection?.recoveryWindowUntil || null });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;

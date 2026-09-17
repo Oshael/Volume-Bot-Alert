@@ -45,7 +45,8 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
       chain text, checkpoint_block bigint
     )`);
     await query(`CREATE TEMP TABLE robinhood_chain_blocks (
-      chain text, block_number bigint, block_hash text, canonical boolean
+      chain text, block_number bigint, block_hash text, canonical boolean,
+      block_timestamp timestamptz
     )`);
     await query(`CREATE TEMP TABLE robinhood_chain_events (
       chain text, block_number bigint, block_hash text, transaction_hash text,
@@ -78,7 +79,7 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
       ('robinhood','legacy',0,1,NULL,NULL,NULL,NOW())`);
     await query(`INSERT INTO robinhood_chain_capture_cursor VALUES ('robinhood',105)`);
     for (let block = 91; block <= 100; block += 1) {
-      await query(`INSERT INTO robinhood_chain_blocks VALUES ('robinhood',$1,$2,true)`,
+      await query(`INSERT INTO robinhood_chain_blocks VALUES ('robinhood',$1,$2,true,NOW())`,
         [block, HASH(block)]);
     }
     await query(`INSERT INTO robinhood_chain_events VALUES
@@ -97,17 +98,22 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
     await query(`INSERT INTO robinhood_holder_legacy_coverage_builds VALUES
       ('robinhood',NOW())`);
 
-    const noRetention = createRobinhoodHolderCutoverGate({ database });
-    assert.equal((await noRetention.inspect()).blockers[0], 'manifest_incomplete');
-    await assert.rejects(noRetention.inspect({ apply: true }), {
-      code: 'holder_cutover_not_ready', reason: 'retention_guard_unavailable',
+    const gate = createRobinhoodHolderCutoverGate({ database });
+    assert.equal((await gate.inspect()).blockers[0], 'manifest_incomplete');
+    await assert.rejects(gate.inspect({ apply: true }), {
+      code: 'holder_cutover_not_ready', reason: 'manifest_incomplete',
     });
     await query(`INSERT INTO robinhood_holder_legacy_coverage_manifest VALUES
       ('robinhood',$1,1)`, [TOKEN]);
-    assert.equal((await noRetention.inspect()).readyForGate, true);
+    assert.equal((await gate.inspect()).readyForGate, true);
     await query(`UPDATE robinhood_holder_transfer_journal SET amount_raw=6`);
-    assert.ok((await noRetention.inspect()).blockers.includes('recent_parity_divergent'));
+    assert.ok((await gate.inspect()).blockers.includes('recent_parity_divergent'));
     await query(`UPDATE robinhood_holder_transfer_journal SET amount_raw=5`);
+    await query(`UPDATE robinhood_chain_blocks
+      SET block_timestamp=NOW()-INTERVAL '2 hours' WHERE block_number=100`);
+    assert.ok((await gate.inspect()).blockers.includes('checkpoint_not_recent'));
+    await query(`UPDATE robinhood_chain_blocks
+      SET block_timestamp=NOW() WHERE block_number=100`);
 
     const unprotected = createRobinhoodHolderCutoverGate({ database, retentionGuard: {
       async assertProtected() { throw new Error('raw retention is not fenced'); },
@@ -116,16 +122,13 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
     assert.equal((await query(`SELECT capture_mode FROM robinhood_holder_capture_policy`))
       .rows[0].capture_mode, 'legacy');
 
-    let guarded = false;
-    const gate = createRobinhoodHolderCutoverGate({ database, retentionGuard: {
-      async assertProtected(_, frontier) {
-        assert.equal(frontier.nextBlock, '101');
-        guarded = true;
-      },
-    } });
-    const result = await gate.inspect({ apply: true });
+    await assert.rejects(gate.inspect({ apply: true }), {
+      code: 'holder_cutover_not_ready', reason: 'expected_anchor_changed_or_missing',
+    });
+    const result = await gate.inspect({ apply: true,
+      expectedNextBlock: '101', expectedCheckpointHash: HASH(100) });
     assert.equal(result.readyForGate, true);
-    assert.equal(guarded, true);
+    assert.ok(Date.parse(result.recoveryWindowUntil) > Date.now());
     const policy = (await query(`SELECT capture_mode, coverage_generation,
       cutover_next_block, version FROM robinhood_holder_capture_policy`)).rows[0];
     assert.deepEqual(policy, { capture_mode: 'tracked', coverage_generation: '1',

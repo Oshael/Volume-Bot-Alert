@@ -472,7 +472,8 @@ Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
    e rewind cruzando o cutover falham fechados; há preflight read-only e
    reconstrução idempotente e auditoria read-only exata de uma faixa raw limitada.
    Gate transacional de cursor, cohort e paridade recente está implementado,
-   mas ainda não acionável sem guarda de retenção raw. Prova durável de cobertura
+   com guarda de retenção raw mínima de três dias e janela operacional de 24 horas.
+   Prova durável de cobertura
    de todo o intervalo e rollback transacional ficam como opção de reversão
    posterior, não como pré-condição do primeiro flip; sem eles, uma falha deve
    parar o fluxo para reparo forward-only, não voltar a `legacy` por flag.
@@ -634,10 +635,10 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Manter a policy em `legacy` enquanto se implementa a guarda de retenção raw e
-o comando explícito que aciona o gate transacional. Medir o custo da checagem
-de cohort sob lock antes da VPS. Não gravar `tracked` manualmente; se o gate
-falhar, permanecer em `legacy`.
+Manter a policy em `legacy` até validar em produção o schema e o plano/custo
+da checagem de cohort sob lock, publicar o mesmo código no worker de retenção
+e no de holders, revisar o preview do gate e aprovar o flip explicitamente.
+Não gravar `tracked` manualmente; se o gate falhar, permanecer em `legacy`.
 
 ## Arquivos de entrada para a próxima análise
 

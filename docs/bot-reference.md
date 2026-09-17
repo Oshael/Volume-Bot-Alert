@@ -3165,11 +3165,18 @@ na numeração dos blocos canônicos e igualdade de identidade/payload entre Tra
 journal (incluindo ausentes, excedentes e divergentes). Resultado
 `rangeComplete=true` vale somente para a faixa e snapshot indicados; não é
 prova durável de todo o intervalo tracked nem autoriza rollback ou flip.
-O gate de cutover `robinhood-holder-cutover-gate` confere sob transação o cursor,
-âncora canônica, manifesto/cohort e paridade raw/journal dos dez blocos finais;
-ao aplicar, incrementa a versão do cursor e grava policy e âncora no mesmo commit.
-Por enquanto não há comando operacional para acioná-lo: a aplicação falha sem
-uma guarda de retenção raw, ainda pendente. Não alterar a policy manualmente.
+O gate `node src/utils/cutover-robinhood-holder-capture.js` é read-only por
+padrão. Confere cursor, âncora canônica, manifesto/cohort, paridade raw/journal
+dos dez blocos finais e checkpoint com no máximo uma hora. O pruner impõe
+retenção raw mínima de três dias, inclusive em chamadas internas; o cutover
+assume uma janela conservadora de recuperação de 24 horas a partir do flip.
+`--apply --expect-next=N --expect-hash=0x...` exige a âncora exata mostrada no
+preview; sob lock, incrementa a versão do cursor e grava policy/âncora no mesmo
+commit. A janela conserva evidência para reparo; esta versão não oferece
+rollback por flag nem mesmo dentro dela. Em falha, parar e reparar para frente.
+Antes de aplicar na VPS, publicar o mesmo código no worker de retenção e no de
+holders, confirmar schema, plano/custo do gate e revisar o preview. Não alterar
+a policy manualmente.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
 `node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
 `npm run db:schema-check`. A Stage 213 cria
