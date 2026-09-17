@@ -468,8 +468,9 @@ Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
 4. Política de captura/rollback duráveis e reorg cruzando o cutover, ainda
    default `legacy`; testes de integração do cursor e da recuperação raw.
    **Parcialmente implementado**: policy governa a captura, commit concorrente
-   e rewind cruzando o cutover falham fechados; há preflight read-only de âncoras
-   e retenção raw, mas reconstrução/rollback explícitos ainda precedem o flip.
+   e rewind cruzando o cutover falham fechados; há preflight read-only e
+   reconstrução idempotente de uma faixa raw limitada. Prova de cobertura de
+   todo o intervalo e rollback transacional ainda precedem o flip.
 5. Somente então ativação do Corte 6, mediante gate real em produção.
 
 O novo gate deve ter provas separadas: para tokens com tail, paridade desde o

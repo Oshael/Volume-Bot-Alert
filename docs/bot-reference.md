@@ -3151,6 +3151,14 @@ verifica se a âncora tracked, o checkpoint holder e o floor raw ainda permitem
 iniciar uma reconstrução do trecho desde o cutover. Ele não prova todos os
 blocos/eventos intermediários, não reconstrói o journal e não autoriza mudar
 a policy de volta para `legacy`; falha fechado se a retenção ou âncora sumir.
+Para reconstruir manualmente uma faixa tracked ainda retida no raw, use
+`node src/utils/restore-robinhood-holder-universal-range.js --from=N --to=M`
+em preview; `--apply` escreve somente após revisão. Cada chamada aceita no
+máximo 250 blocos, exige policy/cursor inalterados e compara quantidade e
+identidades dos transfers com o raw canônico antes do INSERT idempotente.
+Faixas com logs Transfer malformados, raw incompleto, conflito no journal ou
+reorg falham fechadas. O comando não atualiza o cursor, não muda a policy e não
+prova sozinho a reconstrução de todo o intervalo até o rollback.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
 `node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
 `npm run db:schema-check`. A Stage 213 cria

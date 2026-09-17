@@ -1971,6 +1971,7 @@ module.exports = {
   acquireRobinhoodHolderReorgFence: lockReorgFence,
   createRobinhoodHolderLedgerRepository,
   deriveHolderBalanceChanges: deriveBalanceChanges,
+  insertHolderJournalTransfers: insertTransfers,
   normalizeHolderTransfer: normalizeTransfer,
   __private: {
     deriveBalanceChanges, lockReorgFence,
