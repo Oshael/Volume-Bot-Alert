@@ -3139,7 +3139,13 @@ o relay durável roda no mesmo worker de apply, mas fora da transação do ledge
 promoção residual é limitada separadamente por
 `ROBINHOOD_HOLDER_LIVE_SHADOW_PROMOTION_BATCH_SIZE` (default 250, máximo 1.000),
 evitando que um budget alto de apply transforme milhares de promoções em uma única
-transação e esgote a tabela compartilhada de locks do PostgreSQL.
+transação e esgote a tabela compartilhada de locks do PostgreSQL. Essa promoção
+residual só roda quando o drain não esgota seu budget de eventos ou duração; sob
+backlog, aplicar o journal tem precedência e shadows drenados ainda são promovidos
+individualmente no próprio caminho de apply.
+`lastResult.timing` separa `targetedShadowPromotionDurationMs` e
+`residualShadowPromotionDurationMs`, com contagem de chamadas e
+`residualShadowPromotionDeferred`, para identificar qual caminho consome o tick.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
 `node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
 `npm run db:schema-check`. A Stage 213 cria

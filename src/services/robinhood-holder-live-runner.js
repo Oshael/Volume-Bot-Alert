@@ -72,6 +72,7 @@ const TIMING_SUM_FIELDS = Object.freeze([
   'applyCalls', 'nonIdleApplyCalls', 'attemptedEvents', 'applyCallDurationMs',
   'driftRepairDurationMs', 'selectionCalls', 'selectionDurationMs', 'selectedTokens',
   'hotSelectionCalls', 'hotSelectionDurationMs', 'shadowPromotionDurationMs',
+  'targetedShadowPromotionDurationMs', 'targetedShadowPromotionCalls',
   'publicationDurationMs',
 ]);
 
@@ -323,7 +324,15 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         'shadow_promotion', input.tokenAddress
       );
     } finally {
-      timing.shadowPromotionDurationMs += elapsedMs(startedAt);
+      const durationMs = elapsedMs(startedAt);
+      timing.shadowPromotionDurationMs += durationMs;
+      if (input.tokenAddress) {
+        timing.targetedShadowPromotionDurationMs += durationMs;
+        timing.targetedShadowPromotionCalls += 1;
+      } else {
+        timing.residualShadowPromotionDurationMs += durationMs;
+        timing.residualShadowPromotionCalls += 1;
+      }
     }
   }
 
@@ -525,7 +534,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       hotSelectionsByClass: {
         'fresh-live': 0, 'recent-shadow': 0, 'stale-live': 0, 'stale-shadow': 0,
       },
-      shadowPromotionDurationMs: 0, publicationDurationMs: 0,
+      shadowPromotionDurationMs: 0, targetedShadowPromotionDurationMs: 0,
+      targetedShadowPromotionCalls: 0, publicationDurationMs: 0,
     };
     const holderCountUpdates = new Map();
     const deadlineMs = measureMs() + maxDurationMs;
@@ -701,9 +711,15 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     )));
     const drained = mergeDrainedLanes(lanes, maxApplyEvents);
     const drainDurationMs = elapsedMs(drainStartedAt);
-    const promoted = await promoteReadyShadows({
-      limit: Math.min(maxApplyEvents, shadowPromotionBatchSize),
-    }, drained.timing);
+    drained.timing.residualShadowPromotionDurationMs = 0;
+    drained.timing.residualShadowPromotionCalls = 0;
+    const applyBudgetExhausted = !drained.reachedIdle
+      && (drained.eventBudgetExhausted || drained.durationBudgetExhausted);
+    const promoted = applyBudgetExhausted
+      ? { promotedTokens: 0, publications: [] }
+      : await promoteReadyShadows({
+        limit: Math.min(maxApplyEvents, shadowPromotionBatchSize),
+      }, drained.timing);
     const promotedUpdates = new Map();
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });
@@ -739,6 +755,11 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           - applyTiming.publicationDurationMs
       ),
       shadowPromotionDurationMs: applyTiming.shadowPromotionDurationMs,
+      targetedShadowPromotionDurationMs: applyTiming.targetedShadowPromotionDurationMs,
+      targetedShadowPromotionCalls: applyTiming.targetedShadowPromotionCalls,
+      residualShadowPromotionDurationMs: applyTiming.residualShadowPromotionDurationMs,
+      residualShadowPromotionCalls: applyTiming.residualShadowPromotionCalls,
+      residualShadowPromotionDeferred: applyBudgetExhausted,
       publicationDurationMs: applyTiming.publicationDurationMs,
       appliedEventsPerSecond: totalDurationMs > 0
         ? Number((drained.appliedEvents * 1000 / totalDurationMs).toFixed(2)) : 0,
@@ -757,8 +778,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       shadowPromotions,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       freshness: await ledger.getHotQueueFreshness(),
-      applyBudgetExhausted: !drained.reachedIdle
-        && (drained.eventBudgetExhausted || drained.durationBudgetExhausted),
+      applyBudgetExhausted,
       timing,
     });
   }

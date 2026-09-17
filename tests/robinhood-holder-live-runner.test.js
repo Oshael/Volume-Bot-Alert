@@ -652,6 +652,31 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.appliedEvents, 2);
     assert.equal(result.applyBudgetExhausted, true);
     assert.equal(context.calls.filter(([name]) => name === 'capture').length, 1);
+    assert.equal(context.calls.some(([name]) => name === 'promote-shadows'), false);
+    assert.equal(result.timing.residualShadowPromotionDeferred, true);
+    assert.equal(result.timing.residualShadowPromotionCalls, 0);
+  });
+
+  it('preserves targeted promotion when backlog defers the residual sweep', async () => {
+    const tokenAddress = `0x${'c'.repeat(40)}`;
+    const context = harness({ status: 'idle' }, [{
+      status: 'applied', tokenAddress, appliedEvents: 2, attemptedEvents: 2,
+      tokenDrained: true,
+    }], { status: 'idle' }, async () => 0, {
+      targetedShadowPromotions: [{
+        status: 'promoted', promotedTokens: 1, publications: [],
+      }],
+    });
+
+    const result = await context.runner.applyOnce({ maxApplyEvents: 2 });
+
+    assert.equal(result.shadowPromotions, 1);
+    assert.equal(result.applyBudgetExhausted, true);
+    assert.deepEqual(context.calls.filter(([name]) => name === 'promote-shadows'), [
+      ['promote-shadows', { limit: 1, tokenAddress }],
+    ]);
+    assert.equal(result.timing.targetedShadowPromotionCalls, 1);
+    assert.equal(result.timing.residualShadowPromotionCalls, 0);
   });
 
   it('allows capture to advance while an independent apply tick is in flight', async () => {
