@@ -1060,6 +1060,14 @@ lendo e escrevendo a tabela antiga. O trigger também replica deletes por `ON DE
 Enquanto o shadow estiver ativo há custo temporário de dual-write; não remova o trigger nem use a
 tabela shadow como autoridade antes de concluir o backfill e a paridade operacional.
 
+A Stage 237 adiciona somente o cursor durável do backfill. Aplique-a e use
+`npm run robinhood:wallet-swap-state-backfill -- --limit=1000` para prévia; acrescente `--apply`
+para copiar um lote. Cada transação percorre a PK por keyset, insere apenas estados ausentes e
+compara todos os campos mutáveis no mesmo intervalo antes de avançar o cursor. O comando é
+retomável, limita o lote a 10.000 e marca `complete=true` somente ao alcançar o fim. Qualquer
+`missing` ou `divergent` em apply aborta e reverte o lote. O trigger da Stage 236 continua cobrindo
+eventos e mudanças concorrentes durante toda a carga.
+
 Em ambiente pré-lançamento, `ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED=true` admite todas
 as sessões, inclusive anônimas, nessa mesma sala. O default permanece `false`; essa flag controla
 somente a audiência, enquanto `...OBSERVED_ENABLED` continua controlando a produção dos eventos.

@@ -6464,6 +6464,26 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage237-robinhood-wallet-swap-realtime-state-backfill',
+    name: 'Stage 237 Robinhood wallet-swap realtime state backfill',
+    repair: 'node src/utils/db-init-stage237.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_state_backfills',
+      columns: [
+        'chain', 'pass', 'after_transaction_hash', 'after_log_index',
+        'after_block_hash', 'after_event_kind', 'scanned', 'inserted',
+        'completed_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_swap_realtime_state_backfill_values_check',
+        includes: [
+          'after_transaction_hash', 'after_log_index', 'after_block_hash',
+          'after_event_kind', 'scanned', 'inserted',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
