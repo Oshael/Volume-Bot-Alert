@@ -3154,8 +3154,8 @@ a policy de volta para `legacy`; falha fechado se a retenção ou âncora sumir.
 Para reconstruir manualmente uma faixa tracked ainda retida no raw, use
 `node src/utils/restore-robinhood-holder-universal-range.js --from=N --to=M`
 em preview; `--apply` escreve somente após revisão. Cada chamada aceita no
-máximo 250 blocos, exige policy/cursor inalterados e compara quantidade e
-identidades dos transfers com o raw canônico antes do INSERT idempotente.
+máximo 250 blocos, exige policy/cursor inalterados e compara quantidade,
+identidades e payload dos transfers com o raw canônico antes do INSERT idempotente.
 Faixas com logs Transfer malformados, raw incompleto, conflito no journal ou
 reorg falham fechadas. O comando não atualiza o cursor, não muda a policy e não
 prova sozinho a reconstrução de todo o intervalo até o rollback.

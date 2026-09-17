@@ -106,7 +106,9 @@ function createRobinhoodHolderUniversalRestore(options = {}) {
                   AS raw_transfers,
                 (SELECT COUNT(*)::int
                    FROM jsonb_to_recordset($5::jsonb) AS item(
-                     block_hash text, transaction_hash text, log_index int)
+                     block_number bigint, block_hash text, transaction_hash text,
+                     transaction_index int, log_index int, token_address text,
+                     from_topic text, to_topic text, data text)
                    JOIN robinhood_chain_events event
                      ON event.chain='robinhood' AND event.block_hash=item.block_hash
                     AND event.transaction_hash=item.transaction_hash
@@ -115,7 +117,14 @@ function createRobinhoodHolderUniversalRestore(options = {}) {
                      ON block.chain=event.chain AND block.block_hash=event.block_hash
                     AND block.canonical=TRUE
                   WHERE event.topic0=$3
-                    AND event.block_number BETWEEN $1::bigint AND $2::bigint)
+                    AND event.block_number BETWEEN $1::bigint AND $2::bigint
+                    AND event.block_number=item.block_number
+                    AND event.transaction_index=item.transaction_index
+                    AND event.address=item.token_address
+                    AND jsonb_array_length(event.topics)=3
+                    AND lower(event.topics->>1)=item.from_topic
+                    AND lower(event.topics->>2)=item.to_topic
+                    AND lower(event.data)=item.data)
                   AS matched_transfers,
                 EXISTS(SELECT 1 FROM robinhood_chain_blocks block
                   WHERE block.chain='robinhood' AND block.canonical=TRUE
@@ -131,9 +140,15 @@ function createRobinhoodHolderUniversalRestore(options = {}) {
                   AS holder_checkpoint_canonical`,
         [range.fromBlock, range.toBlock, TRANSFER_TOPIC, captured.checkpoint.hash,
           JSON.stringify(transfers.map((transfer) => ({
+            block_number: transfer.blockNumber,
             block_hash: transfer.blockHash,
             transaction_hash: transfer.transactionHash,
+            transaction_index: transfer.transactionIndex,
             log_index: transfer.logIndex,
+            token_address: transfer.tokenAddress,
+            from_topic: `0x${'0'.repeat(24)}${transfer.fromWallet.slice(2)}`,
+            to_topic: `0x${'0'.repeat(24)}${transfer.toWallet.slice(2)}`,
+            data: `0x${BigInt(transfer.amountRaw).toString(16).padStart(64, '0')}`,
           }))), policy.cutover_checkpoint_block, policy.cutover_checkpoint_hash,
           cursor.checkpoint_block, cursor.checkpoint_hash]
       )).rows[0];

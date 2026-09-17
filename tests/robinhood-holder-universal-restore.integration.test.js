@@ -108,6 +108,20 @@ it('restores a bounded canonical range idempotently and rejects stale or diverge
     });
     await query('UPDATE robinhood_chain_blocks SET canonical=true WHERE block_number=101');
 
+    const changedPayload = createRobinhoodHolderUniversalRestore({ database, source: {
+      async readGlobalRange(range) {
+        const captured = await canonical.readGlobalRange(range);
+        await query('UPDATE robinhood_chain_events SET data=$1 WHERE block_number=101',
+          [`0x${'0'.repeat(63)}6`]);
+        return captured;
+      },
+    } });
+    await assert.rejects(changedPayload.restoreRange({ ...input, apply: true }), {
+      code: 'holder_universal_restore_unavailable', reason: 'raw-range-incomplete-or-changed',
+    });
+    await query('UPDATE robinhood_chain_events SET data=$1 WHERE block_number=101',
+      [`0x${'0'.repeat(63)}5`]);
+
     const source = createRobinhoodHolderUniversalRestore({ database });
     await query("UPDATE robinhood_holder_capture_policy SET capture_mode='legacy'");
     await assert.rejects(source.restoreRange(input), {
