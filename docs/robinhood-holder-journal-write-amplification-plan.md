@@ -444,7 +444,8 @@ fechado até um procedimento testado restaurar a cobertura pelo raw retido e
 reancorar o cohort. O rollback da flag para `legacy` também deve ser gravado
 sob o cursor com incremento de versão; ele não inventa o buffer universal das
 faixas já capturadas em tracked-only. O caminho de reconstrução dessas faixas
-precisa de teste de integração e de estar dentro do floor raw antes do flip.
+depende de raw ainda retido; sem ele, o modo `tracked` deve parar para reparo
+forward-only, sem flip de volta por flag.
 
 #### Fatiamento e checkpoint de arquitetura
 
@@ -470,17 +471,18 @@ Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
    **Parcialmente implementado**: policy governa a captura, commit concorrente
    e rewind cruzando o cutover falham fechados; há preflight read-only e
    reconstrução idempotente e auditoria read-only exata de uma faixa raw limitada.
-   Prova durável de cobertura de todo o intervalo e rollback transacional ainda
-   precedem o flip.
+   Gate transacional de cursor, cohort e paridade recente está implementado,
+   mas ainda não acionável sem guarda de retenção raw. Prova durável de cobertura
+   de todo o intervalo e rollback transacional ficam como opção de reversão
+   posterior, não como pré-condição do primeiro flip; sem eles, uma falha deve
+   parar o fluxo para reparo forward-only, não voltar a `legacy` por flag.
 5. Somente então ativação do Corte 6, mediante gate real em produção.
 
-O novo gate deve ter provas separadas: para tokens com tail, paridade desde o
-deployment como hoje; para o cohort legado promovido, paridade raw/journal em
-janela recente comum e, quando houver avanço, deltas de saldo desde um snapshot
-de baseline. Não alegar paridade histórica a partir de janela recente. Exigir
-amostras não vazias de ambas as populações e contagens explícitas de estados
-sem contrato, de pendências e de exceções invalidadas. Uma amostra ausente deve
-produzir `ready=false`, nunca zeros interpretados como sucesso.
+O gate mínimo para o primeiro flip exige manifesto corrente em todo o cohort
+legado, nenhum `backfilling` legado, tail coerente, coorte global inativa e
+paridade exata raw/journal em janela recente universal não vazia. Isso não prova
+paridade histórica de balances nem substitui as auditorias de tail/legado;
+divergência, janela vazia ou timeout deixam o modo `legacy` intacto.
 
 No flip, serializar política, cursor e admissões: uma captura que leu escopo ou
 modo anterior deve ser invalidada por versão e repetida; a primeira faixa
@@ -491,8 +493,9 @@ dentro da janela em que o raw e o journal ainda permitem reconstituir a faixa.
 
 Aceite: nenhum `backfilling` legado sem recuperação; todos os `live/shadow`
 antigos identificados por contrato explícito e verificável; admissões novas e
-coortes globais protegidas; gate com amostras reais sem divergência; teste de
-concorrência entre captura/admissão/flip, reorg através da âncora e rollback.
+coortes globais protegidas; gate com amostra recente real sem divergência e
+fence de retenção raw; teste de concorrência entre captura/admissão/flip e
+reorg através da âncora. Voltar a `legacy` não integra o primeiro cutover.
 Até isso estar implementado e observado, manter `captureAllTransfers=true`.
 
 ### Corte 6 — ativação tracked-only
@@ -525,7 +528,7 @@ Gate de produção antes do flip:
   `backfilling` legado com tail `NULL`;
 - raw floor cobre todas as admissões que usarão replay recente;
 - worker sem erro e checkpoints canônicos consistentes;
-- rollback flag testado.
+- janela de retenção raw protegida e procedimento de parada/reparo forward-only.
 
 Aceite operacional:
 
@@ -535,8 +538,9 @@ Aceite operacional:
 - WAL, deletes e crescimento de dead tuples do journal caem após a drenagem da
   dívida antiga.
 
-Rollback: voltar a flag para legacy enquanto a compatibilidade e o raw da
-janela estiverem presentes. Não dropar schema neste corte.
+Não há rollback por flag neste corte. Uma reversão futura para `legacy` exige
+reconstrução e auditoria do intervalo tracked inteiro sob fence próprio;
+sem isso, parar a captura e reparar para frente. Não dropar schema neste corte.
 
 ### Corte 7 — retirar buffer e prune obsoletos
 
@@ -630,10 +634,10 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Aplicar a Stage 234, manter a policy em `legacy` e observar a captura universal.
-Depois, implementar a reconstrução/rollback da faixa tracked e o gate
-transacional por população com comando explícito de flip; `tracked` não deve
-ser gravado manualmente.
+Manter a policy em `legacy` enquanto se implementa a guarda de retenção raw e
+o comando explícito que aciona o gate transacional. Medir o custo da checagem
+de cohort sob lock antes da VPS. Não gravar `tracked` manualmente; se o gate
+falhar, permanecer em `legacy`.
 
 ## Arquivos de entrada para a próxima análise
 
