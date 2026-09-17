@@ -3166,22 +3166,27 @@ journal (incluindo ausentes, excedentes e divergentes). Resultado
 `rangeComplete=true` vale somente para a faixa e snapshot indicados; não é
 prova durável de todo o intervalo tracked nem autoriza rollback ou flip.
 O gate `node src/utils/cutover-robinhood-holder-capture.js` é read-only por
-padrão. Confere cursor, âncora canônica, manifesto/cohort, paridade raw/journal
-dos dez blocos finais e checkpoint com no máximo uma hora. O pruner impõe
+padrão. Confere cursor, âncora canônica, manifesto/cohort, paridade entre raw e
+recibos duráveis dos dez blocos finais e checkpoint com no máximo uma hora. A
+Stage 235 cria `robinhood_holder_capture_receipts`: cada bloco não vazio da
+captura legacy grava contagem e SHA-256 da evidência na mesma transação que
+journal e cursor. O journal rejeita alteração posterior dos campos de evidência;
+rewind e retenção removem os recibos correspondentes. Assim o gate não varre o
+journal BRIN fisicamente descorrelacionado. O pruner impõe
 retenção raw mínima de três dias, inclusive em chamadas internas; o cutover
 assume uma janela conservadora de recuperação de 24 horas a partir do flip.
 `--apply --expect-next=N --expect-hash=0x...` exige a âncora exata mostrada no
 preview; sob lock, incrementa a versão do cursor e grava policy/âncora no mesmo
 commit. A janela conserva evidência para reparo; esta versão não oferece
 rollback por flag nem mesmo dentro dela. Em falha, parar e reparar para frente.
-O gate usa `statement_timeout` de 15 segundos por padrão e informa a fase que
-falhou. Em journal fisicamente descorrelacionado, depois de confirmar por
-`EXPLAIN` que a leitura dos dez blocos usa o BRIN, aceite explicitamente até
-60 segundos com `--statement-timeout-ms=60000`; o limite de blocos e de eventos
-não muda, e não se deve recriar o B-tree global para executar o gate.
+O gate usa `statement_timeout` de 15 segundos por padrão, informa a fase que
+falhou e aceita limite explícito de até 60 segundos com
+`--statement-timeout-ms=60000`; o limite de blocos e de eventos não muda.
 Antes de aplicar na VPS, publicar o mesmo código no worker de retenção e no de
-holders, confirmar schema, plano/custo do gate e revisar o preview. Não alterar
-a policy manualmente.
+holders, parar o grupo holders, aplicar `node src/utils/db-init-stage235.js`,
+confirmar schema e reiniciar. Aguarde o cursor avançar pelo menos dez blocos com
+a nova versão antes do preview; recibo ausente ou divergente bloqueia o gate.
+Não alterar a policy manualmente.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
 `node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
 `npm run db:schema-check`. A Stage 213 cria

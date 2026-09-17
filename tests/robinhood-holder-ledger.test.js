@@ -76,6 +76,20 @@ describe('Robinhood holder ledger repository', () => {
     }), /immediately precede/);
   });
 
+  it('builds stable per-block receipts from unique normalized evidence', () => {
+    const second = transfer({ transactionHash: `0x${'e'.repeat(64)}`, logIndex: 3 });
+    const forward = __private.buildCaptureReceipts([transfer(), second, transfer()]);
+    const reversed = __private.buildCaptureReceipts([second, transfer()]);
+    assert.deepEqual(forward, reversed);
+    assert.equal(forward[0].blockNumber, '100');
+    assert.equal(forward[0].transferCount, 2);
+    assert.match(forward[0].evidenceHash, /^0x[0-9a-f]{64}$/);
+    assert.notEqual(
+      __private.buildCaptureReceipts([transfer({ amountRaw: '1' }), second])[0].evidenceHash,
+      forward[0].evidenceHash
+    );
+  });
+
   it('derives holder transitions for mint, burn, transfer and self-transfer', () => {
     const derive = __private.deriveBalanceChanges;
     const zero = `0x${'0'.repeat(40)}`;
@@ -118,6 +132,7 @@ describe('Robinhood holder ledger repository', () => {
       { rows: [{ capture_mode: 'legacy', coverage_generation: '0',
         cutover_next_block: null, version: '0' }], rowCount: 1 },
       { rows: [{ matched: '2', inserted: '1' }], rowCount: 1 },
+      { rows: [{ matched: '1' }], rowCount: 1 },
       { rows: [{ version: '0' }], rowCount: 1 },
     ]);
     const repository = createRobinhoodHolderLedgerRepository(fake);
@@ -128,12 +143,13 @@ describe('Robinhood holder ledger repository', () => {
 
     assert.deepEqual(result, { insertedTransfers: 1, duplicateTransfers: 1, cursorVersion: 0 });
     assert.deepEqual(fake.calls.map(({ sql }) => sql === 'BEGIN' || sql === 'COMMIT' ? sql : 'query'), [
-      'BEGIN', 'query', 'query', 'query', 'query', 'query', 'COMMIT',
+      'BEGIN', 'query', 'query', 'query', 'query', 'query', 'query', 'COMMIT',
     ]);
     assert.match(fake.calls[4].sql, /ON CONFLICT \(chain, transaction_hash, log_index\)/);
-    assert.match(fake.calls[5].sql, /robinhood_holder_cursors\.version = \$5::bigint/);
-    assert.match(fake.calls[5].sql, /robinhood_holder_cursors\.next_block = \$6::bigint/);
-    assert.equal(fake.calls[5].params[6], true);
+    assert.match(fake.calls[5].sql, /robinhood_holder_capture_receipts/);
+    assert.match(fake.calls[6].sql, /robinhood_holder_cursors\.version = \$5::bigint/);
+    assert.match(fake.calls[6].sql, /robinhood_holder_cursors\.next_block = \$6::bigint/);
+    assert.equal(fake.calls[6].params[6], true);
     assert.equal(fake.client.released, true);
   });
 

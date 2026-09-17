@@ -5,6 +5,7 @@ const db = require('../src/models/db');
 const { HOT_QUEUE_REPAIR_STATEMENTS, STATEMENTS: HOT_QUEUE_DDL } = require('../src/utils/db-init-stage180');
 const stage213 = require('../src/utils/db-init-stage213');
 const stage229 = require('../src/utils/db-init-stage229');
+const stage235 = require('../src/utils/db-init-stage235');
 const {
   createRobinhoodHolderRealtimeOutboxRepository,
 } = require('../src/models/robinhood-holder-realtime-outbox');
@@ -123,6 +124,9 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_capture_policy
         (LIKE public.robinhood_holder_capture_policy INCLUDING ALL)`);
+      await client.query(stage235.STATEMENTS[0].replace(
+        'CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE'
+      ));
       await client.query(`INSERT INTO robinhood_holder_capture_policy
         VALUES ('robinhood', 'legacy')`);
       await client.query(stage213.STATEMENTS[0].replace(
@@ -201,6 +205,12 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(first, {
         insertedTransfers: 2, duplicateTransfers: 1, cursorVersion: 0,
       });
+      const receipt = await client.query(
+        `SELECT transfer_count, evidence_hash
+           FROM robinhood_holder_capture_receipts WHERE block_number = 100`
+      );
+      assert.equal(Number(receipt.rows[0].transfer_count), 2);
+      assert.match(receipt.rows[0].evidence_hash, /^0x[0-9a-f]{64}$/);
       await client.query(`UPDATE robinhood_holder_capture_policy SET version=1`);
       await assert.rejects(
         repository.appendCapturedRange(capture('101', HASH_B, 0, '101')),
@@ -950,7 +960,8 @@ describe('Robinhood holder ledger persistence', () => {
                 state.live_through_block, state.live_through_hash,
                 cursor.next_block, cursor.safe_head, cursor.checkpoint_block,
                 cursor.checkpoint_hash, cursor.buffer_floor_block, cursor.version,
-                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal) AS journal_count
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal) AS journal_count,
+                (SELECT COUNT(*) FROM robinhood_holder_capture_receipts) AS receipt_count
            FROM robinhood_holder_token_states state
            CROSS JOIN robinhood_holder_cursors cursor
           WHERE state.token_address = $1`, [TOKEN]
@@ -963,11 +974,12 @@ describe('Robinhood holder ledger persistence', () => {
         bufferFloorBlock: row.buffer_floor_block == null
           ? null : String(row.buffer_floor_block),
         version: Number(row.version), journalCount: Number(row.journal_count),
+        receiptCount: Number(row.receipt_count),
       })), [{
         holderCount: '1', ledgerStatus: 'live', liveThroughBlock: '99',
         liveThroughHash: HASH_B, nextBlock: '100', safeHead: '199',
         checkpointBlock: '99', checkpointHash: HASH_B, bufferFloorBlock: null,
-        version: 2, journalCount: 0,
+        version: 2, journalCount: 0, receiptCount: 0,
       }]);
       const stillRecovering = await client.query(
         `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,

@@ -6393,6 +6393,37 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage235-robinhood-holder-capture-receipts',
+    name: 'Stage 235 Robinhood holder capture receipts',
+    repair: 'node src/utils/db-init-stage235.js',
+    tables: [{
+      table: 'robinhood_holder_capture_receipts',
+      columns: [
+        'chain', 'block_number', 'block_hash', 'transfer_count', 'evidence_hash',
+        'capture_policy_version', 'captured_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_capture_receipts_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'block_number'],
+      }, {
+        name: 'rh_holder_capture_receipts_values_check',
+        includes: [
+          'block_number', 'transfer_count', 'capture_policy_version',
+          'block_hash', 'evidence_hash',
+        ],
+      }],
+    }, {
+      table: 'robinhood_holder_transfer_journal',
+      triggers: [{
+        name: 'trg_rh_holder_journal_evidence_immutable',
+        includes: [
+          'BEFORE UPDATE', 'enforce_robinhood_holder_journal_evidence_immutable',
+          'block_hash', 'transaction_hash', 'amount_raw',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

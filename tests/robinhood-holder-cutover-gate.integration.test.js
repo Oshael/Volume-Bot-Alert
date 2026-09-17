@@ -7,6 +7,9 @@ const { TRANSFER_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 const {
   createRobinhoodHolderCutoverGate,
 } = require('../src/services/robinhood-holder-cutover-gate');
+const {
+  buildHolderCaptureReceipts,
+} = require('../src/models/robinhood-holder-ledger');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const HASH = (n) => `0x${n.toString(16).padStart(64, '0')}`;
@@ -27,6 +30,7 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
     'robinhood_chain_blocks', 'robinhood_holder_global_backfill_tokens',
     'robinhood_holder_global_backfill_runs', 'robinhood_holder_legacy_coverage_builds',
     'robinhood_holder_legacy_coverage_manifest', 'robinhood_holder_token_states',
+    'robinhood_holder_capture_receipts',
     'robinhood_chain_capture_cursor', 'robinhood_holder_capture_policy',
     'robinhood_holder_cursors',
   ];
@@ -55,6 +59,11 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
     )`);
     await query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
       (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
+    await query(`CREATE TEMP TABLE robinhood_holder_capture_receipts (
+      chain text, block_number bigint, block_hash text, transfer_count int,
+      evidence_hash text, capture_policy_version bigint,
+      PRIMARY KEY (chain, block_number)
+    )`);
     await query(`CREATE TEMP TABLE robinhood_holder_token_states (
       chain text, token_address text, ledger_status text,
       coverage_generation bigint, tail_capture_from_block bigint,
@@ -93,6 +102,15 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
       log_index, token_address, from_wallet, to_wallet, amount_raw
     ) VALUES ('robinhood',100,$1,$2,0,0,$3,$4,$5,5)`,
     [HASH(100), HASH(200), TOKEN, FROM, TO]);
+    const [receipt] = buildHolderCaptureReceipts([{
+      blockNumber: '100', blockHash: HASH(100), transactionHash: HASH(200),
+      transactionIndex: 0, logIndex: 0, tokenAddress: TOKEN,
+      fromWallet: FROM, toWallet: TO, amountRaw: '5',
+    }]);
+    await query(`INSERT INTO robinhood_holder_capture_receipts VALUES
+      ('robinhood',$1,$2,$3,$4,1)`, [
+      receipt.blockNumber, receipt.blockHash, receipt.transferCount, receipt.evidenceHash,
+    ]);
     await query(`INSERT INTO robinhood_holder_token_states VALUES
       ('robinhood',$1,'live',1,NULL,90,90,100)`, [TOKEN]);
     await query(`INSERT INTO robinhood_holder_legacy_coverage_builds VALUES
@@ -106,9 +124,11 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
     await query(`INSERT INTO robinhood_holder_legacy_coverage_manifest VALUES
       ('robinhood',$1,1)`, [TOKEN]);
     assert.equal((await gate.inspect()).readyForGate, true);
-    await query(`UPDATE robinhood_holder_transfer_journal SET amount_raw=6`);
+    await query(`UPDATE robinhood_holder_capture_receipts SET evidence_hash=$1`, [HASH(999)]);
     assert.ok((await gate.inspect()).blockers.includes('recent_parity_divergent'));
-    await query(`UPDATE robinhood_holder_transfer_journal SET amount_raw=5`);
+    await query(`UPDATE robinhood_holder_capture_receipts SET evidence_hash=$1`, [
+      receipt.evidenceHash,
+    ]);
     await query(`UPDATE robinhood_chain_blocks
       SET block_timestamp=NOW()-INTERVAL '2 hours' WHERE block_number=100`);
     assert.ok((await gate.inspect()).blockers.includes('checkpoint_not_recent'));

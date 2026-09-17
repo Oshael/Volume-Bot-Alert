@@ -253,6 +253,11 @@ async function hasOlderJournalEvent(client, cutoffBlock) {
 }
 
 async function advanceFloor(client, cutoffBlock) {
+  await client.query(
+    `DELETE FROM robinhood_holder_capture_receipts
+      WHERE chain = 'robinhood' AND block_number < $1`,
+    [cutoffBlock]
+  );
   const result = await client.query(
     `/* holder-prune:advance_floor */ UPDATE robinhood_holder_cursors
         SET journal_floor_block = $1, updated_at = NOW()

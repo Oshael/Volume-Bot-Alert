@@ -4,9 +4,8 @@ const db = require('../models/db');
 const { TRANSFER_TOPIC } = require('./evm-erc20-supply-delta');
 const { __private: { decodeTransferLog } } = require('./robinhood-holder-transfer-reader');
 const {
-  acquireRobinhoodHolderReorgFence, normalizeHolderTransfer,
+  acquireRobinhoodHolderReorgFence, buildHolderCaptureReceipts, normalizeHolderTransfer,
 } = require('../models/robinhood-holder-ledger');
-const { compareEvidence } = require('./robinhood-holder-universal-coverage-audit');
 const { createRobinhoodHolderCutoverRetention } = require('./robinhood-holder-cutover-retention');
 
 const CHAIN = 'robinhood';
@@ -68,13 +67,30 @@ function decodeRaw(row, from, through, checkpointHash) {
   }, { tokenAddress: null, fromBlock: from, toBlock: through, checkpointHash }));
 }
 
-function decodeJournal(row) {
-  return normalizeHolderTransfer({
-    blockNumber: row.block_number, blockHash: row.block_hash,
-    transactionHash: row.transaction_hash, transactionIndex: row.transaction_index,
-    logIndex: row.log_index, tokenAddress: row.token_address,
-    fromWallet: row.from_wallet, toWallet: row.to_wallet, amountRaw: row.amount_raw,
+function decodeReceipt(row) {
+  return Object.freeze({
+    blockNumber: String(row.block_number), blockHash: row.block_hash,
+    transferCount: Number(row.transfer_count), evidenceHash: row.evidence_hash,
   });
+}
+
+function compareReceipts(expected, actual) {
+  const expectedByBlock = new Map(expected.map((receipt) => [receipt.blockNumber, receipt]));
+  const actualByBlock = new Map(actual.map((receipt) => [receipt.blockNumber, receipt]));
+  let missing = 0;
+  let excess = 0;
+  let divergent = 0;
+  for (const [blockNumber, receipt] of expectedByBlock) {
+    const stored = actualByBlock.get(blockNumber);
+    if (!stored) missing += receipt.transferCount;
+    else if (stored.blockHash !== receipt.blockHash
+        || stored.transferCount !== receipt.transferCount
+        || stored.evidenceHash !== receipt.evidenceHash) divergent += 1;
+  }
+  for (const [blockNumber, receipt] of actualByBlock) {
+    if (!expectedByBlock.has(blockNumber)) excess += receipt.transferCount;
+  }
+  return { missing, excess, divergent };
 }
 
 async function recentParity(client, cursor) {
@@ -103,23 +119,24 @@ async function recentParity(client, cursor) {
       ORDER BY event.block_number, event.transaction_index, event.log_index LIMIT $5`,
     [CHAIN, from.toString(), through.toString(), TRANSFER_TOPIC, MAX_EVENTS + 1]
   )).rows;
-  const journal = (await client.query(
-    `SELECT block_number, block_hash, transaction_hash, transaction_index,
-            log_index, token_address, from_wallet, to_wallet, amount_raw
-       FROM robinhood_holder_transfer_journal
-      WHERE chain=$1 AND block_number BETWEEN $2::bigint AND $3::bigint
-      ORDER BY block_number, transaction_index, log_index LIMIT $4`,
-    [CHAIN, from.toString(), through.toString(), MAX_EVENTS + 1]
-  )).rows;
-  if (!raw.length || raw.length > MAX_EVENTS || journal.length > MAX_EVENTS) {
+  if (!raw.length || raw.length > MAX_EVENTS) {
     throw fail('recent_sample_empty_or_over_limit');
   }
-  const compared = compareEvidence(
-    raw.map((row) => decodeRaw(row, from, through, cursor.checkpoint_hash)),
-    journal.map(decodeJournal)
-  );
+  const normalizedRaw = raw.map((row) => decodeRaw(row, from, through, cursor.checkpoint_hash));
+  const expectedReceipts = buildHolderCaptureReceipts(normalizedRaw);
+  const stored = (await client.query(
+    `SELECT block_number, block_hash, transfer_count, evidence_hash
+       FROM robinhood_holder_capture_receipts
+      WHERE chain=$1 AND block_number BETWEEN $2::bigint AND $3::bigint
+      ORDER BY block_number`,
+    [CHAIN, from.toString(), through.toString()]
+  )).rows;
+  const receipts = stored.map(decodeReceipt);
+  const compared = compareReceipts(expectedReceipts, receipts);
   return { fromBlock: from.toString(), throughBlock: through.toString(),
-    rawTransfers: raw.length, journalTransfers: journal.length,
+    rawTransfers: raw.length,
+    journalTransfers: receipts.reduce((total, receipt) => total + receipt.transferCount, 0),
+    receiptBlocks: receipts.length,
     missing: compared.missing, excess: compared.excess, divergent: compared.divergent };
 }
 

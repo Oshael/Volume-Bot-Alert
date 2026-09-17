@@ -1,3 +1,4 @@
+const { createHash } = require('node:crypto');
 const db = require('./db');
 const {
   lockCapturePolicy, lockCoverageRecoveryContext, readCapturePolicy, recoveryTail,
@@ -143,6 +144,70 @@ function uniqueTransferEvidence(transfers) {
     if (!existing) unique.set(identity, transfer);
   }
   return [...unique.values()];
+}
+
+function buildCaptureReceipts(transfers) {
+  const groups = new Map();
+  for (const transfer of uniqueTransferEvidence(transfers)) {
+    const existing = groups.get(transfer.blockNumber);
+    if (existing && existing.blockHash !== transfer.blockHash) throw captureConflict();
+    if (existing) existing.transfers.push(transfer);
+    else groups.set(transfer.blockNumber, {
+      blockNumber: transfer.blockNumber,
+      blockHash: transfer.blockHash,
+      transfers: [transfer],
+    });
+  }
+  return [...groups.values()].sort((left, right) => (
+    BigInt(left.blockNumber) < BigInt(right.blockNumber) ? -1 : 1
+  )).map((group) => {
+    group.transfers.sort((left, right) => left.transactionIndex - right.transactionIndex
+      || left.logIndex - right.logIndex || left.transactionHash.localeCompare(right.transactionHash));
+    const evidence = group.transfers.map((transfer) => (
+      TRANSFER_EVIDENCE_FIELDS.map((field) => transfer[field])
+    ));
+    return Object.freeze({
+      blockNumber: group.blockNumber,
+      blockHash: group.blockHash,
+      transferCount: group.transfers.length,
+      evidenceHash: `0x${createHash('sha256').update(JSON.stringify(evidence)).digest('hex')}`,
+    });
+  });
+}
+
+async function insertCaptureReceipts(client, transfers, cursor) {
+  if (!cursor.bufferedAllTransfers || cursor.captureMode !== 'legacy') return 0;
+  const receipts = buildCaptureReceipts(transfers);
+  if (!receipts.length) return 0;
+  const result = await client.query(
+    `WITH matched AS (
+       INSERT INTO robinhood_holder_capture_receipts (
+         chain, block_number, block_hash, transfer_count, evidence_hash,
+         capture_policy_version
+       )
+       SELECT 'robinhood', item.block_number::bigint, item.block_hash,
+              item.transfer_count, item.evidence_hash, $2::bigint
+         FROM jsonb_to_recordset($1::jsonb) AS item(
+           block_number text, block_hash text, transfer_count int, evidence_hash text
+         )
+       ON CONFLICT (chain, block_number) DO UPDATE SET
+         captured_at = robinhood_holder_capture_receipts.captured_at
+       WHERE robinhood_holder_capture_receipts.block_hash = EXCLUDED.block_hash
+         AND robinhood_holder_capture_receipts.transfer_count = EXCLUDED.transfer_count
+         AND robinhood_holder_capture_receipts.evidence_hash = EXCLUDED.evidence_hash
+         AND robinhood_holder_capture_receipts.capture_policy_version =
+             EXCLUDED.capture_policy_version
+       RETURNING 1
+     ) SELECT COUNT(*)::int AS matched FROM matched`,
+    [JSON.stringify(receipts.map((receipt) => ({
+      block_number: receipt.blockNumber,
+      block_hash: receipt.blockHash,
+      transfer_count: receipt.transferCount,
+      evidence_hash: receipt.evidenceHash,
+    }))), cursor.capturePolicyVersion]
+  );
+  if (Number(result.rows[0]?.matched) !== receipts.length) throw captureConflict();
+  return receipts.length;
 }
 
 async function insertTransfers(client, transfers) {
@@ -1112,6 +1177,11 @@ async function commitRewind(client, rewind, affectedTokens) {
     [rewind.nextBlock]
   );
   await client.query(
+    `DELETE FROM robinhood_holder_capture_receipts
+      WHERE chain = 'robinhood' AND block_number >= $1`,
+    [rewind.nextBlock]
+  );
+  await client.query(
     `DELETE FROM robinhood_holder_hot_queue queue
       WHERE queue.chain = 'robinhood' AND NOT EXISTS (
         SELECT 1 FROM robinhood_holder_transfer_journal journal
@@ -1165,6 +1235,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       await lockReorgFence(client, 'shared');
       await lockCaptureCommitContext(client, cursor);
       const insertedTransfers = await insertTransfers(client, transfers);
+      await insertCaptureReceipts(client, transfers, cursor);
       const version = await advanceCursor(client, cursor);
       return Object.freeze({
         insertedTransfers,
@@ -1972,9 +2043,10 @@ module.exports = {
   createRobinhoodHolderLedgerRepository,
   deriveHolderBalanceChanges: deriveBalanceChanges,
   insertHolderJournalTransfers: insertTransfers,
+  buildHolderCaptureReceipts: buildCaptureReceipts,
   normalizeHolderTransfer: normalizeTransfer,
   __private: {
-    deriveBalanceChanges, lockReorgFence,
+    buildCaptureReceipts, deriveBalanceChanges, lockReorgFence,
     normalizeCursor, normalizeRewind, normalizeTransfer, validateRange,
   },
 };
