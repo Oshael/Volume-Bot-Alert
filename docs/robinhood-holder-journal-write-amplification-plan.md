@@ -345,11 +345,11 @@ promoção indevida e sem regressão do live.
 
 ### Corte 5A — contrato de transição para estados legados (antes do Corte 6)
 
-Estado: auditoria read-only de classificação implementada; contrato de baseline,
-schema e flip **não implementados**. É um novo corte necessário pelos dados de
-produção; o Corte 6 original não pode ser ativado somente mudando a flag. As
-etapas seguintes devem ser fatiadas em commits de até 500 linhas, com schema e
-integração próprios.
+Estado: auditoria read-only de classificação implementada e contrato de
+transição desenhado abaixo; schema, manifesto, fence e flip **não
+implementados**. É um novo corte necessário pelos dados de produção; o Corte 6
+original não pode ser ativado somente mudando a flag. As etapas seguintes
+devem ser fatiadas em commits de até 500 linhas, com validação própria.
 
 Separar três populações, sem converter `NULL` em prova de replay:
 
@@ -364,17 +364,107 @@ Separar três populações, sem converter `NULL` em prova de replay:
    canônico verificado. A exceção precisa ser durável, identificável por token,
    e invalidada em reset/rebackfill/reorg que atravesse sua âncora. Não usar
    apenas `created_at`, status ou `tail=NULL` para identificá-la.
-3. Os 3 `backfilling` legados com tail `NULL`: mantê-los no modo universal até
-   handoff comprovado ou recuperá-los individualmente por replay histórico com
-   fronteira nova capturada sob fence. Sem uma dessas provas, não há flip.
+3. `backfilling` legado com tail `NULL`: manter no modo universal até handoff
+   comprovado ou recuperar individualmente com replay e fronteira sob fence.
+   Havia 3 no primeiro diagnóstico; na snapshot posterior, nenhum permanecia
+   em `backfilling`. O gate deve verificar zero novamente, não assumir que esse
+   resultado é permanente.
 
-Antes de escolher a representação da exceção, medir a integridade do cohort
-legado: status, `deployment_block`, `backfill_next_block`,
-`live_through_block/hash`, pendências até o checkpoint, estados em
-`drifted/resyncing`, coortes globais ativas e distribuição de idade/volume.
-Executar diagnósticos read-only e limitados; não atualizar 364 mil linhas para
-"sanear" o gate. A escolha entre marcador por estado e manifesto durável de
-cohort deve incluir custo de escrita, concorrência e invalidação em reorg.
+O diagnóstico posterior mostrou 362.710 `live` e 1.971 `shadow` legados com
+tail `NULL`, 98 `drifted` legados e nenhuma coorte global ativa. Entre os
+`shadow`, 1.036 estavam sem checkpoint, com saldo zero e **todos** tinham
+pending no journal; a promoção atual exige esvaziar o pending. Isso não prova
+gap nem autoriza ignorar esses eventos. As amostras `live` tinham checkpoint
+canônico e nenhum pending anterior, mas amostra não é prova histórica universal.
+
+#### Decisão de contrato: manifesto legado + geração de baseline
+
+Usar um manifesto durável separado, identificado por `(chain, token_address)`,
+e uma geração de baseline por token. Não preencher
+`tail_capture_from_block` nos estados antigos: o manifesto afirma apenas que
+o saldo/estado existente e os pending já duráveis são o ponto de partida legado
+para a continuidade futura. Não afirma replay desde deployment. Uma linha
+global de política de captura guarda modo (`legacy`/`tracked`), geração do
+cutover, `cursor.next_block` inicial e checkpoint canônico anterior. A flag de
+ambiente pode autorizar o modo novo, mas nunca ser a única autoridade entre
+workers: o modo efetivo vem dessa linha durável.
+
+Adicionar à state uma `coverage_generation` com default zero, sem UPDATE
+massivo na tabela quente. Construir o manifesto em batches limitados de
+`live/shadow` legados enquanto `captureAllTransfers=true`, gravando a geração
+observada; não incluir `backfilling`, `drifted` ou `resyncing`. Uma transição
+que abandone `live/shadow`, ou altere deployment/baseline, incrementa a geração
+na mesma transação. O manifesto antigo então deixa de validar automaticamente.
+O ingresso posterior em `backfilling/shadow/live` com tail `NULL` não pode
+reutilizar essa autorização: exige novo tail durável sob fence e replay/handoff,
+ou recuperação manual explicitamente comprovada. A preparação do manifesto
+precisa ser serializada por token com a invalidação; não selecionar uma state
+antiga e inserir um marcador depois que ela foi resetada. Após selar o cohort,
+nenhuma nova linha legada pode ser admitida silenciosamente.
+
+O manifesto implica cerca de 365 mil INSERTs únicos, não 365 mil UPDATEs da
+state nem uma cópia de transfers. Ainda assim há WAL e espaço adicionais:
+medir tamanho/plano, escrever em batches com cursor durável, cadência e
+backoff abaixo do live, e nunca executar a carga em produção sem aprovação
+operacional. Repetir o batch deve ser idempotente; conflito com geração
+divergente falha fechado. O cutover verifica por anti-join indexado que todo
+`live/shadow` com tail `NULL` tem manifesto da geração atual e que não existe
+`backfilling` ativo sem tail. Se o plano dessa verificação exigir scan/custo
+incompatível com um lock curto do cursor, não fazer o flip; ajustar o gate.
+
+Para `shadow` sem checkpoint, exigir antes do manifesto `holder_count=0`,
+`backfill_next_block=deployment_block`, deployment dentro da cobertura
+comprovada pelo `buffer_floor_block`/journal e pending preservado. Eles podem
+continuar `shadow` com pending no cutover; tracked-only só altera captura
+*futura*, não descarta pending antigo nem força promoção. Se qualquer token
+falhar nessas condições, excluir do cohort e recuperá-lo individualmente
+antes do flip. `live/shadow` com checkpoint mantêm o saldo existente como
+baseline operacional, sujeito ao gate de paridade recente e às auditorias
+contínuas; checkpoint antigo fora do raw não vira uma falsa prova histórica.
+
+#### Fence, invalidação e reorg
+
+O flip trava cursor e política na mesma transação, valida checkpoint canônico,
+cohort e ausência de lacunas, grava `cutover_next_block=cursor.next_block` e
+incrementa `cursor.version`. Capturas em voo com escopo/modo antigo falham no
+commit e repetem; uma captura tracked-only grava todos os eventos do escopo
+antes de avançar o cursor. Admissões novas já travam/incrementam o cursor, mas
+o mesmo contrato deve cobrir **todos** os ingressos de fora para dentro do
+escopo: attach global e caminhos de drift/repair/requeue. `shadow -> live` não
+muda o escopo; `drifted/resyncing -> backfilling` muda. Hoje há utilitários de
+recovery que atualizam o status sem o fence do cursor; eles precisam ser
+adaptados ou bloqueados no modo tracked antes do flip. Um guard central na
+persistência deve rejeitar ingresso sem tail/fence ou manifesto válido, mesmo
+se algum utilitário esquecer a checagem em JavaScript.
+
+Reorg acima do cutover usa o rollback aplicado do journal e o ancestral em
+`robinhood_chain_blocks`. Se o rewind cruzar a âncora legada, não continuar
+com a mesma baseline por conveniência: invalidar o modo/âncora e falhar
+fechado até um procedimento testado restaurar a cobertura pelo raw retido e
+reancorar o cohort. O rollback da flag para `legacy` também deve ser gravado
+sob o cursor com incremento de versão; ele não inventa o buffer universal das
+faixas já capturadas em tracked-only. O caminho de reconstrução dessas faixas
+precisa de teste de integração e de estar dentro do floor raw antes do flip.
+
+#### Fatiamento e checkpoint de arquitetura
+
+Estimativa de implementação completa: 14–18 arquivos de produção em schema,
+captura, ledger/cursor, bootstrap/global, handoff, repair/recovery, auditoria e
+wiring; aproximadamente 1.200–1.800 linhas entre código, testes e docs.
+Isso ultrapassa o checkpoint arquitetural de 12 arquivos. Manter a lógica de
+contrato numa camada de cobertura/manifesto; arquivos hub só fazem wiring.
+Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
+
+1. Schema do manifesto/política/geração e invalidação; integração de schema,
+   nenhum flip nem carga de dados. Antes, medir `buffer_floor_block`, a
+   elegibilidade dos 1.036 `shadow` sem checkpoint e o plano do anti-join.
+2. Builder limitado e idempotente do manifesto + auditoria de coverage;
+   testar concorrência com reset e custos; carga na VPS só após aprovação.
+3. Fence de todos os ingressos e gate de paridade por população, incluindo
+   `drifted` que retornem; testes de race entre admissão, captura e recovery.
+4. Política de captura/rollback duráveis e reorg cruzando o cutover, ainda
+   default `legacy`; testes de integração do cursor e da recuperação raw.
+5. Somente então ativação do Corte 6, mediante gate real em produção.
 
 O novo gate deve ter provas separadas: para tokens com tail, paridade desde o
 deployment como hoje; para o cohort legado promovido, paridade raw/journal em
@@ -532,19 +622,15 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Executar `npm run robinhood:holder-legacy-audit` na VPS com o modo universal
-ligado. O comando usa snapshot read-only e timeout de 15s; agrega estados por
-status e presença de tail, lista no máximo quatro `backfilling` legados e
-amostra até quatro `live` e quatro `shadow` com verificação de checkpoint e
-pending anteriores. Também conta coortes globais ativas sem state. A saída é
-diagnóstica, **não** um gate de ativação nem prova de paridade histórica. Com
-checkpoint `NULL`, pending antes do state é indeterminado: usar pending em
-qualquer bloco e a contagem dos `shadow` sem checkpoint. Para os `backfilling`
-legados, inspecionar pending mais antigo, checkpoint canônico e overlap aplicado.
-Com esses dados, escolher e documentar a representação durável da exceção, seu
-fence e sua invalidação. Só então estimar arquivos/linhas e aprovar a
-implementação; schema e migração são esperados e exigem `db:schema-check` e
-integração de persistência. O modo universal deve permanecer ligado.
+Ampliar a auditoria read-only para medir `buffer_floor_block` e quantos
+`shadow` legados sem checkpoint satisfazem `holder_count=0`,
+`backfill_next_block=deployment_block` e deployment coberto pelo buffer/journal.
+Exibir contagens de cada motivo de exclusão sem varrer o journal inteiro. Medir
+o plano de seleção do cohort antes de escolher batch e índice; validar o plano
+do anti-join após criar o schema, antes de permitir qualquer flip.
+Só com esses dados iniciar o primeiro slice de schema, após aprovação do
+checkpoint de arquitetura acima. `npm run robinhood:holder-legacy-audit`
+continua diagnóstico, não gate. O modo universal permanece ligado.
 
 ## Arquivos de entrada para a próxima análise
 
