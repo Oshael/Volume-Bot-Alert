@@ -308,6 +308,9 @@ universal; não ativar tracked-only antes deste corte estar validado.
 
 ### Corte 5 — shadow/paridade antes da ativação
 
+Estado: auditoria read-only implementada; gate operacional ainda depende de
+amostras completas e observação em vários ciclos antes do Corte 6.
+
 Objetivo: provar que o novo caminho produz o mesmo estado antes de torná-lo
 autoridade.
 

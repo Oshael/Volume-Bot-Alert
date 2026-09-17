@@ -126,6 +126,7 @@
     "robinhood:activate-head-processing-state": "node src/utils/activate-robinhood-head-processing-state.js",
     "robinhood:canonical-liquidity-audit": "node src/utils/audit-robinhood-canonical-liquidity.js",
     "robinhood:canonical-holder-audit": "node src/utils/audit-robinhood-canonical-holder.js",
+    "robinhood:holder-shadow-parity": "node src/utils/audit-robinhood-holder-shadow-parity.js",
     "robinhood:canonical-holder-canary": "node src/utils/audit-robinhood-canonical-holder-canary.js",
     "robinhood:canonical-wallet-swap-audit": "node src/utils/audit-robinhood-canonical-wallet-swap.js",
     "robinhood:canonical-wallet-swap-canary": "node src/utils/audit-robinhood-canonical-wallet-swap-canary.js",

@@ -3245,6 +3245,14 @@ o tail, checkpoint confirmado e encontro dentro da cobertura retida do journal.
 Estados legados com tail `NULL` mantêm o caminho universal anterior enquanto
 `captureAllTransfers=true`. Coortes globais continuam exigindo
 `tail_capture_from_block = barrier_block` na promoção.
+`npm run robinhood:holder-shadow-parity` faz uma auditoria read-only em um
+snapshot PostgreSQL: seleciona até um token `backfilling` e um `shadow/live`
+com histórico completo dentro dos floors, compara o tail canônico com o buffer
+legado por identidade e payload e recompõe holder count/balances desde o
+deployment. O comando sai com código 2 se houver missing, excess, divergent,
+amostra incompleta ou estado ativo sem tail; código 1 indica erro da auditoria.
+Limites: 1.000 blocos e 10.000 eventos/carteiras por token. Repetir em ciclos
+com volume real antes de qualquer flip; resultado local não autoriza Corte 6.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
 Com `canonical_recent`, cada range integralmente entre o floor retido de
 `robinhood_chain_blocks` e o checkpoint contínuo de
