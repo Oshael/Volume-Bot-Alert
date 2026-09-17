@@ -345,9 +345,11 @@ promoção indevida e sem regressão do live.
 
 ### Corte 5A — contrato de transição para estados legados (antes do Corte 6)
 
-Estado: **não implementado**. É um novo corte necessário pelos dados de produção;
-o Corte 6 original não pode ser ativado somente mudando a flag. Este corte deve
-ser fatiado em commits de até 500 linhas, com schema e integração próprios.
+Estado: auditoria read-only de classificação implementada; contrato de baseline,
+schema e flip **não implementados**. É um novo corte necessário pelos dados de
+produção; o Corte 6 original não pode ser ativado somente mudando a flag. As
+etapas seguintes devem ser fatiadas em commits de até 500 linhas, com schema e
+integração próprios.
 
 Separar três populações, sem converter `NULL` em prova de replay:
 
@@ -530,15 +532,16 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Iniciar o Corte 5A por uma auditoria read-only, sem migration nem mudança da
-captura: classificar `live/shadow` legados por integridade do checkpoint e
-pendências, identificar os 3 `backfilling` sem tail e contabilizar coortes globais
-ativas fora de `token_states`. Usar queries limitadas e plano de execução
-compatível com o volume de produção. Com esses dados, escolher e documentar a
-representação durável da exceção, seu fence e sua invalidação. Só então estimar
-arquivos/linhas e aprovar a implementação; schema e migração são esperados e
-exigem `db:schema-check` e integração de persistência. O modo universal deve
-permanecer ligado durante toda essa preparação.
+Executar `npm run robinhood:holder-legacy-audit` na VPS com o modo universal
+ligado. O comando usa snapshot read-only e timeout de 15s; agrega estados por
+status e presença de tail, lista no máximo quatro `backfilling` legados e
+amostra até quatro `live` e quatro `shadow` com verificação de checkpoint e
+pending anteriores. Também conta coortes globais ativas sem state. A saída é
+diagnóstica, **não** um gate de ativação nem prova de paridade histórica. Com
+esses dados, escolher e documentar a representação durável da exceção, seu
+fence e sua invalidação. Só então estimar arquivos/linhas e aprovar a
+implementação; schema e migração são esperados e exigem `db:schema-check` e
+integração de persistência. O modo universal deve permanecer ligado.
 
 ## Arquivos de entrada para a próxima análise
 

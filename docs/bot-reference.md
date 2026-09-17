@@ -3253,6 +3253,13 @@ deployment. O comando sai com código 2 se houver missing, excess, divergent,
 amostra incompleta ou estado ativo sem tail; código 1 indica erro da auditoria.
 Limites: 1.000 blocos e 10.000 eventos/carteiras por token. Repetir em ciclos
 com volume real antes de qualquer flip; resultado local não autoriza Corte 6.
+`npm run robinhood:holder-legacy-audit` é diagnóstico read-only separado do gate:
+em uma snapshot com timeout de 15s, agrega estados por status/tail, mostra até
+quatro `backfilling` legados, amostra até quatro `live` e quatro `shadow` legados
+com checkpoint/pending e conta coortes globais ativas sem state. Ele não atribui
+tail aos estados antigos, não prova paridade histórica e não autoriza o flip.
+Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
+continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
 Com `canonical_recent`, cada range integralmente entre o floor retido de
 `robinhood_chain_blocks` e o checkpoint contínuo de
