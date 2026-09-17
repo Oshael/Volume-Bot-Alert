@@ -221,6 +221,11 @@ Rollback: código antigo ignora coluna nullable; nenhuma linha é apagada.
 
 ### Corte 2 — reader canônico por token para replay recente
 
+Estado: implementado no código, opt-in por
+`ROBINHOOD_HOLDER_BACKFILL_SOURCE=canonical_recent`; `rpc` permanece o default e
+o rollback operacional. O plano local usa o índice existente por range e não
+justifica migration adicional.
+
 Objetivo: usar o raw local já retido para preencher somente o token admitido.
 
 Mudanças propostas:

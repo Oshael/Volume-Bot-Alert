@@ -3222,6 +3222,18 @@ diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
 replay conclui primeiro estados que já possuem checkpoint live e, dentro de cada
 classe, prioriza o menor trabalho restante até a barreira; assim novas admissões
 não deixam recuperações já iniciadas permanentemente no fim da fila.
+O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
+Com `canonical_recent`, cada range integralmente entre o floor retido de
+`robinhood_chain_blocks` e o checkpoint contínuo de
+`robinhood_chain_capture_cursor` é lido de `robinhood_chain_events` por endereço
+do token, `topic0=Transfer` e somente blocos canônicos. Floor, frontier, eventos e
+checkpoint final são validados em uma snapshot read-only `REPEATABLE READ`; range
+parcial ou fora da retenção é roteado inteiro para RPC, sem misturar fontes.
+Ausência do checkpoint dentro de uma cobertura declarada falha fechada. O reader
+canônico limita cada consulta a 5.000 blocos e 2s; range/concurrency e backoff
+continuam limitados pelo worker, cuja prioridade permanece abaixo do capture/apply
+live. Checkpoint anterior e reparo por receipts continuam no RPC. Para rollback
+operacional, volte a variável para `rpc`; nenhuma migration é necessária.
 Durante replay, saldo negativo isolado gera apenas `drift-suspected` e nao move
 cursor nem balances. O executor rele o trecho ate o primeiro deficit por
 `eth_getBlockReceipts`; se esse replay passa, commita o trecho e recupera o token.

@@ -1,4 +1,7 @@
 const db = require('../models/db');
+const {
+  createRobinhoodCanonicalHolderSource,
+} = require('../models/robinhood-canonical-holder-source');
 const { createRobinhoodHolderBackfillRepository } = require('../models/robinhood-holder-backfill');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
@@ -9,6 +12,12 @@ const REQUIRED_DRIFT_OBSERVATIONS = 3;
 const DEFAULT_DRIFT_RECHECK_MS = 60_000;
 const DEFAULT_RECEIPT_BLOCK_LIMIT = 250;
 const DEFAULT_RECEIPT_BATCH_SIZE = 25;
+const RPC_SOURCE = 'rpc';
+const CANONICAL_RECENT_SOURCE = 'canonical_recent';
+const CANONICAL_STATEMENT_TIMEOUT_MS = 2000;
+const ROUTABLE_GAPS = new Set([
+  'below-floor', 'partial-coverage', 'above-frontier', 'journal-empty',
+]);
 
 function isAdaptiveRangeError(error) {
   return ['log_range_error', 'timeout', 'rate_limited'].includes(error?.code)
@@ -25,6 +34,81 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
 
 function resolveRpcProvider(env = process.env) {
   return resolveRobinhoodHolderRpcProvider(env, PROVIDER_NAME);
+}
+
+function normalizeBackfillSource(value) {
+  const normalized = String(value || RPC_SOURCE).trim().toLowerCase();
+  if (![RPC_SOURCE, CANONICAL_RECENT_SOURCE].includes(normalized)) {
+    const error = new Error(
+      `ROBINHOOD_HOLDER_BACKFILL_SOURCE must be ${RPC_SOURCE} or ${CANONICAL_RECENT_SOURCE}`
+    );
+    error.code = 'configuration_error';
+    error.fatal = true;
+    throw error;
+  }
+  return normalized;
+}
+
+function createRecentReplayReader(options = {}) {
+  const canonicalReader = options.canonicalReader;
+  const rpcReader = options.rpcReader;
+  if (typeof canonicalReader?.getCoverage !== 'function'
+      || typeof canonicalReader?.readRange !== 'function') {
+    throw new TypeError('canonical holder replay reader is required');
+  }
+  if (typeof rpcReader?.getSafeHead !== 'function'
+      || typeof rpcReader?.matchesCheckpoint !== 'function'
+      || typeof rpcReader?.readRange !== 'function'
+      || typeof rpcReader?.readReceiptRange !== 'function') {
+    throw new TypeError('RPC holder replay reader is required');
+  }
+
+  async function readRpc(input, reason, coverage = null) {
+    const range = await rpcReader.readRange(input);
+    return Object.freeze({
+      ...range, source: RPC_SOURCE, routeReason: reason,
+      ...(coverage ? { canonicalCoverage: coverage } : {}),
+    });
+  }
+
+  async function readRange(input = {}) {
+    let coverage;
+    try {
+      coverage = await canonicalReader.getCoverage();
+    } catch (error) {
+      if (error?.code !== 'canonical_holder_source_gap') throw error;
+      return readRpc(input, error.reason || 'coverage-unavailable');
+    }
+    const fromBlock = BigInt(input.fromBlock);
+    const toBlock = BigInt(input.toBlock);
+    const floor = coverage.floorBlock == null ? null : BigInt(coverage.floorBlock);
+    const frontier = BigInt(coverage.frontierBlock);
+    let reason = null;
+    if (floor == null) reason = 'journal-empty';
+    else if (toBlock < floor) reason = 'below-floor';
+    else if (fromBlock > frontier) reason = 'above-frontier';
+    else if (fromBlock < floor || toBlock > frontier) reason = 'partial-coverage';
+    if (reason) return readRpc(input, reason, coverage);
+    try {
+      const range = await canonicalReader.readRange(input);
+      return Object.freeze({
+        ...range, source: 'canonical-journal', routeReason: 'fully-covered',
+        canonicalCoverage: coverage,
+      });
+    } catch (error) {
+      if (error?.code !== 'canonical_holder_source_gap' || !ROUTABLE_GAPS.has(error.reason)) {
+        throw error;
+      }
+      return readRpc(input, error.reason, error.coverage || coverage);
+    }
+  }
+
+  return Object.freeze({
+    getSafeHead: (...args) => rpcReader.getSafeHead(...args),
+    matchesCheckpoint: (...args) => rpcReader.matchesCheckpoint(...args),
+    readRange,
+    readReceiptRange: (...args) => rpcReader.readReceiptRange(...args),
+  });
 }
 
 function createRobinhoodHolderBackfillExecutor(options = {}) {
@@ -214,6 +298,9 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
         });
       }
       let committed = await repository.commitRange(range);
+      const replayMetadata = range.source ? {
+        replaySource: range.source, replayRouteReason: range.routeReason,
+      } : {};
       if (committed.status === 'drift-suspected') {
         committed = await verifyDriftWithReceipts(committed, state);
       } else {
@@ -221,13 +308,13 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       }
       if (committed.status !== 'committed') {
         return Object.freeze({
-          ...committed, safeHead: head.safeHead, atBarrier: false,
+          ...committed, ...replayMetadata, safeHead: head.safeHead, atBarrier: false,
         });
       }
       const atBarrier = BigInt(committed.backfillNextBlock) > safeHead;
       if (atBarrier) adaptiveRangeSizes.delete(state.tokenAddress);
       return Object.freeze({
-        ...committed, safeHead: head.safeHead,
+        ...committed, ...replayMetadata, safeHead: head.safeHead,
         atBarrier,
       });
     } catch (error) {
@@ -259,7 +346,16 @@ function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
   });
   const database = options.database || db;
   const repository = options.repository || createRobinhoodHolderBackfillRepository({ database });
-  const reader = options.reader || createRobinhoodHolderTransferReader({ rpcClient });
+  const rpcReader = options.rpcReader || createRobinhoodHolderTransferReader({ rpcClient });
+  const sourceMode = normalizeBackfillSource(env.ROBINHOOD_HOLDER_BACKFILL_SOURCE);
+  const reader = options.reader || (sourceMode === CANONICAL_RECENT_SOURCE
+    ? createRecentReplayReader({
+      rpcReader,
+      canonicalReader: options.canonicalReader || createRobinhoodCanonicalHolderSource({
+        database, statementTimeoutMs: CANONICAL_STATEMENT_TIMEOUT_MS,
+      }),
+    })
+    : rpcReader);
   return createRobinhoodHolderBackfillExecutor({
     repository, reader,
     driftRecheckMs: boundedInteger(
@@ -281,7 +377,9 @@ module.exports = {
   createConfiguredRobinhoodHolderBackfillExecutor,
   createRobinhoodHolderBackfillExecutor,
   __private: {
+    CANONICAL_RECENT_SOURCE, CANONICAL_STATEMENT_TIMEOUT_MS, RPC_SOURCE,
     DEFAULT_DRIFT_RECHECK_MS, DEFAULT_RECEIPT_BATCH_SIZE, DEFAULT_RECEIPT_BLOCK_LIMIT,
-    REQUIRED_DRIFT_OBSERVATIONS, isAdaptiveRangeError, resolveRpcProvider,
+    REQUIRED_DRIFT_OBSERVATIONS, createRecentReplayReader, isAdaptiveRangeError,
+    normalizeBackfillSource, resolveRpcProvider,
   },
 };

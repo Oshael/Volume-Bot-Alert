@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  createConfiguredRobinhoodHolderBackfillExecutor,
   createRobinhoodHolderBackfillExecutor,
   __private,
 } = require('../src/services/robinhood-holder-backfill-executor');
@@ -360,5 +361,111 @@ describe('Robinhood holder backfill executor', () => {
       () => __private.resolveRpcProvider({ ROBINHOOD_DRPC_RPC_URL: 'https://drpc.invalid' }),
       /ROBINHOOD_RPC_URL is required/
     );
+  });
+
+  it('routes only fully covered recent ranges to the canonical journal', async () => {
+    const reads = [];
+    const range = (input, source) => ({
+      ...input, source, checkpoint: { number: input.toBlock, hash: HASH }, transfers: [],
+    });
+    const rpcReader = {
+      getSafeHead: async () => ({ safeHead: '200' }),
+      matchesCheckpoint: async () => true,
+      readReceiptRange: async (input) => range(input, 'rpc-receipt'),
+      readRange: async (input) => { reads.push(['rpc', input]); return range(input, 'raw-rpc'); },
+    };
+    const canonicalReader = {
+      getCoverage: async () => ({
+        floorBlock: '100', frontierBlock: '200', nodeHead: '210',
+      }),
+      readRange: async (input) => {
+        reads.push(['canonical', input]);
+        return range(input, 'raw-canonical');
+      },
+    };
+    const reader = __private.createRecentReplayReader({ canonicalReader, rpcReader });
+
+    assert.equal((await reader.readRange({ fromBlock: '100', toBlock: '150' })).source,
+      'canonical-journal');
+    assert.equal((await reader.readRange({ fromBlock: '90', toBlock: '99' })).routeReason,
+      'below-floor');
+    assert.equal((await reader.readRange({ fromBlock: '90', toBlock: '100' })).routeReason,
+      'partial-coverage');
+    assert.equal((await reader.readRange({ fromBlock: '201', toBlock: '202' })).routeReason,
+      'above-frontier');
+    assert.deepEqual(reads.map(([source]) => source), ['canonical', 'rpc', 'rpc', 'rpc']);
+    assert.equal((await reader.getSafeHead()).safeHead, '200');
+    assert.equal((await reader.readReceiptRange({ fromBlock: '1', toBlock: '1' })).source,
+      'rpc-receipt');
+  });
+
+  it('falls back once if retention advances, but not for a missing checkpoint', async () => {
+    const rpcReads = [];
+    const rpcReader = {
+      getSafeHead: async () => ({ safeHead: '200' }), matchesCheckpoint: async () => true,
+      readReceiptRange: async () => ({}),
+      readRange: async (input) => { rpcReads.push(input); return { ...input, transfers: [] }; },
+    };
+    const gap = (reason) => Object.assign(new Error(reason), {
+      code: 'canonical_holder_source_gap', reason,
+    });
+    const canonicalReader = {
+      getCoverage: async () => ({ floorBlock: '100', frontierBlock: '200' }),
+      readRange: async () => { throw gap('below-floor'); },
+    };
+    const reader = __private.createRecentReplayReader({ canonicalReader, rpcReader });
+    const routed = await reader.readRange({ fromBlock: '100', toBlock: '101' });
+    assert.equal(routed.routeReason, 'below-floor');
+    assert.equal(rpcReads.length, 1);
+
+    canonicalReader.readRange = async () => { throw gap('checkpoint-missing'); };
+    await assert.rejects(
+      reader.readRange({ fromBlock: '100', toBlock: '101' }),
+      (error) => error.reason === 'checkpoint-missing'
+    );
+    assert.equal(rpcReads.length, 1);
+  });
+
+  it('keeps RPC as the default and validates the recent canonical source mode', () => {
+    assert.equal(__private.normalizeBackfillSource(), 'rpc');
+    assert.equal(__private.normalizeBackfillSource('canonical_recent'), 'canonical_recent');
+    assert.throws(
+      () => __private.normalizeBackfillSource('canonical_only'),
+      /ROBINHOOD_HOLDER_BACKFILL_SOURCE/
+    );
+  });
+
+  it('wires canonical_recent into the configured executor without replacing RPC authority', async () => {
+    const reads = [];
+    const repository = {
+      getNextToken: async () => state({ liveThroughBlock: null, liveThroughHash: null }),
+      markResyncing: async () => { throw new Error('must not resync'); },
+      commitRange: async (range) => ({
+        status: 'committed', tokenAddress: TOKEN, holderCount: '1',
+        backfillNextBlock: String(BigInt(range.toBlock) + 1n),
+      }),
+    };
+    const rpcReader = {
+      getSafeHead: async () => ({ safeHead: '105' }), matchesCheckpoint: async () => true,
+      readRange: async () => { throw new Error('must not use RPC for covered range'); },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
+    };
+    const canonicalReader = {
+      getCoverage: async () => ({ floorBlock: '100', frontierBlock: '110' }),
+      readRange: async (range) => {
+        reads.push(range);
+        return { ...range, checkpoint: { number: range.toBlock, hash: HASH }, transfers: [] };
+      },
+    };
+    const executor = createConfiguredRobinhoodHolderBackfillExecutor({
+      env: { ROBINHOOD_HOLDER_BACKFILL_SOURCE: 'canonical_recent' },
+      rpcClient: { request: async () => { throw new Error('must not request'); } },
+      repository, rpcReader, canonicalReader,
+    });
+
+    const result = await executor.runOnce({ rangeSize: 3, confirmations: 12 });
+    assert.equal(result.replaySource, 'canonical-journal');
+    assert.equal(result.replayRouteReason, 'fully-covered');
+    assert.equal(reads.length, 1);
   });
 });

@@ -41,10 +41,40 @@ function logFromRow(row) {
   };
 }
 
-function sourceGap(message) {
+function sourceGap(message, reason = 'coverage-unavailable', coverage = null) {
   const error = new Error(message);
   error.code = 'canonical_holder_source_gap';
+  error.reason = reason;
+  if (coverage) error.coverage = Object.freeze(coverage);
   return error;
+}
+
+function coverageFrom(row) {
+  if (!row || row.checkpoint_block == null || row.node_head == null) {
+    throw sourceGap('canonical capture frontier is unavailable', 'frontier-unavailable');
+  }
+  const frontier = quantity(row.checkpoint_block, 'checkpoint_block');
+  const nodeHead = quantity(row.node_head, 'node_head');
+  const floor = row.journal_start_block == null
+    ? null : quantity(row.journal_start_block, 'journal_start_block');
+  if ((floor != null && floor > frontier) || frontier > nodeHead) {
+    throw sourceGap('canonical capture coverage is inconsistent', 'coverage-inconsistent');
+  }
+  return Object.freeze({
+    floorBlock: floor == null ? null : floor.toString(),
+    frontierBlock: frontier.toString(), nodeHead: nodeHead.toString(),
+  });
+}
+
+function coverageGap(fromBlock, toBlock, coverage) {
+  if (coverage.floorBlock == null) return 'journal-empty';
+  const floor = BigInt(coverage.floorBlock);
+  const frontier = BigInt(coverage.frontierBlock);
+  if (toBlock < floor) return 'below-floor';
+  if (fromBlock < floor) return 'partial-coverage';
+  if (fromBlock > frontier) return 'above-frontier';
+  if (toBlock > frontier) return 'partial-coverage';
+  return null;
 }
 
 function safeHeadFrom(row, confirmations) {
@@ -80,6 +110,11 @@ function decodeRows(rows, context, allowed, captureAllTransfers) {
 
 function createRobinhoodCanonicalHolderSource(options = {}) {
   const database = options.database || db;
+  const statementTimeoutMs = Number(options.statementTimeoutMs || 0);
+  if (!Number.isSafeInteger(statementTimeoutMs)
+      || statementTimeoutMs < 0 || statementTimeoutMs > 60_000) {
+    throw new Error('statementTimeoutMs must be between 0 and 60000');
+  }
 
   async function readFrontier(client = database) {
     const result = await client.query(
@@ -110,6 +145,10 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
     });
   }
 
+  async function getCoverage() {
+    return coverageFrom(await readFrontier());
+  }
+
   async function matchesCheckpoint(checkpoint = {}) {
     const number = quantity(checkpoint.number, 'checkpoint.number').toString();
     const hash = String(checkpoint.hash || '').toLowerCase();
@@ -124,17 +163,24 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
     return result.rows[0]?.matches === true;
   }
 
-  async function readCanonicalRange(input, maximum, label) {
+  async function readCanonicalRange(input, maximum, label, tokenAddress = null) {
     const { fromBlock, toBlock } = boundedRange(input, maximum, label);
     const client = await database.getClient();
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      if (statementTimeoutMs > 0) {
+        await client.query("SELECT set_config('statement_timeout', $1, TRUE)", [
+          `${statementTimeoutMs}ms`,
+        ]);
+      }
       const frontier = await readFrontier(client);
-      const journalStart = frontier.journal_start_block == null
-        ? null : BigInt(frontier.journal_start_block);
-      if (journalStart == null || fromBlock < journalStart
-          || toBlock > BigInt(frontier.checkpoint_block)) {
-        throw sourceGap(`canonical journal does not cover holder range ${fromBlock}-${toBlock}`);
+      const coverage = coverageFrom(frontier);
+      const gapReason = coverageGap(fromBlock, toBlock, coverage);
+      if (gapReason) {
+        throw sourceGap(
+          `canonical journal does not cover holder range ${fromBlock}-${toBlock}`,
+          gapReason, coverage
+        );
       }
       const checkpointResult = await client.query(
         `SELECT block_hash FROM robinhood_chain_blocks
@@ -142,7 +188,9 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
         [CHAIN, toBlock.toString()]
       );
       if (!checkpointResult.rowCount) {
-        throw sourceGap(`canonical holder checkpoint ${toBlock} is missing`);
+        throw sourceGap(
+          `canonical holder checkpoint ${toBlock} is missing`, 'checkpoint-missing', coverage
+        );
       }
       const events = await client.query(
         `SELECT event.block_number, event.block_hash, event.transaction_hash,
@@ -153,9 +201,10 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
              ON block.chain=event.chain AND block.block_hash=event.block_hash
             AND block.canonical=TRUE
           WHERE event.chain=$1 AND event.block_number BETWEEN $2::bigint AND $3::bigint
-            AND event.topic0=$4
+            AND event.topic0=$4${tokenAddress ? ' AND event.address=$5' : ''}
           ORDER BY event.block_number, event.transaction_index, event.log_index`,
-        [CHAIN, fromBlock.toString(), toBlock.toString(), TRANSFER_TOPIC]
+        [CHAIN, fromBlock.toString(), toBlock.toString(), TRANSFER_TOPIC,
+          ...(tokenAddress ? [tokenAddress] : [])]
       );
       await client.query('ROLLBACK');
       return {
@@ -170,6 +219,28 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
     } finally {
       client.release();
     }
+  }
+
+  async function readTokenRange(input, maximum, label, telemetry = {}) {
+    const tokenAddress = address(input.tokenAddress, 'tokenAddress');
+    const range = await readCanonicalRange(input, maximum, label, tokenAddress);
+    const decoded = decodeRows(range.rows, {
+      tokenAddress, fromBlock: range.fromBlock, toBlock: range.toBlock,
+      checkpointHash: range.checkpoint.hash,
+    }, new Set([tokenAddress]), false);
+    return Object.freeze({
+      tokenAddress, fromBlock: range.fromBlock.toString(), toBlock: range.toBlock.toString(),
+      nextBlock: (range.toBlock + 1n).toString(), checkpoint: range.checkpoint,
+      transfers: decoded.transfers,
+      telemetry: Object.freeze({
+        requests: 0, observedLogs: range.rows.length, ignoredLogs: 0,
+        source: 'canonical-journal', ...telemetry,
+      }),
+    });
+  }
+
+  async function readRange(input = {}) {
+    return readTokenRange(input, MAX_RANGE_BLOCKS, 'holder replay');
   }
 
   async function readGlobalRange(input = {}) {
@@ -207,34 +278,21 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
   }
 
   async function readReceiptRange(input = {}) {
-    const tokenAddress = address(input.tokenAddress, 'tokenAddress');
-    const range = await readCanonicalRange(input, MAX_RECEIPT_RANGE_BLOCKS, 'holder receipt');
-    const allowed = new Set([tokenAddress]);
-    const decoded = decodeRows(range.rows, {
-      tokenAddress: null, fromBlock: range.fromBlock, toBlock: range.toBlock,
-      checkpointHash: range.checkpoint.hash,
-    }, allowed, false);
-    return Object.freeze({
-      tokenAddress, fromBlock: range.fromBlock.toString(), toBlock: range.toBlock.toString(),
-      nextBlock: (range.toBlock + 1n).toString(), checkpoint: range.checkpoint,
-      transfers: Object.freeze(decoded.transfers.filter(
-        (transfer) => transfer.tokenAddress === tokenAddress
-      )),
-      telemetry: Object.freeze({
-        requests: 0, receiptBlocks: Number(range.toBlock - range.fromBlock + 1n),
-        receipts: 0, observedLogs: range.rows.length,
-        ignoredLogs: range.rows.length - decoded.transfers.length,
-        source: 'canonical-journal',
-      }),
+    const { fromBlock, toBlock } = boundedRange(
+      input, MAX_RECEIPT_RANGE_BLOCKS, 'holder receipt'
+    );
+    return readTokenRange(input, MAX_RECEIPT_RANGE_BLOCKS, 'holder receipt', {
+      receiptBlocks: Number(toBlock - fromBlock + 1n), receipts: 0,
     });
   }
 
   return Object.freeze({
-    assertChain, getSafeHead, matchesCheckpoint, readGlobalRange, readReceiptRange,
+    assertChain, getCoverage, getSafeHead, matchesCheckpoint,
+    readGlobalRange, readRange, readReceiptRange,
   });
 }
 
 module.exports = {
   createRobinhoodCanonicalHolderSource,
-  __private: { decodeRows, logFromRow, safeHeadFrom },
+  __private: { coverageFrom, coverageGap, decodeRows, logFromRow, safeHeadFrom },
 };
