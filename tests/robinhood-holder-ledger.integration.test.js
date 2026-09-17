@@ -120,6 +120,11 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_capture_policy (
+        chain varchar(16) PRIMARY KEY, capture_mode varchar(16) NOT NULL
+      )`);
+      await client.query(`INSERT INTO robinhood_holder_capture_policy
+        VALUES ('robinhood', 'legacy')`);
       await client.query(stage213.STATEMENTS[0].replace(
         'CREATE TABLE IF NOT EXISTS robinhood_holder_realtime_outbox',
         'CREATE TEMP TABLE robinhood_holder_realtime_outbox'
@@ -533,9 +538,9 @@ describe('Robinhood holder ledger persistence', () => {
 
       await client.query(
         `INSERT INTO robinhood_holder_token_states
-          (token_address, holder_count, ledger_status, backfill_next_block,
+          (token_address, holder_count, ledger_status, deployment_block, backfill_next_block,
            live_through_block, live_through_hash)
-         VALUES ($1, 1, 'shadow', 101, 100, $2)`, [TOKEN_2, HASH_A]
+         VALUES ($1, 1, 'shadow', 50, 101, 100, $2)`, [TOKEN_2, HASH_A]
       );
       await client.query(
         `INSERT INTO robinhood_holder_balances (
@@ -591,6 +596,11 @@ describe('Robinhood holder ledger persistence', () => {
       const persistent = await repository.applyNextPendingEvent();
       assert.equal(persistent.status, 'drift-suspected');
       assert.equal(persistent.recoverySafe, false);
+      const trackedTail = String((await client.query(`SELECT next_block
+        FROM robinhood_holder_cursors WHERE chain='robinhood' AND stream='live'`)).rows[0]
+        .next_block);
+      await client.query(`UPDATE robinhood_holder_capture_policy
+        SET capture_mode='tracked' WHERE chain='robinhood'`);
       const rolledBack = await repository.rollbackAppliedTail({
         tokenAddress: persistent.tokenAddress,
         backfillNextBlock: persistent.recoveryFromBlock,
@@ -610,17 +620,19 @@ describe('Robinhood holder ledger persistence', () => {
       assert.ok(publication.observedAt instanceof Date);
       const recoveredTail = await client.query(
         `SELECT state.holder_count, state.ledger_status, state.live_through_block,
+                state.tail_capture_from_block,
                 COUNT(*) FILTER (WHERE journal.applied = false)::int AS pending,
                 COUNT(*) FILTER (WHERE journal.applied = true)::int AS applied
            FROM robinhood_holder_token_states state
            INNER JOIN robinhood_holder_transfer_journal journal
              ON journal.token_address = state.token_address
           WHERE state.token_address = $1
-          GROUP BY state.holder_count, state.ledger_status, state.live_through_block`, [TOKEN_2]
+          GROUP BY state.holder_count, state.ledger_status, state.live_through_block,
+                   state.tail_capture_from_block`, [TOKEN_2]
       );
       assert.deepEqual(recoveredTail.rows, [{
         holder_count: '1', ledger_status: 'backfilling', live_through_block: null,
-        pending: 3, applied: 0,
+        tail_capture_from_block: trackedTail, pending: 3, applied: 0,
       }]);
       const restoredTailBalances = await client.query(
         `SELECT wallet_address, balance_raw FROM robinhood_holder_balances
@@ -672,6 +684,7 @@ describe('Robinhood holder ledger persistence', () => {
       });
       const restoredDrift = await client.query(
         `SELECT state.holder_count, state.ledger_status, state.live_through_block,
+                state.tail_capture_from_block,
                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
                   WHERE journal.token_address = state.token_address
                     AND journal.applied = true)::int AS applied,
@@ -683,7 +696,7 @@ describe('Robinhood holder ledger persistence', () => {
       );
       assert.deepEqual(restoredDrift.rows, [{
         holder_count: '1', ledger_status: 'backfilling', live_through_block: null,
-        applied: 0, alice_balance: '1',
+        tail_capture_from_block: trackedTail, applied: 0, alice_balance: '1',
       }]);
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
@@ -728,7 +741,7 @@ describe('Robinhood holder ledger persistence', () => {
       }), { status: 'not-requeued', reason: 'state-not-safe' });
       const wideState = await client.query(
         `SELECT ledger_status, holder_count, backfill_next_block,
-                live_through_block,
+                live_through_block, tail_capture_from_block,
                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
                   WHERE journal.token_address = state.token_address)::int AS journal_events
            FROM robinhood_holder_token_states state WHERE token_address = $1`,
@@ -736,7 +749,8 @@ describe('Robinhood holder ledger persistence', () => {
       );
       assert.deepEqual(wideState.rows[0], {
         ledger_status: 'backfilling', holder_count: '0',
-        backfill_next_block: '100', live_through_block: '99', journal_events: 1,
+        backfill_next_block: '100', live_through_block: '99',
+        tail_capture_from_block: trackedTail, journal_events: 1,
       });
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
@@ -785,13 +799,15 @@ describe('Robinhood holder ledger persistence', () => {
         }
         assert.deepEqual(result, expected);
         const state = await client.query(
-          `SELECT ledger_status, holder_count, backfill_next_block, live_through_block
+          `SELECT ledger_status, holder_count, backfill_next_block, live_through_block,
+                  tail_capture_from_block
              FROM robinhood_holder_token_states WHERE token_address = $1`,
           [TOKEN_WIDE_TAIL]
         );
         assert.deepEqual(state.rows[0], {
           ledger_status: 'backfilling', holder_count: '7',
           backfill_next_block: '100',
+          tail_capture_from_block: trackedTail,
           live_through_block: scenario.liveThroughBlock == null
             ? null : String(scenario.liveThroughBlock),
         });

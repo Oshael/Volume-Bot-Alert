@@ -3316,6 +3316,11 @@ durável; apenas
 status fora desse conjunto ou troca do tail trava o cursor live e exige
 `tail_capture_from_block >= cursor.next_block`. A ordem para flip/rollback é
 sempre cursor live antes da policy, permitindo que o trigger serialize admissões.
+Os recoveries automáticos do ledger seguem essa mesma ordem. Rollback de token
+`drifted` sempre cria uma nova âncora no `cursor.next_block`; rollback de
+`shadow/live` preserva tail já contínuo e ancora no cursor apenas um baseline
+legado sem tail. Em policy `legacy`, esses caminhos preservam o comportamento
+anterior e não inventam uma fronteira.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
