@@ -3146,6 +3146,11 @@ individualmente no próprio caminho de apply.
 `lastResult.timing` separa `targetedShadowPromotionDurationMs` e
 `residualShadowPromotionDurationMs`, com contagem de chamadas e
 `residualShadowPromotionDeferred`, para identificar qual caminho consome o tick.
+O diagnóstico read-only `node src/utils/audit-robinhood-holder-rollback.js`
+verifica se a âncora tracked, o checkpoint holder e o floor raw ainda permitem
+iniciar uma reconstrução do trecho desde o cutover. Ele não prova todos os
+blocos/eventos intermediários, não reconstrói o journal e não autoriza mudar
+a policy de volta para `legacy`; falha fechado se a retenção ou âncora sumir.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
 `node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
 `npm run db:schema-check`. A Stage 213 cria
