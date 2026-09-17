@@ -1,6 +1,9 @@
 require('dotenv').config();
 
 const db = require('../models/db');
+const {
+  lockCoverageRecoveryContext, recoveryTail,
+} = require('../models/robinhood-holder-coverage');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null || value === '' ? fallback : Number(value);
@@ -59,8 +62,8 @@ async function loadCandidates(database, options) {
 
 async function lockCandidate(client, candidate) {
   const result = await client.query(
-    `SELECT token_address, backfill_next_block, live_through_block,
-            live_through_hash, version
+    `SELECT token_address, deployment_block, backfill_next_block, live_through_block,
+            live_through_hash, tail_capture_from_block, version
        FROM robinhood_holder_token_states
       WHERE chain = 'robinhood' AND token_address = $1
         AND ledger_status = 'shadow' AND version = $2::bigint
@@ -96,18 +99,21 @@ async function requeueCandidate(database, candidate, receiptBlockLimit) {
   const client = await database.getClient();
   try {
     await client.query('BEGIN');
-    if (!await lockCandidate(client, candidate)
+    const coverage = await lockCoverageRecoveryContext(client);
+    const lockedState = await lockCandidate(client, candidate);
+    if (!lockedState
         || !await verifyPendingGap(client, candidate, receiptBlockLimit)) {
       await client.query('ROLLBACK');
       return null;
     }
     const result = await client.query(
       `UPDATE robinhood_holder_token_states
-          SET ledger_status = 'backfilling', version = version + 1, updated_at = NOW()
+          SET ledger_status = 'backfilling', tail_capture_from_block = $3::bigint,
+              version = version + 1, updated_at = NOW()
         WHERE chain = 'robinhood' AND token_address = $1
           AND ledger_status = 'shadow' AND version = $2::bigint
         RETURNING backfill_next_block, live_through_block, version`,
-      [candidate.tokenAddress, candidate.version]
+      [candidate.tokenAddress, candidate.version, recoveryTail(coverage, lockedState)]
     );
     if (!result.rowCount) throw new Error('holder wide-tail requeue lost its state lock');
     await client.query('COMMIT');

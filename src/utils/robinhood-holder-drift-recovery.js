@@ -2,6 +2,9 @@ require('dotenv').config();
 
 const db = require('../models/db');
 const {
+  lockCoverageRecoveryContext, recoveryTail,
+} = require('../models/robinhood-holder-coverage');
+const {
   createRobinhoodHolderLedgerRepository,
 } = require('../models/robinhood-holder-ledger');
 const { runDriftProbe } = require('./robinhood-holder-drift-probe');
@@ -25,17 +28,42 @@ function normalizeOptions(input = {}) {
 }
 
 async function requeueCandidate(database, candidate) {
-  const result = await database.query(
-    `UPDATE robinhood_holder_token_states
-        SET ledger_status = 'backfilling', version = version + 1, updated_at = NOW()
-      WHERE chain = 'robinhood' AND token_address = $1
-        AND ledger_status = 'drifted' AND version = $2::bigint
-        AND backfill_next_block = $3::bigint
-        AND (live_through_block IS NULL OR live_through_block + 1 = backfill_next_block)
-      RETURNING token_address, version`,
-    [candidate.tokenAddress, candidate.version, candidate.backfillNextBlock]
-  );
-  return result.rowCount === 1;
+  const client = await database.getClient();
+  try {
+    await client.query('BEGIN');
+    const coverage = await lockCoverageRecoveryContext(client);
+    const state = (await client.query(
+      `SELECT deployment_block, tail_capture_from_block
+         FROM robinhood_holder_token_states
+        WHERE chain = 'robinhood' AND token_address = $1
+          AND ledger_status = 'drifted' AND version = $2::bigint
+          AND backfill_next_block = $3::bigint
+          AND (live_through_block IS NULL OR live_through_block + 1 = backfill_next_block)
+        FOR UPDATE`,
+      [candidate.tokenAddress, candidate.version, candidate.backfillNextBlock]
+    )).rows[0];
+    if (!state) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    const result = await client.query(
+      `UPDATE robinhood_holder_token_states
+          SET ledger_status = 'backfilling', tail_capture_from_block = $4::bigint,
+              version = version + 1, updated_at = NOW()
+        WHERE chain = 'robinhood' AND token_address = $1
+          AND ledger_status = 'drifted' AND version = $2::bigint
+          AND backfill_next_block = $3::bigint
+        RETURNING token_address, version`,
+      [candidate.tokenAddress, candidate.version, candidate.backfillNextBlock,
+        recoveryTail(coverage, state, true)]
+    );
+    if (result.rowCount !== 1) throw new Error('holder drift recovery lost its state lock');
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally { client.release(); }
 }
 
 function hasReplayCheckpoint(candidate) {

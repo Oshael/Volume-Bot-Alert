@@ -58,8 +58,15 @@ describe('Robinhood bounded holder drift repair', () => {
     const calls = [];
     const database = transactionalDatabase(async (sql, params) => {
       calls.push({ sql, params });
-      if (/SELECT token_address FROM robinhood_holder_token_states/.test(sql)) {
-        return { rowCount: 1, rows: [{ token_address: TOKEN }] };
+      if (/SELECT next_block, journal_floor_block/.test(sql)) {
+        return { rowCount: 1, rows: [{ next_block: '200', journal_floor_block: '50' }] };
+      }
+      if (/SELECT capture_mode/.test(sql)) {
+        return { rowCount: 1, rows: [{ capture_mode: 'tracked' }] };
+      }
+      if (/SELECT token_address, deployment_block/.test(sql)) {
+        return { rowCount: 1, rows: [{ token_address: TOKEN,
+          deployment_block: '100', tail_capture_from_block: null }] };
       }
       if (/SELECT balance_raw FROM robinhood_holder_balances/.test(sql)) {
         return { rowCount: 1, rows: [{ balance_raw: '25' }] };
@@ -77,6 +84,7 @@ describe('Robinhood bounded holder drift repair', () => {
       /balance_raw \+ \$3::numeric/);
     assert.match(calls.find(({ sql }) => /SET ledger_status/.test(sql)).sql,
       /ledger_status = 'backfilling'/);
+    assert.equal(calls.find(({ sql }) => /SET ledger_status/.test(sql)).params[2], '200');
     assert.equal(calls.at(-1).sql, 'COMMIT');
   });
 
@@ -84,7 +92,7 @@ describe('Robinhood bounded holder drift repair', () => {
     const calls = [];
     const database = transactionalDatabase(async (sql) => {
       calls.push(sql);
-      if (/SELECT token_address FROM robinhood_holder_token_states/.test(sql)) {
+      if (/SELECT token_address, deployment_block/.test(sql)) {
         return { rowCount: 1, rows: [{ token_address: TOKEN }] };
       }
       return { rowCount: 1, rows: [] };

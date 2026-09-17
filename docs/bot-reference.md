@@ -3321,6 +3321,11 @@ Os recoveries automáticos do ledger seguem essa mesma ordem. Rollback de token
 `shadow/live` preserva tail já contínuo e ancora no cursor apenas um baseline
 legado sem tail. Em policy `legacy`, esses caminhos preservam o comportamento
 anterior e não inventam uma fronteira.
+As ferramentas manuais `npm run robinhood:holder-drift-recovery`,
+`npm run robinhood:holder-drift-bounded-repair` e
+`npm run robinhood:holder-tail-requeue` usam o mesmo contrato. Quando precisam
+criar uma âncora tracked, escolhem o maior valor entre `cursor.next_block` e
+`deployment_block`; dry-runs continuam read-only.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.

@@ -53,11 +53,25 @@ describe('Robinhood holder drift recovery', () => {
 
   it('requeues only freshly revalidated candidates with cursor and version CAS', async () => {
     const queries = [];
-    const database = { async query(sql, params) {
+    const query = async (sql, params) => {
       queries.push([sql, params]);
+      if (/SELECT next_block, journal_floor_block/.test(sql)) {
+        return { rowCount: 1, rows: [{ next_block: '501', journal_floor_block: '100' }] };
+      }
+      if (/SELECT capture_mode/.test(sql)) {
+        return { rowCount: 1, rows: [{ capture_mode: 'tracked' }] };
+      }
+      if (/SELECT deployment_block, tail_capture_from_block/.test(sql)) {
+        return { rowCount: 1, rows: [{ deployment_block: '100',
+          tail_capture_from_block: null }] };
+      }
       if (/^\s*UPDATE/.test(sql)) return { rowCount: 1, rows: [{ token_address: TOKEN_A }] };
       return { rows: [{ tokens: 1 }] };
-    } };
+    };
+    const database = {
+      query,
+      async getClient() { return { query, release() {} }; },
+    };
     const probe = async () => ({ provider: 'node', safeHead: '500', results: [
       result(TOKEN_A, 'not-reproduced'),
       result(TOKEN_C, 'not-reproduced', { liveThroughBlock: '250' }),
@@ -103,8 +117,9 @@ describe('Robinhood holder drift recovery', () => {
     ).status, 'overflow-found');
     assert.equal(recovered.remainingDrifted, 1);
     const update = queries.find(([sql]) => /^\s*UPDATE/.test(sql));
-    assert.deepEqual(update[1], [TOKEN_A, '7', '200']);
+    assert.deepEqual(update[1], [TOKEN_A, '7', '200', '501']);
     assert.match(update[0], /ledger_status = 'drifted' AND version = \$2::bigint/);
-    assert.match(update[0], /live_through_block \+ 1 = backfill_next_block/);
+    assert.match(queries.find(([sql]) => /SELECT deployment_block/.test(sql))[0],
+      /live_through_block \+ 1 = backfill_next_block/);
   });
 });

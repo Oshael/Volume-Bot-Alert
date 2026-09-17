@@ -1,4 +1,7 @@
 const db = require('./db');
+const {
+  lockCoverageRecoveryContext, recoveryTail,
+} = require('./robinhood-holder-coverage');
 const { refreshExistingHotQueue } = require('./robinhood-holder-hot-queue');
 const { enqueuePublications } = require('./robinhood-holder-realtime-outbox');
 
@@ -180,36 +183,6 @@ async function insertTransfers(client, transfers) {
   );
   if (Number(result.rows[0]?.matched) !== unique.length) throw captureConflict();
   return Number(result.rows[0]?.inserted) || 0;
-}
-
-async function lockCoverageRecoveryContext(client) {
-  const cursor = (await client.query(
-    `SELECT next_block, journal_floor_block FROM robinhood_holder_cursors
-      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
-  )).rows[0];
-  if (!cursor) {
-    const error = new Error('holder live cursor is missing');
-    error.code = 'holder_cursor_missing';
-    throw error;
-  }
-  const policy = (await client.query(
-    `SELECT capture_mode FROM robinhood_holder_capture_policy
-      WHERE chain = 'robinhood' FOR SHARE`
-  )).rows[0];
-  if (!policy) {
-    const error = new Error('holder capture policy is missing');
-    error.code = 'holder_capture_policy_missing';
-    throw error;
-  }
-  return Object.freeze({ cursor, captureMode: policy.capture_mode });
-}
-
-function recoveryTail(context, state, forceReanchor = false) {
-  if (context.captureMode !== 'tracked') return state.tail_capture_from_block;
-  if (forceReanchor || state.tail_capture_from_block == null) {
-    return context.cursor.next_block;
-  }
-  return state.tail_capture_from_block;
 }
 
 async function advanceCursor(client, cursor) {
@@ -1387,7 +1360,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       await lockReorgFence(client, 'exclusive');
       const coverage = await lockCoverageRecoveryContext(client);
       const stateResult = await client.query(
-        `SELECT holder_count, ledger_status, backfill_next_block,
+        `SELECT holder_count, ledger_status, deployment_block, backfill_next_block,
                 live_through_block, live_through_hash, tail_capture_from_block, version
            FROM robinhood_holder_token_states
           WHERE chain = 'robinhood' AND token_address = $1 FOR UPDATE`,
@@ -1524,7 +1497,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       await lockReorgFence(client, 'exclusive');
       const coverage = await lockCoverageRecoveryContext(client);
       const stateResult = await client.query(
-        `SELECT ledger_status, backfill_next_block, live_through_block,
+        `SELECT ledger_status, deployment_block, backfill_next_block, live_through_block,
                 live_through_hash, tail_capture_from_block, version
            FROM robinhood_holder_token_states
           WHERE chain = 'robinhood' AND token_address = $1
@@ -1957,6 +1930,6 @@ module.exports = {
   normalizeHolderTransfer: normalizeTransfer,
   __private: {
     deriveBalanceChanges, lockReorgFence,
-    normalizeCursor, normalizeRewind, normalizeTransfer, recoveryTail, validateRange,
+    normalizeCursor, normalizeRewind, normalizeTransfer, validateRange,
   },
 };

@@ -55,6 +55,11 @@ describe('Robinhood holder backfill persistence', () => {
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
         (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_capture_policy (
+        chain varchar(16) PRIMARY KEY, capture_mode varchar(16) NOT NULL
+      )`);
+      await client.query(`INSERT INTO robinhood_holder_capture_policy
+        VALUES ('robinhood', 'legacy')`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
@@ -203,17 +208,22 @@ describe('Robinhood holder backfill persistence', () => {
         tokenAddress: TOKEN, backfillNextBlock: '103',
       }), { status: 'resyncing', tokenAddress: TOKEN });
       assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
-      assert.equal(await requeueCandidate(client, {
+      await client.query(`UPDATE robinhood_holder_capture_policy
+        SET capture_mode='tracked' WHERE chain='robinhood'`);
+      assert.equal(await requeueCandidate(database, {
         tokenAddress: DRIFT_TOKEN, version: '1', backfillNextBlock: '200',
       }), true);
-      assert.equal(await requeueCandidate(client, {
+      assert.equal(await requeueCandidate(database, {
         tokenAddress: DRIFT_TOKEN, version: '1', backfillNextBlock: '200',
       }), false);
       const recovered = await client.query(
-        `SELECT ledger_status, version FROM robinhood_holder_token_states
+        `SELECT ledger_status, tail_capture_from_block, version
+           FROM robinhood_holder_token_states
           WHERE token_address = $1`, [DRIFT_TOKEN]
       );
-      assert.deepEqual(recovered.rows[0], { ledger_status: 'backfilling', version: '2' });
+      assert.deepEqual(recovered.rows[0], {
+        ledger_status: 'backfilling', tail_capture_from_block: '200', version: '2',
+      });
       assert.deepEqual(await repository.markMalformed({
         tokenAddress: DRIFT_TOKEN, backfillNextBlock: '200', version: '2',
       }), {
@@ -305,7 +315,7 @@ describe('Robinhood holder backfill persistence', () => {
       assert.equal(tailRequeue.requeued[0].backfillNextBlock, '201');
       const preserved = await client.query(
         `SELECT state.ledger_status, state.holder_count, state.backfill_next_block,
-                state.live_through_block, state.version,
+                state.live_through_block, state.tail_capture_from_block, state.version,
                 (SELECT COUNT(*) FROM robinhood_holder_balances balances
                   WHERE balances.token_address = state.token_address)::int AS balances,
                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
@@ -318,12 +328,14 @@ describe('Robinhood holder backfill persistence', () => {
         holderCount: String(preserved.rows[0].holder_count),
         nextBlock: String(preserved.rows[0].backfill_next_block),
         liveThroughBlock: String(preserved.rows[0].live_through_block),
+        tailCaptureFromBlock: String(preserved.rows[0].tail_capture_from_block),
         version: String(preserved.rows[0].version),
         balances: Number(preserved.rows[0].balances),
         journalEvents: Number(preserved.rows[0].journal_events),
       }, {
         status: 'backfilling', holderCount: '1', nextBlock: '201',
-        liveThroughBlock: '200', version: '2', balances: 1, journalEvents: 1,
+        liveThroughBlock: '200', tailCaptureFromBlock: '104', version: '2',
+        balances: 1, journalEvents: 1,
       });
 
       await client.query(

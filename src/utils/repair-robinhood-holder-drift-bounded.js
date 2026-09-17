@@ -1,6 +1,9 @@
 require('dotenv').config();
 
 const db = require('../models/db');
+const {
+  lockCoverageRecoveryContext, recoveryTail,
+} = require('../models/robinhood-holder-coverage');
 const { runDriftProbe } = require('./robinhood-holder-drift-probe');
 
 const MAX_UINT256 = (1n << 256n) - 1n;
@@ -100,19 +103,22 @@ async function withTransaction(database, operation) {
 
 async function lockCandidate(client, candidate) {
   const result = await client.query(
-    `SELECT token_address FROM robinhood_holder_token_states
+    `SELECT token_address, deployment_block, tail_capture_from_block
+       FROM robinhood_holder_token_states
       WHERE chain = 'robinhood' AND token_address = $1
         AND ledger_status = 'drifted' AND version = $2::bigint
         AND backfill_next_block = $3::bigint
       FOR UPDATE`,
     [candidate.tokenAddress, candidate.version, candidate.backfillNextBlock]
   );
-  return result.rowCount === 1;
+  return result.rows[0] || null;
 }
 
 async function anchorCandidate(database, candidate, action) {
   return withTransaction(database, async (client) => {
-    if (!await lockCandidate(client, candidate)) return null;
+    const coverage = await lockCoverageRecoveryContext(client);
+    const lockedState = await lockCandidate(client, candidate);
+    if (!lockedState) return null;
     const balance = await client.query(
       `SELECT balance_raw FROM robinhood_holder_balances
         WHERE chain = 'robinhood' AND token_address = $1 AND wallet_address = $2
@@ -131,10 +137,12 @@ async function anchorCandidate(database, candidate, action) {
     const state = await client.query(
       `UPDATE robinhood_holder_token_states
           SET ledger_status = 'backfilling', last_reconciled_at = NOW(),
+              tail_capture_from_block = $3::bigint,
               version = version + 1, updated_at = NOW()
         WHERE chain = 'robinhood' AND token_address = $1
           AND ledger_status = 'drifted' AND version = $2::bigint
-        RETURNING version`, [candidate.tokenAddress, candidate.version]
+        RETURNING version`, [candidate.tokenAddress, candidate.version,
+        recoveryTail(coverage, lockedState, true)]
     );
     if (!state.rowCount) throw new Error('bounded drift repair lost its state lock');
     return Object.freeze({
