@@ -3159,6 +3159,12 @@ identidades e payload dos transfers com o raw canônico antes do INSERT idempote
 Faixas com logs Transfer malformados, raw incompleto, conflito no journal ou
 reorg falham fechadas. O comando não atualiza o cursor, não muda a policy e não
 prova sozinho a reconstrução de todo o intervalo até o rollback.
+`node src/utils/audit-robinhood-holder-universal-range.js --from=N --to=M`
+confere read-only, em snapshot consistente e até 250 blocos, ausência de lacunas
+na numeração dos blocos canônicos e igualdade de identidade/payload entre Transfer raw e
+journal (incluindo ausentes, excedentes e divergentes). Resultado
+`rangeComplete=true` vale somente para a faixa e snapshot indicados; não é
+prova durável de todo o intervalo tracked nem autoriza rollback ou flip.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
 `node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
 `npm run db:schema-check`. A Stage 213 cria

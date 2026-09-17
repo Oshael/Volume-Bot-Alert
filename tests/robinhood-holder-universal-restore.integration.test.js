@@ -10,6 +10,9 @@ const {
 const {
   createRobinhoodHolderUniversalRestore,
 } = require('../src/services/robinhood-holder-universal-restore');
+const {
+  createRobinhoodHolderUniversalCoverageAudit,
+} = require('../src/services/robinhood-holder-universal-coverage-audit');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const HASH_A = `0x${'a'.repeat(64)}`;
@@ -67,22 +70,41 @@ it('restores a bounded canonical range idempotently and rejects stale or diverge
     ]);
 
     const restore = createRobinhoodHolderUniversalRestore({ database });
+    const audit = createRobinhoodHolderUniversalCoverageAudit({ database });
     const input = { fromBlock: '101', toBlock: '102' };
     assert.equal((await restore.restoreRange(input)).observedTransfers, 1);
+    assert.deepEqual(await audit.inspectRange(input), {
+      mode: 'read-only', fromBlock: '101', toBlock: '102', nextBlock: '103',
+      rangeComplete: false, rawTransfers: 1, journalTransfers: 0,
+      missing: 1, excess: 0, divergent: 0,
+      samples: [{ kind: 'missing', identity: `${TX}:0` }],
+      snapshot: { policyVersion: '1', holderVersion: '5', holderNextBlock: '103',
+        rangeCheckpointHash: HASH_C },
+    });
     assert.equal((await query('SELECT COUNT(*)::int AS total FROM robinhood_holder_transfer_journal'))
       .rows[0].total, 0);
     assert.deepEqual(await restore.restoreRange({ ...input, apply: true }), {
       mode: 'apply', fromBlock: '101', toBlock: '102', matched: 1,
       inserted: 1, alreadyPresent: 0,
     });
+    assert.equal((await audit.inspectRange(input)).rangeComplete, true);
     assert.equal(String((await query('SELECT next_block FROM robinhood_holder_cursors'))
       .rows[0].next_block), '103');
     assert.equal((await restore.restoreRange({ ...input, apply: true })).alreadyPresent, 1);
     await query('UPDATE robinhood_holder_transfer_journal SET amount_raw=6');
+    assert.equal((await audit.inspectRange(input)).divergent, 1);
     await assert.rejects(restore.restoreRange({ ...input, apply: true }), {
       code: 'holder_capture_conflict',
     });
     await query('UPDATE robinhood_holder_transfer_journal SET amount_raw=5');
+    await query(`INSERT INTO robinhood_holder_transfer_journal (
+      chain, block_number, block_hash, transaction_hash, transaction_index,
+      log_index, token_address, from_wallet, to_wallet, amount_raw
+    ) SELECT chain, block_number, block_hash, $1, transaction_index,
+             1, token_address, from_wallet, to_wallet, amount_raw
+        FROM robinhood_holder_transfer_journal`, [`0x${'e'.repeat(64)}`]);
+    assert.equal((await audit.inspectRange(input)).excess, 1);
+    await query('DELETE FROM robinhood_holder_transfer_journal WHERE log_index=1');
 
     const canonical = createRobinhoodCanonicalHolderSource({ database });
     const racing = createRobinhoodHolderUniversalRestore({ database, source: {
@@ -106,6 +128,7 @@ it('restores a bounded canonical range idempotently and rejects stale or diverge
     await assert.rejects(changedRaw.restoreRange({ ...input, apply: true }), {
       code: 'holder_universal_restore_unavailable', reason: 'raw-range-incomplete-or-changed',
     });
+    await assert.rejects(audit.inspectRange(input), /canonical holder range or anchor is incomplete/);
     await query('UPDATE robinhood_chain_blocks SET canonical=true WHERE block_number=101');
 
     const changedPayload = createRobinhoodHolderUniversalRestore({ database, source: {
