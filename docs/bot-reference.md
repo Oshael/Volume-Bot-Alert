@@ -3174,6 +3174,11 @@ assume uma janela conservadora de recuperação de 24 horas a partir do flip.
 preview; sob lock, incrementa a versão do cursor e grava policy/âncora no mesmo
 commit. A janela conserva evidência para reparo; esta versão não oferece
 rollback por flag nem mesmo dentro dela. Em falha, parar e reparar para frente.
+O gate usa `statement_timeout` de 15 segundos por padrão e informa a fase que
+falhou. Em journal fisicamente descorrelacionado, depois de confirmar por
+`EXPLAIN` que a leitura dos dez blocos usa o BRIN, aceite explicitamente até
+60 segundos com `--statement-timeout-ms=60000`; o limite de blocos e de eventos
+não muda, e não se deve recriar o B-tree global para executar o gate.
 Antes de aplicar na VPS, publicar o mesmo código no worker de retenção e no de
 holders, confirmar schema, plano/custo do gate e revisar o preview. Não alterar
 a policy manualmente.

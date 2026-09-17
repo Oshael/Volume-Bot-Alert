@@ -12,6 +12,27 @@ const { createRobinhoodHolderCutoverRetention } = require('./robinhood-holder-cu
 const CHAIN = 'robinhood';
 const SAMPLE_BLOCKS = 10n;
 const MAX_EVENTS = 10_000;
+const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
+const MAX_STATEMENT_TIMEOUT_MS = 60_000;
+
+function statementTimeout(value) {
+  const timeout = value == null ? DEFAULT_STATEMENT_TIMEOUT_MS : Number(value);
+  if (!Number.isSafeInteger(timeout) || timeout < DEFAULT_STATEMENT_TIMEOUT_MS
+      || timeout > MAX_STATEMENT_TIMEOUT_MS) {
+    throw new Error(`holder cutover statement timeout must be between ${DEFAULT_STATEMENT_TIMEOUT_MS}`
+      + ` and ${MAX_STATEMENT_TIMEOUT_MS} ms`);
+  }
+  return timeout;
+}
+
+async function withPhase(phase, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!error.cutoverPhase) error.cutoverPhase = phase;
+    throw error;
+  }
+}
 
 function fail(code) {
   const error = new Error(`holder cutover gate: ${code}`);
@@ -185,9 +206,13 @@ async function assess(client, context, retentionGuard) {
   let parity = null;
   let protection = null;
   if (!blockers.length) {
-    stateCoverage = await coverage(client, cursor.checkpoint_block);
+    stateCoverage = await withPhase(
+      'coverage', () => coverage(client, cursor.checkpoint_block)
+    );
     blockers.push(...coverageBlockers(stateCoverage));
-    try { parity = await recentParity(client, cursor); } catch (error) {
+    try {
+      parity = await withPhase('recent-parity', () => recentParity(client, cursor));
+    } catch (error) {
       if (error.code !== 'holder_cutover_not_ready') throw error;
       blockers.push(error.reason);
     }
@@ -195,10 +220,10 @@ async function assess(client, context, retentionGuard) {
       blockers.push('recent_parity_divergent');
     }
     try {
-      protection = await retentionGuard.assertProtected(client, {
+      protection = await withPhase('retention', () => retentionGuard.assertProtected(client, {
         nextBlock: String(cursor.next_block), checkpointBlock: String(cursor.checkpoint_block),
         checkpointHash: cursor.checkpoint_hash,
-      });
+      }));
     } catch (error) {
       if (error.code !== 'holder_cutover_retention_unavailable') throw error;
       blockers.push(error.reason);
@@ -234,13 +259,14 @@ function createRobinhoodHolderCutoverGate(options = {}) {
 
   async function inspect(input = {}) {
     const apply = input.apply === true;
+    const statementTimeoutMs = statementTimeout(input.statementTimeoutMs);
     const client = await database.getClient();
     try {
       await client.query(apply ? 'BEGIN' : 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       await client.query("SET LOCAL lock_timeout = '2s'");
-      await client.query("SET LOCAL statement_timeout = '15000ms'");
+      await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
       if (apply) await acquireRobinhoodHolderReorgFence(client, 'shared');
-      const context = await readContext(client, apply);
+      const context = await withPhase('context', () => readContext(client, apply));
       const { blockers, stateCoverage, parity, protection } = await assess(
         client, context, retentionGuard
       );
@@ -250,7 +276,7 @@ function createRobinhoodHolderCutoverGate(options = {}) {
             || String(input.expectedCheckpointHash) !== context.cursor.checkpoint_hash) {
           throw fail('expected_anchor_changed_or_missing');
         }
-        await applyCutover(client, context);
+        await withPhase('apply', () => applyCutover(client, context));
         await client.query('COMMIT');
       } else await client.query('ROLLBACK');
       const { cursor, policy } = context;
@@ -271,4 +297,7 @@ function createRobinhoodHolderCutoverGate(options = {}) {
   return Object.freeze({ inspect });
 }
 
-module.exports = { createRobinhoodHolderCutoverGate };
+module.exports = {
+  createRobinhoodHolderCutoverGate,
+  __private: { statementTimeout },
+};

@@ -12,6 +12,10 @@ function parseArgs(argv = process.argv.slice(2)) {
       options.expectedNextBlock = arg.slice('--expect-next='.length);
     } else if (arg.startsWith('--expect-hash=')) {
       options.expectedCheckpointHash = arg.slice('--expect-hash='.length);
+    } else if (arg.startsWith('--statement-timeout-ms=')) {
+      const value = arg.slice('--statement-timeout-ms='.length);
+      if (!/^[0-9]+$/.test(value)) throw new Error('statement timeout must be an integer');
+      options.statementTimeoutMs = Number(value);
     } else throw new Error(`unknown option: ${arg}`);
   }
   if (options.apply && (!/^[0-9]+$/.test(options.expectedNextBlock || '')
@@ -34,7 +38,8 @@ async function main(deps = {}) {
 }
 
 if (require.main === module) main().catch((error) => {
-  console.error('Robinhood holder cutover failed:', error.message);
+  const phase = error.cutoverPhase ? ` (${error.cutoverPhase})` : '';
+  console.error(`Robinhood holder cutover failed${phase}:`, error.message);
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
