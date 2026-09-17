@@ -7,6 +7,8 @@ const TOKEN = `0x${'1'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
 const HASH_C = `0x${'c'.repeat(64)}`;
+const LEGACY_POLICY = Object.freeze({ mode: 'legacy', generation: '0',
+  cutoverNextBlock: null, version: 0 });
 
 describe('Robinhood holder global live capture', () => {
   it('captures one confirmed global range with optimistic cursor continuity', async () => {
@@ -16,6 +18,7 @@ describe('Robinhood holder global live capture', () => {
       return [{ ledgerStatus: 'backfilling' }];
     } };
     const ledger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => ({
         nextBlock: '103', checkpointBlock: '102', checkpointHash: HASH,
         journalFloorBlock: '90', version: 4,
@@ -79,7 +82,7 @@ describe('Robinhood holder global live capture', () => {
         transfers: [transfer],
         cursor: {
           rangeStart: '103', nextBlock: '106', safeHead: '105', expectedVersion: 4,
-          bufferedAllTransfers: true,
+          bufferedAllTransfers: true, captureMode: 'legacy', capturePolicyVersion: 0,
           checkpoint: { number: '105', hash: HASH },
         },
       }],
@@ -102,6 +105,7 @@ describe('Robinhood holder global live capture', () => {
       }),
     };
     const initialLedger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => null,
       listJournalBlockCheckpoints: async () => [],
       getLiveCaptureScope: async () => ({
@@ -139,6 +143,7 @@ describe('Robinhood holder global live capture', () => {
   it('finds the latest canonical journal evidence and rewinds atomically', async () => {
     const calls = [];
     const ledger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => ({
         nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH,
         journalFloorBlock: '90', version: 7,
@@ -192,6 +197,7 @@ describe('Robinhood holder global live capture', () => {
   it('finds a canonical ancestor across blocks without holder transfers', async () => {
     const calls = [];
     const ledger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => ({
         nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH,
         journalFloorBlock: '90', version: 7,
@@ -244,6 +250,7 @@ describe('Robinhood holder global live capture', () => {
   it('bounds canonical ancestor search and fails closed below retained evidence', async () => {
     let requested;
     const ledger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => ({
         nextBlock: '2001', checkpointBlock: '2000', checkpointHash: HASH,
         journalFloorBlock: '1', version: 7,
@@ -283,6 +290,7 @@ describe('Robinhood holder global live capture', () => {
     };
     let appends = 0;
     const ledger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => cursor,
       listJournalBlockCheckpoints: async () => { throw new Error('unexpected journal read'); },
       listCanonicalBlockCheckpoints: async () => [{ number: '99', hash: HASH_B }],
@@ -320,12 +328,54 @@ describe('Robinhood holder global live capture', () => {
     assert.equal(appends, 1);
   });
 
+  it('requires runtime authorization and filters the durable tracked scope', async () => {
+    const calls = [];
+    const policy = { mode: 'tracked', generation: '1', cutoverNextBlock: '103', version: 2 };
+    const ledger = {
+      getCapturePolicy: async () => policy,
+      getCursor: async () => ({ nextBlock: '103', checkpointBlock: '102',
+        checkpointHash: HASH, journalFloorBlock: '90', version: 4 }),
+      listJournalBlockCheckpoints: async () => [],
+      getLiveCaptureScope: async () => ({ tokenAddresses: [TOKEN], coverageAudit: {} }),
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
+      rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
+      appendCapturedRange: async (input) => {
+        calls.push(['append', input]);
+        return { insertedTransfers: 0, duplicateTransfers: 0, cursorVersion: 5 };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '103' }),
+      matchesCheckpoint: async () => true,
+      readGlobalRange: async (input) => {
+        calls.push(['read', input]);
+        return { ...input, nextBlock: '104', scopeTokens: 1, transfers: [],
+          checkpoint: { number: '103', hash: HASH_B }, telemetry: {} };
+      },
+    };
+    await assert.rejects(
+      createRobinhoodHolderLiveCapture({ ledger, reader }).captureOnce(),
+      (error) => error.code === 'holder_tracked_capture_not_authorized'
+    );
+    const result = await createRobinhoodHolderLiveCapture({
+      ledger, reader, allowTrackedCapture: true,
+    }).captureOnce();
+    assert.equal(result.captureMode, 'tracked');
+    assert.equal(calls[0][1].captureAllTransfers, false);
+    assert.deepEqual(calls[1][1].cursor, {
+      rangeStart: '103', nextBlock: '104', safeHead: '103', expectedVersion: 4,
+      bufferedAllTransfers: false, captureMode: 'tracked', capturePolicyVersion: 2,
+      checkpoint: { number: '103', hash: HASH_B },
+    });
+  });
+
   it('quarantines one malformed tracked token without advancing the live cursor', async () => {
     const calls = [];
     const invalid = new Error('Transfer log topics are invalid');
     invalid.code = 'holder_transfer_invalid_log';
     invalid.tokenAddress = TOKEN;
     const ledger = {
+      getCapturePolicy: async () => LEGACY_POLICY,
       getCursor: async () => ({
         nextBlock: '103', checkpointBlock: '102', checkpointHash: HASH,
         journalFloorBlock: '90', version: 4,

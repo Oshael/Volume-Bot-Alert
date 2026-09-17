@@ -40,6 +40,10 @@ function rewindHolderUpdates(captured) {
   return updates;
 }
 
+function captureModeResult(captured) {
+  return captured.captureMode == null ? {} : { captureMode: captured.captureMode };
+}
+
 function pendingEventFilter(excluded, preferredTokenAddress) {
   const filter = {};
   if (excluded.length) filter.excludeTokenAddresses = excluded;
@@ -654,6 +658,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     if (prepared.terminal) return prepared.terminal;
     return Object.freeze({
       status: 'completed', captureStatus: prepared.captured.status,
+      ...captureModeResult(prepared.captured),
       capturedTransfers: Number(prepared.captured.transfers) || 0,
       ...(prepared.captured.telemetry ? {
         captureTelemetry: prepared.captured.telemetry,

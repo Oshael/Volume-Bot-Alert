@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const {
   DEFAULT_FALLBACK_INTERVAL_MS,
   createRobinhoodHolderLiveWorker,
-  __private: { buildRuntime },
+  __private: { buildRuntime, normalizeOptions },
 } = require('../src/services/robinhood-holder-live-worker');
 
 function scheduler() {
@@ -24,6 +24,7 @@ function scheduler() {
 function completed(overrides = {}) {
   return {
     status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
+    captureMode: 'legacy',
     handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
     capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
     captureTelemetry: {
@@ -37,6 +38,13 @@ function completed(overrides = {}) {
 }
 
 describe('Robinhood holder live worker', () => {
+  it('requires an explicit true value to authorize tracked capture', () => {
+    assert.equal(normalizeOptions({}, {}).allowTrackedCapture, false);
+    assert.equal(normalizeOptions({}, {
+      ROBINHOOD_HOLDER_TRACKED_CAPTURE_ENABLED: 'true',
+    }).allowTrackedCapture, true);
+  });
+
   it('stays disabled by default and schedules bounded ticks only when enabled', async () => {
     const clock = scheduler();
     const calls = [];
@@ -72,6 +80,7 @@ describe('Robinhood holder live worker', () => {
     assert.equal(calls[0].confirmations, 12);
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
+      captureMode: 'legacy',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
       capturedTransfers: 3, seededTokens: 0, bufferedSeededTokens: 0,
       rawTransfersObserved: 10, trackedTransfers: 3, legacyExtraTransfers: 7,

@@ -23,6 +23,7 @@ function transfer(overrides = {}) {
 function cursor(overrides = {}) {
   return {
     rangeStart: '100', nextBlock: '101', safeHead: '105', expectedVersion: null,
+    bufferedAllTransfers: true, captureMode: 'legacy', capturePolicyVersion: 0,
     checkpoint: { number: '100', hash: HASH }, ...overrides,
   };
 }
@@ -112,6 +113,10 @@ describe('Robinhood holder ledger repository', () => {
 
   it('commits matching captures and advances a bootstrap cursor atomically', async () => {
     const fake = fakeDatabase([
+      { rows: [], rowCount: 1 },
+      { rows: [], rowCount: 0 },
+      { rows: [{ capture_mode: 'legacy', coverage_generation: '0',
+        cutover_next_block: null, version: '0' }], rowCount: 1 },
       { rows: [{ matched: '2', inserted: '1' }], rowCount: 1 },
       { rows: [{ version: '0' }], rowCount: 1 },
     ]);
@@ -123,19 +128,22 @@ describe('Robinhood holder ledger repository', () => {
 
     assert.deepEqual(result, { insertedTransfers: 1, duplicateTransfers: 1, cursorVersion: 0 });
     assert.deepEqual(fake.calls.map(({ sql }) => sql === 'BEGIN' || sql === 'COMMIT' ? sql : 'query'), [
-      'BEGIN', 'query', 'query', 'COMMIT',
+      'BEGIN', 'query', 'query', 'query', 'query', 'query', 'COMMIT',
     ]);
-    assert.match(fake.calls[1].sql, /ON CONFLICT \(chain, transaction_hash, log_index\)/);
-    assert.match(fake.calls[2].sql, /robinhood_holder_cursors\.version = \$5::bigint/);
-    assert.match(fake.calls[2].sql, /robinhood_holder_cursors\.next_block = \$6::bigint/);
-    assert.equal(fake.calls[2].params[6], false);
+    assert.match(fake.calls[4].sql, /ON CONFLICT \(chain, transaction_hash, log_index\)/);
+    assert.match(fake.calls[5].sql, /robinhood_holder_cursors\.version = \$5::bigint/);
+    assert.match(fake.calls[5].sql, /robinhood_holder_cursors\.next_block = \$6::bigint/);
+    assert.equal(fake.calls[5].params[6], true);
     assert.equal(fake.client.released, true);
   });
 
   it('rolls back the range when evidence conflicts or the cursor is stale', async () => {
     for (const [sequence, expectedCode] of [
-      [[{ rows: [], rowCount: 0 }], 'holder_capture_conflict'],
-      [[{ rows: [{ matched: '1', inserted: '1' }], rowCount: 1 }, { rows: [], rowCount: 0 }],
+      [[{ rows: [] }, { rows: [], rowCount: 0 },
+        { rows: [{ capture_mode: 'legacy', coverage_generation: '0',
+          cutover_next_block: null, version: '0' }] }, { rows: [], rowCount: 0 }],
+      'holder_capture_conflict'],
+      [[{ rows: [] }, { rows: [{ next_block: '100', version: '0' }], rowCount: 1 }],
         'holder_cursor_stale'],
     ]) {
       const fake = fakeDatabase(sequence);

@@ -3326,6 +3326,13 @@ As ferramentas manuais `npm run robinhood:holder-drift-recovery`,
 `npm run robinhood:holder-tail-requeue` usam o mesmo contrato. Quando precisam
 criar uma âncora tracked, escolhem o maior valor entre `cursor.next_block` e
 `deployment_block`; dry-runs continuam read-only.
+A captura live lê `robinhood_holder_capture_policy` a cada range. `legacy`
+continua capturando todos os Transfers; `tracked` filtra pelo escopo durável e
+exige também `ROBINHOOD_HOLDER_TRACKED_CAPTURE_ENABLED=true`. Essa env apenas
+autoriza o modo: não o ativa sem a policy. O commit trava cursor e policy nessa
+ordem e rejeita ranges lidos sob outra versão/modo. Reorg acima do cutover pode
+ser recapturado; rewind abaixo de `cutover_next_block` falha com
+`holder_rewind_crosses_cutover`, pois o journal tracked não prova a faixa legada.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.

@@ -1,6 +1,6 @@
 const db = require('./db');
 const {
-  lockCoverageRecoveryContext, recoveryTail,
+  lockCapturePolicy, lockCoverageRecoveryContext, readCapturePolicy, recoveryTail,
 } = require('./robinhood-holder-coverage');
 const { refreshExistingHotQueue } = require('./robinhood-holder-hot-queue');
 const { enqueuePublications } = require('./robinhood-holder-realtime-outbox');
@@ -61,6 +61,10 @@ function normalizeCursor(value = {}) {
   const checkpoint = value.checkpoint || {};
   const expectedVersion = value.expectedVersion == null
     ? null : nonNegativeInteger(value.expectedVersion, 'cursor.expectedVersion');
+  const captureMode = String(value.captureMode || '');
+  if (!['legacy', 'tracked'].includes(captureMode)) {
+    throw new Error('cursor.captureMode is invalid');
+  }
   return Object.freeze({
     rangeStart: decimalQuantity(value.rangeStart, 'cursor.rangeStart'),
     nextBlock: decimalQuantity(value.nextBlock, 'cursor.nextBlock'),
@@ -68,6 +72,10 @@ function normalizeCursor(value = {}) {
     checkpointBlock: decimalQuantity(checkpoint.number, 'cursor.checkpoint.number'),
     checkpointHash: hex(checkpoint.hash, 32, 'cursor.checkpoint.hash'),
     bufferedAllTransfers: value.bufferedAllTransfers === true,
+    captureMode,
+    capturePolicyVersion: nonNegativeInteger(
+      value.capturePolicyVersion, 'cursor.capturePolicyVersion'
+    ),
     expectedVersion,
   });
 }
@@ -221,6 +229,30 @@ async function advanceCursor(client, cursor) {
     throw error;
   }
   return Number(result.rows[0].version);
+}
+
+async function lockCaptureCommitContext(client, cursor) {
+  const locked = await client.query(
+    `SELECT next_block, version FROM robinhood_holder_cursors
+      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+  );
+  const current = locked.rows[0];
+  const cursorMatches = cursor.expectedVersion == null
+    ? !current
+    : current && Number(current.version) === cursor.expectedVersion
+      && String(current.next_block) === cursor.rangeStart;
+  if (!cursorMatches) {
+    const error = new Error('holder capture cursor is stale');
+    error.code = 'holder_cursor_stale';
+    throw error;
+  }
+  const policy = await lockCapturePolicy(client);
+  if (policy.mode !== cursor.captureMode || policy.version !== cursor.capturePolicyVersion
+      || cursor.bufferedAllTransfers !== (policy.mode === 'legacy')) {
+    const error = new Error('holder capture policy changed during the range read');
+    error.code = 'holder_capture_policy_stale';
+    throw error;
+  }
 }
 
 function normalizeCursorRow(row) {
@@ -1131,6 +1163,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     validateRange(transfers, cursor);
     return withTransaction(database, async (client) => {
       await lockReorgFence(client, 'shared');
+      await lockCaptureCommitContext(client, cursor);
       const insertedTransfers = await insertTransfers(client, transfers);
       const version = await advanceCursor(client, cursor);
       return Object.freeze({
@@ -1567,6 +1600,13 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const rewind = normalizeRewind(input);
     await lockReorgFence(client, 'exclusive');
     await lockCursorForRewind(client, rewind);
+    const policy = await lockCapturePolicy(client);
+    if (policy.mode === 'tracked' && (policy.cutoverNextBlock == null
+        || BigInt(rewind.nextBlock) < BigInt(policy.cutoverNextBlock))) {
+      const error = new Error('holder rewind crosses the tracked capture cutover');
+      error.code = 'holder_rewind_crosses_cutover';
+      throw error;
+    }
     if (input.requireCanonicalCheckpoint === true) {
       const anchor = await client.query(
         `SELECT 1 FROM robinhood_chain_blocks
@@ -1611,6 +1651,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       [CHAIN, STREAM]
     );
     return normalizeCursorRow(result.rows[0]);
+  }
+
+  async function getCapturePolicy() {
+    return readCapturePolicy(database);
   }
 
   async function getLiveCaptureScope() {
@@ -1916,7 +1960,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     inspectDriftedAppliedTail, repairCapturedRange, requeueWideShadowTail,
     rollbackAppliedTail, rollbackDriftedAppliedTail,
     rewindOrphanedRange, rewindOrphanedRangeInTransaction,
-    getCursor, getHotQueueFreshness, listHotPendingTokenAddresses,
+    getCapturePolicy, getCursor, getHotQueueFreshness, listHotPendingTokenAddresses,
     listJournalBlockCheckpoints, listCanonicalBlockCheckpoints, listPendingTokenAddresses,
     getLiveCaptureScope, listTrackedTokenAddresses,
     quarantineMalformedToken,

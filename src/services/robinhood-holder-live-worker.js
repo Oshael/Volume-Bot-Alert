@@ -21,6 +21,7 @@ const DEFAULT_FALLBACK_INTERVAL_MS = 5000;
 const FATAL_CODES = new Set([
   'configuration_error', 'holder_live_apply_contract_error',
   'holder_live_capture_contract_error', 'holder_live_handoff_contract_error',
+  'holder_tracked_capture_not_authorized',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -40,6 +41,8 @@ function normalizeOptions(options = {}, env = process.env) {
   }
   return Object.freeze({
     enabled: options.enabled === true,
+    allowTrackedCapture: options.allowTrackedCapture === true
+      || env.ROBINHOOD_HOLDER_TRACKED_CAPTURE_ENABLED === 'true',
     sourceMode: normalizeRobinhoodHolderLiveSource(
       options.sourceMode ?? env.ROBINHOOD_HOLDER_LIVE_SOURCE
     ),
@@ -79,6 +82,7 @@ async function buildRuntime(options, deps = {}) {
   const { reader } = source;
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
     bootstrap, ledger, reader, sourceMode: source.sourceMode,
+    ...(options.allowTrackedCapture ? { allowTrackedCapture: true } : {}),
   });
   const handoffRepository = deps.handoffRepository
     || (deps.handoffRepositoryFactory || createRobinhoodHolderHandoffRepository)({ database });
@@ -122,6 +126,7 @@ function compactResult(result) {
   return Object.freeze({
     status: result.status || null,
     captureStatus: result.captureStatus || null,
+    captureMode: nullableMetric(result.captureMode),
     nextBlock: result.nextBlock ?? null,
     safeHead: result.safeHead ?? null,
     capturedTransfers: numericMetric(result.capturedTransfers),

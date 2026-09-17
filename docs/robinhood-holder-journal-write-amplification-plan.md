@@ -464,8 +464,12 @@ Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
    conflito fail-closed e restart explícito; a carga ainda não foi autorizada.
 3. Fence de todos os ingressos e gate de paridade por população, incluindo
    `drifted` que retornem; testes de race entre admissão, captura e recovery.
+   **Fences implementados**; o gate final por população permanece no item 5.
 4. Política de captura/rollback duráveis e reorg cruzando o cutover, ainda
    default `legacy`; testes de integração do cursor e da recuperação raw.
+   **Parcialmente implementado**: policy governa a captura, commit concorrente
+   e rewind cruzando o cutover falham fechados; reconstrução/rollback explícitos
+   ainda precedem o flip.
 5. Somente então ativação do Corte 6, mediante gate real em produção.
 
 O novo gate deve ter provas separadas: para tokens com tail, paridade desde o
@@ -624,10 +628,10 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Aplicar a Stage 233 e revisar em produção somente o preview, o plano e a
-cadência do builder. Não executar `--apply` sem aprovação operacional. Depois
-da preparação comprovada do manifesto, implementar os fences de todos os
-ingressos e o gate por população; o modo universal permanece ligado.
+Aplicar a Stage 234, manter a policy em `legacy` e observar a captura universal.
+Depois, implementar a reconstrução/rollback da faixa tracked e o gate
+transacional por população com comando explícito de flip; `tracked` não deve
+ser gravado manualmente.
 
 ## Arquivos de entrada para a próxima análise
 

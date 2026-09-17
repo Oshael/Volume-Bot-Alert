@@ -34,6 +34,7 @@ describe('Robinhood holder live handoff persistence', () => {
       for (const table of [
         'robinhood_holder_transfer_journal', 'robinhood_holder_cursors',
         'robinhood_holder_balances', 'robinhood_holder_token_states',
+        'robinhood_holder_capture_policy',
       ]) {
         await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
       }
@@ -43,6 +44,8 @@ describe('Robinhood holder live handoff persistence', () => {
       };
       const handoff = createRobinhoodHolderHandoffRepository({ database });
       const ledger = createRobinhoodHolderLedgerRepository({ database });
+      await client.query(`INSERT INTO robinhood_holder_capture_policy (chain)
+        VALUES ('robinhood')`);
       await client.query(
         `INSERT INTO robinhood_holder_cursors (
            next_block, safe_head, checkpoint_block, checkpoint_hash, journal_floor_block
@@ -105,6 +108,7 @@ describe('Robinhood holder live handoff persistence', () => {
         }],
         cursor: {
           rangeStart: '107', nextBlock: '108', safeHead: '107', expectedVersion: 0,
+          bufferedAllTransfers: true, captureMode: 'legacy', capturePolicyVersion: 0,
           checkpoint: { number: '107', hash: HASH_B },
         },
       });

@@ -44,7 +44,7 @@ async function readOrQuarantine(input) {
   try {
     return await input.reader.readGlobalRange({
       tokenAddresses: input.tokenAddresses,
-      captureAllTransfers: true,
+      captureAllTransfers: input.captureAllTransfers,
       fromBlock: input.fromBlock.toString(), toBlock: input.toBlock.toString(),
     });
   } catch (error) {
@@ -65,7 +65,7 @@ function hasMethods(value, names) {
 
 function assertDependencies(ledger, reader) {
   if (!hasMethods(ledger, [
-    'getCursor', 'listJournalBlockCheckpoints', 'getLiveCaptureScope',
+    'getCapturePolicy', 'getCursor', 'listJournalBlockCheckpoints', 'getLiveCaptureScope',
     'quarantineMalformedToken', 'appendCapturedRange', 'rewindOrphanedRange',
   ])) {
     throw new TypeError('holder live ledger is required');
@@ -102,6 +102,7 @@ function createRobinhoodHolderLiveCapture(options = {}) {
   const ledger = options.ledger;
   const reader = options.reader;
   const sourceMode = options.sourceMode || 'rpc';
+  const allowTrackedCapture = options.allowTrackedCapture === true;
   assertDependencies(ledger, reader);
 
   async function seedNewTokens(input) {
@@ -119,6 +120,12 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
     const head = await reader.getSafeHead(confirmations);
+    const policy = await ledger.getCapturePolicy();
+    if (policy.mode === 'tracked' && !allowTrackedCapture) {
+      const error = new Error('tracked holder capture is not authorized by runtime configuration');
+      error.code = 'holder_tracked_capture_not_authorized';
+      throw error;
+    }
     const cursor = await ledger.getCursor();
     if (cursor?.checkpointBlock != null) {
       const matches = await reader.matchesCheckpoint({
@@ -164,6 +171,7 @@ function createRobinhoodHolderLiveCapture(options = {}) {
       const seeded = await seedNewTokens(input);
       return Object.freeze({
         status: 'idle', nextBlock: fromBlock.toString(), safeHead: head.safeHead,
+        captureMode: policy.mode,
         seededTokens: seeded.length,
         bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,
       });
@@ -174,6 +182,7 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     const tokenAddresses = scope.tokenAddresses;
     const captured = await readOrQuarantine({
       ledger, reader, tokenAddresses, fromBlock, toBlock, safeHead: head.safeHead,
+      captureAllTransfers: policy.mode === 'legacy',
     });
     if (captured.status === 'malformed-token-quarantined') return captured;
     const committed = await ledger.appendCapturedRange({
@@ -181,13 +190,15 @@ function createRobinhoodHolderLiveCapture(options = {}) {
       cursor: {
         rangeStart: captured.fromBlock, nextBlock: captured.nextBlock,
         safeHead: head.safeHead, expectedVersion: cursor?.version ?? null,
-        bufferedAllTransfers: true,
+        bufferedAllTransfers: policy.mode === 'legacy',
+        captureMode: policy.mode, capturePolicyVersion: policy.version,
         checkpoint: captured.checkpoint,
       },
     });
     const seeded = await seedNewTokens(input);
     return Object.freeze({
-      status: 'captured', fromBlock: captured.fromBlock, toBlock: captured.toBlock,
+      status: 'captured', captureMode: policy.mode,
+      fromBlock: captured.fromBlock, toBlock: captured.toBlock,
       nextBlock: captured.nextBlock, safeHead: head.safeHead,
       seededTokens: seeded.length,
       bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,

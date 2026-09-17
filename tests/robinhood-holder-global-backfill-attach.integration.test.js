@@ -29,7 +29,7 @@ describe('Robinhood holder global backfill live attach', () => {
         'robinhood_holder_global_backfill_runs',
         'robinhood_holder_global_backfill_tokens', 'robinhood_holder_cursors',
         'robinhood_holder_token_states', 'robinhood_holder_transfer_journal',
-        'robinhood_holder_hot_queue',
+        'robinhood_holder_hot_queue', 'robinhood_holder_capture_policy',
       ]) {
         await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
       }
@@ -47,6 +47,8 @@ describe('Robinhood holder global backfill live attach', () => {
       const global = createRobinhoodHolderGlobalBackfillRepository({ database });
       const bootstrap = createRobinhoodHolderBootstrapRepository({ database });
       const ledger = createRobinhoodHolderLedgerRepository({ database });
+      await client.query(`INSERT INTO robinhood_holder_capture_policy (chain)
+        VALUES ('robinhood')`);
       const inserted = await client.query(
         `INSERT INTO robinhood_holder_global_backfill_runs (
            status, catalog_cutoff, next_block, checkpoint_block, checkpoint_hash,
@@ -99,6 +101,7 @@ describe('Robinhood holder global backfill live attach', () => {
         }],
         cursor: {
           rangeStart: '105', nextBlock: '106', safeHead: '110',
+          bufferedAllTransfers: true, captureMode: 'legacy', capturePolicyVersion: 0,
           checkpoint: { number: '105', hash: HASH_C },
         },
       };

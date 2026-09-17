@@ -52,6 +52,7 @@ function capture(blockNumber, blockHash, expectedVersion, rangeStart, overrides 
     }],
     cursor: {
       rangeStart, nextBlock: String(Number(blockNumber) + 1), safeHead: '200', expectedVersion,
+      bufferedAllTransfers: true, captureMode: 'legacy', capturePolicyVersion: 0,
       checkpoint: { number: blockNumber, hash: blockHash },
     },
   };
@@ -120,9 +121,8 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
-      await client.query(`CREATE TEMP TABLE robinhood_holder_capture_policy (
-        chain varchar(16) PRIMARY KEY, capture_mode varchar(16) NOT NULL
-      )`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_capture_policy
+        (LIKE public.robinhood_holder_capture_policy INCLUDING ALL)`);
       await client.query(`INSERT INTO robinhood_holder_capture_policy
         VALUES ('robinhood', 'legacy')`);
       await client.query(stage213.STATEMENTS[0].replace(
@@ -201,6 +201,12 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(first, {
         insertedTransfers: 2, duplicateTransfers: 1, cursorVersion: 0,
       });
+      await client.query(`UPDATE robinhood_holder_capture_policy SET version=1`);
+      await assert.rejects(
+        repository.appendCapturedRange(capture('101', HASH_B, 0, '101')),
+        (error) => error.code === 'holder_capture_policy_stale'
+      );
+      await client.query(`UPDATE robinhood_holder_capture_policy SET version=0`);
       await client.query(
         `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
           WHERE token_address = $1`, [TOKEN_3]
@@ -599,8 +605,13 @@ describe('Robinhood holder ledger persistence', () => {
       const trackedTail = String((await client.query(`SELECT next_block
         FROM robinhood_holder_cursors WHERE chain='robinhood' AND stream='live'`)).rows[0]
         .next_block);
-      await client.query(`UPDATE robinhood_holder_capture_policy
-        SET capture_mode='tracked' WHERE chain='robinhood'`);
+      await client.query(`UPDATE robinhood_holder_capture_policy policy SET
+        capture_mode='tracked', coverage_generation=1,
+        cutover_next_block=cursor.next_block,
+        cutover_checkpoint_block=cursor.checkpoint_block,
+        cutover_checkpoint_hash=cursor.checkpoint_hash, version=1
+        FROM robinhood_holder_cursors cursor
+        WHERE policy.chain=cursor.chain AND cursor.stream='live'`);
       const rolledBack = await repository.rollbackAppliedTail({
         tokenAddress: persistent.tokenAddress,
         backfillNextBlock: persistent.recoveryFromBlock,
@@ -846,6 +857,9 @@ describe('Robinhood holder ledger persistence', () => {
         `DELETE FROM robinhood_holder_token_states WHERE token_address = $1`,
         [TOKEN_NO_TAIL]
       );
+      await client.query(`UPDATE robinhood_holder_capture_policy SET
+        capture_mode='legacy', coverage_generation=0, cutover_next_block=NULL,
+        cutover_checkpoint_block=NULL, cutover_checkpoint_hash=NULL, version=2`);
 
       await client.query(
         `UPDATE robinhood_holder_balances SET balance_raw = 5
@@ -887,6 +901,17 @@ describe('Robinhood holder ledger persistence', () => {
         checkpoint: { number: '99', hash: HASH_B }, requireCanonicalCheckpoint: true,
       }), (error) => error.code === 'holder_rewind_canonical_checkpoint_changed');
       await client.query(`UPDATE robinhood_chain_blocks SET canonical = true`);
+
+      await client.query(`UPDATE robinhood_holder_capture_policy SET
+        capture_mode='tracked', coverage_generation=1, cutover_next_block=101,
+        cutover_checkpoint_block=100, cutover_checkpoint_hash=$1, version=3`, [HASH_A]);
+      await assert.rejects(repository.rewindOrphanedRange({
+        nextBlock: '100', safeHead: '199', expectedVersion: 1,
+        checkpoint: { number: '99', hash: HASH_B },
+      }), (error) => error.code === 'holder_rewind_crosses_cutover');
+      await client.query(`UPDATE robinhood_holder_capture_policy SET
+        capture_mode='legacy', coverage_generation=0, cutover_next_block=NULL,
+        cutover_checkpoint_block=NULL, cutover_checkpoint_hash=NULL, version=4`);
 
       const rewoundResult = await repository.rewindOrphanedRange({
         nextBlock: '100', safeHead: '199', expectedVersion: 1,
