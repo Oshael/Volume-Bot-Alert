@@ -113,7 +113,7 @@ async function admitLiveCandidates(database, params, addresses) {
        )
        SELECT $1, candidate.token_address, 0, 'backfilling',
               candidate.attribution_block, candidate.attribution_block,
-              cursor.next_block
+              GREATEST(cursor.next_block, candidate.attribution_block)
          FROM candidates candidate CROSS JOIN robinhood_holder_cursors cursor
         WHERE cursor.chain = $1 AND cursor.stream = 'live'
        ON CONFLICT (chain, token_address) DO NOTHING
@@ -194,7 +194,8 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
          deployment_block, backfill_next_block, tail_capture_from_block
        )
        SELECT $1, token_address, 0, 'backfilling',
-              attribution_block, attribution_block, cursor.next_block
+              attribution_block, attribution_block,
+              GREATEST(cursor.next_block, attribution_block)
          FROM candidates CROSS JOIN robinhood_holder_cursors cursor
         WHERE cursor.chain = $1 AND cursor.stream = 'live'
        ON CONFLICT (chain, token_address) DO NOTHING

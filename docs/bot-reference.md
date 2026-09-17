@@ -2728,7 +2728,9 @@ bufferiza também `Transfer` válidos de tokens ainda fora do catálogo. Quando 
 deployment novo está dentro de `max(journal_floor_block, buffer_floor_block)`, o
 bootstrap continua elegível, mas o admite em `backfilling`. A Stage 231 adiciona
 `tail_capture_from_block`: sob lock do cursor live, o bootstrap grava
-`cursor.next_block` como início durável do tail na mesma transação da admissão.
+`max(cursor.next_block, deployment_block)` como início durável do tail na mesma
+transação da admissão. Esse máximo preserva a constraint quando o cursor live
+ainda está atrás do deployment; não há histórico do token antes do contrato.
 Admissões cold usam o mesmo fence; coortes globais usam o `barrier_block` já
 durável até materializarem o token state, quando o copiam para a coluna. Estados
 anteriores permanecem com `NULL`, que significa cobertura não comprovada e deve

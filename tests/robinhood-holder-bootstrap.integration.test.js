@@ -216,6 +216,31 @@ describe('Robinhood holder bootstrap persistence', () => {
       }]);
       assert.equal((await client.query(`SELECT COUNT(*)::int AS count
         FROM robinhood_holder_token_states WHERE token_address = $1`, [expired])).rows[0].count, 0);
+
+      // A token deployed ahead of a lagging live cursor starts its tail at the
+      // deployment block; a pre-contract tail would violate the durable fence.
+      const aheadLive = `0x${'9'.repeat(40)}`;
+      const aheadCold = `0x${'0'.repeat(40)}`;
+      await client.query(`INSERT INTO token_catalog VALUES
+        ('robinhood', $1, '2026-08-10T00:30:00Z'),
+        ('robinhood', $2, '2026-08-09T23:30:00Z')`, [aheadLive, aheadCold]);
+      await client.query(`INSERT INTO robinhood_token_attributions VALUES
+        ('robinhood', $1, 'rpc_direct', 230),
+        ('robinhood', $2, 'rpc_direct', 240)`, [aheadLive, aheadCold]);
+      assert.deepEqual(await repository.seedNewTokens({
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 50,
+      }), [{
+        tokenAddress: aheadLive, deploymentBlock: '230',
+        backfillNextBlock: '230', tailCaptureFromBlock: '230',
+        ledgerStatus: 'backfilling',
+      }]);
+      assert.deepEqual(await repository.seedColdTokens({
+        admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
+      }), [{
+        tokenAddress: aheadCold, deploymentBlock: '240',
+        backfillNextBlock: '240', tailCaptureFromBlock: '240',
+        ledgerStatus: 'backfilling',
+      }]);
     } finally {
       client.release();
     }

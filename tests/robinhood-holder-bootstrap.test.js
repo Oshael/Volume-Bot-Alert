@@ -71,7 +71,8 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(admission.sql, /catalog\.address = ANY\(\$6::varchar\[\]\)/);
     assert.deepEqual(admission.params.at(-1), [TOKEN]);
     assert.match(admission.sql, /0, 'backfilling'/);
-    assert.match(admission.sql, /cursor\.next_block/);
+    assert.match(admission.sql,
+      /GREATEST\(cursor\.next_block, candidate\.attribution_block\)/);
     assert.match(admission.sql, /tail_capture_from_block/);
     assert.doesNotMatch(calls[0].sql, /UPDATE robinhood_holder_cursors/);
     assert.match(calls.at(-2).sql, /SET version = version \+ 1/);
@@ -160,7 +161,7 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(admission.sql, /robinhood_holder_global_backfill_tokens cohort/);
     assert.match(admission.sql, /cohort\.status = 'active'/);
     assert.match(admission.sql, /tail_capture_from_block/);
-    assert.match(admission.sql, /cursor\.next_block/);
+    assert.match(admission.sql, /GREATEST\(cursor\.next_block, attribution_block\)/);
     assert.match(calls.at(-2).sql, /SET version = version \+ 1/);
     assert.deepEqual(admission.params, [
       'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 5,

@@ -193,8 +193,9 @@ Mudanças propostas:
 - criar coluna durável por token, provisoriamente chamada
   `tail_capture_from_block`;
 - definir constraints entre deployment, backfill, tail e live-through;
-- na admissão, sob o lock/fence do cursor, registrar o `next_block` live como
-  início do tail e inserir o token como `backfilling`;
+- na admissão, sob o lock/fence do cursor, registrar
+  `max(next_block live, deployment_block)` como início do tail e inserir o token
+  como `backfilling`;
 - manter `captureAllTransfers=true` neste corte;
 - adicionar telemetria por ciclo: raw Transfers observados, transfers de tokens
   acompanhados, transfers extras mantidos pelo modo legado e número de tokens
