@@ -43,7 +43,8 @@ describe('Robinhood holder bootstrap repository', () => {
             }
             return { rows: [{
               token_address: TOKEN, deployment_block: '123',
-              backfill_next_block: '123', ledger_status: 'backfilling',
+              backfill_next_block: '123', tail_capture_from_block: '200',
+              ledger_status: 'backfilling',
             }] };
           },
           release() {},
@@ -54,7 +55,8 @@ describe('Robinhood holder bootstrap repository', () => {
       admittedAfter: '2026-08-10T00:00:00.000Z', limit: 12,
     }), [{
       tokenAddress: TOKEN, deploymentBlock: '123',
-      backfillNextBlock: '123', ledgerStatus: 'backfilling',
+      backfillNextBlock: '123', tailCaptureFromBlock: '200',
+      ledgerStatus: 'backfilling',
     }]);
     assert.match(calls[0].sql, /catalog\.first_seen_at >= \$2::timestamptz/);
     assert.match(calls[0].sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
@@ -68,10 +70,11 @@ describe('Robinhood holder bootstrap repository', () => {
     const admission = calls.find(({ sql }) => sql.includes('INSERT INTO robinhood_holder_token_states'));
     assert.match(admission.sql, /catalog\.address = ANY\(\$6::varchar\[\]\)/);
     assert.deepEqual(admission.params.at(-1), [TOKEN]);
-    assert.match(admission.sql, /cursor\.buffer_floor_block IS NOT NULL/);
-    assert.match(admission.sql, /candidate\.attribution_block >= GREATEST\([\s\S]*journal_floor_block/);
-    assert.match(admission.sql, /THEN 'shadow' ELSE 'backfilling' END/);
+    assert.match(admission.sql, /0, 'backfilling'/);
+    assert.match(admission.sql, /cursor\.next_block/);
+    assert.match(admission.sql, /tail_capture_from_block/);
     assert.doesNotMatch(calls[0].sql, /UPDATE robinhood_holder_cursors/);
+    assert.match(calls.at(-2).sql, /SET version = version \+ 1/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
     assert.match(calls[0].sql, /NOT EXISTS \([\s\S]*admin_blocked_tokens blocked/);
     assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
@@ -124,30 +127,42 @@ describe('Robinhood holder bootstrap repository', () => {
     const calls = [];
     const repository = createRobinhoodHolderBootstrapRepository({
       database: {
-        query: async (sql, params) => {
-          calls.push({ sql, params });
-          return { rows: [{
-            token_address: TOKEN, deployment_block: '99',
-            backfill_next_block: '99', ledger_status: 'backfilling',
-          }] };
-        },
+        getClient: async () => ({
+          async query(sql, params) {
+            calls.push({ sql, params });
+            if (sql.includes('FOR UPDATE SKIP LOCKED')) return { rows: [{}] };
+            if (sql.includes('INSERT INTO robinhood_holder_token_states')) return { rows: [{
+              token_address: TOKEN, deployment_block: '99',
+              backfill_next_block: '99', tail_capture_from_block: '200',
+              ledger_status: 'backfilling',
+            }] };
+            return { rows: [] };
+          },
+          release() {},
+        }),
       },
     });
     assert.deepEqual(await repository.seedColdTokens({
       admittedBefore: '2026-08-10T00:00:00.000Z', limit: 5,
     }), [{
       tokenAddress: TOKEN, deploymentBlock: '99',
-      backfillNextBlock: '99', ledgerStatus: 'backfilling',
+      backfillNextBlock: '99', tailCaptureFromBlock: '200',
+      ledgerStatus: 'backfilling',
     }]);
-    assert.match(calls[0].sql, /catalog\.first_seen_at < \$2::timestamptz/);
-    assert.match(calls[0].sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
-    assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
-    assert.match(calls[0].sql, /ORDER BY catalog\.first_seen_at DESC, catalog\.address/);
-    assert.match(calls[0].sql, /state\.token_address IS NULL/);
-    assert.match(calls[0].sql, /NOT EXISTS \([\s\S]*admin_blocked_tokens blocked/);
-    assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
-    assert.match(calls[0].sql, /cohort\.status = 'active'/);
-    assert.deepEqual(calls[0].params, [
+    const admission = calls.find(({ sql }) => sql.includes('INSERT INTO'));
+    assert.match(calls[1].sql, /FOR UPDATE SKIP LOCKED/);
+    assert.match(admission.sql, /catalog\.first_seen_at < \$2::timestamptz/);
+    assert.match(admission.sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
+    assert.match(admission.sql, /attribution\.attribution_block IS NOT NULL/);
+    assert.match(admission.sql, /ORDER BY catalog\.first_seen_at DESC, catalog\.address/);
+    assert.match(admission.sql, /state\.token_address IS NULL/);
+    assert.match(admission.sql, /NOT EXISTS \([\s\S]*admin_blocked_tokens blocked/);
+    assert.match(admission.sql, /robinhood_holder_global_backfill_tokens cohort/);
+    assert.match(admission.sql, /cohort\.status = 'active'/);
+    assert.match(admission.sql, /tail_capture_from_block/);
+    assert.match(admission.sql, /cursor\.next_block/);
+    assert.match(calls.at(-2).sql, /SET version = version \+ 1/);
+    assert.deepEqual(admission.params, [
       'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 5,
     ]);
   });

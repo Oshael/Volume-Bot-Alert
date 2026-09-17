@@ -182,6 +182,9 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
       checkpointHash: range.checkpoint.hash,
     };
     const decoded = decodeRows(range.rows, context, allowed, captureAllTransfers);
+    const trackedTransfers = decoded.transfers.filter(
+      ({ tokenAddress }) => allowed.has(tokenAddress)
+    ).length;
     return Object.freeze({
       fromBlock: range.fromBlock.toString(), toBlock: range.toBlock.toString(),
       nextBlock: (range.toBlock + 1n).toString(), scopeTokens: allowed.size,
@@ -191,6 +194,10 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
         filterMode: captureAllTransfers ? 'canonical-journal-buffered' : 'canonical-journal',
         observedLogs: range.rows.length,
         ignoredLogs: range.rows.length - decoded.transfers.length,
+        rawTransfersObserved: range.rows.length,
+        trackedTransfers,
+        legacyExtraTransfers: decoded.transfers.length - trackedTransfers,
+        scopeTokens: allowed.size,
         ...(captureAllTransfers ? { ignoredMalformedLogs: decoded.ignoredMalformedLogs,
           bufferedTokenAddresses: new Set(decoded.transfers
             .map(({ tokenAddress }) => tokenAddress)

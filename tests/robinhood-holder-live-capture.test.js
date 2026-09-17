@@ -13,7 +13,7 @@ describe('Robinhood holder global live capture', () => {
     const calls = [];
     const bootstrap = { seedNewTokens: async (input) => {
       calls.push(['seed', input]);
-      return [{ ledgerStatus: 'shadow' }];
+      return [{ ledgerStatus: 'backfilling' }];
     } };
     const ledger = {
       getCursor: async () => ({
@@ -21,7 +21,10 @@ describe('Robinhood holder global live capture', () => {
         journalFloorBlock: '90', version: 4,
       }),
       listJournalBlockCheckpoints: async () => [],
-      listTrackedTokenAddresses: async () => [TOKEN],
+      getLiveCaptureScope: async () => ({
+        tokenAddresses: [TOKEN],
+        coverageAudit: { scopedTokens: 1, missingTailTokens: 0, incoherentTailTokens: 0 },
+      }),
       quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
       appendCapturedRange: async (input) => {
         calls.push(['append', input]);
@@ -44,7 +47,11 @@ describe('Robinhood holder global live capture', () => {
         return {
           fromBlock: '103', toBlock: '105', nextBlock: '106', scopeTokens: 1,
           checkpoint: { number: '105', hash: HASH }, transfers: [transfer],
-          telemetry: { requests: 1, splits: 0, observedLogs: 2, ignoredLogs: 1 },
+          telemetry: {
+            requests: 1, splits: 0, observedLogs: 2, ignoredLogs: 1,
+            rawTransfersObserved: 2, trackedTransfers: 1,
+            legacyExtraTransfers: 0, scopeTokens: 1,
+          },
         };
       },
     };
@@ -57,7 +64,10 @@ describe('Robinhood holder global live capture', () => {
 
     assert.equal(result.status, 'captured');
     assert.equal(result.cursorVersion, 5);
-    assert.equal(result.bufferedSeededTokens, 1);
+    assert.equal(result.bufferedSeededTokens, 0);
+    assert.deepEqual(result.telemetry.tailCoverage, {
+      scopedTokens: 1, missingTailTokens: 0, incoherentTailTokens: 0,
+    });
     assert.deepEqual(calls, [
       ['head', 12],
       ['checkpoint', { number: '102', hash: HASH }],
@@ -94,7 +104,10 @@ describe('Robinhood holder global live capture', () => {
     const initialLedger = {
       getCursor: async () => null,
       listJournalBlockCheckpoints: async () => [],
-      listTrackedTokenAddresses: async () => [],
+      getLiveCaptureScope: async () => ({
+        tokenAddresses: [],
+        coverageAudit: { scopedTokens: 0, missingTailTokens: 0, incoherentTailTokens: 0 },
+      }),
       quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
       appendCapturedRange: async (input) => {
         appended.push(input);
@@ -142,7 +155,10 @@ describe('Robinhood holder global live capture', () => {
         calls.push(['rewind', input]);
         return { status: 'rewound', revertedEvents: 3, cursorVersion: 8 };
       },
-      listTrackedTokenAddresses: async () => [],
+      getLiveCaptureScope: async () => ({
+        tokenAddresses: [],
+        coverageAudit: { scopedTokens: 0, missingTailTokens: 0, incoherentTailTokens: 0 },
+      }),
       quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
       appendCapturedRange: async () => { throw new Error('unexpected capture'); },
     };
@@ -183,7 +199,10 @@ describe('Robinhood holder global live capture', () => {
         journalFloorBlock: '90', version: 4,
       }),
       listJournalBlockCheckpoints: async () => [],
-      listTrackedTokenAddresses: async () => [TOKEN],
+      getLiveCaptureScope: async () => ({
+        tokenAddresses: [TOKEN],
+        coverageAudit: { scopedTokens: 1, missingTailTokens: 1, incoherentTailTokens: 0 },
+      }),
       appendCapturedRange: async () => { throw new Error('unexpected capture'); },
       rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
       quarantineMalformedToken: async (input) => {

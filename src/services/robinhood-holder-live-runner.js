@@ -655,6 +655,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return Object.freeze({
       status: 'completed', captureStatus: prepared.captured.status,
       capturedTransfers: Number(prepared.captured.transfers) || 0,
+      ...(prepared.captured.telemetry ? {
+        captureTelemetry: prepared.captured.telemetry,
+      } : {}),
       ...(prepared.captured.seededTokens == null ? {} : {
         seededTokens: Number(prepared.captured.seededTokens) || 0,
         bufferedSeededTokens: Number(prepared.captured.bufferedSeededTokens) || 0,

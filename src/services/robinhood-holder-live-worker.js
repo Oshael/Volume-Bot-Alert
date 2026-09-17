@@ -112,14 +112,24 @@ function nullableMetric(value) {
   return value == null ? null : value;
 }
 
+function addMetric(target, key, value) {
+  target[key] += Number(value) || 0;
+}
+
 function compactResult(result) {
   if (!result) return null;
+  const capture = result.captureTelemetry || {};
   return Object.freeze({
     status: result.status || null,
     captureStatus: result.captureStatus || null,
     nextBlock: result.nextBlock ?? null,
     safeHead: result.safeHead ?? null,
     capturedTransfers: numericMetric(result.capturedTransfers),
+    rawTransfersObserved: numericMetric(capture.rawTransfersObserved),
+    trackedTransfers: numericMetric(capture.trackedTransfers),
+    legacyExtraTransfers: numericMetric(capture.legacyExtraTransfers),
+    scopeTokens: numericMetric(capture.scopeTokens),
+    tailCoverage: capture.tailCoverage || null,
     seededTokens: numericMetric(result.seededTokens),
     bufferedSeededTokens: numericMetric(result.bufferedSeededTokens),
     handoffStatus: result.handoffStatus || null,
@@ -159,6 +169,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     sourceMode: null, providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalCapturedTransfers: 0, totalSeededTokens: 0, totalBufferedSeededTokens: 0,
+    totalRawTransfersObserved: 0, totalTrackedTransfers: 0,
+    totalLegacyExtraTransfers: 0,
     totalAppliedEvents: 0,
     totalHolderCountUpdates: 0, totalHolderCountPublished: 0,
     totalHandoffPromotions: 0, totalHandoffResyncs: 0,
@@ -194,20 +206,23 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
 
   function recordResult(result) {
     status.lastResult = compactResult(result);
-    status.totalCapturedTransfers += Number(result.capturedTransfers) || 0;
-    status.totalSeededTokens += Number(result.seededTokens) || 0;
-    status.totalBufferedSeededTokens += Number(result.bufferedSeededTokens) || 0;
-    status.totalHandoffPromotions += Number(result.handoffPromotions) || 0;
-    status.totalHandoffResyncs += Number(result.handoffResyncs) || 0;
-    status.totalAppliedEvents += Number(result.appliedEvents) || 0;
-    status.totalHolderCountUpdates += Number(result.holderCountUpdates) || 0;
-    status.totalHolderCountPublished += Number(result.holderCountPublished) || 0;
-    status.totalDriftedTokens += Number(result.driftedTokens) || 0;
-    status.totalDriftSuspicions += Number(result.driftSuspicions) || 0;
-    status.totalReceiptRecoveries += Number(result.receiptRecoveries) || 0;
-    status.totalTailRollbacks += Number(result.tailRollbacks) || 0;
-    status.totalTailRollbackEvents += Number(result.tailRollbackEvents) || 0;
-    status.totalMalformedTokenQuarantines += Number(result.quarantinedTokens) || 0;
+    addMetric(status, 'totalCapturedTransfers', result.capturedTransfers);
+    addMetric(status, 'totalRawTransfersObserved', result.captureTelemetry?.rawTransfersObserved);
+    addMetric(status, 'totalTrackedTransfers', result.captureTelemetry?.trackedTransfers);
+    addMetric(status, 'totalLegacyExtraTransfers', result.captureTelemetry?.legacyExtraTransfers);
+    addMetric(status, 'totalSeededTokens', result.seededTokens);
+    addMetric(status, 'totalBufferedSeededTokens', result.bufferedSeededTokens);
+    addMetric(status, 'totalHandoffPromotions', result.handoffPromotions);
+    addMetric(status, 'totalHandoffResyncs', result.handoffResyncs);
+    addMetric(status, 'totalAppliedEvents', result.appliedEvents);
+    addMetric(status, 'totalHolderCountUpdates', result.holderCountUpdates);
+    addMetric(status, 'totalHolderCountPublished', result.holderCountPublished);
+    addMetric(status, 'totalDriftedTokens', result.driftedTokens);
+    addMetric(status, 'totalDriftSuspicions', result.driftSuspicions);
+    addMetric(status, 'totalReceiptRecoveries', result.receiptRecoveries);
+    addMetric(status, 'totalTailRollbacks', result.tailRollbacks);
+    addMetric(status, 'totalTailRollbackEvents', result.tailRollbackEvents);
+    addMetric(status, 'totalMalformedTokenQuarantines', result.quarantinedTokens);
     if (result.status === 'recovered') status.totalRecoveries += 1;
   }
 

@@ -42,6 +42,7 @@ function normalizeSeededRow(row) {
     tokenAddress: row.token_address,
     deploymentBlock: String(row.deployment_block),
     backfillNextBlock: String(row.backfill_next_block),
+    tailCaptureFromBlock: String(row.tail_capture_from_block),
     ledgerStatus: row.ledger_status,
   });
 }
@@ -84,6 +85,12 @@ function liveCandidatesSql(revalidate = false) {
    ${revalidate ? 'FOR UPDATE OF attribution SKIP LOCKED' : ''}`;
 }
 
+async function fenceLiveCursor(client) {
+  await client.query(`UPDATE robinhood_holder_cursors
+    SET version = version + 1, updated_at = NOW()
+    WHERE chain = $1 AND stream = 'live'`, [CHAIN]);
+}
+
 async function admitLiveCandidates(database, params, addresses) {
   const client = await database.getClient();
   try {
@@ -102,22 +109,19 @@ async function admitLiveCandidates(database, params, addresses) {
       `WITH candidates AS MATERIALIZED (${liveCandidatesSql(true)})
        INSERT INTO robinhood_holder_token_states (
          chain, token_address, holder_count, ledger_status,
-         deployment_block, backfill_next_block
+         deployment_block, backfill_next_block, tail_capture_from_block
        )
-       SELECT $1, candidate.token_address, 0,
-              CASE WHEN cursor.journal_floor_block IS NOT NULL
-                         AND cursor.buffer_floor_block IS NOT NULL
-                         AND candidate.attribution_block >= GREATEST(
-                           cursor.journal_floor_block, cursor.buffer_floor_block
-                         )
-                   THEN 'shadow' ELSE 'backfilling' END,
-              candidate.attribution_block, candidate.attribution_block
+       SELECT $1, candidate.token_address, 0, 'backfilling',
+              candidate.attribution_block, candidate.attribution_block,
+              cursor.next_block
          FROM candidates candidate CROSS JOIN robinhood_holder_cursors cursor
         WHERE cursor.chain = $1 AND cursor.stream = 'live'
        ON CONFLICT (chain, token_address) DO NOTHING
-       RETURNING token_address, deployment_block, backfill_next_block, ledger_status`,
+       RETURNING token_address, deployment_block, backfill_next_block,
+                 tail_capture_from_block, ledger_status`,
       [...params, addresses]
     );
+    if (result.rows.length) await fenceLiveCursor(client);
     await client.query('COMMIT');
     return result.rows;
   } catch (error) {
@@ -145,8 +149,19 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
 
   async function seedColdTokens(input = {}) {
     const normalized = normalizeColdOptions(input);
-    const result = await database.query(
-      `WITH candidates AS MATERIALIZED (
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const cursor = await client.query(
+        `SELECT 1 FROM robinhood_holder_cursors
+          WHERE chain = $1 AND stream = 'live' FOR UPDATE SKIP LOCKED`, [CHAIN]
+      );
+      if (!cursor.rows.length) {
+        await client.query('COMMIT');
+        return Object.freeze([]);
+      }
+      const result = await client.query(
+        `WITH candidates AS MATERIALIZED (
          SELECT catalog.address AS token_address, attribution.attribution_block
            FROM token_catalog catalog
            INNER JOIN robinhood_token_attributions attribution
@@ -176,19 +191,29 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
        )
        INSERT INTO robinhood_holder_token_states (
          chain, token_address, holder_count, ledger_status,
-         deployment_block, backfill_next_block
+         deployment_block, backfill_next_block, tail_capture_from_block
        )
        SELECT $1, token_address, 0, 'backfilling',
-              attribution_block, attribution_block
-         FROM candidates
+              attribution_block, attribution_block, cursor.next_block
+         FROM candidates CROSS JOIN robinhood_holder_cursors cursor
+        WHERE cursor.chain = $1 AND cursor.stream = 'live'
        ON CONFLICT (chain, token_address) DO NOTHING
-       RETURNING token_address, deployment_block, backfill_next_block, ledger_status`,
-      [
-        CHAIN, normalized.admittedBefore,
-        [...EXACT_DEPLOYMENT_SOURCES], normalized.limit,
-      ]
-    );
-    return Object.freeze(result.rows.map(normalizeSeededRow));
+       RETURNING token_address, deployment_block, backfill_next_block,
+                 tail_capture_from_block, ledger_status`,
+        [
+          CHAIN, normalized.admittedBefore,
+          [...EXACT_DEPLOYMENT_SOURCES], normalized.limit,
+        ]
+      );
+      if (result.rows.length) await fenceLiveCursor(client);
+      await client.query('COMMIT');
+      return Object.freeze(result.rows.map(normalizeSeededRow));
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   return Object.freeze({ seedColdTokens, seedNewTokens });

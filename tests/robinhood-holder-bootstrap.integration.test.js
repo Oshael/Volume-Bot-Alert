@@ -107,7 +107,8 @@ describe('Robinhood holder bootstrap persistence', () => {
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
       }), [{
         tokenAddress: TOKENS[0], deploymentBlock: '101',
-        backfillNextBlock: '101', ledgerStatus: 'shadow',
+        backfillNextBlock: '101', tailCaptureFromBlock: '201',
+        ledgerStatus: 'backfilling',
       }]);
       assert.deepEqual(await repository.seedNewTokens({
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
@@ -116,36 +117,39 @@ describe('Robinhood holder bootstrap persistence', () => {
         admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
       }), [{
         tokenAddress: TOKENS[1], deploymentBlock: '99',
-        backfillNextBlock: '99', ledgerStatus: 'backfilling',
+        backfillNextBlock: '99', tailCaptureFromBlock: '201',
+        ledgerStatus: 'backfilling',
       }]);
       assert.deepEqual(await repository.seedColdTokens({
         admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
       }), []);
       const states = await client.query(
         `SELECT token_address, holder_count, ledger_status,
-                deployment_block, backfill_next_block
+                deployment_block, backfill_next_block, tail_capture_from_block
            FROM robinhood_holder_token_states ORDER BY token_address`
       );
       assert.deepEqual(states.rows.map((row) => ({
         tokenAddress: row.token_address, holderCount: String(row.holder_count),
         ledgerStatus: row.ledger_status, deploymentBlock: String(row.deployment_block),
         backfillNextBlock: String(row.backfill_next_block),
+        tailCaptureFromBlock: row.tail_capture_from_block == null
+          ? null : String(row.tail_capture_from_block),
       })), [{
-        tokenAddress: TOKENS[0], holderCount: '0', ledgerStatus: 'shadow',
-        deploymentBlock: '101', backfillNextBlock: '101',
+        tokenAddress: TOKENS[0], holderCount: '0', ledgerStatus: 'backfilling',
+        deploymentBlock: '101', backfillNextBlock: '101', tailCaptureFromBlock: '201',
       }, {
         tokenAddress: TOKENS[1], holderCount: '0', ledgerStatus: 'backfilling',
-        deploymentBlock: '99', backfillNextBlock: '99',
+        deploymentBlock: '99', backfillNextBlock: '99', tailCaptureFromBlock: '201',
       }, {
         tokenAddress: TOKENS[3], holderCount: '0', ledgerStatus: 'backfilling',
-        deploymentBlock: '104', backfillNextBlock: '104',
+        deploymentBlock: '104', backfillNextBlock: '104', tailCaptureFromBlock: null,
       }]);
       const cursor = await client.query(
         `SELECT version, buffer_floor_block FROM robinhood_holder_cursors`
       );
       assert.deepEqual(cursor.rows.map((row) => ({
         version: Number(row.version), bufferFloorBlock: String(row.buffer_floor_block),
-      })), [{ version: 0, bufferFloorBlock: '101' }]);
+      })), [{ version: 2, bufferFloorBlock: '101' }]);
 
       // Changes committed between discovery and admission must win over stale hints.
       const late = ['1', '2', '3', '4', '5', '6'].map((digit) => `0x${digit.repeat(40)}`);
@@ -171,10 +175,12 @@ describe('Robinhood holder bootstrap persistence', () => {
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
       }), [{
         tokenAddress: late[0], deploymentBlock: '120',
-        backfillNextBlock: '120', ledgerStatus: 'backfilling',
+        backfillNextBlock: '120', tailCaptureFromBlock: '221',
+        ledgerStatus: 'backfilling',
       }, {
         tokenAddress: late[5], deploymentBlock: '128',
-        backfillNextBlock: '128', ledgerStatus: 'shadow',
+        backfillNextBlock: '128', tailCaptureFromBlock: '221',
+        ledgerStatus: 'backfilling',
       }]);
       assert.deepEqual((await client.query(`SELECT token_address, holder_count::text
         FROM robinhood_holder_token_states WHERE token_address = ANY($1::varchar[])
@@ -201,10 +207,12 @@ describe('Robinhood holder bootstrap persistence', () => {
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 50,
       }), [{
         tokenAddress: late[1], deploymentBlock: '110',
-        backfillNextBlock: '110', ledgerStatus: 'shadow',
+        backfillNextBlock: '110', tailCaptureFromBlock: '221',
+        ledgerStatus: 'backfilling',
       }, {
         tokenAddress: retained, deploymentBlock: '110',
-        backfillNextBlock: '110', ledgerStatus: 'shadow',
+        backfillNextBlock: '110', tailCaptureFromBlock: '221',
+        ledgerStatus: 'backfilling',
       }]);
       assert.equal((await client.query(`SELECT COUNT(*)::int AS count
         FROM robinhood_holder_token_states WHERE token_address = $1`, [expired])).rows[0].count, 0);

@@ -2713,6 +2713,7 @@ Stages confirmados:
 | 215 | âncora canônica durável do mint no outbox de resolução de deployment |
 | 229 | cursor persistente da varredura limitada do prune automático do journal holder |
 | 230 | índice parcial ordenado do claim de publicação lifecycle auditada |
+| 231 | fronteira durável por token para o início da captura live de holders |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -2725,8 +2726,14 @@ idênticas permanecem idempotentes e qualquer evidência conflitante aborta tamb
 o avanço atômico do cursor. A partir da Stage 141, ela consulta o tópico global e
 bufferiza também `Transfer` válidos de tokens ainda fora do catálogo. Quando um
 deployment novo está dentro de `max(journal_floor_block, buffer_floor_block)`, o
-bootstrap o admite direto em `shadow` e aplica o journal preservado, sem replay
-RPC. A descoberta de candidatos do bootstrap é somente leitura e não trava o
+bootstrap continua elegível, mas o admite em `backfilling`. A Stage 231 adiciona
+`tail_capture_from_block`: sob lock do cursor live, o bootstrap grava
+`cursor.next_block` como início durável do tail na mesma transação da admissão.
+Admissões cold usam o mesmo fence; coortes globais usam o `barrier_block` já
+durável até materializarem o token state, quando o copiam para a coluna. Estados
+anteriores permanecem com `NULL`, que significa cobertura não comprovada e deve
+falhar fechado em qualquer cutover tracked-only. A descoberta de candidatos do
+bootstrap é somente leitura e não trava o
 cursor durante a busca no catálogo. Havendo candidatos, uma transação curta
 trava o cursor com `SKIP LOCKED` e revalida apenas o lote selecionado: proveniência,
 janela de admissão, coortes globais, estado existente e floors atuais de cobertura.
@@ -2734,16 +2741,26 @@ Enquanto o deployment permanecer coberto simultaneamente por
 `journal_floor_block` e `buffer_floor_block`, ele continua elegível mesmo depois
 do gap incremental configurado. Assim, uma indisponibilidade temporária do seed
 não perde tokens cujos `Transfer` já foram capturados. O gap configurado continua
-como fallback quando a retenção disponível for menor e esses casos entram em
-`backfilling`.
+limitando a elegibilidade; todo token novo entra em `backfilling` enquanto o modo
+legado ainda preserva o buffer universal.
 Cursor ocupado adia a admissão para o próximo tick, sem esperar sua liberação;
 lote vazio não inicia transação de escrita. O bootstrap continua usando os budgets
-e a cadência existentes; não cria outro polling nem altera o cursor.
+e a cadência existentes; não cria outro polling. Quando admite ao menos um token,
+incrementa somente a versão do cursor para invalidar uma captura em voo com escopo
+anterior, sem avançar a fronteira de blocos.
 Essa admissão não invalida um range live em voo, pois o tópico global já
 inclui transfers de tokens ainda não admitidos. Cobertura incompleta continua
 fail-closed em `backfilling`; eventos de tokens nunca admitidos só deixam de ser
 elegíveis ao live quando o deployment fica abaixo tanto da janela incremental
 quanto do maior floor de cobertura retida.
+Antes de reiniciar os workers de holders com esse contrato, aplique
+`node src/utils/db-init-stage231.js` e rode `npm run db:schema-check`.
+Cada ciclo da captura expõe `rawTransfersObserved`, `trackedTransfers`,
+`legacyExtraTransfers` e `scopeTokens`; os três primeiros também possuem totais
+acumulados no status do worker. A consulta que monta o escopo também reporta
+`tailCoverage.scopedTokens`, `missingTailTokens` e `incoherentTailTokens`, sem
+varrer novamente o journal. Neste estágio `captureAllTransfers=true` permanece
+obrigatório: as métricas medem a amplificação, mas ainda não mudam a saída live.
 Pendencias de tokens `drifted` seguem a mesma politica: nenhum worker local volta
 a consumi-las, então somente eventos abaixo do cutoff são descartados em batches.
 Qualquer estado diferente de `drifted` e qualquer membro de campanha global ativa

@@ -201,6 +201,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.telemetry, {
       requests: 1, splits: 0, addressSplits: 0, filterMode: 'address-filtered',
       observedLogs: 2, ignoredLogs: 1,
+      rawTransfersObserved: 2, trackedTransfers: 1, legacyExtraTransfers: 0,
+      scopeTokens: 1,
     });
   });
 
@@ -223,6 +225,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.telemetry, {
       requests: 1, splits: 0, addressSplits: 0, filterMode: 'topics-only',
       observedLogs: 2, ignoredLogs: 1,
+      rawTransfersObserved: 2, trackedTransfers: 1, legacyExtraTransfers: 0,
+      scopeTokens: 2,
     });
   });
 
@@ -266,6 +270,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.telemetry, {
       requests: 1, splits: 0, addressSplits: 0, filterMode: 'topics-only-buffered',
       observedLogs: 2, ignoredLogs: 0, ignoredMalformedLogs: 0,
+      rawTransfersObserved: 2, trackedTransfers: 1, legacyExtraTransfers: 1,
+      scopeTokens: 1,
       bufferedTokenAddresses: 1,
     });
   });
@@ -328,6 +334,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.telemetry, {
       requests: 3, splits: 0, addressSplits: 1, filterMode: 'address-filtered',
       observedLogs: 1, ignoredLogs: 0,
+      rawTransfersObserved: 1, trackedTransfers: 1, legacyExtraTransfers: 0,
+      scopeTokens: 2,
     });
     filters.length = 0;
     const learned = await reader.readGlobalRange({
@@ -338,6 +346,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(learned.telemetry, {
       requests: 2, splits: 0, addressSplits: 0, filterMode: 'address-filtered',
       observedLogs: 1, ignoredLogs: 0,
+      rawTransfersObserved: 1, trackedTransfers: 1, legacyExtraTransfers: 0,
+      scopeTokens: 2,
     });
   });
 

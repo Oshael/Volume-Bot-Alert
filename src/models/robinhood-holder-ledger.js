@@ -1595,21 +1595,54 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return normalizeCursorRow(result.rows[0]);
   }
 
-  async function listTrackedTokenAddresses() {
+  async function getLiveCaptureScope() {
     const result = await database.query(
-      `SELECT token_address FROM robinhood_holder_token_states
-        WHERE chain = $1 AND ledger_status IN ('backfilling', 'shadow', 'live')
-       UNION
-       SELECT token.token_address
-         FROM robinhood_holder_global_backfill_tokens token
-         INNER JOIN robinhood_holder_global_backfill_runs run
-           ON run.id = token.run_id AND run.chain = token.chain
-        WHERE token.chain = $1 AND token.status = 'active'
-          AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
-        ORDER BY token_address`,
+      `WITH scope AS (
+         SELECT state.token_address,
+                CASE
+                  WHEN state.tail_capture_from_block IS NULL THEN 'missing'
+                  WHEN state.deployment_block IS NULL OR state.backfill_next_block IS NULL
+                    OR state.tail_capture_from_block < state.deployment_block
+                    OR state.backfill_next_block < state.deployment_block
+                    OR (state.live_through_block IS NOT NULL
+                      AND state.live_through_block < state.deployment_block)
+                    OR (state.ledger_status IN ('shadow', 'live') AND (
+                      state.backfill_next_block < state.tail_capture_from_block
+                      OR state.live_through_block IS NULL
+                      OR state.live_through_block < state.tail_capture_from_block - 1
+                    )) THEN 'incoherent'
+                  ELSE NULL
+                END AS coverage_issue
+           FROM robinhood_holder_token_states state
+          WHERE state.chain = $1
+            AND state.ledger_status IN ('backfilling', 'shadow', 'live')
+         UNION ALL
+         SELECT token.token_address, NULL
+           FROM robinhood_holder_global_backfill_tokens token
+           INNER JOIN robinhood_holder_global_backfill_runs run
+             ON run.id = token.run_id AND run.chain = token.chain
+          WHERE token.chain = $1 AND token.status = 'active'
+            AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
+       )
+       SELECT token_address,
+              BOOL_OR(coverage_issue = 'missing') AS missing_tail,
+              BOOL_OR(coverage_issue = 'incoherent') AS incoherent_tail
+         FROM scope GROUP BY token_address ORDER BY token_address`,
       [CHAIN]
     );
-    return Object.freeze(result.rows.map((row) => row.token_address));
+    const tokenAddresses = result.rows.map((row) => row.token_address);
+    return Object.freeze({
+      tokenAddresses: Object.freeze(tokenAddresses),
+      coverageAudit: Object.freeze({
+        scopedTokens: tokenAddresses.length,
+        missingTailTokens: result.rows.filter((row) => row.missing_tail).length,
+        incoherentTailTokens: result.rows.filter((row) => row.incoherent_tail).length,
+      }),
+    });
+  }
+
+  async function listTrackedTokenAddresses() {
+    return (await getLiveCaptureScope()).tokenAddresses;
   }
 
   async function listPendingTokenAddresses(input = {}) {
@@ -1838,7 +1871,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     rewindOrphanedRange, rewindOrphanedRangeInTransaction,
     getCursor, getHotQueueFreshness, listHotPendingTokenAddresses,
     listJournalBlockCheckpoints, listPendingTokenAddresses,
-    listTrackedTokenAddresses,
+    getLiveCaptureScope, listTrackedTokenAddresses,
     quarantineMalformedToken,
   });
 }

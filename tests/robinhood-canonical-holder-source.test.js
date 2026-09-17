@@ -78,6 +78,15 @@ describe('Robinhood canonical holder source', () => {
     });
     assert.equal(result.telemetry.filterMode, 'canonical-journal-buffered');
     assert.equal(result.telemetry.bufferedTokenAddresses, 1);
+    assert.deepEqual({
+      rawTransfersObserved: result.telemetry.rawTransfersObserved,
+      trackedTransfers: result.telemetry.trackedTransfers,
+      legacyExtraTransfers: result.telemetry.legacyExtraTransfers,
+      scopeTokens: result.telemetry.scopeTokens,
+    }, {
+      rawTransfersObserved: 2, trackedTransfers: 1,
+      legacyExtraTransfers: 1, scopeTokens: 1,
+    });
     const eventCall = calls.find(({ sql }) => sql.includes('FROM robinhood_chain_events'));
     assert.deepEqual(eventCall.params, ['robinhood', '100', '104', TRANSFER_TOPIC]);
     assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);

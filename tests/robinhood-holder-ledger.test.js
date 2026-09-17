@@ -164,12 +164,20 @@ describe('Robinhood holder ledger repository', () => {
   });
 
   it('unions tracked states with active cohorts fenced into the live stream', async () => {
-    const fake = fakeDatabase([{ rows: [{ token_address: TOKEN }], rowCount: 1 }]);
-    const addresses = await createRobinhoodHolderLedgerRepository(fake)
-      .listTrackedTokenAddresses();
+    const rows = [{ token_address: TOKEN, missing_tail: true, incoherent_tail: false }];
+    const fake = fakeDatabase([
+      { rows, rowCount: 1 }, { rows, rowCount: 1 },
+    ]);
+    const repository = createRobinhoodHolderLedgerRepository(fake);
+    assert.deepEqual(await repository.getLiveCaptureScope(), {
+      tokenAddresses: [TOKEN],
+      coverageAudit: { scopedTokens: 1, missingTailTokens: 1, incoherentTailTokens: 0 },
+    });
+    const addresses = await repository.listTrackedTokenAddresses();
     assert.deepEqual(addresses, [TOKEN]);
     assert.match(fake.calls[0].sql, /ledger_status IN \('backfilling', 'shadow', 'live'\)/);
     assert.match(fake.calls[0].sql, /run\.barrier_block IS NOT NULL/);
     assert.match(fake.calls[0].sql, /token\.status = 'active'/);
+    assert.match(fake.calls[0].sql, /tail_capture_from_block IS NULL THEN 'missing'/);
   });
 });

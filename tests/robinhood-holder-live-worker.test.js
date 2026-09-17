@@ -26,6 +26,11 @@ function completed(overrides = {}) {
     status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
     handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
     capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
+    captureTelemetry: {
+      rawTransfersObserved: 10, trackedTransfers: 3, legacyExtraTransfers: 7,
+      scopeTokens: 2,
+      tailCoverage: { scopedTokens: 2, missingTailTokens: 1, incoherentTailTokens: 0 },
+    },
     holderCountUpdates: 1, holderCountPublished: 1,
     applyBudgetExhausted: false, ...overrides,
   };
@@ -69,6 +74,9 @@ describe('Robinhood holder live worker', () => {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
       capturedTransfers: 3, seededTokens: 0, bufferedSeededTokens: 0,
+      rawTransfersObserved: 10, trackedTransfers: 3, legacyExtraTransfers: 7,
+      scopeTokens: 2,
+      tailCoverage: { scopedTokens: 2, missingTailTokens: 1, incoherentTailTokens: 0 },
       appliedEvents: 2, driftedTokens: 1,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       tailRollbacks: 0, tailRollbackEvents: 0,
@@ -77,6 +85,9 @@ describe('Robinhood holder live worker', () => {
       applyBudgetExhausted: false,
     });
     assert.equal(worker.getStatus().totalAppliedEvents, 2);
+    assert.equal(worker.getStatus().totalRawTransfersObserved, 10);
+    assert.equal(worker.getStatus().totalTrackedTransfers, 3);
+    assert.equal(worker.getStatus().totalLegacyExtraTransfers, 7);
     assert.equal(worker.getStatus().totalHolderCountPublished, 1);
     assert.equal(worker.getStatus().totalHandoffPromotions, 1);
     await worker.stop();

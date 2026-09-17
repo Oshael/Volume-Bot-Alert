@@ -65,7 +65,7 @@ function hasMethods(value, names) {
 
 function assertDependencies(ledger, reader) {
   if (!hasMethods(ledger, [
-    'getCursor', 'listJournalBlockCheckpoints', 'listTrackedTokenAddresses',
+    'getCursor', 'listJournalBlockCheckpoints', 'getLiveCaptureScope',
     'quarantineMalformedToken', 'appendCapturedRange', 'rewindOrphanedRange',
   ])) {
     throw new TypeError('holder live ledger is required');
@@ -149,7 +149,8 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     }
     const candidateEnd = fromBlock + BigInt(rangeSize - 1);
     const toBlock = cursor && candidateEnd < safeHead ? candidateEnd : safeHead;
-    const tokenAddresses = await ledger.listTrackedTokenAddresses();
+    const scope = await ledger.getLiveCaptureScope();
+    const tokenAddresses = scope.tokenAddresses;
     const captured = await readOrQuarantine({
       ledger, reader, tokenAddresses, fromBlock, toBlock, safeHead: head.safeHead,
     });
@@ -170,7 +171,10 @@ function createRobinhoodHolderLiveCapture(options = {}) {
       seededTokens: seeded.length,
       bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,
       scopeTokens: captured.scopeTokens, transfers: captured.transfers.length,
-      telemetry: captured.telemetry, ...committed,
+      telemetry: Object.freeze({
+        ...captured.telemetry, tailCoverage: scope.coverageAudit,
+      }),
+      ...committed,
     });
   }
 

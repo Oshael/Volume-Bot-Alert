@@ -393,6 +393,9 @@ function createRobinhoodHolderTransferReader(options = {}) {
         .map(({ tokenAddress }) => tokenAddress)
         .filter((tokenAddress) => !allowed.has(tokenAddress))).size
       : 0;
+    const trackedTransfers = buffered.transfers.filter(
+      ({ tokenAddress }) => allowed.has(tokenAddress)
+    ).length;
     return Object.freeze({
       fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
       nextBlock: (toBlock + 1n).toString(), scopeTokens: allowed.size,
@@ -401,6 +404,10 @@ function createRobinhoodHolderTransferReader(options = {}) {
         ...telemetry, filterMode, observedLogs: observedLogs.length,
         ignoredLogs: captureAllTransfers
           ? buffered.ignoredMalformedLogs : observedLogs.length - logs.length,
+        rawTransfersObserved: observedLogs.length,
+        trackedTransfers,
+        legacyExtraTransfers: buffered.transfers.length - trackedTransfers,
+        scopeTokens: allowed.size,
         ...(captureAllTransfers ? {
           ignoredMalformedLogs: buffered.ignoredMalformedLogs,
           bufferedTokenAddresses,

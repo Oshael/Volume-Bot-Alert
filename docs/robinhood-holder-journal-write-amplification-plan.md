@@ -182,6 +182,9 @@ parar e replanejar.
 
 ### Corte 1 — contrato de cobertura e telemetria, ainda em modo legado
 
+Estado: implementado no código. A Stage 231 precisa ser aplicada antes do restart
+dos workers de holders; o modo live continua com `captureAllTransfers=true`.
+
 Objetivo: representar com precisão onde começa a cobertura live de cada token
 antes de remover o buffer universal.
 

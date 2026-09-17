@@ -148,7 +148,7 @@ describe('Robinhood holder global backfill live attach', () => {
       assert.deepEqual(await attach.materializeOnce(), { status: 'idle' });
       const state = await client.query(
         `SELECT holder_count, ledger_status, deployment_block, backfill_next_block,
-                live_through_block, live_through_hash
+                live_through_block, live_through_hash, tail_capture_from_block
            FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN]
       );
       assert.deepEqual({
@@ -156,9 +156,11 @@ describe('Robinhood holder global backfill live attach', () => {
         deployment_block: String(state.rows[0].deployment_block),
         backfill_next_block: String(state.rows[0].backfill_next_block),
         live_through_block: String(state.rows[0].live_through_block),
+        tail_capture_from_block: String(state.rows[0].tail_capture_from_block),
       }, {
         holder_count: '1', ledger_status: 'backfilling', deployment_block: '0',
         backfill_next_block: '105', live_through_block: '104', live_through_hash: HASH_B,
+        tail_capture_from_block: '105',
       });
       assert.equal((await client.query(
         'SELECT 1 FROM robinhood_holder_transfer_journal WHERE applied = false'

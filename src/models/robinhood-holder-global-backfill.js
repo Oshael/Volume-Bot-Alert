@@ -380,9 +380,10 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
         await client.query(
           `INSERT INTO robinhood_holder_token_states (
              chain, token_address, holder_count, ledger_status, deployment_block,
-             backfill_next_block, live_through_block, live_through_hash
+             backfill_next_block, live_through_block, live_through_hash,
+             tail_capture_from_block
            ) SELECT chain, token_address, holder_count, 'backfilling', 0,
-                    $3, $4, $5
+                    $3, $4, $5, $3
                FROM robinhood_holder_global_backfill_tokens
               WHERE run_id = $1 AND chain = $2 AND token_address = ANY($6::varchar[])
                 AND status = 'active'`,

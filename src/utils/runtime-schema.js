@@ -6303,6 +6303,22 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage231-robinhood-holder-tail-coverage',
+    name: 'Stage 231 Robinhood holder tail coverage',
+    repair: 'node src/utils/db-init-stage231.js',
+    tables: [{
+      table: 'robinhood_holder_token_states',
+      columns: ['tail_capture_from_block'],
+      constraints: [{
+        name: 'rh_holder_token_states_tail_coverage_check',
+        includes: [
+          'tail_capture_from_block', 'deployment_block', 'backfill_next_block',
+          'live_through_block', 'shadow', 'live',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
