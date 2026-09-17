@@ -8,6 +8,16 @@
 
 Always include a statement labeled exactly "Ponto importante" for significant changes, feature updates, and other work that may materially affect the bot's behavior. This helps ensure that relevant details and consequences of the applied changes are not overlooked.
 
+## Production diagnosis evidence rule
+
+For incidents, lag, database pressure, and performance regressions, separate **observations**, **hypotheses**, and **confirmed causes** explicitly. Never call a plausible explanation a root cause, assign an unsupported probability, or present a proposed optimization as the fix for the observed symptom without causal evidence.
+
+- Record the affected metric, time window, baseline/comparison, and evidence source. Prefer rates and deltas measured during the incident over lifetime counters or one-off snapshots.
+- Before selecting a material fix, compare competing explanations using simultaneous, low-risk measurements along the affected path (for example application phase timings, query plans and waits, locks, WAL/checkpoints, CPU, and storage I/O). A wait event, long-running maintenance task, or high dead-tuple count alone does not establish causality.
+- State what observation would falsify each leading hypothesis. If the evidence is incomplete, say that the cause is unknown and identify the next discriminating measurement; do not advance an architecture cut as an incident fix on that basis.
+- Label a cause **confirmed** only when a deterministic trace/reproduction directly connects it to the symptom, or a controlled change improves the primary symptom while relevant competing conditions are accounted for. Keep independently valuable cleanup separate from incident remediation.
+- After a fix, compare the same primary metric and guardrail metrics against the baseline. If the primary symptom does not improve, reopen the diagnosis rather than declaring success because an intermediate metric improved.
+
 ## Operational reference
 
 `docs/bot-reference.md` describes the bot's current operational state, not its change history. Update it only when a change affects information needed to understand, operate, deploy, configure, debug, or safely modify the bot, including:
