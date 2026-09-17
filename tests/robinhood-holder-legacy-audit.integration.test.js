@@ -28,6 +28,7 @@ it('runs the bounded read-only legacy diagnosis against PostgreSQL', async () =>
   assert.ok(result.legacyBackfilling.length <= 4);
   assert.ok(result.legacyPromotedSamples.length <= 8);
   assert.equal(typeof result.globalCohort.activeTokens, 'number');
+  assert.equal(typeof result.manifestCoverage.currentManifest, 'number');
   assert.equal(result.legacyShadowWithoutCheckpoint.total,
     result.legacyShadowWithoutCheckpoint.withPending
       + result.legacyShadowWithoutCheckpoint.withoutPending);

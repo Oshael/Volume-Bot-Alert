@@ -113,6 +113,26 @@ const COHORT_SQL = `SELECT COUNT(*)::bigint AS active_tokens,
     ON state.chain=token.chain AND state.token_address=token.token_address
  WHERE token.chain=$1 AND token.status='active' AND run.status<>'completed'`;
 
+const MANIFEST_COVERAGE_SQL = `SELECT
+    COUNT(*) FILTER (WHERE state.ledger_status IN ('live','shadow')
+      AND state.tail_capture_from_block IS NULL)::bigint AS legacy_states,
+    COUNT(*) FILTER (WHERE state.ledger_status IN ('live','shadow')
+      AND state.tail_capture_from_block IS NULL
+      AND manifest.coverage_generation=state.coverage_generation)::bigint AS current_manifest,
+    COUNT(*) FILTER (WHERE state.ledger_status IN ('live','shadow')
+      AND state.tail_capture_from_block IS NULL
+      AND manifest.token_address IS NULL)::bigint AS missing_manifest,
+    COUNT(*) FILTER (WHERE state.ledger_status IN ('live','shadow')
+      AND state.tail_capture_from_block IS NULL AND manifest.token_address IS NOT NULL
+      AND manifest.coverage_generation<>state.coverage_generation)::bigint AS stale_manifest,
+    COUNT(*) FILTER (WHERE manifest.token_address IS NOT NULL AND (
+      manifest.coverage_generation<>state.coverage_generation
+      OR state.ledger_status NOT IN ('live','shadow')
+      OR state.tail_capture_from_block IS NOT NULL))::bigint AS invalidated_manifest
+  FROM robinhood_holder_token_states state
+  LEFT JOIN robinhood_holder_legacy_coverage_manifest manifest USING (chain,token_address)
+ WHERE state.chain=$1`;
+
 const SAMPLES_SQL = `WITH sample AS (
     (SELECT token_address, ledger_status, deployment_block, backfill_next_block,
             live_through_block, live_through_hash, holder_count
@@ -208,6 +228,7 @@ function createRobinhoodHolderLegacyAudit(options = {}) {
       const shadowWithoutCheckpoint = await client.query(SHADOW_WITHOUT_CHECKPOINT_SQL, [CHAIN]);
       const cohorts = await client.query(COHORT_SQL, [CHAIN]);
       const samples = await client.query(SAMPLES_SQL, [CHAIN, SAMPLE_LIMIT]);
+      const manifestCoverage = (await client.query(MANIFEST_COVERAGE_SQL, [CHAIN])).rows[0];
       const selectionPlan = await client.query(COHORT_SELECTION_PLAN_SQL,
         [CHAIN, `0x${'0'.repeat(40)}`, COHORT_BATCH_LIMIT]);
       await client.query('ROLLBACK');
@@ -249,6 +270,13 @@ function createRobinhoodHolderLegacyAudit(options = {}) {
           missingBarrier: Number(cohort.missing_barrier),
           withoutState: Number(cohort.without_state),
           stateOverlap: Number(cohort.state_overlap),
+        },
+        manifestCoverage: {
+          legacyStates: Number(manifestCoverage.legacy_states),
+          currentManifest: Number(manifestCoverage.current_manifest),
+          missingManifest: Number(manifestCoverage.missing_manifest),
+          staleManifest: Number(manifestCoverage.stale_manifest),
+          invalidatedManifest: Number(manifestCoverage.invalidated_manifest),
         },
         legacyPromotedSamples: samples.rows.map(tokenRow),
       });

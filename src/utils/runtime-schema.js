@@ -6356,6 +6356,28 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage233-robinhood-holder-legacy-manifest-builder',
+    name: 'Stage 233 Robinhood holder legacy manifest builder',
+    repair: 'node src/utils/db-init-stage233.js',
+    tables: [{
+      table: 'robinhood_holder_legacy_coverage_manifest',
+      constraints: [{
+        name: 'rh_holder_legacy_manifest_blocks_check',
+        includes: ['coverage_generation', '>= 0', 'baseline_deployment_block'],
+      }],
+    }, {
+      table: 'robinhood_holder_legacy_coverage_builds',
+      columns: [
+        'chain', 'pass', 'after_token_address', 'scanned', 'inserted',
+        'rejected', 'completed_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_legacy_build_values_check',
+        includes: ['after_token_address', 'scanned', 'inserted', 'rejected'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

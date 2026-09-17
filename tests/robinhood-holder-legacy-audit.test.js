@@ -47,6 +47,10 @@ it('classifies legacy states in one read-only snapshot without claiming readines
         return { rows: [{ active_tokens: '7', missing_barrier: '1',
           without_state: '6', state_overlap: '1' }] };
       }
+      if (sql.includes('robinhood_holder_legacy_coverage_manifest manifest')) {
+        return { rows: [{ legacy_states: '5', current_manifest: '3',
+          missing_manifest: '1', stale_manifest: '1', invalidated_manifest: '2' }] };
+      }
       if (sql.includes('WITH sample AS')) return { rows: [{
         token_address: '0xlive', ledger_status: 'live', deployment_block: '1',
         backfill_next_block: '30', live_through_block: '190',
@@ -71,6 +75,10 @@ it('classifies legacy states in one read-only snapshot without claiming readines
   assert.equal(result.ready, undefined);
   assert.equal(result.stateGroups[0].total, 2);
   assert.equal(result.globalCohort.withoutState, 6);
+  assert.deepEqual(result.manifestCoverage, {
+    legacyStates: 5, currentManifest: 3, missingManifest: 1,
+    staleManifest: 1, invalidatedManifest: 2,
+  });
   assert.equal(result.legacyShadowWithoutCheckpoint.withPending, 2);
   assert.equal(result.legacyShadowWithoutCheckpoint.promotableByCurrentSql, 1);
   assert.equal(result.legacyShadowWithoutCheckpoint.baselineCoverageEligible, 1);

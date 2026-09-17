@@ -460,6 +460,8 @@ Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
    restantes como elegíveis e confirmar paginação pela PK existente.
 2. Builder limitado e idempotente do manifesto + auditoria de coverage;
    testar concorrência com reset e custos; carga na VPS só após aprovação.
+   **Implementado** com preview default, batch máximo de 1.000, cursor durável,
+   conflito fail-closed e restart explícito; a carga ainda não foi autorizada.
 3. Fence de todos os ingressos e gate de paridade por população, incluindo
    `drifted` que retornem; testes de race entre admissão, captura e recovery.
 4. Política de captura/rollback duráveis e reorg cruzando o cutover, ainda
@@ -622,12 +624,10 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Aplicar a Stage 232 antes do restart. Confirmar com `npm run db:schema-check`
-que policy/manifest/geração existem e que a policy continua `legacy` com o
-manifesto vazio. O próximo slice implementa somente o builder limitado e
-idempotente com preview, cursor durável e auditoria de gerações; não executar a
-carga na VPS até revisar seu plano/cadência e obter aprovação operacional. O
-modo universal permanece ligado.
+Aplicar a Stage 233 e revisar em produção somente o preview, o plano e a
+cadência do builder. Não executar `--apply` sem aprovação operacional. Depois
+da preparação comprovada do manifesto, implementar os fences de todos os
+ingressos e o gate por população; o modo universal permanece ligado.
 
 ## Arquivos de entrada para a próxima análise
 

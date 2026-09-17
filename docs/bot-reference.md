@@ -3279,6 +3279,17 @@ assim, eventual manifesto antigo deixa de coincidir sem ser apagado. Promoção
 âncora contígua; nenhum runtime lê ou ativa esse modo neste estágio. Aplicar
 `node src/utils/db-init-stage232.js` antes de reiniciar código que exige o novo
 schema; não preencher o manifesto manualmente.
+Antes de preparar o manifesto, aplique `node src/utils/db-init-stage233.js` e
+confirme `npm run db:schema-check`. A Stage 233 adiciona um cursor durável por
+endereço e permite que o manifesto registre a geração inicial zero; resets
+continuam invalidando a linha ao incrementar a geração do state. O comando
+`npm run robinhood:holder-legacy-manifest` é somente preview por default e aceita
+`--limit=1..1000` (default 100). `--apply` grava um único batch atômico e só
+opera enquanto a policy durável está em `legacy`; conflito de baseline/geração
+faz rollback sem avançar o cursor. Depois de uma passagem completa, somente
+`--apply --restart` inicia outra passagem. Não automatizar nem executar a carga
+de produção sem revisar primeiro o preview e autorizar sua cadência. A auditoria
+legada expõe `manifestCoverage` com linhas atuais, ausentes, stale e invalidadas.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
