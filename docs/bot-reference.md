@@ -3263,6 +3263,12 @@ contra o qual comparar); use `pendingAnywhere` e o agregado
 `legacyShadowWithoutCheckpoint`. Para `backfilling` legado, o diagnóstico mostra
 o pending mais antigo, checkpoint canônico e eventual overlap aplicado antes do
 cursor de backfill; isso ajuda a explicar bloqueios, sem promover o token.
+O snapshot também inclui `bufferFloorBlock`. O agregado dos `shadow` sem
+checkpoint separa deployment/cursor divergentes, deployment abaixo dos floors,
+pending anterior ao deployment e `baselineCoverageEligible`, que exige saldo
+zero, cursor no deployment e cobertura simultânea do buffer e journal. O campo
+`cohortSelectionPlan` resume um `EXPLAIN` sem `ANALYZE` da paginação proposta;
+ele não lê nem grava o futuro manifesto e deve ser revisado antes de criar índice.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.

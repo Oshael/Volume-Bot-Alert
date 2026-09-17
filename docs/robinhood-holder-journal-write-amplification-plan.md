@@ -345,8 +345,8 @@ promoção indevida e sem regressão do live.
 
 ### Corte 5A — contrato de transição para estados legados (antes do Corte 6)
 
-Estado: auditoria read-only de classificação implementada e contrato de
-transição desenhado abaixo; schema, manifesto, fence e flip **não
+Estado: auditoria read-only de classificação e elegibilidade implementada e
+contrato de transição desenhado abaixo; schema, manifesto, fence e flip **não
 implementados**. É um novo corte necessário pelos dados de produção; o Corte 6
 original não pode ser ativado somente mudando a flag. As etapas seguintes
 devem ser fatiadas em commits de até 500 linhas, com validação própria.
@@ -622,15 +622,15 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Ampliar a auditoria read-only para medir `buffer_floor_block` e quantos
-`shadow` legados sem checkpoint satisfazem `holder_count=0`,
-`backfill_next_block=deployment_block` e deployment coberto pelo buffer/journal.
-Exibir contagens de cada motivo de exclusão sem varrer o journal inteiro. Medir
-o plano de seleção do cohort antes de escolher batch e índice; validar o plano
-do anti-join após criar o schema, antes de permitir qualquer flip.
-Só com esses dados iniciar o primeiro slice de schema, após aprovação do
-checkpoint de arquitetura acima. `npm run robinhood:holder-legacy-audit`
-continua diagnóstico, não gate. O modo universal permanece ligado.
+Executar novamente `npm run robinhood:holder-legacy-audit` na VPS. Enviar apenas
+`snapshot.bufferFloorBlock`, `legacyShadowWithoutCheckpoint` e
+`cohortSelectionPlan`. A auditoria agora mede quantos `shadow` sem checkpoint
+têm saldo zero, cursor no deployment, pending não anterior ao deployment e
+deployment coberto simultaneamente pelo buffer/journal. Ela também resume um
+`EXPLAIN` sem `ANALYZE` da paginação de até 1.000 tokens; não executa carga.
+Com esses dados, confirmar ou revisar o contrato antes do primeiro slice de
+schema. O comando continua diagnóstico, não gate, e o modo universal permanece
+ligado.
 
 ## Arquivos de entrada para a próxima análise
 

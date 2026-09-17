@@ -4,9 +4,10 @@ const db = require('../models/db');
 
 const CHAIN = 'robinhood';
 const SAMPLE_LIMIT = 4;
+const COHORT_BATCH_LIMIT = 1000;
 
 const FRONTIER_SQL = `SELECT cursor.next_block, cursor.checkpoint_block,
-    cursor.checkpoint_hash, cursor.journal_floor_block,
+    cursor.checkpoint_hash, cursor.journal_floor_block, cursor.buffer_floor_block,
     capture.checkpoint_block AS capture_checkpoint_block,
     (SELECT MIN(block_number) FROM robinhood_chain_blocks
       WHERE chain=$1 AND canonical=TRUE) AS raw_floor_block
@@ -56,21 +57,50 @@ const BACKFILLING_SQL = `SELECT state.token_address, state.ledger_status,
  ORDER BY state.backfill_next_block DESC NULLS LAST, state.token_address LIMIT $2`;
 
 const SHADOW_WITHOUT_CHECKPOINT_SQL = `SELECT COUNT(*)::bigint AS total,
-    COUNT(*) FILTER (WHERE pending.present IS NOT NULL)::bigint AS with_pending,
-    COUNT(*) FILTER (WHERE pending.present IS NULL)::bigint AS without_pending,
+    COUNT(*) FILTER (WHERE pending.block_number IS NOT NULL)::bigint AS with_pending,
+    COUNT(*) FILTER (WHERE pending.block_number IS NULL)::bigint AS without_pending,
     COUNT(*) FILTER (WHERE state.holder_count <> 0)::bigint AS nonzero_holders,
-    COUNT(*) FILTER (WHERE pending.present IS NULL
-      AND state.deployment_block < cursor.next_block)::bigint AS promotable_by_current_sql
+    COUNT(*) FILTER (WHERE pending.block_number IS NULL
+      AND state.deployment_block < cursor.next_block)::bigint AS promotable_by_current_sql,
+    COUNT(*) FILTER (WHERE state.deployment_block IS NULL)::bigint AS missing_deployment,
+    COUNT(*) FILTER (WHERE cursor.buffer_floor_block IS NULL
+      OR cursor.journal_floor_block IS NULL)::bigint AS missing_coverage_floor,
+    COUNT(*) FILTER (WHERE state.backfill_next_block IS DISTINCT FROM
+      state.deployment_block)::bigint AS backfill_not_at_deployment,
+    COUNT(*) FILTER (WHERE state.deployment_block < cursor.buffer_floor_block)::bigint
+      AS below_buffer_floor,
+    COUNT(*) FILTER (WHERE state.deployment_block < cursor.journal_floor_block)::bigint
+      AS below_journal_floor,
+    COUNT(*) FILTER (WHERE pending.block_number < state.deployment_block)::bigint
+      AS pending_before_deployment,
+    COUNT(*) FILTER (WHERE state.holder_count=0
+      AND state.backfill_next_block=state.deployment_block
+      AND cursor.buffer_floor_block IS NOT NULL
+      AND cursor.journal_floor_block IS NOT NULL
+      AND state.deployment_block >= GREATEST(
+        cursor.buffer_floor_block, cursor.journal_floor_block)
+      AND state.deployment_block < cursor.next_block
+      AND (pending.block_number IS NULL
+        OR pending.block_number >= state.deployment_block))::bigint
+      AS baseline_coverage_eligible
   FROM robinhood_holder_token_states state
   JOIN robinhood_holder_cursors cursor
     ON cursor.chain=state.chain AND cursor.stream='live'
   LEFT JOIN LATERAL (
-    SELECT 1 AS present FROM robinhood_holder_transfer_journal journal
+    SELECT journal.block_number FROM robinhood_holder_transfer_journal journal
      WHERE journal.chain=state.chain AND journal.token_address=state.token_address
-       AND journal.applied=FALSE LIMIT 1
+       AND journal.applied=FALSE
+     ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+     LIMIT 1
   ) pending ON TRUE
  WHERE state.chain=$1 AND state.ledger_status='shadow'
    AND state.tail_capture_from_block IS NULL AND state.live_through_block IS NULL`;
+
+const COHORT_SELECTION_PLAN_SQL = `EXPLAIN (FORMAT JSON)
+  SELECT state.token_address FROM robinhood_holder_token_states state
+   WHERE state.chain=$1 AND state.ledger_status IN ('live','shadow')
+     AND state.tail_capture_from_block IS NULL AND state.token_address > $2
+   ORDER BY state.token_address LIMIT $3`;
 
 const COHORT_SQL = `SELECT COUNT(*)::bigint AS active_tokens,
     COUNT(*) FILTER (WHERE run.barrier_block IS NULL)::bigint AS missing_barrier,
@@ -113,6 +143,18 @@ const SAMPLES_SQL = `WITH sample AS (
 
 function numberOrNull(value) {
   return value == null ? null : String(value);
+}
+
+function summarizePlan(value) {
+  const root = value?.[0]?.Plan;
+  if (!root) throw new Error('holder cohort selection plan is missing');
+  const nodes = [];
+  function visit(node) {
+    nodes.push({ nodeType: node['Node Type'], indexName: node['Index Name'] || null });
+    for (const child of node.Plans || []) visit(child);
+  }
+  visit(root);
+  return { estimatedRows: root['Plan Rows'], totalCost: root['Total Cost'], nodes };
 }
 
 function stateGroup(row) {
@@ -166,6 +208,8 @@ function createRobinhoodHolderLegacyAudit(options = {}) {
       const shadowWithoutCheckpoint = await client.query(SHADOW_WITHOUT_CHECKPOINT_SQL, [CHAIN]);
       const cohorts = await client.query(COHORT_SQL, [CHAIN]);
       const samples = await client.query(SAMPLES_SQL, [CHAIN, SAMPLE_LIMIT]);
+      const selectionPlan = await client.query(COHORT_SELECTION_PLAN_SQL,
+        [CHAIN, `0x${'0'.repeat(40)}`, COHORT_BATCH_LIMIT]);
       await client.query('ROLLBACK');
       const cohort = cohorts.rows[0];
       return Object.freeze({
@@ -176,6 +220,7 @@ function createRobinhoodHolderLegacyAudit(options = {}) {
           holderCheckpointHash: frontier.checkpoint_hash,
           captureCheckpointBlock: numberOrNull(frontier.capture_checkpoint_block),
           journalFloorBlock: numberOrNull(frontier.journal_floor_block),
+          bufferFloorBlock: numberOrNull(frontier.buffer_floor_block),
           rawFloorBlock: numberOrNull(frontier.raw_floor_block),
         },
         stateGroups: states.rows.map(stateGroup),
@@ -187,6 +232,17 @@ function createRobinhoodHolderLegacyAudit(options = {}) {
           withoutPending: Number(shadowWithoutCheckpoint.rows[0].without_pending),
           nonzeroHolders: Number(shadowWithoutCheckpoint.rows[0].nonzero_holders),
           promotableByCurrentSql: Number(shadowWithoutCheckpoint.rows[0].promotable_by_current_sql),
+          missingDeployment: Number(shadowWithoutCheckpoint.rows[0].missing_deployment),
+          missingCoverageFloor: Number(shadowWithoutCheckpoint.rows[0].missing_coverage_floor),
+          backfillNotAtDeployment: Number(shadowWithoutCheckpoint.rows[0].backfill_not_at_deployment),
+          belowBufferFloor: Number(shadowWithoutCheckpoint.rows[0].below_buffer_floor),
+          belowJournalFloor: Number(shadowWithoutCheckpoint.rows[0].below_journal_floor),
+          pendingBeforeDeployment: Number(shadowWithoutCheckpoint.rows[0].pending_before_deployment),
+          baselineCoverageEligible: Number(shadowWithoutCheckpoint.rows[0].baseline_coverage_eligible),
+        },
+        cohortSelectionPlan: {
+          batchLimit: COHORT_BATCH_LIMIT,
+          ...summarizePlan(selectionPlan.rows[0]['QUERY PLAN']),
         },
         globalCohort: {
           activeTokens: Number(cohort.active_tokens),

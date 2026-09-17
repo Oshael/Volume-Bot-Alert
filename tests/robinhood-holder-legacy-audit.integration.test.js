@@ -31,4 +31,7 @@ it('runs the bounded read-only legacy diagnosis against PostgreSQL', async () =>
   assert.equal(result.legacyShadowWithoutCheckpoint.total,
     result.legacyShadowWithoutCheckpoint.withPending
       + result.legacyShadowWithoutCheckpoint.withoutPending);
+  assert.ok(result.legacyShadowWithoutCheckpoint.total
+    >= result.legacyShadowWithoutCheckpoint.baselineCoverageEligible);
+  assert.ok(result.cohortSelectionPlan.nodes.length >= 1);
 });

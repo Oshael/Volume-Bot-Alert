@@ -15,7 +15,8 @@ it('classifies legacy states in one read-only snapshot without claiming readines
       }
       if (sql.includes('FROM robinhood_holder_cursors cursor')) return { rows: [{
         next_block: '201', checkpoint_block: '200', checkpoint_hash: '0xhash',
-        capture_checkpoint_block: '205', journal_floor_block: '100', raw_floor_block: '90',
+        capture_checkpoint_block: '205', journal_floor_block: '100',
+        buffer_floor_block: '95', raw_floor_block: '90',
       }] };
       if (sql.includes('GROUP BY ledger_status, coverage')) return { rows: [{
         ledger_status: 'live', coverage: 'legacy_null', total: '2',
@@ -33,7 +34,15 @@ it('classifies legacy states in one read-only snapshot without claiming readines
       if (sql.includes('LEFT JOIN LATERAL')) return { rows: [{
         total: '3', with_pending: '2', without_pending: '1',
         nonzero_holders: '0', promotable_by_current_sql: '1',
+        missing_deployment: '0', missing_coverage_floor: '0',
+        backfill_not_at_deployment: '1', below_buffer_floor: '0',
+        below_journal_floor: '1', pending_before_deployment: '0',
+        baseline_coverage_eligible: '1',
       }] };
+      if (sql.startsWith('EXPLAIN')) return { rows: [{ 'QUERY PLAN': [{ Plan: {
+        'Node Type': 'Limit', 'Plan Rows': 1000, 'Total Cost': 42,
+        Plans: [{ 'Node Type': 'Index Scan', 'Index Name': 'states_pkey' }],
+      } }] }] };
       if (sql.includes('FROM robinhood_holder_global_backfill_tokens token')) {
         return { rows: [{ active_tokens: '7', missing_barrier: '1',
           without_state: '6', state_overlap: '1' }] };
@@ -64,6 +73,10 @@ it('classifies legacy states in one read-only snapshot without claiming readines
   assert.equal(result.globalCohort.withoutState, 6);
   assert.equal(result.legacyShadowWithoutCheckpoint.withPending, 2);
   assert.equal(result.legacyShadowWithoutCheckpoint.promotableByCurrentSql, 1);
+  assert.equal(result.legacyShadowWithoutCheckpoint.baselineCoverageEligible, 1);
+  assert.equal(result.legacyShadowWithoutCheckpoint.belowJournalFloor, 1);
+  assert.equal(result.snapshot.bufferFloorBlock, '95');
+  assert.equal(result.cohortSelectionPlan.nodes[1].indexName, 'states_pkey');
   assert.equal(result.legacyPromotedSamples[0].checkpointCanonical, true);
   assert.equal(result.legacyPromotedSamples[1].pendingAtOrBeforeState, null);
   assert.equal(result.legacyPromotedSamples[1].pendingAnywhere, true);
