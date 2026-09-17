@@ -2,9 +2,11 @@
 
 const db = require('../models/db');
 const { TRANSFER_TOPIC } = require('./evm-erc20-supply-delta');
-const { __private: { decodeTransferLog } } = require('./robinhood-holder-transfer-reader');
 const {
-  acquireRobinhoodHolderReorgFence, buildHolderCaptureReceipts, normalizeHolderTransfer,
+  __private: { orderBufferedTransfers },
+} = require('./robinhood-holder-transfer-reader');
+const {
+  acquireRobinhoodHolderReorgFence, buildHolderCaptureReceipts,
 } = require('../models/robinhood-holder-ledger');
 const { createRobinhoodHolderCutoverRetention } = require('./robinhood-holder-cutover-retention');
 
@@ -59,12 +61,32 @@ function contextBlockers(policy, cursor, capture, checkpointCanonical) {
   return blockers;
 }
 
-function decodeRaw(row, from, through, checkpointHash) {
-  return normalizeHolderTransfer(decodeTransferLog({
+function rawLog(row) {
+  return {
     blockNumber: String(row.block_number), blockHash: row.block_hash,
     transactionHash: row.transaction_hash, transactionIndex: row.transaction_index,
     logIndex: row.log_index, address: row.address, topics: row.topics, data: row.data,
-  }, { tokenAddress: null, fromBlock: from, toBlock: through, checkpointHash }));
+  };
+}
+
+async function trackedRawTokens(client, rows) {
+  const candidates = [...new Set(rows.map((row) => String(row.address || '').toLowerCase()))];
+  const result = await client.query(
+    `SELECT state.token_address
+       FROM robinhood_holder_token_states state
+      WHERE state.chain=$1 AND state.token_address=ANY($2::varchar[])
+        AND state.ledger_status IN ('backfilling','shadow','live')
+     UNION
+     SELECT token.token_address
+       FROM robinhood_holder_global_backfill_tokens token
+       JOIN robinhood_holder_global_backfill_runs run
+         ON run.id=token.run_id AND run.chain=token.chain
+      WHERE token.chain=$1 AND token.token_address=ANY($2::varchar[])
+        AND token.status='active' AND run.barrier_block IS NOT NULL
+        AND run.status<>'completed'`,
+    [CHAIN, candidates]
+  );
+  return new Set(result.rows.map((row) => row.token_address));
 }
 
 function decodeReceipt(row) {
@@ -122,7 +144,12 @@ async function recentParity(client, cursor) {
   if (!raw.length || raw.length > MAX_EVENTS) {
     throw fail('recent_sample_empty_or_over_limit');
   }
-  const normalizedRaw = raw.map((row) => decodeRaw(row, from, through, cursor.checkpoint_hash));
+  const trackedTokens = await trackedRawTokens(client, raw);
+  const buffered = orderBufferedTransfers(raw.map(rawLog), {
+    tokenAddress: null, fromBlock: from, toBlock: through,
+    checkpointHash: cursor.checkpoint_hash,
+  }, trackedTokens);
+  const normalizedRaw = buffered.transfers;
   const expectedReceipts = buildHolderCaptureReceipts(normalizedRaw);
   const stored = (await client.query(
     `SELECT block_number, block_hash, transfer_count, evidence_hash
@@ -134,7 +161,8 @@ async function recentParity(client, cursor) {
   const receipts = stored.map(decodeReceipt);
   const compared = compareReceipts(expectedReceipts, receipts);
   return { fromBlock: from.toString(), throughBlock: through.toString(),
-    rawTransfers: raw.length,
+    rawLogs: raw.length, rawTransfers: normalizedRaw.length,
+    ignoredMalformedLogs: buffered.ignoredMalformedLogs,
     journalTransfers: receipts.reduce((total, receipt) => total + receipt.transferCount, 0),
     receiptBlocks: receipts.length,
     missing: compared.missing, excess: compared.excess, divergent: compared.divergent };

@@ -16,6 +16,7 @@ const HASH = (n) => `0x${n.toString(16).padStart(64, '0')}`;
 const TOKEN = `0x${'1'.repeat(40)}`;
 const FROM = `0x${'2'.repeat(40)}`;
 const TO = `0x${'3'.repeat(40)}`;
+const UNTRACKED = `0x${'4'.repeat(40)}`;
 const topicAddress = (address) => `0x${'0'.repeat(24)}${address.slice(2)}`;
 
 after(() => db.pool.end());
@@ -77,7 +78,7 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
       chain text, completed_at timestamptz
     )`);
     await query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs (
-      chain text, id bigint, status text
+      chain text, id bigint, status text, barrier_block bigint
     )`);
     await query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens (
       chain text, run_id bigint, token_address text, status text
@@ -96,6 +97,12 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
       HASH(100), HASH(200), TOKEN, TRANSFER_TOPIC,
       JSON.stringify([TRANSFER_TOPIC, topicAddress(FROM), topicAddress(TO)]),
       `0x${'0'.repeat(63)}5`,
+    ]);
+    await query(`INSERT INTO robinhood_chain_events VALUES
+      ('robinhood',99,$1,$2,1,1,$3,$4,$5::jsonb,$6)`, [
+      HASH(99), HASH(201), UNTRACKED, TRANSFER_TOPIC,
+      JSON.stringify([TRANSFER_TOPIC, topicAddress(FROM)]),
+      `0x${'0'.repeat(63)}1`,
     ]);
     await query(`INSERT INTO robinhood_holder_transfer_journal (
       chain, block_number, block_hash, transaction_hash, transaction_index,
@@ -123,7 +130,11 @@ it('fails closed on incomplete cohort/parity and flips only behind a retention g
     });
     await query(`INSERT INTO robinhood_holder_legacy_coverage_manifest VALUES
       ('robinhood',$1,1)`, [TOKEN]);
-    assert.equal((await gate.inspect()).readyForGate, true);
+    const ready = await gate.inspect();
+    assert.equal(ready.readyForGate, true);
+    assert.equal(ready.recentParity.rawLogs, 2);
+    assert.equal(ready.recentParity.rawTransfers, 1);
+    assert.equal(ready.recentParity.ignoredMalformedLogs, 1);
     await query(`UPDATE robinhood_holder_capture_receipts SET evidence_hash=$1`, [HASH(999)]);
     assert.ok((await gate.inspect()).blockers.includes('recent_parity_divergent'));
     await query(`UPDATE robinhood_holder_capture_receipts SET evidence_hash=$1`, [

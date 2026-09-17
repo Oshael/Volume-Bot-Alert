@@ -3172,7 +3172,9 @@ Stage 235 cria `robinhood_holder_capture_receipts`: cada bloco não vazio da
 captura legacy grava contagem e SHA-256 da evidência na mesma transação que
 journal e cursor. O journal rejeita alteração posterior dos campos de evidência;
 rewind e retenção removem os recibos correspondentes. Assim o gate não varre o
-journal BRIN fisicamente descorrelacionado. O pruner impõe
+journal BRIN fisicamente descorrelacionado. Na amostra, aplica a mesma regra da
+captura legacy: `Transfer` malformado de token fora do escopo é contado e
+ignorado, enquanto evidência malformada de token acompanhado falha fechada. O pruner impõe
 retenção raw mínima de três dias, inclusive em chamadas internas; o cutover
 assume uma janela conservadora de recuperação de 24 horas a partir do flip.
 `--apply --expect-next=N --expect-hash=0x...` exige a âncora exata mostrada no

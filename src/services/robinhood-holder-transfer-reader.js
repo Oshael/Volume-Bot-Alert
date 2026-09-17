@@ -428,5 +428,5 @@ module.exports = {
   MAX_RANGE_BLOCKS,
   MAX_RECEIPT_RANGE_BLOCKS,
   createRobinhoodHolderTransferReader,
-  __private: { decodeTransferLog },
+  __private: { decodeTransferLog, orderBufferedTransfers },
 };
