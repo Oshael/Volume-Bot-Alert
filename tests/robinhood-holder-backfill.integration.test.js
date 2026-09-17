@@ -68,8 +68,10 @@ describe('Robinhood holder backfill persistence', () => {
       );
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
-           token_address, ledger_status, deployment_block, backfill_next_block
-         ) VALUES ($1, 'backfilling', 100, 100), ($2, 'backfilling', 200, 200)`,
+           token_address, ledger_status, deployment_block, backfill_next_block,
+           tail_capture_from_block
+         ) VALUES ($1, 'backfilling', 100, 100, 104),
+                  ($2, 'backfilling', 200, 200, NULL)`,
         [TOKEN, DRIFT_TOKEN]
       );
       const database = {
@@ -150,6 +152,7 @@ describe('Robinhood holder backfill persistence', () => {
       assert.equal(await repository.getNextToken({ throughBlock: '102' }), null);
       assert.deepEqual(await repository.getNextToken({ throughBlock: '103' }), {
         tokenAddress: TOKEN, deploymentBlock: '100', backfillNextBlock: '103',
+        tailCaptureFromBlock: '104',
         liveThroughBlock: '102', liveThroughHash: HASH_C, version: 2,
       });
       await client.query(
@@ -159,12 +162,14 @@ describe('Robinhood holder backfill persistence', () => {
       );
       assert.deepEqual(await repository.getNextToken({ throughBlock: '200' }), {
         tokenAddress: TOKEN, deploymentBlock: '100', backfillNextBlock: '103',
+        tailCaptureFromBlock: '104',
         liveThroughBlock: '102', liveThroughHash: HASH_C, version: 2,
       });
       assert.deepEqual(await repository.getNextToken({
         throughBlock: '200', excludeTokenAddresses: [TOKEN],
       }), {
         tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
+        tailCaptureFromBlock: null,
         liveThroughBlock: null, liveThroughHash: null, version: 0,
       });
       const partition = await client.query(
@@ -180,6 +185,7 @@ describe('Robinhood holder backfill persistence', () => {
         shardCount: 2, shardIndex: priorityShard,
       }), {
         tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
+        tailCaptureFromBlock: null,
         liveThroughBlock: null, liveThroughHash: null, version: 0,
       });
       assert.equal(await repository.getNextToken({
@@ -190,6 +196,8 @@ describe('Robinhood holder backfill persistence', () => {
         `UPDATE robinhood_holder_cursors
             SET next_block = 104, safe_head = 103, journal_floor_block = 100`
       );
+      await client.query(`UPDATE robinhood_holder_token_states
+        SET tail_capture_from_block = 103 WHERE token_address = $1`, [TOKEN]);
       assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
       assert.deepEqual(await repository.markResyncing({
         tokenAddress: TOKEN, backfillNextBlock: '103',

@@ -51,6 +51,8 @@ function stateRow(row) {
     tokenAddress: tokenAddress(row.token_address),
     deploymentBlock: quantity(row.deployment_block, 'deploymentBlock').toString(),
     backfillNextBlock: quantity(row.backfill_next_block, 'backfillNextBlock').toString(),
+    tailCaptureFromBlock: row.tail_capture_from_block == null
+      ? null : quantity(row.tail_capture_from_block, 'tailCaptureFromBlock').toString(),
     liveThroughBlock: row.live_through_block == null ? null : String(row.live_through_block),
     liveThroughHash: row.live_through_hash,
     version: Number(row.version),
@@ -246,11 +248,17 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     const excluded = tokenAddressList(input.excludeTokenAddresses);
     const shard = shardOptions(input);
     const result = await database.query(
-      `SELECT token_address, deployment_block, backfill_next_block,
+      `SELECT token_address, deployment_block, backfill_next_block, tail_capture_from_block,
               live_through_block, live_through_hash, version
          FROM robinhood_holder_token_states state
         WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
           AND state.backfill_next_block <= $1
+          AND (
+            state.tail_capture_from_block IS NULL
+            OR state.backfill_next_block < state.tail_capture_from_block
+            OR (state.backfill_next_block = state.tail_capture_from_block
+              AND state.live_through_block IS NULL)
+          )
           AND NOT (state.token_address = ANY($2::varchar[]))
           AND NOT EXISTS (
             SELECT 1

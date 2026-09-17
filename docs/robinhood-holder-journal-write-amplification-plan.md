@@ -252,6 +252,10 @@ Rollback: desligar o roteamento canônico recente e continuar no executor RPC.
 
 ### Corte 3 — admissão e handoff sem dependência do buffer global
 
+Estado: implementado no código para estados com tail durável; estados legados com
+tail `NULL` preservam o handoff universal anterior enquanto o live ainda opera com
+`captureAllTransfers=true`.
+
 Objetivo: fechar matematicamente a lacuna deployment -> tail live.
 
 Mudanças propostas:

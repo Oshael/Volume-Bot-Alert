@@ -447,6 +447,7 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
           WHERE token.run_id = $1 AND token.chain = $2 AND token.status = 'materialized'
             AND state.ledger_status = 'backfilling'
             AND state.backfill_next_block = $3
+            AND state.tail_capture_from_block = $3
             AND state.live_through_block = $4 AND state.live_through_hash = $5
             AND NOT EXISTS (
               SELECT 1 FROM robinhood_holder_transfer_journal journal
@@ -471,6 +472,7 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
               SET ledger_status = 'shadow', version = version + 1, updated_at = NOW()
             WHERE chain = $1 AND token_address = ANY($2::varchar[])
               AND ledger_status = 'backfilling' AND backfill_next_block = $3
+              AND tail_capture_from_block = $3
               AND live_through_block = $4 AND live_through_hash = $5
             RETURNING token_address`,
           [CHAIN, addresses, run.barrier_block, run.barrier_checkpoint_block,

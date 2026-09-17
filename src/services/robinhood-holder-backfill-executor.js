@@ -111,6 +111,24 @@ function createRecentReplayReader(options = {}) {
   });
 }
 
+function replayRange(state, safeHeadValue, rangeSize) {
+  const fromBlock = BigInt(state.backfillNextBlock);
+  const safeHead = BigInt(safeHeadValue);
+  const tail = state.tailCaptureFromBlock == null
+    ? null : BigInt(state.tailCaptureFromBlock);
+  const replayThrough = tail == null
+    ? safeHead : (fromBlock < tail ? tail - 1n : tail);
+  const candidateEnd = fromBlock + BigInt(rangeSize - 1);
+  const availableEnd = replayThrough < safeHead ? replayThrough : safeHead;
+  return Object.freeze({
+    fromBlock, toBlock: candidateEnd < availableEnd ? candidateEnd : availableEnd, tail,
+  });
+}
+
+function reachedReplayBarrier(nextBlock, tail, safeHead) {
+  return tail == null ? BigInt(nextBlock) > safeHead : BigInt(nextBlock) >= tail;
+}
+
 function createRobinhoodHolderBackfillExecutor(options = {}) {
   const repository = options.repository;
   const reader = options.reader;
@@ -276,10 +294,10 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
           return Object.freeze({ ...isolated, reason: 'holder_backfill_checkpoint_orphaned' });
         }
       }
-      const fromBlock = BigInt(state.backfillNextBlock);
       const safeHead = BigInt(head.safeHead);
-      const candidateEnd = fromBlock + BigInt(effectiveRangeSize - 1);
-      const toBlock = candidateEnd < safeHead ? candidateEnd : safeHead;
+      const { fromBlock, toBlock, tail } = replayRange(
+        state, head.safeHead, effectiveRangeSize
+      );
       let range;
       try {
         range = await reader.readRange({
@@ -311,7 +329,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
           ...committed, ...replayMetadata, safeHead: head.safeHead, atBarrier: false,
         });
       }
-      const atBarrier = BigInt(committed.backfillNextBlock) > safeHead;
+      const atBarrier = reachedReplayBarrier(committed.backfillNextBlock, tail, safeHead);
       if (atBarrier) adaptiveRangeSizes.delete(state.tokenAddress);
       return Object.freeze({
         ...committed, ...replayMetadata, safeHead: head.safeHead,
@@ -380,6 +398,6 @@ module.exports = {
     CANONICAL_RECENT_SOURCE, CANONICAL_STATEMENT_TIMEOUT_MS, RPC_SOURCE,
     DEFAULT_DRIFT_RECHECK_MS, DEFAULT_RECEIPT_BATCH_SIZE, DEFAULT_RECEIPT_BLOCK_LIMIT,
     REQUIRED_DRIFT_OBSERVATIONS, createRecentReplayReader, isAdaptiveRangeError,
-    normalizeBackfillSource, resolveRpcProvider,
+    normalizeBackfillSource, reachedReplayBarrier, replayRange, resolveRpcProvider,
   },
 };

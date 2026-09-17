@@ -3224,6 +3224,15 @@ diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
 replay conclui primeiro estados que já possuem checkpoint live e, dentro de cada
 classe, prioriza o menor trabalho restante até a barreira; assim novas admissões
 não deixam recuperações já iniciadas permanentemente no fim da fila.
+Estados com `tail_capture_from_block` limitam o replay ao bloco imediatamente
+anterior ao tail e deixam de ser selecionados quando `backfill_next_block` alcança
+essa fronteira. Se deployment e tail forem iguais e ainda não existir checkpoint,
+o executor processa somente esse bloco para criar uma âncora verificável; o overlap
+pendente é removido atomicamente no handoff. A promoção exige replay no mínimo até
+o tail, checkpoint confirmado e encontro dentro da cobertura retida do journal.
+Estados legados com tail `NULL` mantêm o caminho universal anterior enquanto
+`captureAllTransfers=true`. Coortes globais continuam exigindo
+`tail_capture_from_block = barrier_block` na promoção.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
 Com `canonical_recent`, cada range integralmente entre o floor retido de
 `robinhood_chain_blocks` e o checkpoint contínuo de

@@ -26,6 +26,8 @@ function candidateRow(row) {
   return Object.freeze({
     tokenAddress: row.token_address,
     backfillNextBlock: String(row.backfill_next_block),
+    tailCaptureFromBlock: row.tail_capture_from_block == null
+      ? null : String(row.tail_capture_from_block),
     checkpoint: Object.freeze({
       number: String(row.live_through_block), hash: row.live_through_hash,
     }),
@@ -55,7 +57,7 @@ async function lockLiveCursor(client) {
 async function lockBackfillState(client, token) {
   const result = await client.query(
     `SELECT holder_count, deployment_block, backfill_next_block,
-            live_through_block, live_through_hash, version
+            tail_capture_from_block, live_through_block, live_through_hash, version
        FROM robinhood_holder_token_states
       WHERE chain = 'robinhood' AND token_address = $1
         AND ledger_status = 'backfilling' FOR UPDATE`,
@@ -77,6 +79,12 @@ function validateCoverage(cursor, state) {
   const floor = BigInt(cursor.journal_floor_block);
   const backfillNext = BigInt(state.backfill_next_block);
   const liveNext = BigInt(cursor.next_block);
+  if (state.tail_capture_from_block != null
+      && backfillNext < BigInt(state.tail_capture_from_block)) {
+    throw codedError(
+      'holder replay has not reached its durable live tail', 'holder_handoff_tail_gap'
+    );
+  }
   if (backfillNext < floor) {
     throw codedError('holder backfill cursor is below retained live coverage', 'holder_handoff_below_floor');
   }
@@ -144,7 +152,7 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
   async function getNextCandidate() {
     const result = await database.query(
       `WITH candidate AS MATERIALIZED (
-         SELECT state.token_address, state.backfill_next_block,
+         SELECT state.token_address, state.backfill_next_block, state.tail_capture_from_block,
                 state.live_through_block, state.live_through_hash, state.version
            FROM robinhood_holder_token_states state
            INNER JOIN robinhood_holder_cursors cursor
@@ -152,6 +160,8 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
           WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
             AND cursor.journal_floor_block IS NOT NULL
             AND state.backfill_next_block BETWEEN cursor.journal_floor_block AND cursor.next_block
+            AND (state.tail_capture_from_block IS NULL
+              OR state.backfill_next_block >= state.tail_capture_from_block)
             AND state.live_through_block + 1 = state.backfill_next_block
             AND state.live_through_hash IS NOT NULL
             AND state.backfill_next_block >= COALESCE((

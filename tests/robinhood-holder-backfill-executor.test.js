@@ -23,15 +23,15 @@ describe('Robinhood holder backfill executor', () => {
     const repository = {
       getNextToken: async (input) => {
         calls.push(['select', input]);
-        return state();
+        return state({ tailCaptureFromBlock: '105' });
       },
       markResyncing: async () => { throw new Error('must not isolate'); },
       async commitRange(range) {
         calls.push(['commit', range]);
         return {
           status: 'committed', tokenAddress: TOKEN, transfers: 0, touchedWallets: 0,
-          holderDelta: 0, holderCount: '10', backfillNextBlock: '106',
-          liveThroughBlock: '105', liveThroughHash: HASH, version: 3,
+          holderDelta: 0, holderCount: '10', backfillNextBlock: '105',
+          liveThroughBlock: '104', liveThroughHash: HASH, version: 3,
         };
       },
     };
@@ -46,7 +46,7 @@ describe('Robinhood holder backfill executor', () => {
       },
       readRange: async (range) => {
         calls.push(['read', range]);
-        return { ...range, checkpoint: { number: '105', hash: HASH }, transfers: [] };
+        return { ...range, checkpoint: { number: '104', hash: HASH }, transfers: [] };
       },
       readReceiptRange: async () => { throw new Error('must not read receipts'); },
     };
@@ -62,14 +62,44 @@ describe('Robinhood holder backfill executor', () => {
       }],
       ['checkpoint', { number: '102', hash: HASH }],
       ['read', {
-        tokenAddress: TOKEN, fromBlock: '103', toBlock: '105', deferRangeAdaptation: true,
+        tokenAddress: TOKEN, fromBlock: '103', toBlock: '104', deferRangeAdaptation: true,
       }],
       ['commit', {
-        tokenAddress: TOKEN, fromBlock: '103', toBlock: '105',
+        tokenAddress: TOKEN, fromBlock: '103', toBlock: '104',
         deferRangeAdaptation: true,
-        checkpoint: { number: '105', hash: HASH }, transfers: [],
+        checkpoint: { number: '104', hash: HASH }, transfers: [],
       }],
     ]);
+  });
+
+  it('establishes one checkpoint when deployment already equals the tail', async () => {
+    const reads = [];
+    const repository = {
+      getNextToken: async () => state({
+        backfillNextBlock: '103', tailCaptureFromBlock: '103',
+        liveThroughBlock: null, liveThroughHash: null,
+      }),
+      markResyncing: async () => { throw new Error('must not isolate'); },
+      commitRange: async (_range) => ({
+        status: 'committed', tokenAddress: TOKEN, holderCount: '1',
+        backfillNextBlock: '104', liveThroughBlock: '103',
+      }),
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '200' }),
+      matchesCheckpoint: async () => { throw new Error('must not verify absent checkpoint'); },
+      readRange: async (range) => {
+        reads.push(range);
+        return { ...range, checkpoint: { number: '103', hash: HASH }, transfers: [] };
+      },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
+    };
+
+    const result = await createRobinhoodHolderBackfillExecutor({ repository, reader }).runOnce();
+    assert.equal(result.atBarrier, true);
+    assert.deepEqual(reads, [{
+      tokenAddress: TOKEN, fromBlock: '103', toBlock: '103', deferRangeAdaptation: true,
+    }]);
   });
 
   it('treats a cursor changed by concurrent handoff as superseded work', async () => {
