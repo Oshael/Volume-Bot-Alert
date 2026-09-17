@@ -292,7 +292,7 @@ describe('Robinhood holder live worker', () => {
       ['reader', { rpcClient, addressShardConcurrency: 2 }], 'chain',
       ['ledger', { database: 'database' }],
       ['bootstrap', { database: 'database' }],
-      ['capture', { bootstrap, ledger, reader }],
+      ['capture', { bootstrap, ledger, reader, sourceMode: 'rpc' }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],
       ['runner', { capture, handoff, ledger, reader }],
@@ -328,7 +328,9 @@ describe('Robinhood holder live worker', () => {
     assert.equal(await disabledPublisher([]), 0);
     assert.deepEqual(calls, [
       ['canonical', { database: 'database' }], 'chain',
-      ['capture', { bootstrap: 'bootstrap', ledger: 'ledger', reader }],
+      ['capture', {
+        bootstrap: 'bootstrap', ledger: 'ledger', reader, sourceMode: 'canonical_journal',
+      }],
       ['handoff', { repository: 'handoffRepository', reader }],
       ['runner', {
         capture: 'capture', handoff: 'handoff', ledger: 'ledger', reader,

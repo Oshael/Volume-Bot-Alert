@@ -184,8 +184,140 @@ describe('Robinhood holder global live capture', () => {
       ['rewind', {
         nextBlock: '96', safeHead: '100', expectedVersion: 7,
         checkpoint: { number: '95', hash: HASH_B },
+        requireCanonicalCheckpoint: false,
       }],
     ]);
+  });
+
+  it('finds a canonical ancestor across blocks without holder transfers', async () => {
+    const calls = [];
+    const ledger = {
+      getCursor: async () => ({
+        nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH,
+        journalFloorBlock: '90', version: 7,
+      }),
+      listJournalBlockCheckpoints: async () => {
+        throw new Error('holder transfer journal must not source canonical checkpoints');
+      },
+      listCanonicalBlockCheckpoints: async (input) => {
+        calls.push(['candidates', input]);
+        return [
+          { number: '98', hash: HASH_B },
+          { number: '99', hash: HASH_C },
+        ];
+      },
+      getLiveCaptureScope: async () => { throw new Error('unexpected scope read'); },
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
+      appendCapturedRange: async () => { throw new Error('unexpected capture'); },
+      rewindOrphanedRange: async (input) => {
+        calls.push(['rewind', input]);
+        return { status: 'rewound', revertedEvents: 0, cursorVersion: 8 };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '100' }),
+      matchesCheckpoint: async ({ number }) => {
+        calls.push(['checkpoint', number]);
+        return BigInt(number) <= 98n;
+      },
+      readGlobalRange: async () => { throw new Error('unexpected read'); },
+    };
+    const result = await createRobinhoodHolderLiveCapture({
+      ledger, reader, sourceMode: 'canonical_journal',
+    }).captureOnce();
+
+    assert.equal(result.status, 'reorg-rewound');
+    assert.equal(result.canonicalCheckpointBlock, '98');
+    assert.equal(result.revertedEvents, 0);
+    assert.deepEqual(calls, [
+      ['checkpoint', '100'],
+      ['candidates', { fromBlock: '90', toBlock: '100', checkpointHash: HASH }],
+      ['checkpoint', '98'], ['checkpoint', '99'],
+      ['rewind', {
+        nextBlock: '99', safeHead: '100', expectedVersion: 7,
+        checkpoint: { number: '98', hash: HASH_B },
+        requireCanonicalCheckpoint: true,
+      }],
+    ]);
+  });
+
+  it('bounds canonical ancestor search and fails closed below retained evidence', async () => {
+    let requested;
+    const ledger = {
+      getCursor: async () => ({
+        nextBlock: '2001', checkpointBlock: '2000', checkpointHash: HASH,
+        journalFloorBlock: '1', version: 7,
+      }),
+      listJournalBlockCheckpoints: async () => {
+        throw new Error('unexpected holder journal read');
+      },
+      listCanonicalBlockCheckpoints: async (input) => {
+        requested = input;
+        return [{ number: '1000', hash: HASH_B }];
+      },
+      getLiveCaptureScope: async () => { throw new Error('unexpected scope read'); },
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
+      appendCapturedRange: async () => { throw new Error('unexpected capture'); },
+      rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '2000' }),
+      matchesCheckpoint: async () => false,
+      readGlobalRange: async () => { throw new Error('unexpected read'); },
+    };
+    const result = await createRobinhoodHolderLiveCapture({
+      ledger, reader, sourceMode: 'canonical_journal',
+    }).captureOnce();
+
+    assert.deepEqual(requested, {
+      fromBlock: '1000', toBlock: '2000', checkpointHash: HASH,
+    });
+    assert.equal(result.status, 'reorg-unrecoverable');
+    assert.equal(result.reason, 'canonical-evidence-unavailable');
+  });
+
+  it('recaptures a shallow canonical reorg once after rewind', async () => {
+    let cursor = {
+      nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH,
+      journalFloorBlock: '90', version: 7,
+    };
+    let appends = 0;
+    const ledger = {
+      getCursor: async () => cursor,
+      listJournalBlockCheckpoints: async () => { throw new Error('unexpected journal read'); },
+      listCanonicalBlockCheckpoints: async () => [{ number: '99', hash: HASH_B }],
+      rewindOrphanedRange: async () => {
+        cursor = { ...cursor, nextBlock: '100', checkpointBlock: '99',
+          checkpointHash: HASH_B, version: 8 };
+        return { status: 'rewound', revertedEvents: 1, cursorVersion: 8 };
+      },
+      getLiveCaptureScope: async () => ({ tokenAddresses: [], coverageAudit: {} }),
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
+      appendCapturedRange: async () => {
+        appends += 1;
+        cursor = { ...cursor, nextBlock: '101', checkpointBlock: '100',
+          checkpointHash: HASH_C, version: 9 };
+        return { insertedTransfers: 0, cursorVersion: 9 };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '100' }),
+      matchesCheckpoint: async ({ number, hash }) => (
+        number === '99' || (number === '100' && hash === HASH_C)
+      ),
+      readGlobalRange: async () => ({
+        fromBlock: '100', toBlock: '100', nextBlock: '101',
+        checkpoint: { number: '100', hash: HASH_C },
+        scopeTokens: 0, transfers: [], telemetry: {},
+      }),
+    };
+    const capture = createRobinhoodHolderLiveCapture({
+      ledger, reader, sourceMode: 'canonical_journal',
+    });
+    assert.equal((await capture.captureOnce()).status, 'reorg-rewound');
+    assert.equal((await capture.captureOnce()).status, 'captured');
+    assert.equal((await capture.captureOnce()).status, 'idle');
+    assert.equal(appends, 1);
   });
 
   it('quarantines one malformed tracked token without advancing the live cursor', async () => {

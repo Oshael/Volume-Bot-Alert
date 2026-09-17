@@ -78,7 +78,7 @@ async function buildRuntime(options, deps = {}) {
   const bootstrap = resolveBootstrap(deps, database);
   const { reader } = source;
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
-    bootstrap, ledger, reader,
+    bootstrap, ledger, reader, sourceMode: source.sourceMode,
   });
   const handoffRepository = deps.handoffRepository
     || (deps.handoffRepositoryFactory || createRobinhoodHolderHandoffRepository)({ database });

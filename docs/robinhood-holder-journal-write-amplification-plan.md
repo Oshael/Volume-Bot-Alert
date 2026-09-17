@@ -282,6 +282,9 @@ o novo estado permanece apenas observacional.
 
 ### Corte 4 — reorg baseado no journal canônico de blocos
 
+Estado: implementado para `ROBINHOOD_HOLDER_LIVE_SOURCE=canonical_journal`.
+O modo `rpc` conserva a busca legada no holder journal como rollback operacional.
+
 Objetivo: tornar a descoberta do ancestral independente da densidade do holder
 journal, que passará a ser esparso.
 

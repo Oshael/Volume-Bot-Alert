@@ -75,10 +75,33 @@ function assertDependencies(ledger, reader) {
   }
 }
 
+const MAX_CANONICAL_REORG_DEPTH = 1000n;
+
+async function reorgCandidates(ledger, cursor, sourceMode) {
+  if (sourceMode !== 'canonical_journal') {
+    return ledger.listJournalBlockCheckpoints({
+      fromBlock: cursor.journalFloorBlock,
+      toBlock: (BigInt(cursor.checkpointBlock) - 1n).toString(),
+    });
+  }
+  if (typeof ledger.listCanonicalBlockCheckpoints !== 'function') {
+    throw new TypeError('holder canonical block checkpoints are required');
+  }
+  const checkpoint = BigInt(cursor.checkpointBlock);
+  const floor = BigInt(cursor.journalFloorBlock);
+  const boundedFloor = checkpoint - floor > MAX_CANONICAL_REORG_DEPTH
+    ? checkpoint - MAX_CANONICAL_REORG_DEPTH : floor;
+  return ledger.listCanonicalBlockCheckpoints({
+    fromBlock: boundedFloor.toString(), toBlock: checkpoint.toString(),
+    checkpointHash: cursor.checkpointHash,
+  });
+}
+
 function createRobinhoodHolderLiveCapture(options = {}) {
   const bootstrap = options.bootstrap || null;
   const ledger = options.ledger;
   const reader = options.reader;
+  const sourceMode = options.sourceMode || 'rpc';
   assertDependencies(ledger, reader);
 
   async function seedNewTokens(input) {
@@ -111,10 +134,7 @@ function createRobinhoodHolderLiveCapture(options = {}) {
             checkedCheckpoints: 0,
           });
         }
-        const candidates = await ledger.listJournalBlockCheckpoints({
-          fromBlock: cursor.journalFloorBlock,
-          toBlock: (BigInt(cursor.checkpointBlock) - 1n).toString(),
-        });
+        const candidates = await reorgCandidates(ledger, cursor, sourceMode);
         const located = await findLastCanonicalCheckpoint(reader, candidates);
         if (!located.canonical) {
           return Object.freeze({
@@ -128,6 +148,7 @@ function createRobinhoodHolderLiveCapture(options = {}) {
           nextBlock: (BigInt(located.canonical.number) + 1n).toString(),
           safeHead: head.safeHead, expectedVersion: cursor.version,
           checkpoint: located.canonical,
+          requireCanonicalCheckpoint: sourceMode === 'canonical_journal',
         });
         return Object.freeze({
           ...rewind, status: 'reorg-rewound',

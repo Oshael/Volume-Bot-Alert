@@ -72,6 +72,43 @@ async function observeReorgFenceMode(client, mode) {
 }
 
 describe('Robinhood holder ledger persistence', () => {
+  it('loads the old canonical block lineage even when the holder journal is sparse', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
+        chain varchar(16) NOT NULL, block_number bigint NOT NULL,
+        block_hash varchar(66) NOT NULL, parent_hash varchar(66) NOT NULL,
+        canonical boolean NOT NULL
+      )`);
+      await client.query(
+        `INSERT INTO robinhood_chain_blocks
+           (chain, block_number, block_hash, parent_hash, canonical)
+         VALUES ('robinhood', 98, $1, $5, true),
+                ('robinhood', 99, $2, $1, false),
+                ('robinhood', 100, $3, $2, false),
+                ('robinhood', 99, $4, $1, true),
+                ('robinhood', 100, $5, $4, true)`,
+        [HASH_B, HASH_C, HASH_A, HASH_D, HASH_E]
+      );
+      const repository = createRobinhoodHolderLedgerRepository({
+        database: { query: client.query.bind(client) },
+      });
+      assert.deepEqual(await repository.listCanonicalBlockCheckpoints({
+        fromBlock: '98', toBlock: '100', checkpointHash: HASH_A,
+      }), [
+        { number: '98', hash: HASH_B },
+        { number: '99', hash: HASH_C },
+      ]);
+      assert.deepEqual(await repository.listCanonicalBlockCheckpoints({
+        fromBlock: '98', toBlock: '100', checkpointHash: HASH_0,
+      }), []);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
   it('commits captures and atomically rewinds orphaned evidence in PostgreSQL', async () => {
     const client = await db.getClient();
     try {
@@ -822,9 +859,22 @@ describe('Robinhood holder ledger persistence', () => {
         `UPDATE robinhood_holder_cursors SET buffer_floor_block = 101`
       );
 
+      await client.query(`CREATE TEMP TABLE robinhood_chain_blocks
+        (LIKE public.robinhood_chain_blocks INCLUDING ALL)`);
+      await client.query(`INSERT INTO robinhood_chain_blocks
+        (chain, block_number, block_hash, parent_hash, capture_digest,
+         block_timestamp, head_observed_at, receipts_available_at, canonical)
+        VALUES ('robinhood', 99, $1, $2, $2, NOW(), NOW(), NOW(), false)`,
+      [HASH_B, HASH_A]);
+      await assert.rejects(repository.rewindOrphanedRange({
+        nextBlock: '100', safeHead: '199', expectedVersion: 1,
+        checkpoint: { number: '99', hash: HASH_B }, requireCanonicalCheckpoint: true,
+      }), (error) => error.code === 'holder_rewind_canonical_checkpoint_changed');
+      await client.query(`UPDATE robinhood_chain_blocks SET canonical = true`);
+
       const rewoundResult = await repository.rewindOrphanedRange({
         nextBlock: '100', safeHead: '199', expectedVersion: 1,
-        checkpoint: { number: '99', hash: HASH_B },
+        checkpoint: { number: '99', hash: HASH_B }, requireCanonicalCheckpoint: true,
       });
       const { publications, ...rewindSummary } = rewoundResult;
       assert.deepEqual(rewindSummary, {

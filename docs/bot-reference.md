@@ -2721,6 +2721,18 @@ por eventos ERC-20 `Transfer`, com apenas balances positivos, journal reversíve
 detecção automática de reorg e retenção padrão de 20.000 blocos. A Stage 119 é a
 fronteira de leitura: publica o ledger somente quando o token está `live` e há
 cursor, usando o summary Blockscout nos demais estados. Ela não duplica dados.
+No source live `canonical_journal`, a busca de ancestral de reorg parte do hash
+do checkpoint antigo do holder e segue `parent_hash` em `robinhood_chain_blocks`
+por até 1.000 blocos, respeitando também `journal_floor_block`. Ela independe de
+transfers do token nos blocos intermediários. Se não houver ancestral dentro da
+evidência retida, o worker bloqueia com `canonical-evidence-unavailable`; não
+avança o cursor nem aplica eventos. O ancestral é confirmado novamente sob lock
+na transação de rewind; mudança concorrente rejeita o rewind. O rollback de saldos
+continua usando apenas eventos `applied` do holder journal. No source `rpc`, a
+busca antiga pelo journal permanece disponível. Durante o rewind,
+`buffer_floor_block` é invalidado se estiver à frente do novo cursor, apenas
+para preservar a semântica do buffer
+legado; não é evidência de cobertura no futuro modo tracked-only.
 A captura persiste cada range do journal em um único bulk insert; duplicatas
 idênticas permanecem idempotentes e qualquer evidência conflitante aborta também
 o avanço atômico do cursor. A partir da Stage 141, ela consulta o tópico global e

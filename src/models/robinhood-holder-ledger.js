@@ -1563,6 +1563,20 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const rewind = normalizeRewind(input);
     await lockReorgFence(client, 'exclusive');
     await lockCursorForRewind(client, rewind);
+    if (input.requireCanonicalCheckpoint === true) {
+      const anchor = await client.query(
+        `SELECT 1 FROM robinhood_chain_blocks
+          WHERE chain = 'robinhood' AND canonical = TRUE
+            AND block_number = $1::bigint AND block_hash = $2
+          FOR SHARE`,
+        [rewind.checkpoint?.number ?? null, rewind.checkpoint?.hash ?? null]
+      );
+      if (!anchor.rowCount) {
+        const error = new Error('holder rewind ancestor is no longer canonical');
+        error.code = 'holder_rewind_canonical_checkpoint_changed';
+        throw error;
+      }
+    }
     const events = await loadOrphanedEvents(client, rewind.nextBlock);
     const applied = events.filter((row) => row.applied);
     for (const row of applied) await revertAppliedEvent(client, row);
@@ -1864,13 +1878,42 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     }));
   }
 
+  async function listCanonicalBlockCheckpoints(input = {}) {
+    const fromBlock = decimalQuantity(input.fromBlock, 'canonical.fromBlock');
+    const toBlock = decimalQuantity(input.toBlock, 'canonical.toBlock');
+    const checkpointHash = hex(input.checkpointHash, 32, 'canonical.checkpointHash');
+    if (BigInt(fromBlock) > BigInt(toBlock)) throw new Error('canonical range is inverted');
+    const result = await database.query(
+      `WITH RECURSIVE branch AS (
+         SELECT block_number, block_hash, parent_hash
+           FROM robinhood_chain_blocks
+          WHERE chain = $1 AND block_number = $3::bigint AND block_hash = $4
+         UNION ALL
+         SELECT parent.block_number, parent.block_hash, parent.parent_hash
+           FROM branch child
+           INNER JOIN robinhood_chain_blocks parent
+             ON parent.chain = $1 AND parent.block_hash = child.parent_hash
+            AND parent.block_number = child.block_number - 1
+          WHERE child.block_number > $2::bigint
+       )
+       SELECT block_number, block_hash FROM branch
+        WHERE block_number < $3::bigint
+        ORDER BY block_number`,
+      [CHAIN, fromBlock, toBlock, checkpointHash]
+    );
+    return Object.freeze(result.rows.map((row) => Object.freeze({
+      number: decimalQuantity(row.block_number, 'canonical.blockNumber'),
+      hash: hex(row.block_hash, 32, 'canonical.blockHash'),
+    })));
+  }
+
   return Object.freeze({
     appendCapturedRange, applyNextPendingEvent, promoteReadyShadowTokens,
     inspectDriftedAppliedTail, repairCapturedRange, requeueWideShadowTail,
     rollbackAppliedTail, rollbackDriftedAppliedTail,
     rewindOrphanedRange, rewindOrphanedRangeInTransaction,
     getCursor, getHotQueueFreshness, listHotPendingTokenAddresses,
-    listJournalBlockCheckpoints, listPendingTokenAddresses,
+    listJournalBlockCheckpoints, listCanonicalBlockCheckpoints, listPendingTokenAddresses,
     getLiveCaptureScope, listTrackedTokenAddresses,
     quarantineMalformedToken,
   });
