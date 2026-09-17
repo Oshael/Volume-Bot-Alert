@@ -6378,6 +6378,21 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage234-robinhood-holder-coverage-guard',
+    name: 'Stage 234 Robinhood holder tracked coverage guard',
+    repair: 'node src/utils/db-init-stage234.js',
+    tables: [{
+      table: 'robinhood_holder_token_states',
+      triggers: [{
+        name: 'trg_rh_holder_zz_coverage_guard',
+        includes: [
+          'BEFORE INSERT OR UPDATE', 'enforce_robinhood_holder_coverage_contract',
+          'ledger_status', 'tail_capture_from_block', 'coverage_generation',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -6514,6 +6529,26 @@ function collectMissingIndexes(requirement, tableIndexes) {
   });
 }
 
+function collectMissingTriggers(requirement, tableTriggers) {
+  return (requirement.triggers || []).flatMap((trigger) => {
+    const definition = tableTriggers.get(trigger.name);
+    if (!definition) return [`${requirement.table}.${trigger.name}`];
+    const missing = (trigger.includes || []).filter((part) => !definition.includes(String(part)));
+    return missing.length > 0
+      ? [`${requirement.table}.${trigger.name} missing ${missing.join('/')}`]
+      : [];
+  });
+}
+
+const SCHEMA_ISSUE_FIELDS = Object.freeze([
+  'missingTables', 'missingColumns', 'missingConstraints', 'missingIndexes',
+  'missingTriggers', 'mismatchedDefaults', 'mismatchedColumnTypes',
+]);
+
+function hasSchemaIssues(issue) {
+  return SCHEMA_ISSUE_FIELDS.some((field) => issue[field].length > 0);
+}
+
 async function loadSchemaSnapshot(tableNames) {
   const normalized = [...new Set(tableNames.map((table) => String(table || '').trim()).filter(Boolean))];
   if (normalized.length === 0) {
@@ -6524,10 +6559,11 @@ async function loadSchemaSnapshot(tableNames) {
       defaultsByTable: new Map(),
       columnTypesByTable: new Map(),
       indexesByTable: new Map(),
+      triggersByTable: new Map(),
     };
   }
 
-  const [tableResult, columnResult, constraintResult, indexResult] = await Promise.all([
+  const [tableResult, columnResult, constraintResult, indexResult, triggerResult] = await Promise.all([
     query(
       `SELECT table_name
        FROM information_schema.tables
@@ -6562,6 +6598,16 @@ async function loadSchemaSnapshot(tableNames) {
          AND tablename = ANY($1::text[])`,
       [normalized]
     ),
+    query(
+      `SELECT rel.relname AS table_name, trg.tgname AS trigger_name,
+              pg_get_triggerdef(trg.oid) AS trigger_definition
+         FROM pg_trigger trg
+         INNER JOIN pg_class rel ON rel.oid = trg.tgrelid
+         INNER JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE nsp.nspname = 'public' AND NOT trg.tgisinternal
+          AND rel.relname = ANY($1::text[])`,
+      [normalized]
+    ),
   ]);
 
   const tables = new Set(tableResult.rows.map((row) => row.table_name));
@@ -6570,6 +6616,7 @@ async function loadSchemaSnapshot(tableNames) {
   const defaultsByTable = new Map();
   const columnTypesByTable = new Map();
   const indexesByTable = new Map();
+  const triggersByTable = new Map();
   for (const row of columnResult.rows) {
     if (!columnsByTable.has(row.table_name)) {
       columnsByTable.set(row.table_name, new Set());
@@ -6603,9 +6650,14 @@ async function loadSchemaSnapshot(tableNames) {
     indexesByTable.get(row.table_name).set(row.index_name, row.index_definition || '');
   }
 
+  for (const row of triggerResult.rows) {
+    if (!triggersByTable.has(row.table_name)) triggersByTable.set(row.table_name, new Map());
+    triggersByTable.get(row.table_name).set(row.trigger_name, row.trigger_definition || '');
+  }
+
   return {
     tables, columnsByTable, constraintsByTable, defaultsByTable,
-    columnTypesByTable, indexesByTable,
+    columnTypesByTable, indexesByTable, triggersByTable,
   };
 }
 
@@ -6617,6 +6669,7 @@ function buildSchemaReport(groups, snapshot) {
     const missingColumns = [];
     const missingConstraints = [];
     const missingIndexes = [];
+    const missingTriggers = [];
     const mismatchedDefaults = [];
     const mismatchedColumnTypes = [];
 
@@ -6645,28 +6698,16 @@ function buildSchemaReport(groups, snapshot) {
       missingConstraints.push(...collectMissingConstraints(requirement, tableConstraints));
       const tableIndexes = snapshot.indexesByTable.get(tableName) || new Map();
       missingIndexes.push(...collectMissingIndexes(requirement, tableIndexes));
+      const tableTriggers = snapshot.triggersByTable.get(tableName) || new Map();
+      missingTriggers.push(...collectMissingTriggers(requirement, tableTriggers));
     }
 
-    if (
-      missingTables.length > 0
-      || missingColumns.length > 0
-      || missingConstraints.length > 0
-      || missingIndexes.length > 0
-      || mismatchedDefaults.length > 0
-      || mismatchedColumnTypes.length > 0
-    ) {
-      issues.push({
-        key: group.key,
-        name: group.name,
-        repair: group.repair,
-        missingTables,
-        missingColumns,
-        missingConstraints,
-        missingIndexes,
-        mismatchedDefaults,
-        mismatchedColumnTypes,
-      });
-    }
+    const issue = {
+      key: group.key, name: group.name, repair: group.repair,
+      missingTables, missingColumns, missingConstraints, missingIndexes, missingTriggers,
+      mismatchedDefaults, mismatchedColumnTypes,
+    };
+    if (hasSchemaIssues(issue)) issues.push(issue);
   }
 
   return {
@@ -6697,6 +6738,9 @@ function createRuntimeSchemaError(report, profile = 'runtime') {
     }
     if (issue.missingIndexes.length > 0) {
       lines.push(`  Missing indexes: ${summarizeList(issue.missingIndexes).join(', ')}`);
+    }
+    if (issue.missingTriggers.length > 0) {
+      lines.push(`  Missing triggers: ${summarizeList(issue.missingTriggers).join(', ')}`);
     }
     if (issue.mismatchedDefaults.length > 0) {
       lines.push(`  Mismatched defaults: ${summarizeList(issue.mismatchedDefaults).join(', ')}`);

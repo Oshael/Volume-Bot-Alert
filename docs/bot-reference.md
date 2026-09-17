@@ -3306,6 +3306,16 @@ elegível e nenhum pending até o checkpoint do state. `--apply` reancora esse
 manifesto sob locks da policy e do token; `drifted`, `backfilling`, tail presente,
 manifesto ausente/atual ou prova incompleta falham fechados. Não combinar a
 operação com `--limit`, `--restart` ou `--repair-missing`.
+Antes de implementar ou ativar captura tracked-only, aplique
+`node src/utils/db-init-stage234.js` e confirme `npm run db:schema-check`. A
+Stage 234 instala o fence central. Em policy `legacy`, a validação de cobertura
+continua inativa, mas ingressos já travam o cursor para serializar um futuro
+flip. Em policy `tracked`, todo ingresso em `backfilling/shadow/live` exige tail
+durável; apenas
+`shadow/live` pode usar manifesto da geração atual. Ingresso novo, retorno de
+status fora desse conjunto ou troca do tail trava o cursor live e exige
+`tail_capture_from_block >= cursor.next_block`. A ordem para flip/rollback é
+sempre cursor live antes da policy, permitindo que o trigger serialize admissões.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
