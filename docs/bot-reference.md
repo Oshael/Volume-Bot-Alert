@@ -3290,6 +3290,10 @@ faz rollback sem avançar o cursor. Depois de uma passagem completa, somente
 `--apply --restart` inicia outra passagem. Não automatizar nem executar a carga
 de produção sem revisar primeiro o preview e autorizar sua cadência. A auditoria
 legada expõe `manifestCoverage` com linhas atuais, ausentes, stale e invalidadas.
+Checkpoint presente na retenção raw precisa coincidir com um bloco canônico;
+checkpoint anterior ao `rawFloorBlock` pode identificar o baseline operacional,
+mas não constitui prova de replay histórico. Floor ausente ou checkpoint sem
+correspondência dentro da retenção permanece inelegível.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.

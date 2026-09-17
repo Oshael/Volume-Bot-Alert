@@ -12,7 +12,8 @@ function state(overrides = {}) {
     ledger_status: 'shadow', deployment_block: '100', backfill_next_block: '100',
     live_through_block: null, live_through_hash: null, holder_count: '0',
     buffer_floor_block: '90', journal_floor_block: '95', next_block: '200',
-    checkpoint_canonical: null, pending_before_deployment: false, ...overrides,
+    raw_floor_block: '80', checkpoint_canonical: null,
+    pending_before_deployment: false, ...overrides,
   };
 }
 
@@ -30,6 +31,14 @@ it('accepts only durable legacy baselines', () => {
   assert.equal(eligibility(state({ live_through_block: '150',
     live_through_hash: `0x${'a'.repeat(64)}`, checkpoint_canonical: false })),
   'noncanonical_checkpoint');
+  assert.equal(eligibility(state({ live_through_block: '70',
+    live_through_hash: `0x${'a'.repeat(64)}`, checkpoint_canonical: null })), null);
+  assert.equal(eligibility(state({ live_through_block: '80',
+    live_through_hash: `0x${'a'.repeat(64)}`, checkpoint_canonical: null })),
+  'missing_retained_checkpoint');
+  assert.equal(eligibility(state({ live_through_block: '70', raw_floor_block: null,
+    live_through_hash: `0x${'a'.repeat(64)}`, checkpoint_canonical: null })),
+  'missing_raw_floor');
 });
 
 it('is preview-only by default and bounds every batch', () => {

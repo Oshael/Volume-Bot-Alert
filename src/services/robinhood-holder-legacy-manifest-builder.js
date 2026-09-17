@@ -11,7 +11,13 @@ function eligibility(row) {
   if (row.deployment_block == null || row.backfill_next_block == null) return 'missing_baseline';
   const hasBlock = row.live_through_block != null;
   if (hasBlock !== (row.live_through_hash != null)) return 'incoherent_checkpoint';
-  if (hasBlock) return row.checkpoint_canonical === true ? null : 'noncanonical_checkpoint';
+  if (hasBlock) {
+    if (row.checkpoint_canonical === true) return null;
+    if (row.checkpoint_canonical === false) return 'noncanonical_checkpoint';
+    if (row.raw_floor_block == null) return 'missing_raw_floor';
+    return BigInt(row.live_through_block) < BigInt(row.raw_floor_block)
+      ? null : 'missing_retained_checkpoint';
+  }
   if (row.ledger_status !== 'shadow') return 'live_without_checkpoint';
   if (String(row.holder_count) !== '0') return 'shadow_nonzero_holders';
   if (String(row.backfill_next_block) !== String(row.deployment_block)) return 'shadow_cursor_moved';
@@ -26,6 +32,7 @@ const CANDIDATES_SQL = `SELECT state.token_address, state.coverage_generation,
     state.ledger_status, state.deployment_block, state.backfill_next_block,
     state.live_through_block, state.live_through_hash, state.holder_count,
     cursor.next_block, cursor.journal_floor_block, cursor.buffer_floor_block,
+    raw.raw_floor_block,
     block.canonical AS checkpoint_canonical,
     EXISTS (SELECT 1 FROM robinhood_holder_transfer_journal journal
       WHERE journal.chain=state.chain AND journal.token_address=state.token_address
@@ -33,6 +40,8 @@ const CANDIDATES_SQL = `SELECT state.token_address, state.coverage_generation,
       AS pending_before_deployment
   FROM robinhood_holder_token_states state
   JOIN robinhood_holder_cursors cursor ON cursor.chain=state.chain AND cursor.stream='live'
+  CROSS JOIN (SELECT MIN(block_number) AS raw_floor_block FROM robinhood_chain_blocks
+    WHERE chain=$1 AND canonical=TRUE) raw
   LEFT JOIN robinhood_chain_blocks block ON block.chain=state.chain
     AND block.block_number=state.live_through_block AND block.block_hash=state.live_through_hash
  WHERE state.chain=$1 AND state.ledger_status IN ('live','shadow')
