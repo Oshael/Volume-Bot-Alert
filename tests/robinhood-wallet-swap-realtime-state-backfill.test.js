@@ -15,6 +15,7 @@ test('wallet-swap state backfill CLI is bounded and preview-first', () => {
   assert.throws(() => parseArgs(['--restart']), /unknown argument/);
   assert.doesNotMatch(batchSql(false), /INSERT INTO robinhood_wallet_swap_realtime_states/);
   assert.match(batchSql(true), /ON CONFLICT \(chain, transaction_hash/);
+  assert.match(batchSql(true), /WHERE state\.chain IS NULL/);
   assert.doesNotMatch(batchSql(true), /payload/);
 
   const group = SCHEMA_GROUPS.find(({ key }) => (

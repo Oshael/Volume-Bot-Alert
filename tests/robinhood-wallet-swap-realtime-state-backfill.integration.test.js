@@ -68,3 +68,24 @@ test('backfill resumes by key, repairs missing shadow state and proves batch par
     block_number: '124', status: 'pending', audit_status: 'pending',
   }]);
 });
+
+test('backfill skips an existing state even while a live writer holds its row lock', async () => {
+  await db.query(`UPDATE ${stage237.PROGRESS_TABLE} SET
+    after_transaction_hash=$2, after_log_index=0, after_block_hash=$3,
+    after_event_kind='observed', scanned=0, inserted=0,
+    completed_at=NULL, updated_at=NOW() WHERE chain=$1`,
+  ['robinhood', PREVIOUS_TX, BLOCK]);
+  const locker = await db.getClient();
+  try {
+    await locker.query('BEGIN');
+    await locker.query(`UPDATE ${stage236.STATE_TABLE} SET updated_at=updated_at
+      WHERE transaction_hash=$1 AND log_index=$2`, [TX, LOG_INDEX]);
+    const applied = await runBatch({ apply: true, limit: 1 }, { database: db });
+    assert.equal(applied.inserted, 0);
+    assert.equal(applied.missing, 0);
+    assert.equal(applied.divergent, 0);
+  } finally {
+    await locker.query('ROLLBACK');
+    locker.release();
+  }
+});

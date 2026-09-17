@@ -43,7 +43,9 @@ function batchSql(apply) {
   const sourceColumns = COLUMNS.map((column) => `source.${column}`).join(', ');
   const insertion = apply ? `, inserted AS (
     INSERT INTO ${STATE_TABLE} (${COLUMNS.join(', ')})
-    SELECT ${COLUMNS.join(', ')} FROM batch
+    SELECT ${COLUMNS.map((column) => `batch.${column}`).join(', ')} FROM batch
+    LEFT JOIN ${STATE_TABLE} state USING (${KEYS.join(', ')})
+    WHERE state.chain IS NULL
     ON CONFLICT (${KEYS.join(', ')}) DO NOTHING RETURNING 1
   )` : '';
   return `WITH batch AS MATERIALIZED (
