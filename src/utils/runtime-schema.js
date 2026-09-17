@@ -6424,6 +6424,46 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage236-robinhood-wallet-swap-realtime-state-shadow',
+    name: 'Stage 236 Robinhood wallet-swap realtime state shadow',
+    repair: 'node src/utils/db-init-stage236.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_states',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'block_hash', 'event_kind',
+        'block_number', 'transaction_index', 'status', 'lease_owner', 'lease_until',
+        'attempt_count', 'next_attempt_at', 'published_at', 'last_error',
+        'audit_status', 'audit_lease_owner', 'audit_lease_until', 'audit_attempt_count',
+        'audit_next_attempt_at', 'audited_at', 'audit_last_error', 'terminalized_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_swap_realtime_states_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'transaction_hash', 'log_index', 'block_hash', 'event_kind',
+        ],
+      }, {
+        name: 'rh_wallet_swap_realtime_states_source_fkey',
+        includes: ['FOREIGN KEY', 'robinhood_wallet_swap_realtime_outbox', 'ON DELETE CASCADE'],
+      }, {
+        name: 'rh_wallet_swap_realtime_states_publication_check',
+        includes: ['status', 'lease_owner', 'lease_until', 'published_at'],
+      }, {
+        name: 'rh_wallet_swap_realtime_states_audit_check',
+        includes: ['audit_status', 'audit_lease_owner', 'audit_lease_until', 'audited_at'],
+      }],
+    }, {
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      triggers: [{
+        name: 'trg_rh_wallet_swap_realtime_state_sync',
+        includes: [
+          'AFTER INSERT OR UPDATE', 'sync_robinhood_wallet_swap_realtime_state',
+          'audit_status', 'terminalized_at',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

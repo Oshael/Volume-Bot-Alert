@@ -1050,6 +1050,16 @@ Não remova `idx_rh_wallet_swap_realtime_outbox_claim` no mesmo rollout: primeir
 confirme por `EXPLAIN` o uso do índice novo e meça a latência do claim. A Stage 230
 não cria tabela nem duplica payload; durante a validação, porém, os dois índices
 coexistem e consomem espaço.
+
+A Stage 236 inicia a separação do payload imutável e do estado mutável dessa outbox. Rode
+`node src/utils/db-init-stage236.js` antes de qualquer corte que leia
+`robinhood_wallet_swap_realtime_states`. A tabela nova não contém `payload`; um trigger transacional
+espelha inserts e mudanças de lease, auditoria, publicação e terminalização da Stage 204. Neste
+estágio ela é apenas shadow: a Stage 204 continua sendo a autoridade e todos os consumidores seguem
+lendo e escrevendo a tabela antiga. O trigger também replica deletes por `ON DELETE CASCADE`.
+Enquanto o shadow estiver ativo há custo temporário de dual-write; não remova o trigger nem use a
+tabela shadow como autoridade antes de concluir o backfill e a paridade operacional.
+
 Em ambiente pré-lançamento, `ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED=true` admite todas
 as sessões, inclusive anônimas, nessa mesma sala. O default permanece `false`; essa flag controla
 somente a audiência, enquanto `...OBSERVED_ENABLED` continua controlando a produção dos eventos.
