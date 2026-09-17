@@ -9,7 +9,9 @@ const {
 function parseArgs(argv = []) {
   const values = {};
   for (const argument of argv) {
-    const match = String(argument).match(/^--(apply|restart|repair-missing|limit)(?:=(.*))?$/);
+    const match = String(argument).match(
+      /^--(apply|restart|repair-missing|limit|reanchor-token)(?:=(.*))?$/
+    );
     if (!match) throw new Error(`unknown argument: ${argument}`);
     values[match[1]] = match[2] ?? 'true';
   }
@@ -23,7 +25,15 @@ function parseArgs(argv = []) {
   const restart = values.restart === 'true';
   const repairMissing = values['repair-missing'] === 'true';
   if (restart && repairMissing) throw new Error('--restart cannot be combined with --repair-missing');
-  return Object.freeze({ apply: values.apply === 'true', restart, repairMissing, limit });
+  const reanchorToken = values['reanchor-token']?.toLowerCase() || null;
+  if (reanchorToken && !/^0x[0-9a-f]{40}$/.test(reanchorToken)) {
+    throw new Error('--reanchor-token must be a 20-byte hex address');
+  }
+  if (reanchorToken && (restart || repairMissing || values.limit != null)) {
+    throw new Error('--reanchor-token cannot be combined with --restart, --repair-missing or --limit');
+  }
+  return Object.freeze({ apply: values.apply === 'true', restart, repairMissing, limit,
+    reanchorToken });
 }
 
 async function main(argv = process.argv.slice(2), deps = {}) {
@@ -32,7 +42,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     database: deps.database || db,
   });
   try {
-    const result = await builder.batch(options);
+    const result = options.reanchorToken
+      ? await builder.reanchor({ tokenAddress: options.reanchorToken, apply: options.apply })
+      : await builder.batch(options);
     (deps.logger || console).log(JSON.stringify(result, null, 2));
     return result;
   } finally {

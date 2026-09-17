@@ -112,10 +112,21 @@ it('builds generation zero idempotently and rejects a concurrent reset generatio
 
     await client.query(`UPDATE robinhood_holder_token_states SET ledger_status='drifted'
       WHERE token_address=$1`, [TOKEN]);
+    const rejectedReanchor = await builder.reanchor({ tokenAddress: TOKEN });
+    assert.equal(rejectedReanchor.reason, 'state_not_reanchorable');
     await client.query(`UPDATE robinhood_holder_token_states SET ledger_status='shadow'
       WHERE token_address=$1`, [TOKEN]);
     await assert.rejects(builder.batch({ apply: true, restart: true, limit: 10 }),
       /manifest conflict/);
+    const reanchorPreview = await builder.reanchor({ tokenAddress: TOKEN });
+    assert.equal(reanchorPreview.eligible, true);
+    assert.equal(reanchorPreview.updated, false);
+    const reanchored = await builder.reanchor({ tokenAddress: TOKEN, apply: true });
+    assert.equal(reanchored.updated, true);
+    assert.equal((await client.query(`SELECT coverage_generation FROM
+      robinhood_holder_legacy_coverage_manifest WHERE token_address=$1`, [TOKEN])).rows[0]
+      .coverage_generation, '1');
+    assert.equal((await builder.reanchor({ tokenAddress: TOKEN })).reason, 'manifest_current');
   } finally {
     await client.query('ROLLBACK');
     client.release();

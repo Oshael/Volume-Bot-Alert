@@ -90,6 +90,50 @@ async function prepare(client, apply, restart) {
   return progress;
 }
 
+function reanchorSql(apply) {
+  const lock = apply ? ' FOR UPDATE OF state' : '';
+  return `WITH candidate AS MATERIALIZED (
+    SELECT state.* FROM robinhood_holder_token_states state
+     WHERE state.chain=$1 AND state.token_address=$2${lock}
+  )
+  SELECT state.token_address, state.coverage_generation,
+    state.ledger_status, state.tail_capture_from_block,
+    state.deployment_block, state.backfill_next_block,
+    state.live_through_block, state.live_through_hash, state.holder_count,
+    manifest.coverage_generation AS manifest_generation,
+    cursor.next_block, cursor.journal_floor_block, cursor.buffer_floor_block,
+    raw.raw_floor_block, block.canonical AS checkpoint_canonical,
+    EXISTS (SELECT 1 FROM robinhood_holder_transfer_journal journal
+      WHERE journal.chain=state.chain AND journal.token_address=state.token_address
+        AND journal.applied=FALSE AND journal.block_number < state.deployment_block)
+      AS pending_before_deployment,
+    EXISTS (SELECT 1 FROM robinhood_holder_transfer_journal journal
+      WHERE journal.chain=state.chain AND journal.token_address=state.token_address
+        AND journal.applied=FALSE AND state.live_through_block IS NOT NULL
+        AND journal.block_number <= state.live_through_block)
+      AS pending_at_or_before_state
+  FROM candidate state
+  JOIN robinhood_holder_cursors cursor ON cursor.chain=state.chain AND cursor.stream='live'
+  LEFT JOIN ${MANIFEST} manifest ON manifest.chain=state.chain
+    AND manifest.token_address=state.token_address
+  CROSS JOIN (SELECT MIN(block_number) AS raw_floor_block FROM robinhood_chain_blocks
+    WHERE chain=$1 AND canonical=TRUE) raw
+  LEFT JOIN robinhood_chain_blocks block ON block.chain=state.chain
+    AND block.block_number=state.live_through_block AND block.block_hash=state.live_through_hash`;
+}
+
+function reanchorDecision(row) {
+  if (!row) return 'token_not_found';
+  if (!['live', 'shadow'].includes(row.ledger_status)
+      || row.tail_capture_from_block != null) return 'state_not_reanchorable';
+  if (row.manifest_generation == null) return 'manifest_missing';
+  if (String(row.manifest_generation) === String(row.coverage_generation)) {
+    return 'manifest_current';
+  }
+  if (row.pending_at_or_before_state) return 'pending_at_or_before_state';
+  return eligibility(row);
+}
+
 async function persist(client, states, accepted, byToken, progress, repairMissing) {
   const missing = accepted.filter((row) => !byToken.has(row.token_address));
   let inserted = 0;
@@ -132,6 +176,45 @@ function summarize(states, accepted, existing, inserted, progress, apply, repair
 
 function createRobinhoodHolderLegacyManifestBuilder(options = {}) {
   const database = options.database || db;
+  async function reanchor({ tokenAddress, apply = false } = {}) {
+    const client = await database.getClient();
+    try {
+      await client.query(apply ? 'BEGIN' : 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await client.query("SET LOCAL statement_timeout = '15s'");
+      await client.query("SET LOCAL lock_timeout = '1s'");
+      const lock = apply ? ' FOR UPDATE' : '';
+      const policy = (await client.query(
+        `SELECT capture_mode FROM robinhood_holder_capture_policy WHERE chain=$1${lock}`,
+        [CHAIN]
+      )).rows[0];
+      if (policy?.capture_mode !== 'legacy') throw new Error('legacy capture policy is required');
+      const row = (await client.query(reanchorSql(apply), [CHAIN, tokenAddress])).rows[0];
+      const reason = reanchorDecision(row);
+      let updated = false;
+      if (apply && reason == null) {
+        const result = await client.query(`UPDATE ${MANIFEST} SET
+          coverage_generation=$3, baseline_status=$4,
+          baseline_deployment_block=$5, baseline_backfill_next_block=$6,
+          baseline_live_through_block=$7, baseline_live_through_hash=$8,
+          baseline_holder_count=$9, prepared_at=NOW()
+          WHERE chain=$1 AND token_address=$2 AND coverage_generation=$10`,
+        [...manifestValues(row), row.manifest_generation]);
+        if (result.rowCount !== 1) throw new Error('concurrent manifest conflict');
+        updated = true;
+      }
+      if (apply) await client.query('COMMIT');
+      else await client.query('ROLLBACK');
+      return { mode: `reanchor-${apply ? 'apply' : 'preview'}`, tokenAddress,
+        status: row?.ledger_status || null,
+        stateGeneration: row == null ? null : Number(row.coverage_generation),
+        manifestGeneration: row?.manifest_generation == null
+          ? null : Number(row.manifest_generation),
+        eligible: reason == null, reason, updated };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally { client.release(); }
+  }
   async function batch({
     limit = 100, apply = false, restart = false, repairMissing = false,
   } = {}) {
@@ -169,7 +252,10 @@ function createRobinhoodHolderLegacyManifestBuilder(options = {}) {
       throw error;
     } finally { client.release(); }
   }
-  return Object.freeze({ batch });
+  return Object.freeze({ batch, reanchor });
 }
 
-module.exports = { candidateSql, createRobinhoodHolderLegacyManifestBuilder, eligibility };
+module.exports = {
+  candidateSql, createRobinhoodHolderLegacyManifestBuilder, eligibility,
+  reanchorDecision, reanchorSql,
+};

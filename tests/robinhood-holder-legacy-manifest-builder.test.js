@@ -5,7 +5,7 @@ const { it } = require('node:test');
 const stage233 = require('../src/utils/db-init-stage233');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
-  candidateSql, eligibility,
+  candidateSql, eligibility, reanchorDecision, reanchorSql,
 } = require('../src/services/robinhood-holder-legacy-manifest-builder');
 const { parseArgs } = require('../src/utils/build-robinhood-holder-legacy-manifest');
 
@@ -45,17 +45,37 @@ it('accepts only durable legacy baselines', () => {
 
 it('is preview-only by default and bounds every batch', () => {
   assert.deepEqual(parseArgs([]), {
-    apply: false, restart: false, repairMissing: false, limit: 100,
+    apply: false, restart: false, repairMissing: false, limit: 100, reanchorToken: null,
   });
   assert.deepEqual(parseArgs(['--apply', '--limit=1000']),
-    { apply: true, restart: false, repairMissing: false, limit: 1000 });
+    { apply: true, restart: false, repairMissing: false, limit: 1000,
+      reanchorToken: null });
   assert.deepEqual(parseArgs(['--apply', '--repair-missing']),
-    { apply: true, restart: false, repairMissing: true, limit: 100 });
+    { apply: true, restart: false, repairMissing: true, limit: 100,
+      reanchorToken: null });
+  assert.deepEqual(parseArgs([`--reanchor-token=0x${'A'.repeat(40)}`]),
+    { apply: false, restart: false, repairMissing: false, limit: 100,
+      reanchorToken: `0x${'a'.repeat(40)}` });
   assert.throws(() => parseArgs(['--restart', '--repair-missing']), /cannot be combined/);
+  assert.throws(() => parseArgs([`--reanchor-token=0x${'a'.repeat(40)}`, '--limit=1']),
+    /cannot be combined/);
+  assert.throws(() => parseArgs(['--reanchor-token=0x1234']), /20-byte/);
   assert.throws(() => parseArgs(['--limit=1001']), /between 1 and 1000/);
   assert.throws(() => parseArgs(['--write']), /unknown argument/);
   assert.match(candidateSql(true, false), /MATERIALIZED[\s\S]+FOR UPDATE OF state/);
   assert.match(candidateSql(false, true), /NOT EXISTS[\s\S]+legacy_coverage_manifest/);
+  assert.match(reanchorSql(true), /MATERIALIZED[\s\S]+FOR UPDATE OF state/);
+});
+
+it('reanchors only stale, settled legacy states', () => {
+  const stale = state({ ledger_status: 'shadow', tail_capture_from_block: null,
+    coverage_generation: '2', manifest_generation: '1', pending_at_or_before_state: false });
+  assert.equal(reanchorDecision(stale), null);
+  assert.equal(reanchorDecision({ ...stale, ledger_status: 'backfilling' }),
+    'state_not_reanchorable');
+  assert.equal(reanchorDecision({ ...stale, manifest_generation: '2' }), 'manifest_current');
+  assert.equal(reanchorDecision({ ...stale, pending_at_or_before_state: true }),
+    'pending_at_or_before_state');
 });
 
 it('defines a durable cursor and permits the observed initial generation', () => {

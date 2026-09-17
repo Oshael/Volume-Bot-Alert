@@ -3299,6 +3299,13 @@ checkpoints, evitando misturar uma atualização live concorrente com joins da
 snapshot anterior. `--repair-missing` examina somente states sem manifesto até
 o cursor já percorrido e não altera esse cursor; é preview por default e também
 exige `--apply` para gravar reparos confirmados.
+Um manifesto stale após recuperação individual não deve ser atualizado em massa.
+`--reanchor-token=0x...` faz preview de exatamente um token e só aceita state
+legado `live/shadow`, manifesto existente de geração anterior, checkpoint
+elegível e nenhum pending até o checkpoint do state. `--apply` reancora esse
+manifesto sob locks da policy e do token; `drifted`, `backfilling`, tail presente,
+manifesto ausente/atual ou prova incompleta falham fechados. Não combinar a
+operação com `--limit`, `--restart` ou `--repair-missing`.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
