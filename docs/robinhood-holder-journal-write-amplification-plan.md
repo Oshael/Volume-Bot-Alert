@@ -161,7 +161,9 @@ Nenhum corte pode avançar sem preservar estes contratos:
 5. Handoff exige `backfill_next_block >= tail_capture_from_block` e checkpoint
    canônico compatível; ausência de qualquer evidência bloqueia promoção.
 6. Estados existentes não recebem uma fronteira inventada. Migração só grava
-   valores comprováveis ou mantém o caminho legado.
+   valores comprováveis ou mantém o caminho legado. Um estado já promovido pode
+   usar uma exceção explícita de baseline legada, mas ela não equivale a replay
+   histórico comprovado e não pode ser inferida apenas de `tail=NULL`.
 7. Tokens de cohort global só entram no conjunto live depois do
    `barrier_block`, preservando o fence atual.
 8. O ancestral de reorg é localizado em `robinhood_chain_blocks`, inclusive
@@ -311,6 +313,16 @@ universal; não ativar tracked-only antes deste corte estar validado.
 Estado: auditoria read-only implementada; gate operacional ainda depende de
 amostras completas e observação em vários ciclos antes do Corte 6.
 
+A primeira execução em produção encontrou `missing=excess=divergent=0`, mas
+`samples=[]` e `ready=false`; esses zeros não demonstram paridade. Entre estados
+ativos havia 362.703 `live`, 1.975 `shadow` e 3 `backfilling` com tail `NULL`,
+nenhum tail incoerente. Só um `live` e um `shadow` tinham tail, e nenhum se
+qualificou para a amostra de histórico completo. O gate atual bloqueia
+corretamente o flip, mas não distingue a população promovida antes da Stage 231
+das admissões novas. Não preencher tails em massa a partir de `deployment_block`,
+`live_through_block` ou do cursor atual: isso alegaria cobertura histórica não
+comprovada.
+
 Objetivo: provar que o novo caminho produz o mesmo estado antes de torná-lo
 autoridade.
 
@@ -331,9 +343,67 @@ Executar ainda com buffer universal:
 Aceite: zero missing, excess e divergent nas amostras/auditoria definidas, sem
 promoção indevida e sem regressão do live.
 
+### Corte 5A — contrato de transição para estados legados (antes do Corte 6)
+
+Estado: **não implementado**. É um novo corte necessário pelos dados de produção;
+o Corte 6 original não pode ser ativado somente mudando a flag. Este corte deve
+ser fatiado em commits de até 500 linhas, com schema e integração próprios.
+
+Separar três populações, sem converter `NULL` em prova de replay:
+
+1. Novas admissões e coortes materializadas: conservar o contrato de tail
+   durável, replay até a fronteira e handoff atual. Tail ausente/incoerente falha
+   fechado. Coortes globais ainda `active` devem entrar na auditoria do escopo
+   live, mesmo antes de possuírem linha em `token_states`.
+2. `live`/`shadow` anteriores à Stage 231: permitir continuidade a partir de
+   um baseline **explicitamente identificado**, não de uma história reconstituída.
+   O journal universal já captura seus eventos; o switch tracked-only deve
+   preservar esses tokens no escopo e começar somente após um cursor/checkpoint
+   canônico verificado. A exceção precisa ser durável, identificável por token,
+   e invalidada em reset/rebackfill/reorg que atravesse sua âncora. Não usar
+   apenas `created_at`, status ou `tail=NULL` para identificá-la.
+3. Os 3 `backfilling` legados com tail `NULL`: mantê-los no modo universal até
+   handoff comprovado ou recuperá-los individualmente por replay histórico com
+   fronteira nova capturada sob fence. Sem uma dessas provas, não há flip.
+
+Antes de escolher a representação da exceção, medir a integridade do cohort
+legado: status, `deployment_block`, `backfill_next_block`,
+`live_through_block/hash`, pendências até o checkpoint, estados em
+`drifted/resyncing`, coortes globais ativas e distribuição de idade/volume.
+Executar diagnósticos read-only e limitados; não atualizar 364 mil linhas para
+"sanear" o gate. A escolha entre marcador por estado e manifesto durável de
+cohort deve incluir custo de escrita, concorrência e invalidação em reorg.
+
+O novo gate deve ter provas separadas: para tokens com tail, paridade desde o
+deployment como hoje; para o cohort legado promovido, paridade raw/journal em
+janela recente comum e, quando houver avanço, deltas de saldo desde um snapshot
+de baseline. Não alegar paridade histórica a partir de janela recente. Exigir
+amostras não vazias de ambas as populações e contagens explícitas de estados
+sem contrato, de pendências e de exceções invalidadas. Uma amostra ausente deve
+produzir `ready=false`, nunca zeros interpretados como sucesso.
+
+No flip, serializar política, cursor e admissões: uma captura que leu escopo ou
+modo anterior deve ser invalidada por versão e repetida; a primeira faixa
+tracked-only começa exatamente em `cursor.next_block` após o último range
+universal commitado. Não avançar cursor sem persistir todos os transfers do
+escopo; se houver erro, permanecer no modo legado. Definir rollback somente
+dentro da janela em que o raw e o journal ainda permitem reconstituir a faixa.
+
+Aceite: nenhum `backfilling` legado sem recuperação; todos os `live/shadow`
+antigos identificados por contrato explícito e verificável; admissões novas e
+coortes globais protegidas; gate com amostras reais sem divergência; teste de
+concorrência entre captura/admissão/flip, reorg através da âncora e rollback.
+Até isso estar implementado e observado, manter `captureAllTransfers=true`.
+
 ### Corte 6 — ativação tracked-only
 
 Objetivo: parar a criação da dívida.
+
+Pré-requisito adicional: Corte 5A concluído e gate revisto aprovado em produção.
+O texto original abaixo não autoriza flip com os 364.681 estados sem tail
+observados. A regra "nenhum token ativo com tail incompleto" passa a significar
+"nenhum token ativo sem contrato válido de tail **ou** baseline legada
+explicitamente comprovada"; `backfilling` nunca usa a exceção de baseline.
 
 Mudanças propostas:
 
@@ -341,14 +411,18 @@ Mudanças propostas:
 - no modo novo, chamar o source com tokens acompanhados e
   `captureAllTransfers=false`;
 - persistir somente transfers desses tokens;
-- falhar fechado se algum estado ativo não possuir contrato de tail completo;
+- falhar fechado se algum estado ativo não possuir contrato de tail ou baseline
+  legada válida, conforme sua população;
+- falhar fechado também se a exceção legada perder a âncora canônica, se uma
+  admissão escapar ao escopo ou se a política/cursor mudar durante a captura;
 - manter shadow de contagens por uma janela antes de remover compatibilidade.
 
 Gate de produção antes do flip:
 
 - migrations aplicadas e schema verificado;
 - auditoria do Corte 5 segura;
-- nenhum token ativo com tail incompleto;
+- nenhum token ativo sem tail válido ou exceção legada válida, e nenhum
+  `backfilling` legado com tail `NULL`;
 - raw floor cobre todas as admissões que usarão replay recente;
 - worker sem erro e checkpoints canônicos consistentes;
 - rollback flag testado.
@@ -454,34 +528,27 @@ O projeto termina somente quando:
 - Não particionar tabelas existentes no mesmo corte funcional.
 - Não aumentar concurrency para mascarar I/O e WAL já saturados.
 
-## Início recomendado no próximo chat
+## Próximo corte recomendado
 
-1. Ler este documento e `AGENTS.md`.
-2. Executar `git status --short` e preservar toda alteração não relacionada.
-3. Revalidar os contratos nos arquivos citados contra o HEAD atual.
-4. Planejar somente o Corte 1, listar arquivos, estimar linhas e testes.
-5. Se o Corte 1 exceder 500 linhas ou revelar mudança de responsabilidade,
-   parar e pedir aprovação do novo fatiamento.
-6. Implementar migration compatível e telemetria sem desligar o modo legado.
-7. Rodar `npm run lint`, `npm run db:schema-check` e os menores testes unitários
-   e de integração de bootstrap/cursor/schema.
-8. Revisar o diff completo, atualizar `docs/bot-reference.md` somente com o
-   estado operacional realmente implementado, commitar o slice e parar antes
-   do Corte 2.
+Iniciar o Corte 5A por uma auditoria read-only, sem migration nem mudança da
+captura: classificar `live/shadow` legados por integridade do checkpoint e
+pendências, identificar os 3 `backfilling` sem tail e contabilizar coortes globais
+ativas fora de `token_states`. Usar queries limitadas e plano de execução
+compatível com o volume de produção. Com esses dados, escolher e documentar a
+representação durável da exceção, seu fence e sua invalidação. Só então estimar
+arquivos/linhas e aprovar a implementação; schema e migração são esperados e
+exigem `db:schema-check` e integração de persistência. O modo universal deve
+permanecer ligado durante toda essa preparação.
 
 ## Arquivos de entrada para a próxima análise
 
+- `src/services/robinhood-holder-shadow-parity.js`
 - `src/services/robinhood-holder-live-capture.js`
-- `src/models/robinhood-canonical-holder-source.js`
 - `src/models/robinhood-holder-ledger.js`
+- `src/models/robinhood-holder-backfill.js`
 - `src/models/robinhood-holder-bootstrap.js`
 - `src/models/robinhood-holder-handoff.js`
-- `src/models/robinhood-holder-journal-retention.js`
-- `src/services/robinhood-holder-backfill-executor.js`
-- `src/services/robinhood-holder-global-backfill-worker.js`
-- `src/services/robinhood-holder-cold-worker.js`
-- `src/services/robinhood-chain-event-pruner.js`
-- `src/utils/db-init-stage196.js`
-- `src/utils/db-init-stage219.js`
+- `src/models/robinhood-holder-global-backfill.js`
+- `src/utils/db-init-stage231.js`
 - `docs/robinhood-holder-global-backfill-plan.md`
-- `docs/robinhood-token-holders-plan.md`
+- `docs/bot-reference.md`
