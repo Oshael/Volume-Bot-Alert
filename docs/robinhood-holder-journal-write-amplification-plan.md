@@ -345,11 +345,11 @@ promoção indevida e sem regressão do live.
 
 ### Corte 5A — contrato de transição para estados legados (antes do Corte 6)
 
-Estado: auditoria read-only de classificação e elegibilidade implementada e
-contrato de transição desenhado abaixo; schema, manifesto, fence e flip **não
+Estado: auditoria read-only de classificação/elegibilidade e schema do contrato
+implementados; manifesto permanece vazio, e builder, fence e flip **não estão
 implementados**. É um novo corte necessário pelos dados de produção; o Corte 6
-original não pode ser ativado somente mudando a flag. As etapas seguintes
-devem ser fatiadas em commits de até 500 linhas, com validação própria.
+original não pode ser ativado somente mudando a flag. As etapas seguintes devem
+ser fatiadas em commits de até 500 linhas, com validação própria.
 
 Separar três populações, sem converter `NULL` em prova de replay:
 
@@ -456,8 +456,8 @@ contrato numa camada de cobertura/manifesto; arquivos hub só fazem wiring.
 Fatiar, com commit e validação próprios, sem combinar no mesmo turno:
 
 1. Schema do manifesto/política/geração e invalidação; integração de schema,
-   nenhum flip nem carga de dados. Antes, medir `buffer_floor_block`, a
-   elegibilidade dos 1.036 `shadow` sem checkpoint e o plano do anti-join.
+   nenhum flip nem carga de dados. **Implementado** após medir os 787 `shadow`
+   restantes como elegíveis e confirmar paginação pela PK existente.
 2. Builder limitado e idempotente do manifesto + auditoria de coverage;
    testar concorrência com reset e custos; carga na VPS só após aprovação.
 3. Fence de todos os ingressos e gate de paridade por população, incluindo
@@ -622,15 +622,12 @@ O projeto termina somente quando:
 
 ## Próximo corte recomendado
 
-Executar novamente `npm run robinhood:holder-legacy-audit` na VPS. Enviar apenas
-`snapshot.bufferFloorBlock`, `legacyShadowWithoutCheckpoint` e
-`cohortSelectionPlan`. A auditoria agora mede quantos `shadow` sem checkpoint
-têm saldo zero, cursor no deployment, pending não anterior ao deployment e
-deployment coberto simultaneamente pelo buffer/journal. Ela também resume um
-`EXPLAIN` sem `ANALYZE` da paginação de até 1.000 tokens; não executa carga.
-Com esses dados, confirmar ou revisar o contrato antes do primeiro slice de
-schema. O comando continua diagnóstico, não gate, e o modo universal permanece
-ligado.
+Aplicar a Stage 232 antes do restart. Confirmar com `npm run db:schema-check`
+que policy/manifest/geração existem e que a policy continua `legacy` com o
+manifesto vazio. O próximo slice implementa somente o builder limitado e
+idempotente com preview, cursor durável e auditoria de gerações; não executar a
+carga na VPS até revisar seu plano/cadência e obter aprovação operacional. O
+modo universal permanece ligado.
 
 ## Arquivos de entrada para a próxima análise
 

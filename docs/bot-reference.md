@@ -3269,6 +3269,16 @@ pending anterior ao deployment e `baselineCoverageEligible`, que exige saldo
 zero, cursor no deployment e cobertura simultânea do buffer e journal. O campo
 `cohortSelectionPlan` resume um `EXPLAIN` sem `ANALYZE` da paginação proposta;
 ele não lê nem grava o futuro manifesto e deve ser revisado antes de criar índice.
+A Stage 232 cria o contrato durável da transição, ainda inativo: adiciona
+`coverage_generation` com default zero aos token states, mantém uma política
+singleton em `capture_mode=legacy` e cria o manifesto legado vazio. Nenhuma linha
+de token é copiada pela migration. Um trigger incrementa a geração quando um
+estado sai de `shadow/live` ou muda deployment/backfill de uma baseline ativa;
+assim, eventual manifesto antigo deixa de coincidir sem ser apagado. Promoção
+`shadow -> live` preserva a geração. A policy rejeita `tracked` sem geração e
+âncora contígua; nenhum runtime lê ou ativa esse modo neste estágio. Aplicar
+`node src/utils/db-init-stage232.js` antes de reiniciar código que exige o novo
+schema; não preencher o manifesto manualmente.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.

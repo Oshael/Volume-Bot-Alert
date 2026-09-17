@@ -6319,6 +6319,43 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage232-robinhood-holder-legacy-coverage',
+    name: 'Stage 232 Robinhood holder legacy coverage contract',
+    repair: 'node src/utils/db-init-stage232.js',
+    tables: [{
+      table: 'robinhood_holder_token_states',
+      columns: ['coverage_generation'],
+      defaults: { coverage_generation: '0' },
+      constraints: [{
+        name: 'rh_holder_token_states_coverage_generation_check',
+        includes: ['coverage_generation'],
+      }],
+    }, {
+      table: 'robinhood_holder_capture_policy',
+      columns: [
+        'chain', 'capture_mode', 'coverage_generation', 'cutover_next_block',
+        'cutover_checkpoint_block', 'cutover_checkpoint_hash', 'version',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_capture_policy_cutover_check',
+        includes: ['legacy', 'tracked', 'cutover_next_block', 'cutover_checkpoint_block'],
+      }],
+    }, {
+      table: 'robinhood_holder_legacy_coverage_manifest',
+      columns: [
+        'chain', 'token_address', 'coverage_generation', 'baseline_status',
+        'baseline_deployment_block', 'baseline_backfill_next_block',
+        'baseline_live_through_block', 'baseline_live_through_hash',
+        'baseline_holder_count', 'prepared_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_legacy_manifest_checkpoint_check',
+        includes: ['baseline_status', 'shadow', 'live', 'baseline_live_through_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
