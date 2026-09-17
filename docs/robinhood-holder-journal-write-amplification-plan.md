@@ -538,7 +538,10 @@ status e presença de tail, lista no máximo quatro `backfilling` legados e
 amostra até quatro `live` e quatro `shadow` com verificação de checkpoint e
 pending anteriores. Também conta coortes globais ativas sem state. A saída é
 diagnóstica, **não** um gate de ativação nem prova de paridade histórica. Com
-esses dados, escolher e documentar a representação durável da exceção, seu
+checkpoint `NULL`, pending antes do state é indeterminado: usar pending em
+qualquer bloco e a contagem dos `shadow` sem checkpoint. Para os `backfilling`
+legados, inspecionar pending mais antigo, checkpoint canônico e overlap aplicado.
+Com esses dados, escolher e documentar a representação durável da exceção, seu
 fence e sua invalidação. Só então estimar arquivos/linhas e aprovar a
 implementação; schema e migração são esperados e exigem `db:schema-check` e
 integração de persistência. O modo universal deve permanecer ligado.

@@ -3258,6 +3258,11 @@ em uma snapshot com timeout de 15s, agrega estados por status/tail, mostra até
 quatro `backfilling` legados, amostra até quatro `live` e quatro `shadow` legados
 com checkpoint/pending e conta coortes globais ativas sem state. Ele não atribui
 tail aos estados antigos, não prova paridade histórica e não autoriza o flip.
+Para `shadow` sem checkpoint, `pendingAtOrBeforeState` é `null` (não há bloco
+contra o qual comparar); use `pendingAnywhere` e o agregado
+`legacyShadowWithoutCheckpoint`. Para `backfilling` legado, o diagnóstico mostra
+o pending mais antigo, checkpoint canônico e eventual overlap aplicado antes do
+cursor de backfill; isso ajuda a explicar bloqueios, sem promover o token.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.

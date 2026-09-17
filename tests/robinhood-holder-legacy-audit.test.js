@@ -28,6 +28,11 @@ it('classifies legacy states in one read-only snapshot without claiming readines
         token_address: '0xlegacy', ledger_status: 'backfilling',
         deployment_block: '20', backfill_next_block: '25',
         live_through_block: null, live_through_hash: null, holder_count: '1',
+        checkpoint_canonical: null, oldest_pending_block: '24', applied_overlap: false,
+      }] };
+      if (sql.includes('LEFT JOIN LATERAL')) return { rows: [{
+        total: '3', with_pending: '2', without_pending: '1',
+        nonzero_holders: '0', promotable_by_current_sql: '1',
       }] };
       if (sql.includes('FROM robinhood_holder_global_backfill_tokens token')) {
         return { rows: [{ active_tokens: '7', missing_barrier: '1',
@@ -38,6 +43,12 @@ it('classifies legacy states in one read-only snapshot without claiming readines
         backfill_next_block: '30', live_through_block: '190',
         live_through_hash: '0xhash', holder_count: '2',
         checkpoint_canonical: true, pending_at_or_before_state: false,
+        pending_anywhere: true,
+      }, {
+        token_address: '0xshadow', ledger_status: 'shadow', deployment_block: '2',
+        backfill_next_block: '2', live_through_block: null,
+        live_through_hash: null, holder_count: '0', checkpoint_canonical: null,
+        pending_at_or_before_state: null, pending_anywhere: true,
       }] };
       throw new Error('unexpected query');
     },
@@ -51,8 +62,14 @@ it('classifies legacy states in one read-only snapshot without claiming readines
   assert.equal(result.ready, undefined);
   assert.equal(result.stateGroups[0].total, 2);
   assert.equal(result.globalCohort.withoutState, 6);
+  assert.equal(result.legacyShadowWithoutCheckpoint.withPending, 2);
+  assert.equal(result.legacyShadowWithoutCheckpoint.promotableByCurrentSql, 1);
   assert.equal(result.legacyPromotedSamples[0].checkpointCanonical, true);
+  assert.equal(result.legacyPromotedSamples[1].pendingAtOrBeforeState, null);
+  assert.equal(result.legacyPromotedSamples[1].pendingAnywhere, true);
   assert.equal(result.legacyBackfilling[0].liveThroughBlock, null);
+  assert.equal(result.legacyBackfilling[0].oldestPendingBlock, '24');
+  assert.equal(result.legacyBackfilling[0].appliedOverlap, false);
   assert.match(calls[0], /REPEATABLE READ READ ONLY/);
   assert.equal(calls.at(-2), 'ROLLBACK');
   assert.equal(calls.at(-1), 'RELEASE');
