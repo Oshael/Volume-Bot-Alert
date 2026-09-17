@@ -9,18 +9,21 @@ const {
 function parseArgs(argv = []) {
   const values = {};
   for (const argument of argv) {
-    const match = String(argument).match(/^--(apply|restart|limit)(?:=(.*))?$/);
+    const match = String(argument).match(/^--(apply|restart|repair-missing|limit)(?:=(.*))?$/);
     if (!match) throw new Error(`unknown argument: ${argument}`);
     values[match[1]] = match[2] ?? 'true';
   }
-  for (const flag of ['apply', 'restart']) {
+  for (const flag of ['apply', 'restart', 'repair-missing']) {
     if (values[flag] != null && values[flag] !== 'true') throw new Error(`--${flag} does not accept a value`);
   }
   const limit = Number(values.limit ?? 100);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
     throw new Error('--limit must be between 1 and 1000');
   }
-  return Object.freeze({ apply: values.apply === 'true', restart: values.restart === 'true', limit });
+  const restart = values.restart === 'true';
+  const repairMissing = values['repair-missing'] === 'true';
+  if (restart && repairMissing) throw new Error('--restart cannot be combined with --repair-missing');
+  return Object.freeze({ apply: values.apply === 'true', restart, repairMissing, limit });
 }
 
 async function main(argv = process.argv.slice(2), deps = {}) {

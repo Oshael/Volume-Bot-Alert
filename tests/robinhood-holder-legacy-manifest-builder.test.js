@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const stage233 = require('../src/utils/db-init-stage233');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
-const { eligibility } = require('../src/services/robinhood-holder-legacy-manifest-builder');
+const {
+  candidateSql, eligibility,
+} = require('../src/services/robinhood-holder-legacy-manifest-builder');
 const { parseArgs } = require('../src/utils/build-robinhood-holder-legacy-manifest');
 
 function state(overrides = {}) {
@@ -42,11 +44,18 @@ it('accepts only durable legacy baselines', () => {
 });
 
 it('is preview-only by default and bounds every batch', () => {
-  assert.deepEqual(parseArgs([]), { apply: false, restart: false, limit: 100 });
+  assert.deepEqual(parseArgs([]), {
+    apply: false, restart: false, repairMissing: false, limit: 100,
+  });
   assert.deepEqual(parseArgs(['--apply', '--limit=1000']),
-    { apply: true, restart: false, limit: 1000 });
+    { apply: true, restart: false, repairMissing: false, limit: 1000 });
+  assert.deepEqual(parseArgs(['--apply', '--repair-missing']),
+    { apply: true, restart: false, repairMissing: true, limit: 100 });
+  assert.throws(() => parseArgs(['--restart', '--repair-missing']), /cannot be combined/);
   assert.throws(() => parseArgs(['--limit=1001']), /between 1 and 1000/);
   assert.throws(() => parseArgs(['--write']), /unknown argument/);
+  assert.match(candidateSql(true, false), /MATERIALIZED[\s\S]+FOR UPDATE OF state/);
+  assert.match(candidateSql(false, true), /NOT EXISTS[\s\S]+legacy_coverage_manifest/);
 });
 
 it('defines a durable cursor and permits the observed initial generation', () => {

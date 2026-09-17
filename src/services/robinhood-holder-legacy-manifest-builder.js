@@ -28,7 +28,19 @@ function eligibility(row) {
   return row.pending_before_deployment ? 'pending_before_deployment' : null;
 }
 
-const CANDIDATES_SQL = `SELECT state.token_address, state.coverage_generation,
+function candidateSql(apply, repairMissing) {
+  const scope = repairMissing
+    ? `state.token_address <= $2 AND NOT EXISTS (SELECT 1 FROM ${MANIFEST} manifest
+        WHERE manifest.chain=state.chain AND manifest.token_address=state.token_address)`
+    : 'state.token_address > $2';
+  const lock = apply ? ' FOR UPDATE OF state' : '';
+  return `WITH candidates AS MATERIALIZED (
+    SELECT state.* FROM robinhood_holder_token_states state
+     WHERE state.chain=$1 AND state.ledger_status IN ('live','shadow')
+       AND state.tail_capture_from_block IS NULL AND ${scope}
+     ORDER BY state.token_address LIMIT $3${lock}
+  )
+  SELECT state.token_address, state.coverage_generation,
     state.ledger_status, state.deployment_block, state.backfill_next_block,
     state.live_through_block, state.live_through_hash, state.holder_count,
     cursor.next_block, cursor.journal_floor_block, cursor.buffer_floor_block,
@@ -38,15 +50,14 @@ const CANDIDATES_SQL = `SELECT state.token_address, state.coverage_generation,
       WHERE journal.chain=state.chain AND journal.token_address=state.token_address
         AND journal.applied=FALSE AND journal.block_number < state.deployment_block)
       AS pending_before_deployment
-  FROM robinhood_holder_token_states state
+  FROM candidates state
   JOIN robinhood_holder_cursors cursor ON cursor.chain=state.chain AND cursor.stream='live'
   CROSS JOIN (SELECT MIN(block_number) AS raw_floor_block FROM robinhood_chain_blocks
     WHERE chain=$1 AND canonical=TRUE) raw
   LEFT JOIN robinhood_chain_blocks block ON block.chain=state.chain
     AND block.block_number=state.live_through_block AND block.block_hash=state.live_through_hash
- WHERE state.chain=$1 AND state.ledger_status IN ('live','shadow')
-   AND state.tail_capture_from_block IS NULL AND state.token_address > $2
- ORDER BY state.token_address LIMIT $3`;
+ ORDER BY state.token_address`;
+}
 
 function manifestValues(row) {
   return [CHAIN, row.token_address, row.coverage_generation, row.ledger_status,
@@ -55,13 +66,7 @@ function manifestValues(row) {
 }
 
 function sameManifest(row, state) {
-  return String(row.coverage_generation) === String(state.coverage_generation)
-    && row.baseline_status === state.ledger_status
-    && String(row.baseline_deployment_block) === String(state.deployment_block)
-    && String(row.baseline_backfill_next_block) === String(state.backfill_next_block)
-    && String(row.baseline_live_through_block) === String(state.live_through_block)
-    && row.baseline_live_through_hash === state.live_through_hash
-    && String(row.baseline_holder_count) === String(state.holder_count);
+  return String(row.coverage_generation) === String(state.coverage_generation);
 }
 
 async function prepare(client, apply, restart) {
@@ -85,7 +90,7 @@ async function prepare(client, apply, restart) {
   return progress;
 }
 
-async function persist(client, states, accepted, byToken, progress) {
+async function persist(client, states, accepted, byToken, progress, repairMissing) {
   const missing = accepted.filter((row) => !byToken.has(row.token_address));
   let inserted = 0;
   if (missing.length) {
@@ -99,6 +104,7 @@ async function persist(client, states, accepted, byToken, progress) {
     missing.flatMap(manifestValues))).rowCount;
     if (inserted !== missing.length) throw new Error('concurrent manifest conflict');
   }
+  if (repairMissing) return { inserted, progress };
   const after = states.at(-1)?.token_address || progress.after_token_address;
   const updated = (await client.query(`UPDATE ${PROGRESS} SET after_token_address=$2,
     scanned=scanned+$3, inserted=inserted+$4, rejected=rejected+$5,
@@ -108,30 +114,35 @@ async function persist(client, states, accepted, byToken, progress) {
   return { inserted, progress: updated };
 }
 
-function summarize(states, accepted, existing, inserted, progress, apply) {
+function summarize(states, accepted, existing, inserted, progress, apply, repairMissing) {
   const reasons = {};
   for (const row of states) {
     const reason = eligibility(row);
     if (reason) reasons[reason] = (reasons[reason] || 0) + 1;
   }
-  return { mode: apply ? 'apply' : 'preview', pass: Number(progress.pass),
+  const mode = `${repairMissing ? 'repair-' : ''}${apply ? 'apply' : 'preview'}`;
+  const complete = repairMissing
+    ? states.length === 0 : (apply ? progress.completed_at != null : states.length === 0);
+  return { mode, pass: Number(progress.pass),
     scanned: states.length, eligible: accepted.length, inserted,
     alreadyPresent: existing.length, rejected: states.length - accepted.length,
     rejectionReasons: reasons, nextTokenAddress: states.at(-1)?.token_address || null,
-    complete: apply ? progress.completed_at != null : states.length === 0 };
+    complete };
 }
 
 function createRobinhoodHolderLegacyManifestBuilder(options = {}) {
   const database = options.database || db;
-  async function batch({ limit = 100, apply = false, restart = false } = {}) {
+  async function batch({
+    limit = 100, apply = false, restart = false, repairMissing = false,
+  } = {}) {
+    if (restart && repairMissing) throw new Error('restart and repair-missing are mutually exclusive');
     const client = await database.getClient();
     try {
       await client.query(apply ? 'BEGIN' : 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       await client.query("SET LOCAL statement_timeout = '15s'");
       await client.query("SET LOCAL lock_timeout = '1s'");
       let progress = await prepare(client, apply, restart);
-      const lock = apply ? ' FOR UPDATE OF state' : '';
-      const states = (await client.query(`${CANDIDATES_SQL}${lock}`,
+      const states = (await client.query(candidateSql(apply, repairMissing),
         [CHAIN, progress.after_token_address, limit])).rows;
       const accepted = states.filter((row) => eligibility(row) == null);
       const addresses = accepted.map((row) => row.token_address);
@@ -147,10 +158,12 @@ function createRobinhoodHolderLegacyManifestBuilder(options = {}) {
       if (conflict) throw new Error(`manifest conflict for ${conflict.token_address}`);
       let inserted = 0;
       if (apply) {
-        ({ inserted, progress } = await persist(client, states, accepted, byToken, progress));
+        ({ inserted, progress } = await persist(
+          client, states, accepted, byToken, progress, repairMissing
+        ));
         await client.query('COMMIT');
       } else await client.query('ROLLBACK');
-      return summarize(states, accepted, existing, inserted, progress, apply);
+      return summarize(states, accepted, existing, inserted, progress, apply, repairMissing);
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -159,4 +172,4 @@ function createRobinhoodHolderLegacyManifestBuilder(options = {}) {
   return Object.freeze({ batch });
 }
 
-module.exports = { CANDIDATES_SQL, createRobinhoodHolderLegacyManifestBuilder, eligibility };
+module.exports = { candidateSql, createRobinhoodHolderLegacyManifestBuilder, eligibility };

@@ -88,10 +88,27 @@ it('builds generation zero idempotently and rejects a concurrent reset generatio
       robinhood_holder_legacy_coverage_manifest WHERE token_address=$1`, [TOKEN])).rows[0]
       .coverage_generation, '0');
     assert.equal((await builder.batch({ apply: true, limit: 10 })).complete, true);
+    await client.query(`UPDATE robinhood_holder_token_states SET holder_count=1
+      WHERE token_address=$1`, [OLD_TOKEN]);
     const repeated = await builder.batch({ apply: true, restart: true, limit: 10 });
     assert.equal(repeated.inserted, 0);
     assert.equal(repeated.alreadyPresent, 2);
     await builder.batch({ apply: true, limit: 10 });
+
+    await client.query(`DELETE FROM robinhood_holder_legacy_coverage_manifest
+      WHERE token_address=$1`, [OLD_TOKEN]);
+    const beforeRepair = (await client.query(`SELECT after_token_address FROM
+      robinhood_holder_legacy_coverage_builds WHERE chain='robinhood'`)).rows[0];
+    const repairPreview = await builder.batch({ repairMissing: true, limit: 10 });
+    assert.equal(repairPreview.mode, 'repair-preview');
+    assert.equal(repairPreview.eligible, 1);
+    const repaired = await builder.batch({ apply: true, repairMissing: true, limit: 10 });
+    assert.equal(repaired.inserted, 1);
+    assert.equal(repaired.complete, false);
+    assert.equal((await builder.batch({ repairMissing: true, limit: 10 })).complete, true);
+    const afterRepair = (await client.query(`SELECT after_token_address FROM
+      robinhood_holder_legacy_coverage_builds WHERE chain='robinhood'`)).rows[0];
+    assert.deepEqual(afterRepair, beforeRepair);
 
     await client.query(`UPDATE robinhood_holder_token_states SET ledger_status='drifted'
       WHERE token_address=$1`, [TOKEN]);

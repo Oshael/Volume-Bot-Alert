@@ -3294,6 +3294,11 @@ Checkpoint presente na retenção raw precisa coincidir com um bloco canônico;
 checkpoint anterior ao `rawFloorBlock` pode identificar o baseline operacional,
 mas não constitui prova de replay histórico. Floor ausente ou checkpoint sem
 correspondência dentro da retenção permanece inelegível.
+O builder materializa e trava primeiro o page de states antes de comparar seus
+checkpoints, evitando misturar uma atualização live concorrente com joins da
+snapshot anterior. `--repair-missing` examina somente states sem manifesto até
+o cursor já percorrido e não altera esse cursor; é preview por default e também
+exige `--apply` para gravar reparos confirmados.
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
