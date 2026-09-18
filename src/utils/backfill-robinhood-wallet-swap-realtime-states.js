@@ -16,6 +16,7 @@ const VALUES = [
 ];
 const COLUMNS = [...KEYS, ...VALUES];
 const KEY_SQL = 'transaction_hash, log_index, block_hash, event_kind';
+const KEY_DESC_SQL = KEY_SQL.split(', ').map((column) => `${column} DESC`).join(', ');
 const CURSOR_SQL = 'after_transaction_hash, after_log_index, after_block_hash, after_event_kind';
 const TARGET_SQL = 'target_transaction_hash, target_log_index, target_block_hash, target_event_kind';
 
@@ -61,10 +62,10 @@ function batchSql(apply) {
   )${insertion}
   SELECT COUNT(*)::int AS scanned,
     ${apply ? '(SELECT COUNT(*)::int FROM inserted)' : '0::int'} AS inserted,
-    (SELECT transaction_hash FROM batch ORDER BY ${KEY_SQL} DESC LIMIT 1) AS next_transaction_hash,
-    (SELECT log_index::text FROM batch ORDER BY ${KEY_SQL} DESC LIMIT 1) AS next_log_index,
-    (SELECT block_hash FROM batch ORDER BY ${KEY_SQL} DESC LIMIT 1) AS next_block_hash,
-    (SELECT event_kind FROM batch ORDER BY ${KEY_SQL} DESC LIMIT 1) AS next_event_kind
+    (SELECT transaction_hash FROM batch ORDER BY ${KEY_DESC_SQL} LIMIT 1) AS next_transaction_hash,
+    (SELECT log_index::text FROM batch ORDER BY ${KEY_DESC_SQL} LIMIT 1) AS next_log_index,
+    (SELECT block_hash FROM batch ORDER BY ${KEY_DESC_SQL} LIMIT 1) AS next_block_hash,
+    (SELECT event_kind FROM batch ORDER BY ${KEY_DESC_SQL} LIMIT 1) AS next_event_kind
   FROM batch`;
 }
 

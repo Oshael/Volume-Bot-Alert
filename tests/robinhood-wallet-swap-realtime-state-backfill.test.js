@@ -19,6 +19,8 @@ test('wallet-swap state backfill CLI is bounded and preview-first', () => {
   assert.match(batchSql(true), /WHERE state\.chain IS NULL/);
   assert.match(batchSql(true), /target_transaction_hash/);
   assert.match(batchSql(true), /<= ROW\(progress\.target_transaction_hash/);
+  assert.match(batchSql(true),
+    /ORDER BY transaction_hash DESC, log_index DESC, block_hash DESC, event_kind DESC LIMIT 1/);
   assert.doesNotMatch(batchSql(true), /payload/);
 
   const group = SCHEMA_GROUPS.find(({ key }) => (

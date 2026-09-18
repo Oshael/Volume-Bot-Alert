@@ -12,14 +12,16 @@ const { runBatch } = require('../src/utils/backfill-robinhood-wallet-swap-realti
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TX = `0x${'f'.repeat(63)}e`;
-const PREVIOUS_TX = `0x${'f'.repeat(63)}d`;
+const FIRST_TX = `0x${'f'.repeat(63)}d`;
+const PREVIOUS_TX = `0x${'f'.repeat(63)}c`;
 const AFTER_TX = `0x${'f'.repeat(64)}`;
 const BLOCK = `0x${'c'.repeat(64)}`;
 const LOG_INDEX = '987654322';
 
 async function cleanup() {
   await db.query(`DELETE FROM ${stage236.SOURCE_TABLE}
-    WHERE transaction_hash=ANY($1::varchar[]) AND log_index=$2`, [[TX, AFTER_TX], LOG_INDEX]);
+    WHERE transaction_hash=ANY($1::varchar[]) AND log_index=$2`,
+  [[FIRST_TX, TX, AFTER_TX], LOG_INDEX]);
   await db.query(`UPDATE ${stage237.PROGRESS_TABLE} SET
     after_transaction_hash=NULL, after_log_index=NULL, after_block_hash=NULL,
     after_event_kind=NULL, target_transaction_hash=NULL, target_log_index=NULL,
@@ -47,12 +49,14 @@ test('backfill resumes by key, repairs missing shadow state and proves batch par
     `INSERT INTO ${stage236.SOURCE_TABLE} (
        transaction_hash, log_index, event_kind, block_number,
        block_hash, transaction_index, payload
-     ) VALUES ($1,$3,'observed',124,$4,5,'{}'::jsonb),
-              ($2,$3,'observed',125,$4,6,'{}'::jsonb)`,
-    [TX, AFTER_TX, LOG_INDEX, BLOCK]
+     ) VALUES ($1,$4,'observed',123,$5,4,'{}'::jsonb),
+              ($2,$4,'observed',124,$5,5,'{}'::jsonb),
+              ($3,$4,'observed',125,$5,6,'{}'::jsonb)`,
+    [FIRST_TX, TX, AFTER_TX, LOG_INDEX, BLOCK]
   );
   await db.query(`DELETE FROM ${stage236.STATE_TABLE}
-    WHERE transaction_hash=ANY($1::varchar[]) AND log_index=$2`, [[TX, AFTER_TX], LOG_INDEX]);
+    WHERE transaction_hash=ANY($1::varchar[]) AND log_index=$2`,
+  [[FIRST_TX, TX, AFTER_TX], LOG_INDEX]);
   await db.query(`UPDATE ${stage237.PROGRESS_TABLE} SET
     after_transaction_hash=$2, after_log_index=0, after_block_hash=$3,
     target_transaction_hash=$4, target_log_index=$5, target_block_hash=$3,
@@ -70,6 +74,7 @@ test('backfill resumes by key, repairs missing shadow state and proves batch par
   assert.equal(applied.missing, 0);
   assert.equal(applied.divergent, 0);
   assert.ok(applied.inserted >= 1);
+  assert.equal(applied.next.transactionHash, TX);
   const state = await db.query(`SELECT block_number::text, status, audit_status
     FROM ${stage236.STATE_TABLE} WHERE transaction_hash=$1 AND log_index=$2`, [TX, LOG_INDEX]);
   assert.deepEqual(state.rows, [{
