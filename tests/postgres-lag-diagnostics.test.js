@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  nonnegativeDelta, parseArgs, sampleRates, statementDeltas, summarize, tableDeltas,
+  nonnegativeDelta, parseArgs, processingSql, sampleRates, statementDeltas, summarize, tableDeltas,
 } = require('../src/utils/collect-postgres-lag-diagnostics');
 
 function sample(at, overrides = {}) {
@@ -83,5 +83,13 @@ describe('PostgreSQL lag diagnostics', () => {
     assert.equal(result.vacuumSampleCounts['public.queue'], 2);
     assert.equal(result.processingStart.streams[0].lag_blocks, 10);
     assert.equal(result.processingEnd.streams[0].lag_blocks, 20);
+  });
+
+  it('measures reported, active, and immediately claimable processing frontiers', () => {
+    const sql = processingSql('state');
+    assert.match(sql, /processing_status IN \('pending','leased','blocked'\)/);
+    assert.match(sql, /processing_status IN \('pending','leased'\)/);
+    assert.match(sql, /processing_status='pending' AND item\.next_attempt_at <= NOW\(\)/);
+    assert.match(sql, /active_lag_blocks/);
   });
 });

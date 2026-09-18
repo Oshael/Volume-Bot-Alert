@@ -136,14 +136,26 @@ function processingSql(authority) {
   return `WITH cursors AS MATERIALIZED (
     SELECT stream, safe_head FROM robinhood_head_capture_cursors WHERE chain='robinhood'
   ), observed AS (
-    SELECT cursor.stream, cursor.safe_head, active.block_number AS pending_block,
-           GREATEST(0, cursor.safe_head-active.block_number+1) AS lag_blocks
+    SELECT cursor.stream, cursor.safe_head, reported.block_number AS pending_block,
+           active.block_number AS active_block, claimable.block_number AS claimable_block,
+           GREATEST(0, cursor.safe_head-reported.block_number+1) AS lag_blocks,
+           GREATEST(0, cursor.safe_head-active.block_number+1) AS active_lag_blocks
       FROM cursors cursor LEFT JOIN LATERAL (
         SELECT block_number FROM ${table} item
          WHERE item.chain='robinhood' AND item.stream=cursor.stream
            AND item.processing_status IN ('pending','leased','blocked')
          ORDER BY item.block_number, item.transaction_index, item.log_index LIMIT 1
-      ) active ON TRUE
+      ) reported ON TRUE LEFT JOIN LATERAL (
+        SELECT block_number FROM ${table} item
+         WHERE item.chain='robinhood' AND item.stream=cursor.stream
+           AND item.processing_status IN ('pending','leased')
+         ORDER BY item.block_number, item.transaction_index, item.log_index LIMIT 1
+      ) active ON TRUE LEFT JOIN LATERAL (
+        SELECT block_number FROM ${table} item
+         WHERE item.chain='robinhood' AND item.stream=cursor.stream
+           AND item.processing_status='pending' AND item.next_attempt_at <= NOW()
+         ORDER BY item.block_number, item.transaction_index, item.log_index LIMIT 1
+      ) claimable ON TRUE
   ), lease AS (
     SELECT heartbeat_at, lease_until, metadata->'telemetry' AS telemetry
       FROM worker_leases WHERE lease_key='robinhood-processing-worker'
@@ -294,7 +306,8 @@ function summarize(samples, statementsBefore, statementsAfter) {
     (wait) => Number(wait.sessions || 0)
   );
   const vacuumSamples = observedCounts(
-    samples, (sample) => sample.vacuums || [], (vacuum) => vacuum.relation || 'unknown'
+    samples, (sample) => sample.vacuums || [],
+    (vacuum) => vacuum.relation || vacuum.value?.relation || 'unknown'
   );
   return {
     type: 'summary', startedAt: first?.sampledAt, completedAt: last?.sampledAt,
@@ -379,5 +392,5 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   collectSample, main, nonnegativeDelta, parseArgs, run, sampleRates,
-  statementDeltas, summarize, tableDeltas,
+  processingSql, statementDeltas, summarize, tableDeltas,
 };

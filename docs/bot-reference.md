@@ -934,6 +934,11 @@ deltas de tabelas. Se `pg_stat_statements` estiver disponível, o resumo final o
 queries pelo custo apenas da janela observada. Duração aceita `s`, `m` ou `h` (30 s a
 24 h); intervalo aceita 2 a 60 s. Falha isolada fica registrada e não encerra a coleta.
 O relatório contém textos SQL observados e deve ser tratado como arquivo operacional sensível.
+Não transfira o JSONL bruto por padrão. Depois da coleta, rode
+`npm run diagnose:postgres-lag:summary -- --input=/var/tmp/postgres-lag.jsonl`; o comando lê o
+arquivo localmente em streaming, grava `/var/tmp/postgres-lag.jsonl.summary.json` e imprime somente
+o relatório compacto. `--top=N` limita rankings entre 1 e 20; `--output=...` muda o destino. O
+resumo separa a fronteira reportada (inclui dead letters), a ativa e a imediatamente reclamável.
 A limpeza da fila de captures não pertence mais a esse processo; ela roda somente
 no `robinhood-maintenance`, sob o gate de lag canônico descrito na seção de grupos.
 
