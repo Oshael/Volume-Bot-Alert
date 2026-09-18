@@ -20,22 +20,33 @@ function evidenceKey(event, role) {
 }
 function identities(events) {
   const edges = new Set();
+  const edgeLookups = new Map();
   const daily = new Set();
   const evidence = new Set();
   for (const event of events) {
-    edges.add(edgeKey(event));
+    const identityKey = edgeKey(event);
+    edges.add(identityKey);
+    edgeLookups.set(identityKey, {
+      identity_key: identityKey,
+      token_address: event.tokenAddress,
+      from_wallet: event.fromWallet,
+      to_wallet: event.toWallet,
+    });
     daily.add(dailyKey(event));
     if (event.transferKind === 'wallet_transfer') {
       for (const role of EVIDENCE_ROLES) evidence.add(evidenceKey(event, role));
     }
   }
-  return { edges: [...edges], daily: [...daily], evidence: [...evidence] };
+  return {
+    edges: [...edges], edgeLookups: [...edgeLookups.values()],
+    daily: [...daily], evidence: [...evidence],
+  };
 }
 async function loadRows(client, projectionVersion, keys) {
   const current = new Map();
   const queries = [
     keys.edges.length && [
-      `SELECT 'edge:' || token_address || ':' || from_wallet || ':' || to_wallet AS identity_key,
+      `SELECT requested.identity_key,
               to_jsonb(edge) || jsonb_build_object(
                 'transfer_count', transfer_count::text,
                 'total_amount_raw', total_amount_raw::text,
@@ -46,11 +57,15 @@ async function loadRows(client, projectionVersion, keys) {
                 'first_wallet_transfer_block', first_wallet_transfer_block::text,
                 'first_wallet_transfer_amount_raw', first_wallet_transfer_amount_raw::text
               ) AS previous_row
-         FROM robinhood_wallet_transfer_edges edge
-        WHERE chain=$1 AND classification_version=$2
-          AND ('edge:' || token_address || ':' || from_wallet || ':' || to_wallet)
-            = ANY($3::text[])`,
-      [CHAIN, projectionVersion, keys.edges],
+         FROM jsonb_to_recordset($3::jsonb) AS requested(
+                identity_key text, token_address text, from_wallet text, to_wallet text
+              )
+         JOIN robinhood_wallet_transfer_edges edge
+           ON edge.chain=$1 AND edge.classification_version=$2
+          AND edge.token_address=requested.token_address
+          AND edge.from_wallet=requested.from_wallet
+          AND edge.to_wallet=requested.to_wallet`,
+      [CHAIN, projectionVersion, JSON.stringify(keys.edgeLookups)],
     ],
     keys.daily.length && [
       `SELECT 'daily:' || summary_day::text || ':' || token_address AS identity_key,
