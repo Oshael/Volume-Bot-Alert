@@ -926,6 +926,14 @@ nem uma única query. `attempts`, `commits` e `failures` contam chamadas de pers
 não capturas. O `totalMs` interno inclui normalização e overhead e está contido em
 `persistMs`; não some esses totais às subetapas. A medição zera por tick, chega pela
 lease após sua conclusão e não acrescenta SQL, logs por evento ou flags de ativação.
+Para diagnosticar pressão PostgreSQL junto com o lag, use
+`npm run diagnose:postgres-lag -- --duration=30m --interval=5s
+--output=/var/tmp/postgres-lag.jsonl`. O coletor é read-only, limita cada probe a 1 s
+e grava JSONL incremental com processing, waits/bloqueios, WAL, I/O, autovacuums e
+deltas de tabelas. Se `pg_stat_statements` estiver disponível, o resumo final ordena
+queries pelo custo apenas da janela observada. Duração aceita `s`, `m` ou `h` (30 s a
+24 h); intervalo aceita 2 a 60 s. Falha isolada fica registrada e não encerra a coleta.
+O relatório contém textos SQL observados e deve ser tratado como arquivo operacional sensível.
 A limpeza da fila de captures não pertence mais a esse processo; ela roda somente
 no `robinhood-maintenance`, sob o gate de lag canônico descrito na seção de grupos.
 
