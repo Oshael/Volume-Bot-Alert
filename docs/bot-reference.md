@@ -1076,6 +1076,14 @@ retomável, limita o lote a 10.000 e marca `complete=true` somente ao alcançar 
 `missing` ou `divergent` em apply aborta e reverte o lote. O trigger da Stage 236 continua cobrindo
 eventos e mudanças concorrentes durante toda a carga.
 
+Antes de continuar uma carga iniciada com a Stage 237, interrompa somente o loop entre lotes e
+aplique `node src/utils/db-init-stage238.js`. A Stage 238 preserva o cursor e os contadores já
+gravados, captura uma única vez a maior identidade atual da outbox e a persiste como fronteira
+terminal. O backfill passa a aceitar somente identidades até essa fronteira e, portanto, termina
+de forma determinística; inserts e updates posteriores continuam cobertos pelo trigger da Stage
+236. Se a stage disputar a linha de progresso com um lote ativo, o lock timeout de 1 s falha sem
+alteração parcial: aguarde o lote encerrar e repita a stage, depois retome o mesmo comando apply.
+
 Em ambiente pré-lançamento, `ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED=true` admite todas
 as sessões, inclusive anônimas, nessa mesma sala. O default permanece `false`; essa flag controla
 somente a audiência, enquanto `...OBSERVED_ENABLED` continua controlando a produção dos eventos.

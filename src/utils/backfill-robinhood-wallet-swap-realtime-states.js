@@ -17,6 +17,7 @@ const VALUES = [
 const COLUMNS = [...KEYS, ...VALUES];
 const KEY_SQL = 'transaction_hash, log_index, block_hash, event_kind';
 const CURSOR_SQL = 'after_transaction_hash, after_log_index, after_block_hash, after_event_kind';
+const TARGET_SQL = 'target_transaction_hash, target_log_index, target_block_hash, target_event_kind';
 
 function boundedLimit(value) {
   const limit = Number(value);
@@ -54,6 +55,8 @@ function batchSql(apply) {
     WHERE source.chain=$1 AND (progress.after_transaction_hash IS NULL
       OR ROW(source.${KEY_SQL.replaceAll(', ', ', source.')})
        > ROW(progress.${CURSOR_SQL.replaceAll(', ', ', progress.')}))
+      AND ROW(source.${KEY_SQL.replaceAll(', ', ', source.')})
+        <= ROW(progress.${TARGET_SQL.replaceAll(', ', ', progress.')})
     ORDER BY source.${KEY_SQL.replaceAll(', ', ', source.')} LIMIT $2
   )${insertion}
   SELECT COUNT(*)::int AS scanned,
@@ -92,6 +95,11 @@ function summary(progress, batch, parity, apply, complete) {
     } : null,
     totalScanned: Number(progress.scanned) + (apply ? Number(batch.scanned) : 0),
     totalInserted: Number(progress.inserted) + (apply ? Number(batch.inserted) : 0),
+    target: progress.target_transaction_hash ? {
+      transactionHash: progress.target_transaction_hash,
+      logIndex: String(progress.target_log_index), blockHash: progress.target_block_hash,
+      eventKind: progress.target_event_kind, capturedAt: progress.target_captured_at,
+    } : null,
     complete,
   };
 }
@@ -110,9 +118,15 @@ async function runBatch(options = {}, dependencies = {}) {
       [CHAIN]
     )).rows[0];
     if (!progress) throw new Error('state backfill progress is missing; apply Stage 237');
+    if (!Object.prototype.hasOwnProperty.call(progress, 'target_transaction_hash')) {
+      throw new Error('state backfill target is missing; apply Stage 238');
+    }
     if (progress.completed_at) {
       await client.query(apply ? 'COMMIT' : 'ROLLBACK');
       return summary(progress, { scanned: 0, inserted: 0 }, { missing: 0, divergent: 0 }, apply, true);
+    }
+    if (!progress.target_transaction_hash) {
+      throw new Error('state backfill target is not frozen; apply Stage 238');
     }
     const batch = (await client.query(batchSql(apply), [CHAIN, limit])).rows[0];
     let parity = { missing: 0, divergent: 0 };

@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const stage237 = require('../src/utils/db-init-stage237');
+const stage238 = require('../src/utils/db-init-stage238');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { batchSql, parseArgs } = require(
   '../src/utils/backfill-robinhood-wallet-swap-realtime-states'
@@ -16,6 +17,8 @@ test('wallet-swap state backfill CLI is bounded and preview-first', () => {
   assert.doesNotMatch(batchSql(false), /INSERT INTO robinhood_wallet_swap_realtime_states/);
   assert.match(batchSql(true), /ON CONFLICT \(chain, transaction_hash/);
   assert.match(batchSql(true), /WHERE state\.chain IS NULL/);
+  assert.match(batchSql(true), /target_transaction_hash/);
+  assert.match(batchSql(true), /<= ROW\(progress\.target_transaction_hash/);
   assert.doesNotMatch(batchSql(true), /payload/);
 
   const group = SCHEMA_GROUPS.find(({ key }) => (
@@ -23,4 +26,10 @@ test('wallet-swap state backfill CLI is bounded and preview-first', () => {
   ));
   assert.equal(group.repair, 'node src/utils/db-init-stage237.js');
   assert.equal(group.tables[0].table, stage237.PROGRESS_TABLE);
+
+  const targetGroup = SCHEMA_GROUPS.find(({ key }) => (
+    key === 'stage238-robinhood-wallet-swap-realtime-state-target'
+  ));
+  assert.equal(targetGroup.repair, 'node src/utils/db-init-stage238.js');
+  assert.match(stage238.STATEMENTS.join('\n'), /ORDER BY transaction_hash DESC/);
 });
