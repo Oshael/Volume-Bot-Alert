@@ -305,13 +305,15 @@ function createFakeDatabase(options = {}) {
       }
       if (/INSERT INTO robinhood_wallet_swap_outbox/.test(sql)) {
         const targets = JSON.parse(params[0]);
+        const acceptedTargets = options.walletSwapAcceptedTargets ?? targets;
         return { rows: [{
           requested: targets.length,
           observed: targets.length,
-          accepted: targets.length,
-          eligible: targets.length,
-          inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
-          realtime_inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
+          accepted: acceptedTargets.length,
+          accepted_targets: acceptedTargets,
+          eligible: acceptedTargets.length,
+          inserted: options.walletSwapOutboxDuplicate ? 0 : acceptedTargets.length,
+          realtime_inserted: options.walletSwapOutboxDuplicate ? 0 : acceptedTargets.length,
           notifications: targets.length ? 1 : 0,
           realtime_notifications: targets.length ? 1 : 0,
         }], rowCount: 1 };
@@ -1525,6 +1527,25 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.equal(result.duplicateLogs, 1);
     assert.equal(result.insertedObservations, 1);
     assert.equal(result.insertedWalletSwapOutboxRows, 1);
+  });
+
+  it('keeps a stored terminal rejection outside the hourly replay targets', async () => {
+    const fake = createFakeDatabase({
+      processedLogDuplicate: true,
+      observationDuplicate: true,
+      walletSwapAcceptedTargets: [],
+    });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitHeadProcessingBatch({ entries: [marketEntry()] });
+
+    assert.equal(result.insertedLogs, 0);
+    assert.equal(result.insertedObservations, 0);
+    assert.equal(result.insertedWalletSwapOutboxRows, 0);
+    assert.equal(fake.calls.some((call) => (
+      /INSERT INTO robinhood_market_buckets_1h/.test(call.sql)
+    )), false);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
   });
 
   it('notifies the derived worker in the same transaction after appending rows', async () => {

@@ -111,9 +111,11 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
 
     assert.deepEqual(await producer.appendAccepted(client, target), {
       requested: 1, eligible: 1, inserted: 1, realtimeInserted: 1,
+      acceptedTargets: [{ transactionHash: TX, logIndex: '9' }],
     });
     assert.deepEqual(await producer.appendAccepted(client, target), {
       requested: 1, eligible: 1, inserted: 0, realtimeInserted: 0,
+      acceptedTargets: [{ transactionHash: TX, logIndex: '9' }],
     });
     const stored = await client.query(
       `SELECT block_number::text, transaction_index, log_index::text, payload
@@ -423,7 +425,7 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     }]);
 
     assert.deepEqual(result, {
-      requested: 1, eligible: 0, inserted: 0, realtimeInserted: 0,
+      requested: 1, eligible: 0, inserted: 0, realtimeInserted: 0, acceptedTargets: [],
     });
     const stored = await client.query(
       'SELECT 1 FROM robinhood_wallet_swap_outbox WHERE transaction_hash=$1',

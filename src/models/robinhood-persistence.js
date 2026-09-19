@@ -2114,21 +2114,34 @@ function createRobinhoodPersistenceRepository(options = {}) {
             ...write,
             insertedWalletSwapOutboxRows: outbox.inserted,
             insertedWalletSwapRealtimeRows: outbox.realtimeInserted,
+            acceptedWalletSwapTargets: outbox.acceptedTargets,
           };
         });
+        const acceptedWalletSwapIdentities = new Set(
+          marketWrite.acceptedWalletSwapTargets.map(rowIdentity)
+        );
+        const hourlyObservations = observations.filter((observation) => (
+          acceptedWalletSwapIdentities.has(rowIdentity(observation))
+        ));
         // Roll the touched minute buckets up into buckets_1h in the same tx, the way
         // the monolith's commitMarketRange did. Post-cutover nothing else writes
         // buckets_1h (the aggregate worker only builds buckets_agg FROM it), so
         // without this the hourly table freezes and liquidity/6h/24h go stale. No
         // defer here: the current hour must stay fresh for the 15m liquidity gate.
-        await timing.measure('hourlyMs', () => refreshHourlyBuckets(client, observations));
+        // A stored terminal rejection stays outside the rollup even when replay's
+        // current enrichment would accept it.
+        await timing.measure('hourlyMs', () => refreshHourlyBuckets(client, hourlyObservations));
         const insertedOutboxRows = emit
           ? await timing.measure('outboxMs', () => (
             insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
           ))
           : 0;
         await timing.measure('commitMs', () => client.query('COMMIT'));
-        const { liveBuckets: _ignored, ...marketCounts } = marketWrite;
+        const {
+          liveBuckets: _ignored,
+          acceptedWalletSwapTargets: _acceptedWalletSwapTargets,
+          ...marketCounts
+        } = marketWrite;
         return {
           insertedLogs: insertedIdentities.size,
           duplicateLogs: entries.length - insertedIdentities.size,

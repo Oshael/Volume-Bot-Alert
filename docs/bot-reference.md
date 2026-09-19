@@ -994,7 +994,9 @@ observação decodificada volta a ser oferecida ao insert idempotente para repar
 ausente sem recontar uma já existente. Uma rejeição terminal já persistida, inclusive
 `dead_pool_price`, permanece autoritativa e não gera wallet outbox. O produtor continua fail-closed
 se a projeção permanecer ausente ou se uma observação persistida como aceita não encontrar bloco e
-transação no journal canônico.
+transação no journal canônico. O rollup `1m → 1h` do replay recebe somente as identidades que essa
+leitura persistida confirmou como aceitas; uma decisão terminal rejeitada não cria um alvo horário
+sem bucket de minuto e não pode abortar o restante do batch.
 
 A Stage 204 cria `robinhood_wallet_swap_realtime_outbox`, o journal append-only da publicação v2.
 O processing grava `observed` na mesma transação da observação e da outbox Stage 203. O wallet

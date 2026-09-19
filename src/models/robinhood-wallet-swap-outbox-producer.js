@@ -32,7 +32,9 @@ function createRobinhoodWalletSwapOutboxProducer() {
     }
     const targets = normalizeTargets(observations);
     if (!targets.length) {
-      return { requested: 0, eligible: 0, inserted: 0, realtimeInserted: 0 };
+      return {
+        requested: 0, eligible: 0, inserted: 0, realtimeInserted: 0, acceptedTargets: [],
+      };
     }
     const result = await client.query(
       `WITH input AS MATERIALIZED (
@@ -144,6 +146,11 @@ function createRobinhoodWalletSwapOutboxProducer() {
          (SELECT COUNT(*)::int FROM input) AS requested,
          (SELECT COUNT(*)::int FROM observed) AS observed,
          (SELECT COUNT(*)::int FROM accepted) AS accepted,
+         COALESCE((SELECT jsonb_agg(jsonb_build_object(
+           'transactionHash', transaction_hash,
+           'logIndex', log_index::text
+         ) ORDER BY transaction_hash, log_index) FROM accepted), '[]'::jsonb)
+           AS accepted_targets,
          (SELECT COUNT(*)::int FROM eligible) AS eligible,
          (SELECT COUNT(*)::int FROM inserted) AS inserted,
          (SELECT COUNT(*)::int FROM realtime_inserted) AS realtime_inserted,
@@ -159,6 +166,7 @@ function createRobinhoodWalletSwapOutboxProducer() {
       eligible: Number(row.eligible || 0),
       inserted: Number(row.inserted || 0),
       realtimeInserted: Number(row.realtime_inserted || 0),
+      acceptedTargets: Array.isArray(row.accepted_targets) ? row.accepted_targets : [],
     };
     // The stored observation is authoritative on replay. A prior terminal
     // rejection (for example dead_pool_price) is intentionally not published,
