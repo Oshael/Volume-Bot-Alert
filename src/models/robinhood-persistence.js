@@ -1821,6 +1821,142 @@ async function refreshHourlyBuckets(client, rows) {
   return touchedBuckets;
 }
 
+async function rebuildReplayMinuteBuckets(client, rows) {
+  const targets = rows
+    .filter((row) => row.status === 'accepted')
+    .map((row) => ({
+      protocol: row.protocol,
+      marketKey: row.marketKey,
+      observedAt: row.observedAt,
+    }));
+  if (!targets.length) return 0;
+
+  const result = await client.query(
+    `WITH targets AS MATERIALIZED (
+       SELECT DISTINCT
+         'robinhood'::text AS chain,
+         protocol,
+         "marketKey" AS market_key,
+         date_trunc('minute', "observedAt") AS bucket_ts
+       FROM jsonb_to_recordset($1::jsonb) AS row(
+         protocol text, "marketKey" text, "observedAt" timestamptz
+       )
+     ), aggregated AS (
+       SELECT
+         observation.chain, observation.protocol, observation.market_key,
+         observation.token_address, observation.quote_address, targets.bucket_ts,
+         (array_agg(observation.price_usd ORDER BY
+           observation.block_number, observation.log_index))[1] AS open_price_usd,
+         MAX(observation.price_usd) AS high_price_usd,
+         MIN(observation.price_usd) AS low_price_usd,
+         (array_agg(observation.price_usd ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1] AS close_price_usd,
+         (array_agg(observation.fdv_usd ORDER BY
+           observation.block_number, observation.log_index))[1] AS open_fdv_usd,
+         MAX(observation.fdv_usd) AS high_fdv_usd,
+         MIN(observation.fdv_usd) AS low_fdv_usd,
+         (array_agg(observation.fdv_usd ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1] AS close_fdv_usd,
+         (array_agg(observation.liquidity_usd ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1]
+           AS close_liquidity_usd,
+         (array_agg(observation.liquidity_raw ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1]
+           AS close_liquidity_raw,
+         (array_agg(observation.liquidity_status ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1]
+           AS close_liquidity_status,
+         (array_agg(observation.liquidity_confidence ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1]
+           AS close_liquidity_confidence,
+         (array_agg(observation.liquidity_warning ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1]
+           AS close_liquidity_warning,
+         SUM(observation.volume_usd) AS volume_usd,
+         COUNT(*)::bigint AS swaps,
+         COUNT(*) FILTER (WHERE observation.side = 'buy') AS buys,
+         COUNT(*) FILTER (WHERE observation.side = 'sell') AS sells,
+         COUNT(DISTINCT observation.transaction_hash)::bigint AS transactions,
+         (array_agg(observation.observed_at ORDER BY
+           observation.block_number, observation.log_index))[1] AS first_observed_at,
+         MIN(observation.block_number) AS first_block_number,
+         (array_agg(observation.log_index ORDER BY
+           observation.block_number, observation.log_index))[1] AS first_log_index,
+         (array_agg(observation.observed_at ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1] AS last_observed_at,
+         MAX(observation.block_number) AS last_block_number,
+         (array_agg(observation.log_index ORDER BY
+           observation.block_number DESC, observation.log_index DESC))[1] AS last_log_index
+       FROM targets
+       INNER JOIN robinhood_market_observations observation
+         ON observation.chain = targets.chain
+        AND observation.protocol = targets.protocol
+        AND observation.market_key = targets.market_key
+        AND observation.observed_at >= targets.bucket_ts
+        AND observation.observed_at < targets.bucket_ts + INTERVAL '1 minute'
+        AND observation.status = 'accepted'
+       GROUP BY observation.chain, observation.protocol, observation.market_key,
+         observation.token_address, observation.quote_address, targets.bucket_ts
+     ), upserted AS (
+       INSERT INTO robinhood_market_buckets_1m (
+         chain, protocol, market_key, token_address, quote_address, bucket_ts,
+         open_price_usd, high_price_usd, low_price_usd, close_price_usd,
+         open_fdv_usd, high_fdv_usd, low_fdv_usd, close_fdv_usd,
+         close_liquidity_usd, close_liquidity_raw, close_liquidity_status,
+         close_liquidity_confidence, close_liquidity_warning,
+         volume_usd, swaps, buys, sells, transactions,
+         first_observed_at, first_block_number, first_log_index,
+         last_observed_at, last_block_number, last_log_index, expires_at
+       )
+       SELECT aggregated.*, bucket_ts + INTERVAL '14 days'
+       FROM aggregated
+       ON CONFLICT (chain, protocol, market_key, bucket_ts) DO UPDATE SET
+         open_price_usd = EXCLUDED.open_price_usd,
+         high_price_usd = EXCLUDED.high_price_usd,
+         low_price_usd = EXCLUDED.low_price_usd,
+         close_price_usd = EXCLUDED.close_price_usd,
+         open_fdv_usd = EXCLUDED.open_fdv_usd,
+         high_fdv_usd = EXCLUDED.high_fdv_usd,
+         low_fdv_usd = EXCLUDED.low_fdv_usd,
+         close_fdv_usd = EXCLUDED.close_fdv_usd,
+         close_liquidity_usd = EXCLUDED.close_liquidity_usd,
+         close_liquidity_raw = EXCLUDED.close_liquidity_raw,
+         close_liquidity_status = EXCLUDED.close_liquidity_status,
+         close_liquidity_confidence = EXCLUDED.close_liquidity_confidence,
+         close_liquidity_warning = EXCLUDED.close_liquidity_warning,
+         volume_usd = EXCLUDED.volume_usd,
+         swaps = EXCLUDED.swaps,
+         buys = EXCLUDED.buys,
+         sells = EXCLUDED.sells,
+         transactions = EXCLUDED.transactions,
+         first_observed_at = EXCLUDED.first_observed_at,
+         first_block_number = EXCLUDED.first_block_number,
+         first_log_index = EXCLUDED.first_log_index,
+         last_observed_at = EXCLUDED.last_observed_at,
+         last_block_number = EXCLUDED.last_block_number,
+         last_log_index = EXCLUDED.last_log_index,
+         expires_at = EXCLUDED.expires_at,
+         updated_at = NOW()
+       WHERE robinhood_market_buckets_1m.token_address = EXCLUDED.token_address
+         AND robinhood_market_buckets_1m.quote_address = EXCLUDED.quote_address
+       RETURNING 1
+     )
+     SELECT
+       (SELECT COUNT(*)::int FROM targets) AS target_buckets,
+       (SELECT COUNT(*)::int FROM aggregated) AS expected_buckets,
+       (SELECT COUNT(*)::int FROM upserted) AS touched_buckets`,
+    [JSON.stringify(targets)]
+  );
+  const counts = result.rows[0] || {};
+  const targetBuckets = Number(counts.target_buckets || 0);
+  const expectedBuckets = Number(counts.expected_buckets || 0);
+  const touchedBuckets = Number(counts.touched_buckets || 0);
+  if (targetBuckets !== expectedBuckets || expectedBuckets !== touchedBuckets) {
+    throw new Error('Robinhood replay minute bucket rebuild is incomplete or has conflicting dimensions');
+  }
+  return touchedBuckets;
+}
+
 function createRobinhoodPersistenceRepository(options = {}) {
   const database = options.database || db;
   const now = options.now || Date.now;
@@ -2123,6 +2259,9 @@ function createRobinhoodPersistenceRepository(options = {}) {
         const hourlyObservations = observations.filter((observation) => (
           acceptedWalletSwapIdentities.has(rowIdentity(observation))
         ));
+        const replayHourlyObservations = hourlyObservations.filter((observation) => (
+          !insertedIdentities.has(rowIdentity(observation))
+        ));
         // Roll the touched minute buckets up into buckets_1h in the same tx, the way
         // the monolith's commitMarketRange did. Post-cutover nothing else writes
         // buckets_1h (the aggregate worker only builds buckets_agg FROM it), so
@@ -2130,7 +2269,10 @@ function createRobinhoodPersistenceRepository(options = {}) {
         // defer here: the current hour must stay fresh for the 15m liquidity gate.
         // A stored terminal rejection stays outside the rollup even when replay's
         // current enrichment would accept it.
-        await timing.measure('hourlyMs', () => refreshHourlyBuckets(client, hourlyObservations));
+        await timing.measure('hourlyMs', async () => {
+          await rebuildReplayMinuteBuckets(client, replayHourlyObservations);
+          return refreshHourlyBuckets(client, hourlyObservations);
+        });
         const insertedOutboxRows = emit
           ? await timing.measure('outboxMs', () => (
             insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
@@ -2472,5 +2614,6 @@ module.exports = {
     emitRobinhoodStandardAlertSignals,
     normalizeSignalCandidateQuery,
     normalizeSignalCandidateRow,
+    rebuildReplayMinuteBuckets,
   },
 };

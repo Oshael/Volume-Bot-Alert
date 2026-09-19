@@ -357,6 +357,18 @@ function createFakeDatabase(options = {}) {
           rowCount: 1,
         };
       }
+      if (/FROM targets[\s\S]*robinhood_market_observations observation/.test(sql)) {
+        const rows = JSON.parse(params[0]);
+        const expectedBuckets = rows.length;
+        return {
+          rows: [{
+            target_buckets: expectedBuckets,
+            expected_buckets: expectedBuckets,
+            touched_buckets: options.replayMinuteBucketConflict ? 0 : expectedBuckets,
+          }],
+          rowCount: 1,
+        };
+      }
       const backfillResult = fakeBackfillResult(sql);
       if (backfillResult) return backfillResult;
       return { rows: [], rowCount: 1 };
@@ -1527,6 +1539,24 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.equal(result.duplicateLogs, 1);
     assert.equal(result.insertedObservations, 1);
     assert.equal(result.insertedWalletSwapOutboxRows, 1);
+  });
+
+  it('rebuilds a replayed accepted minute before refreshing its hourly bucket', async () => {
+    const fake = createFakeDatabase({
+      processedLogDuplicate: true,
+      observationDuplicate: true,
+    });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await repository.commitHeadProcessingBatch({ entries: [marketEntry()] });
+
+    const minuteRepair = findCall(
+      fake.calls, /FROM targets[\s\S]*robinhood_market_observations observation/
+    );
+    const hourly = findCall(fake.calls, /INSERT INTO robinhood_market_buckets_1h/);
+    assert.ok(minuteRepair, 'accepted replay must rebuild its authoritative minute');
+    assert.match(minuteRepair.sql, /volume_usd = EXCLUDED\.volume_usd/);
+    assert.ok(fake.calls.indexOf(minuteRepair) < fake.calls.indexOf(hourly));
   });
 
   it('keeps a stored terminal rejection outside the hourly replay targets', async () => {
