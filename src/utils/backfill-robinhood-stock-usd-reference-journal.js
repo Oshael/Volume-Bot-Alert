@@ -11,8 +11,8 @@ const {
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
 const { createRobinhoodWethUsdQuoteReader } = require('../services/robinhood-weth-usd-quote');
 
-const LOOKBACK_BLOCKS = 100_000n;
 const BATCH_BLOCKS = 2_000n;
+const DEFAULT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
 
 async function syncWethUsdPools(database, deps = {}) {
   const repository = deps.repository
@@ -42,8 +42,36 @@ async function window(database) {
   );
   if (rows[0]?.through_block == null) throw new Error('canonical capture cursor is unavailable');
   const frontier = BigInt(rows[0].frontier_block);
+  const retained = await database.query(
+    `SELECT MIN(block_number)::text AS first_block
+       FROM robinhood_chain_blocks WHERE chain='robinhood' AND canonical=TRUE`
+  );
+  if (retained.rows[0]?.first_block == null) throw new Error('canonical block journal is empty');
+  let low = BigInt(retained.rows[0].first_block);
+  let high = frontier;
+  if (low > high) throw new Error('canonical frontier is below retained block coverage');
+  const target = await database.query(
+    `SELECT block_timestamp FROM robinhood_chain_blocks
+      WHERE chain='robinhood' AND canonical=TRUE AND block_number=$1`,
+    [frontier.toString()]
+  );
+  const targetMs = new Date(target.rows[0]?.block_timestamp).getTime();
+  if (!Number.isFinite(targetMs)) throw new Error('frontier block timestamp is unavailable');
+  const cutoffMs = targetMs - DEFAULT_LOOKBACK_MS;
+  while (low < high) {
+    const middle = (low + high) / 2n;
+    const probe = await database.query(
+      `SELECT block_timestamp FROM robinhood_chain_blocks
+        WHERE chain='robinhood' AND canonical=TRUE AND block_number=$1`,
+      [middle.toString()]
+    );
+    const observedMs = new Date(probe.rows[0]?.block_timestamp).getTime();
+    if (!Number.isFinite(observedMs)) throw new Error(`canonical block ${middle} is missing`);
+    if (observedMs < cutoffMs) low = middle + 1n;
+    else high = middle;
+  }
   return {
-    from: frontier > LOOKBACK_BLOCKS ? frontier - LOOKBACK_BLOCKS : 0n,
+    from: low,
     through: BigInt(rows[0].through_block),
   };
 }
@@ -82,4 +110,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { main, syncWethUsdPools, window };
+module.exports = { DEFAULT_LOOKBACK_MS, main, syncWethUsdPools, window };

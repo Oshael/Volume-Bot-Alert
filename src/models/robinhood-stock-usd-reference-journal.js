@@ -9,6 +9,7 @@ const v3 = require('../services/uniswap-v3-decoder');
 const v4 = require('../services/uniswap-v4-decoder');
 
 const CHAIN = 'robinhood';
+const COVERAGE_TABLE = 'robinhood_stock_usd_reference_coverage';
 const STOCKS = Object.freeze(Object.values(ROBINHOOD_TOKENIZED_ASSETS));
 const REFERENCE_TOPICS = new Set([v2.TOPICS.sync, v3.TOPICS.swap, v4.TOPICS.swap]);
 
@@ -93,7 +94,45 @@ async function backfillRange(input = {}, options = {}) {
      )`, '$3', '$4', '$5'
   ), [fromBlock.toString(), throughBlock.toString(),
     CANONICAL_CONTRACTS.USDG, STOCKS, CANONICAL_CONTRACTS.WETH]);
+  await recordBackfillCoverage(database, { fromBlock, throughBlock });
   return result.rowCount;
 }
 
-module.exports = { appendCapturedEvents, backfillRange };
+async function recordBackfillCoverage(executor, input = {}) {
+  const fromBlock = BigInt(input.fromBlock);
+  const nextBlock = BigInt(input.throughBlock) + 1n;
+  if (fromBlock < 0n || nextBlock <= fromBlock) throw new Error('coverage range is invalid');
+  const result = await executor.query(
+    `INSERT INTO ${COVERAGE_TABLE}(chain, coverage_start_block, next_block)
+     VALUES ('${CHAIN}', $1, $2)
+     ON CONFLICT (chain) DO UPDATE SET
+       coverage_start_block=LEAST(${COVERAGE_TABLE}.coverage_start_block,
+                                  EXCLUDED.coverage_start_block),
+       next_block=GREATEST(${COVERAGE_TABLE}.next_block, EXCLUDED.next_block),
+       updated_at=NOW()
+     WHERE EXCLUDED.coverage_start_block<=${COVERAGE_TABLE}.next_block
+       AND EXCLUDED.next_block>=${COVERAGE_TABLE}.coverage_start_block`,
+    [fromBlock.toString(), nextBlock.toString()]
+  );
+  if (result.rowCount !== 1) {
+    const error = new Error('stock/USD reference backfill would create a coverage gap');
+    error.code = 'stock_usd_reference_coverage_gap';
+    throw error;
+  }
+}
+
+async function advanceLiveCoverage(executor, input = {}) {
+  const fromBlock = BigInt(input.fromBlock);
+  const nextBlock = BigInt(input.throughBlock) + 1n;
+  if (fromBlock < 0n || nextBlock <= fromBlock) throw new Error('coverage range is invalid');
+  await executor.query(
+    `UPDATE ${COVERAGE_TABLE}
+        SET next_block=$2, updated_at=NOW()
+      WHERE chain='${CHAIN}' AND next_block=$1`,
+    [fromBlock.toString(), nextBlock.toString()]
+  );
+}
+
+module.exports = {
+  advanceLiveCoverage, appendCapturedEvents, backfillRange, recordBackfillCoverage,
+};

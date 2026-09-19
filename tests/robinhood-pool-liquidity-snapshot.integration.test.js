@@ -22,6 +22,7 @@ const stage191 = require('../src/utils/db-init-stage191');
 const stage198 = require('../src/utils/db-init-stage198');
 const stage212 = require('../src/utils/db-init-stage212');
 const stage222 = require('../src/utils/db-init-stage222');
+const stage239 = require('../src/utils/db-init-stage239');
 const {
   createRobinhoodPoolLiquiditySeedRepository,
 } = require('../src/models/robinhood-pool-liquidity-seed');
@@ -52,6 +53,7 @@ const MARKET = `robinhood:uniswap-v3:${POOL}`;
 const STOCK = ROBINHOOD_TOKENIZED_ASSETS.SPY;
 
 async function cleanup() {
+  await db.query("DELETE FROM robinhood_stock_usd_reference_coverage WHERE chain = 'robinhood'");
   await db.query("DELETE FROM robinhood_stock_usd_reference_events WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address = $1', [TOKEN]);
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain = 'robinhood'");
@@ -83,6 +85,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage198.init({ closePool: false });
     await stage212.init({ closePool: false });
     await stage222.init({ closePool: false });
+    await stage239.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (
@@ -229,7 +232,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         fromBlock: checkpointBlock, throughBlock: checkpointBlock,
       }, { database: client }), 1);
       const checkpoint = await repository.findStockUsdEventCheckpoint({
-        stockAddress: STOCK, blockNumber: '9000020',
+        stockAddress: STOCK, blockNumber: checkpointBlock,
       });
       assert.deepEqual({
         protocol: checkpoint.reference.protocol,
@@ -244,7 +247,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         [checkpointHash]
       );
       assert.equal(await repository.findStockUsdEventCheckpoint({
-        stockAddress: STOCK, blockNumber: '9000020',
+        stockAddress: STOCK, blockNumber: checkpointBlock,
       }), null);
     } finally {
       await client.query('ROLLBACK');

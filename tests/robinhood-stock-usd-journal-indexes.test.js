@@ -3,11 +3,12 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const stage222 = require('../src/utils/db-init-stage222');
+const stage239 = require('../src/utils/db-init-stage239');
 const {
-  appendCapturedEvents, backfillRange,
+  advanceLiveCoverage, appendCapturedEvents, backfillRange,
 } = require('../src/models/robinhood-stock-usd-reference-journal');
 const {
-  syncWethUsdPools,
+  DEFAULT_LOOKBACK_MS, syncWethUsdPools, window,
 } = require('../src/utils/backfill-robinhood-stock-usd-reference-journal');
 const {
   ROBINHOOD_V3_FACTORY,
@@ -34,6 +35,9 @@ describe('Robinhood compact stock/USD reference journal', () => {
       'idx_rh_chain_events_v4_pool_tail',
       'idx_rh_stock_usd_reference_events_lookup',
     ]);
+    assert.match(stage239.STATEMENTS.join('\n'), /coverage_start_block/);
+    const coverage = SCHEMA_GROUPS.find(({ key }) => key.includes('stage239'));
+    assert.equal(coverage.repair, 'node src/utils/db-init-stage239.js');
   });
 
   it('filters live input to reference topics and keeps writes idempotent', async () => {
@@ -59,13 +63,41 @@ describe('Robinhood compact stock/USD reference journal', () => {
     const calls = [];
     await backfillRange({ fromBlock: '100', throughBlock: '200' }, {
       database: { query: async (sql, params) => {
-        calls.push({ sql, params }); return { rowCount: 3 };
+        calls.push({ sql, params });
+        return { rowCount: sql.includes('INSERT INTO robinhood_stock_usd_reference_coverage')
+          ? 1 : 3 };
       } },
     });
     assert.match(calls[0].sql, /block\.canonical=TRUE/);
     assert.match(calls[0].sql, /event\.block_number BETWEEN \$1::bigint AND \$2::bigint/);
     assert.deepEqual(calls[0].params.slice(0, 2), ['100', '200']);
     assert.equal(calls[0].params[4], v3.ROBINHOOD_WETH);
+    assert.deepEqual(calls[1].params, ['100', '201']);
+  });
+
+  it('advances live coverage only from the exact contiguous frontier', async () => {
+    const calls = [];
+    await advanceLiveCoverage({ query: async (sql, params) => {
+      calls.push({ sql, params }); return { rowCount: 1 };
+    } }, { fromBlock: '201', throughBlock: '216' });
+    assert.match(calls[0].sql, /next_block=\$1/);
+    assert.deepEqual(calls[0].params, ['201', '217']);
+  });
+
+  it('derives the default backfill floor from three days of block timestamps', async () => {
+    const origin = Date.parse('2026-01-01T00:00:00Z');
+    const database = { async query(sql, params) {
+      if (sql.includes('robinhood_chain_capture_cursor')) {
+        return { rows: [{ through_block: '1000', frontier_block: '900' }] };
+      }
+      if (sql.includes('MIN(block_number)')) return { rows: [{ first_block: '0' }] };
+      const block = BigInt(params[0]);
+      return { rows: [{ block_timestamp: new Date(
+        origin + Number(block) * 24 * 60 * 60 * 1000
+      ) }] };
+    } };
+    assert.equal(DEFAULT_LOOKBACK_MS, 3 * 24 * 60 * 60 * 1000);
+    assert.deepEqual(await window(database), { from: 897n, through: 1000n });
   });
 
   it('bootstraps WETH/USDG pool identity from the live factory', async () => {

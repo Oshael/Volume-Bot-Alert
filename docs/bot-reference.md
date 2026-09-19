@@ -5407,11 +5407,15 @@ haltam a lease.
 Pools cujo quote é uma stock tentam primeiro resolver a referência USD no estado
 exato do RPC live. Quando uma frontier atrasada já caiu fora da retenção de estado
 do node pruned, o resolver busca no journal o último `Sync` V2 ou `Swap` V3/V4
-canônico da própria stock contra USDG nos 100.000 blocos anteriores e calcula o
-preço diretamente da evidência do evento. O filtro exige bloco menor ou igual ao
-solicitado, portanto nunca usa preço do futuro. Esse checkpoint event-driven
-permite catch-up sem archive permanente; se não existir referência on-chain nem
-evento anterior no intervalo, a ausência continua falhando fechada.
+canônico da própria stock contra USDG e calcula o preço diretamente da evidência
+do evento. Sem watermark, a busca cobre por padrão os três dias anteriores pelo
+timestamp canônico dos blocos. Com a Stage 239 inicializada pelo backfill, o cursor
+`robinhood_stock_usd_reference_coverage` comprova continuidade e permite usar o
+último evento desde o início dessa cobertura sem limite arbitrário de idade. O
+filtro exige bloco menor ou igual ao solicitado, portanto nunca usa preço futuro.
+Se não existir referência on-chain nem evento coberto anterior, a ausência continua
+falhando fechada; dentro de cobertura comprovada ela gera rejeição determinística,
+em vez de manter a frontier em retry infinito.
 A Stage 222 cria `robinhood_stock_usd_reference_events`, um journal compacto e
 independente da retenção dos raws que recebe atomicamente `Sync` V2 e `Swap`
 V3/V4 de pools stock/USDG registradas, além dos `Swap` das pools WETH/USDG
@@ -5422,13 +5426,18 @@ evento compacto a pool com maior liquidez, sem liberar `eth_getLogs` no papel
 live. Antes de reabrir uma frontier antiga, aplique
 `node src/utils/db-init-stage222.js`, reinicie chain capture e canonical head e
 semeie a janela necessária com
-`npm run robinhood:backfill-stock-reference-journal -- --write`. O backfill usa
+`npm run robinhood:backfill-stock-reference-journal -- --write`. Antes do primeiro
+backfill da versão nova, pare primeiro o canonical-head e depois o chain capture,
+aplique `node src/utils/db-init-stage239.js` e só reinicie o capture depois do resumo
+final; reinicie o canonical-head por último. Isso impede que a inicialização do
+watermark deixe um intervalo concorrente. O backfill usa
 o RPC pruned corrente de `ROBINHOOD_CANONICAL_HEAD_RPC_URL` (ou o RPC de capture)
 somente para descobrir e validar as pools WETH/USDG pelo factory; a semeadura dos
-eventos lê o journal PostgreSQL, não o RPC histórico. Ele usa
-por padrão os 100.000 blocos anteriores ao primeiro outbox incompleto até o
-checkpoint capturado, em lotes idempotentes de 2.000 blocos. A consulta live lê
-somente esse journal pequeno e ainda valida o hash contra o bloco canônico.
+eventos lê o journal PostgreSQL, não o RPC histórico. Ele calcula por busca binária
+o bloco correspondente a três dias antes do primeiro outbox incompleto e percorre
+até o checkpoint capturado em lotes idempotentes de 2.000 blocos. Cada lote amplia
+o watermark somente se for contíguo; o capture live mantém o cursor depois da
+reativação. A consulta valida o hash contra o bloco canônico.
 O canário não pode gravar direto em `robinhood_head_captures`, porque a chave
 idempotente faria o primeiro writer esconder divergências. A Stage 194 cria
 `robinhood_canonical_head_candidates`, um sink separado e imutável que compara

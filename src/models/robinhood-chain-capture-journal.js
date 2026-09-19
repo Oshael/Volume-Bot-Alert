@@ -15,6 +15,7 @@ const {
   appendRobinhoodTokenLifecycleEvidence,
 } = require('./robinhood-token-lifecycle-evidence');
 const {
+  advanceLiveCoverage: advanceStockUsdReferenceCoverage,
   appendCapturedEvents: appendStockUsdReferenceEvents,
 } = require('./robinhood-stock-usd-reference-journal');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
@@ -427,6 +428,10 @@ function createRobinhoodChainCaptureJournal(options = {}) {
              )`, [CHAIN, JSON.stringify(payload.events)]
       );
       await appendStockUsdReferenceEvents(client, payload.events);
+      await advanceStockUsdReferenceCoverage(client, {
+        fromBlock: entries[0].block.number,
+        throughBlock: entries.at(-1).block.number,
+      });
       await appendRobinhoodTokenLifecycleEvidence(client, payload.lifecycleEvidence);
       await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(

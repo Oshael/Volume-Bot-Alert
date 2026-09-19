@@ -178,7 +178,7 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, v3.ROBINHOOD_WETH, '123', 7]);
   });
 
-  it('reads a bounded canonical stock/USDG event without looking past the requested block', async () => {
+  it('reads a coverage-aware stock/USDG event without looking past the requested block', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
       async query(sql, params) {
@@ -200,13 +200,26 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.equal(checkpoint.reference.marketKey, MARKET);
     assert.equal(checkpoint.log.blockNumber, '120');
     assert.match(calls[0].sql, /robinhood_stock_usd_reference_events/);
-    assert.match(calls[0].sql, /event\.block_number BETWEEN \$4::bigint AND \$3::bigint/);
+    assert.match(calls[0].sql, /robinhood_stock_usd_reference_coverage/);
+    assert.match(calls[0].sql, /target\.block_number<coverage\.next_block/);
+    assert.match(calls[0].sql, /INTERVAL '3 days'/);
     assert.match(calls[0].sql, /event\.canonical=TRUE/);
     assert.match(calls[0].sql, /snapshot\.liquidity_usd DESC NULLS LAST/);
     assert.match(calls[0].sql, /ORDER BY checkpoint\.reference_rank/);
     assert.match(calls[0].sql, /LIMIT 20/);
     assert.doesNotMatch(calls[0].sql, /FROM robinhood_chain_events/);
-    assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123', '0']);
+    assert.deepEqual(calls[0].params, [TOKEN, v3.ROBINHOOD_USDG, '123']);
+  });
+
+  it('reports whether the durable stock/USD coverage includes a target block', async () => {
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        assert.match(sql, /coverage_start_block/);
+        assert.deepEqual(params, ['123']);
+        return { rows: [{ covered: true }] };
+      },
+    } });
+    assert.equal(await repository.hasStockUsdReferenceCoverage({ blockNumber: '123' }), true);
   });
 
   it('persists factory-resolved WETH/USDG pools and reads their compact checkpoint', async () => {

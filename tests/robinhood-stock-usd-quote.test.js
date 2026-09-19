@@ -164,6 +164,17 @@ describe('Robinhood stock USD quote reader', () => {
     );
   });
 
+  it('makes a covered missing checkpoint deterministic instead of retrying forever', async () => {
+    const deps = dependencies([reference('uniswap-v2')], async () => words(0, 0));
+    deps.repository.hasStockUsdReferenceCoverage = async () => true;
+    const reader = createRobinhoodStockUsdQuoteReader(deps);
+    await assert.rejects(
+      reader.getSnapshot({ stockAddress: STOCK, blockTag: BLOCK_TAG }),
+      (error) => error.code === 'stock_usd_reference_checkpoint_missing'
+        && error.retryable === false
+    );
+  });
+
   it('falls back to the last canonical direct USDG event when pruned state is unavailable', async () => {
     const deps = dependencies([reference('uniswap-v3')], async () => '0x');
     deps.repository.findStockUsdEventCheckpoint = async (input) => {

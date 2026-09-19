@@ -99,6 +99,7 @@ const stage214 = require('../src/utils/db-init-stage214');
 const stage215 = require('../src/utils/db-init-stage215');
 const stage216 = require('../src/utils/db-init-stage216');
 const stage222 = require('../src/utils/db-init-stage222');
+const stage239 = require('../src/utils/db-init-stage239');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -378,6 +379,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage195.init({ closePool: false });
     await stage216.init({ closePool: false });
     await stage222.init({ closePool: false });
+    await stage239.init({ closePool: false });
     await stage90.init({ closePool: false });
     await stage91.init({ closePool: false });
     await stage109.init({ closePool: false });

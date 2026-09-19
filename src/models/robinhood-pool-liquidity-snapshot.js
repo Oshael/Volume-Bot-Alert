@@ -11,7 +11,6 @@ const {
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 const MAX_BATCH_SIZE = 500;
-const STOCK_USD_EVENT_LOOKBACK_BLOCKS = 100_000n;
 const V4_EVENT_TOPICS = new Set([...Object.values(v4.TOPICS), V4_DONATE_TOPIC]);
 
 function timestamp(value, label) {
@@ -323,10 +322,17 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   async function findStockUsdEventCheckpoint(input = {}) {
     const stockAddress = normalizeTokenAddress(CHAIN, input.stockAddress);
     const blockNumber = quantity(input.blockNumber, 'blockNumber');
-    const fromBlock = (BigInt(blockNumber) > STOCK_USD_EVENT_LOOKBACK_BLOCKS
-      ? BigInt(blockNumber) - STOCK_USD_EVENT_LOOKBACK_BLOCKS : 0n).toString();
     const { rows } = await database.query(
-      `WITH direct_references AS MATERIALIZED (
+      `WITH target AS MATERIALIZED (
+         SELECT block.block_number, block.block_timestamp
+           FROM robinhood_chain_blocks block
+          WHERE block.chain='${CHAIN}' AND block.canonical=TRUE
+            AND block.block_number=$3::bigint
+       ), coverage AS MATERIALIZED (
+         SELECT coverage_start_block, next_block
+           FROM robinhood_stock_usd_reference_coverage
+          WHERE chain='${CHAIN}'
+       ), direct_references AS MATERIALIZED (
          SELECT registry.*,
                 ROW_NUMBER() OVER (
                   ORDER BY snapshot.liquidity_usd DESC NULLS LAST,
@@ -347,15 +353,24 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
                 event.transaction_hash, event.transaction_index, event.log_index,
                 event.address, event.topics, event.data
            FROM direct_references registry
+           CROSS JOIN target
+           LEFT JOIN coverage ON TRUE
            CROSS JOIN LATERAL (
              SELECT event.*
                FROM robinhood_stock_usd_reference_events event
+               INNER JOIN robinhood_chain_blocks event_block
+                 ON event_block.chain=event.chain AND event_block.block_hash=event.block_hash
+                AND event_block.canonical=TRUE
               WHERE event.chain='${CHAIN}'
                 AND event.canonical=TRUE
                 AND event.stock_address=$1
                 AND event.protocol=registry.protocol
                 AND event.market_key=registry.market_key
-                AND event.block_number BETWEEN $4::bigint AND $3::bigint
+                AND event.block_number<=target.block_number
+                AND ((target.block_number>=coverage.coverage_start_block
+                      AND target.block_number<coverage.next_block
+                      AND event.block_number>=coverage.coverage_start_block)
+                  OR event_block.block_timestamp>=target.block_timestamp-INTERVAL '3 days')
               ORDER BY event.block_number DESC, event.transaction_index DESC,
                        event.log_index DESC
               LIMIT 1
@@ -371,9 +386,23 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
          FROM checkpoints checkpoint
         ORDER BY checkpoint.reference_rank
         LIMIT 1`,
-      [stockAddress, ROBINHOOD_USDG, blockNumber, fromBlock]
+      [stockAddress, ROBINHOOD_USDG, blockNumber]
     );
     return normalizeStockUsdEventCheckpoint(rows[0]);
+  }
+
+  async function hasStockUsdReferenceCoverage(input = {}) {
+    const blockNumber = quantity(input.blockNumber, 'blockNumber');
+    const { rows } = await database.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM robinhood_stock_usd_reference_coverage coverage
+          WHERE coverage.chain='${CHAIN}'
+            AND $1::bigint>=coverage.coverage_start_block
+            AND $1::bigint<coverage.next_block
+       ) AS covered`,
+      [blockNumber]
+    );
+    return rows[0]?.covered === true;
   }
 
   async function syncWethUsdReferencePools(pools = []) {
@@ -594,7 +623,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   }
 
   return Object.freeze({
-    findStockUsdEventCheckpoint, invalidateSnapshotsFromBlock,
+    findStockUsdEventCheckpoint, hasStockUsdReferenceCoverage, invalidateSnapshotsFromBlock,
     listWethUsdEventCheckpoints, listWethUsdReferencePools, syncWethUsdReferencePools,
     listDuePools, listPoolsForLiquidityEvents, listStockUsdReferences, recordFailure,
     recordSnapshot, recordSnapshots, resolveAnchorBlock, resolveCanonicalAnchorWindow,

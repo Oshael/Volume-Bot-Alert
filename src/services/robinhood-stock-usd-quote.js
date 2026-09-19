@@ -76,11 +76,12 @@ function normalizePrice(rawRatio, tokenDecimals, quoteDecimals, quoteUsdPrice) {
   );
 }
 
-function errorResult(stockAddress, block, failures) {
+function errorResult(stockAddress, block, failures, coverageComplete = false) {
   const error = new Error(`stock USD reference is unavailable for ${stockAddress} at ${block}`);
-  error.code = failures.length
-    ? 'stock_usd_reference_unavailable' : STOCK_USD_REFERENCE_MISSING_ERROR_CODE;
-  error.retryable = failures.length > 0;
+  error.code = coverageComplete
+    ? 'stock_usd_reference_checkpoint_missing'
+    : failures.length ? 'stock_usd_reference_unavailable' : STOCK_USD_REFERENCE_MISSING_ERROR_CODE;
+  error.retryable = !coverageComplete && failures.length > 0;
   error.details = { stockAddress, blockTag: block, failures };
   return error;
 }
@@ -236,7 +237,11 @@ function createRobinhoodStockUsdQuoteReader(options = {}) {
     }
     const journalCheckpoint = await eventCheckpoint(stockAddress, resolvedBlockTag);
     if (journalCheckpoint) return journalCheckpoint;
-    throw errorResult(stockAddress, resolvedBlockTag, failures);
+    const coverageComplete = typeof repository.hasStockUsdReferenceCoverage === 'function'
+      && await repository.hasStockUsdReferenceCoverage({
+        blockNumber: BigInt(resolvedBlockTag).toString(),
+      });
+    throw errorResult(stockAddress, resolvedBlockTag, failures, coverageComplete);
   }
 
   function remember(key, value) {

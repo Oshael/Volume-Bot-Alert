@@ -6503,6 +6503,22 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage239-robinhood-stock-usd-reference-coverage',
+    name: 'Stage 239 stock/USD reference journal coverage',
+    repair: 'node src/utils/db-init-stage239.js',
+    tables: [{
+      table: 'robinhood_stock_usd_reference_coverage',
+      columns: ['chain', 'coverage_start_block', 'next_block', 'updated_at'],
+      constraints: [{
+        name: 'rh_stock_usd_reference_coverage_pkey',
+        includes: ['PRIMARY KEY', 'chain'],
+      }, {
+        name: 'rh_stock_usd_reference_coverage_values_check',
+        includes: ['coverage_start_block', 'next_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
