@@ -2086,16 +2086,14 @@ function createRobinhoodPersistenceRepository(options = {}) {
           client,
           entries.map((entry) => entry.row)
         )));
-        const insertedObservations = entries
-          .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
+        // The processed-log marker and observation projection can diverge after
+        // an interrupted legacy write or retention/replay overlap. Always offer
+        // every decoded observation to the idempotent projection insert: missing
+        // rows are repaired, while existing accepted/rejected decisions remain
+        // authoritative and are never counted twice.
+        const observations = entries
+          .filter((entry) => entry.observation)
           .map((entry) => entry.observation);
-        // During monolith overlap, processing commonly loses the shared log
-        // identity race. Outbox shadow still needs the canonical bucket payload,
-        // but insertMarketObservations keeps ON CONFLICT idempotency so it never
-        // counts that observation twice.
-        const observations = emit
-          ? entries.filter((entry) => entry.observation).map((entry) => entry.observation)
-          : insertedObservations;
         const liquidityDeltas = entries
           .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
           .map((entry) => entry.liquidityDelta);

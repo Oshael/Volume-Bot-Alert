@@ -289,7 +289,7 @@ function createFakeDatabase(options = {}) {
       if (/INSERT INTO robinhood_processed_logs/.test(sql)) {
         if (/jsonb_to_recordset/.test(sql)) {
           const rows = JSON.parse(params[0]);
-          return options.duplicate
+          return (options.processedLogDuplicate ?? options.duplicate)
             ? { rows: [], rowCount: 0 }
             : {
               rows: rows.map((row) => ({
@@ -307,6 +307,8 @@ function createFakeDatabase(options = {}) {
         const targets = JSON.parse(params[0]);
         return { rows: [{
           requested: targets.length,
+          observed: targets.length,
+          accepted: targets.length,
           eligible: targets.length,
           inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
           realtime_inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
@@ -325,15 +327,17 @@ function createFakeDatabase(options = {}) {
       if (/INSERT INTO robinhood_market_observations/.test(sql)) {
         if (options.failObservation) throw new Error('observation write failed');
         const rows = JSON.parse(params[0]);
-        const insertedObservations = options.duplicate ? 0 : rows.length;
-        const expectedBuckets = options.duplicate
+        const observationDuplicate = options.observationDuplicate ?? options.duplicate;
+        const insertedObservations = observationDuplicate ? 0 : rows.length;
+        const expectedBuckets = observationDuplicate
           ? 0 : rows.filter((row) => row.status === 'accepted').length;
         return {
           rows: [{
             inserted_observations: insertedObservations,
             expected_buckets: expectedBuckets,
             touched_buckets: options.bucketIdentityConflict ? 0 : expectedBuckets,
-            live_buckets: options.duplicate && params[2] !== true ? [] : (options.liveBuckets || []),
+            live_buckets: observationDuplicate && params[2] !== true
+              ? [] : (options.liveBuckets || []),
           }],
           rowCount: 1,
         };
@@ -1507,6 +1511,20 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.equal(obsCall.params[1], null);
     assert.equal(obsCall.params[2], false);
     assert.equal(result.insertedOutboxRows, 0);
+  });
+
+  it('repairs a missing observation when the processed-log identity already exists', async () => {
+    const fake = createFakeDatabase({ processedLogDuplicate: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitHeadProcessingBatch({ entries: [marketEntry()] });
+
+    const observationWrite = findCall(fake.calls, /INSERT INTO robinhood_market_observations/);
+    assert.equal(JSON.parse(observationWrite.params[0]).length, 1);
+    assert.equal(result.insertedLogs, 0);
+    assert.equal(result.duplicateLogs, 1);
+    assert.equal(result.insertedObservations, 1);
+    assert.equal(result.insertedWalletSwapOutboxRows, 1);
   });
 
   it('notifies the derived worker in the same transaction after appending rows', async () => {

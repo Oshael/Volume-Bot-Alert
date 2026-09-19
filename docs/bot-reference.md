@@ -989,6 +989,13 @@ shadow, aplique `node src/utils/db-init-stage209.js`; ela adiciona somente estad
 contendo `tx.from`, hash/tempo do bloco e posição da transação vindos do journal canônico. A chave
 `(chain, transaction_hash, log_index)` torna replay idempotente.
 
+No replay do processing, o marcador em `robinhood_processed_logs` não substitui a projeção: toda
+observação decodificada volta a ser oferecida ao insert idempotente para reparar uma projeção
+ausente sem recontar uma já existente. Uma rejeição terminal já persistida, inclusive
+`dead_pool_price`, permanece autoritativa e não gera wallet outbox. O produtor continua fail-closed
+se a projeção permanecer ausente ou se uma observação persistida como aceita não encontrar bloco e
+transação no journal canônico.
+
 A Stage 204 cria `robinhood_wallet_swap_realtime_outbox`, o journal append-only da publicação v2.
 O processing grava `observed` na mesma transação da observação e da outbox Stage 203. O wallet
 worker promove, em lotes limitados, cada evento cujo bloco alcançou a fronteira canônica para uma

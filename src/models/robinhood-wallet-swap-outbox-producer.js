@@ -39,29 +39,33 @@ function createRobinhoodWalletSwapOutboxProducer() {
          SELECT * FROM jsonb_to_recordset($1::jsonb) AS target(
            "transactionHash" text, "logIndex" bigint
          )
-       ), eligible AS MATERIALIZED (
-         SELECT observation.*, block.block_hash, block.block_timestamp,
-           block.head_observed_at, block.receipts_available_at, block.captured_at,
-           transaction.transaction_index, transaction.from_address
+       ), observed AS MATERIALIZED (
+         SELECT observation.*
          FROM input target
          INNER JOIN robinhood_market_observations observation
            ON observation.chain = '${CHAIN}'
           AND observation.transaction_hash = target."transactionHash"
           AND observation.log_index = target."logIndex"
-          AND observation.status = 'accepted'
+       ), accepted AS MATERIALIZED (
+         SELECT * FROM observed WHERE status = 'accepted'
+       ), eligible AS MATERIALIZED (
+         SELECT accepted.*, block.block_hash, block.block_timestamp,
+           block.head_observed_at, block.receipts_available_at, block.captured_at,
+           transaction.transaction_index, transaction.from_address
+         FROM accepted
          INNER JOIN robinhood_processed_logs processed
-           ON processed.chain = observation.chain
-          AND processed.transaction_hash = observation.transaction_hash
-          AND processed.log_index = observation.log_index
+           ON processed.chain = accepted.chain
+          AND processed.transaction_hash = accepted.transaction_hash
+          AND processed.log_index = accepted.log_index
          INNER JOIN robinhood_chain_blocks block
            ON block.chain = processed.chain
           AND block.block_hash = processed.block_hash
-          AND block.block_number = observation.block_number
+          AND block.block_number = accepted.block_number
           AND block.canonical
          INNER JOIN robinhood_chain_transactions transaction
            ON transaction.chain = block.chain
           AND transaction.block_hash = block.block_hash
-          AND transaction.transaction_hash = observation.transaction_hash
+          AND transaction.transaction_hash = accepted.transaction_hash
        ), prepared AS MATERIALIZED (
          SELECT eligible.*, clock_timestamp() AS observation_committed_at
          FROM eligible
@@ -138,6 +142,8 @@ function createRobinhoodWalletSwapOutboxProducer() {
        )
        SELECT
          (SELECT COUNT(*)::int FROM input) AS requested,
+         (SELECT COUNT(*)::int FROM observed) AS observed,
+         (SELECT COUNT(*)::int FROM accepted) AS accepted,
          (SELECT COUNT(*)::int FROM eligible) AS eligible,
          (SELECT COUNT(*)::int FROM inserted) AS inserted,
          (SELECT COUNT(*)::int FROM realtime_inserted) AS realtime_inserted,
@@ -146,13 +152,19 @@ function createRobinhoodWalletSwapOutboxProducer() {
       [JSON.stringify(targets), NOTIFY_CHANNEL, REALTIME_NOTIFY_CHANNEL]
     );
     const row = result.rows[0] || {};
+    const observed = Number(row.observed || 0);
+    const accepted = Number(row.accepted || 0);
     const summary = {
       requested: Number(row.requested || 0),
       eligible: Number(row.eligible || 0),
       inserted: Number(row.inserted || 0),
       realtimeInserted: Number(row.realtime_inserted || 0),
     };
-    if (summary.eligible !== summary.requested) {
+    // The stored observation is authoritative on replay. A prior terminal
+    // rejection (for example dead_pool_price) is intentionally not published,
+    // while a missing projection or accepted row without canonical context is
+    // still a fail-closed integrity error.
+    if (observed !== summary.requested || summary.eligible !== accepted) {
       const error = new Error('accepted wallet swap is missing committed canonical context');
       error.code = 'wallet_swap_canonical_context_missing';
       throw error;

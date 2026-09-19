@@ -24,6 +24,7 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const TX = `0x${'2'.repeat(64)}`;
 const BLOCK = `0x${'3'.repeat(64)}`;
 const REPLAY_TX = `0x${'7'.repeat(64)}`;
+const REJECTED_TX = `0x${'6'.repeat(64)}`;
 const ORPHAN_BLOCK = `0x${'8'.repeat(64)}`;
 const REPLACEMENT_BLOCK = `0x${'9'.repeat(64)}`;
 const WALLET = `0x${'4'.repeat(40)}`;
@@ -401,5 +402,33 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       }]),
       (error) => error.code === 'wallet_swap_canonical_context_missing'
     );
+  });
+
+  it('preserves a stored terminal rejection without publishing an outbox row', async () => {
+    await client.query(`INSERT INTO robinhood_market_observations VALUES (
+      'robinhood',$1,10,100,'uniswap-v3','robinhood:uniswap-v3:test',$2,$3,
+      'buy','rejected',NULL,NULL,18,6,NULL,NULL,NULL,NULL,NULL,NULL
+    )`, [REJECTED_TX, TOKEN, QUOTE]);
+    await client.query(
+      `INSERT INTO robinhood_processed_logs VALUES ('robinhood',$1,10,$2)`,
+      [REJECTED_TX, BLOCK]
+    );
+    await client.query(
+      `INSERT INTO robinhood_chain_transactions VALUES ('robinhood',$1,$2,4,$3)`,
+      [BLOCK, REJECTED_TX, WALLET]
+    );
+
+    const result = await createRobinhoodWalletSwapOutboxProducer().appendAccepted(client, [{
+      transactionHash: REJECTED_TX, logIndex: '10',
+    }]);
+
+    assert.deepEqual(result, {
+      requested: 1, eligible: 0, inserted: 0, realtimeInserted: 0,
+    });
+    const stored = await client.query(
+      'SELECT 1 FROM robinhood_wallet_swap_outbox WHERE transaction_hash=$1',
+      [REJECTED_TX]
+    );
+    assert.equal(stored.rowCount, 0);
   });
 });
