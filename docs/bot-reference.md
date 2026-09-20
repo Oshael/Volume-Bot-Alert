@@ -2868,7 +2868,12 @@ Qualquer estado diferente de `drifted` e qualquer membro de campanha global ativ
 continua protegendo seu journal e bloqueia o avanço do floor enquanto houver
 pendencia anterior ao cutoff.
 O prune automático requer `node src/utils/db-init-stage229.js` antes do restart
-do worker. Ele lê no máximo `ROBINHOOD_HOLDER_JOURNAL_PRUNE_SCAN_PAGE_LIMIT`
+do worker. Além da margem recente em blocos, ele preserva cada evento por no mínimo
+`ROBINHOOD_HOLDER_JOURNAL_RETENTION_MS` desde sua aplicação ou captura (default e
+piso de 259200000 ms, três dias). Linhas ainda recentes bloqueiam o avanço do
+`journal_floor_block`; o comando manual com cutoff explícito mantém sua política
+auditada independente. O worker lê no máximo
+`ROBINHOOD_HOLDER_JOURNAL_PRUNE_SCAN_PAGE_LIMIT`
 eventos pendentes por transação (padrão 20.000; máximo 50.000), seleciona no
 máximo `ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT` para exclusão e persiste a
 posição no mesmo commit. Ao completar uma passagem, recomeça do início para

@@ -9,14 +9,16 @@ after(() => db.pool.end());
 
 test('manual journal cleanup requires an explicit bounded cut and write consent', () => {
   assert.deepEqual(parseArgs(['--before-block=38808102', '--write']), {
-    beforeBlock: '38808102', retentionBlocks: 20000, batchLimit: 1000,
+    beforeBlock: '38808102', retentionBlocks: 20000, retentionMs: null,
+    batchLimit: 1000, scanPageLimit: 20000,
     maxBatches: 1, pauseMs: 1000,
   });
   assert.deepEqual(parseArgs([
     '--before-block=38808102', '--batch-limit=5000', '--max-batches=20',
     '--pause-ms=250', '--write',
   ]), {
-    beforeBlock: '38808102', retentionBlocks: 20000, batchLimit: 5000,
+    beforeBlock: '38808102', retentionBlocks: 20000, retentionMs: null,
+    batchLimit: 5000, scanPageLimit: 20000,
     maxBatches: 20, pauseMs: 250,
   });
   for (const args of [

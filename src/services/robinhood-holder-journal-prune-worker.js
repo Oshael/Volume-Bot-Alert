@@ -1,5 +1,6 @@
 const db = require('../models/db');
 const {
+  DEFAULT_RETENTION_MS,
   createRobinhoodHolderJournalRetention,
 } = require('../models/robinhood-holder-journal-retention');
 
@@ -24,6 +25,10 @@ function normalizeOptions(input = {}) {
     ),
     retentionBlocks: boundedInteger(
       input.retentionBlocks, 20_000, 1, 1_000_000, 'retentionBlocks'
+    ),
+    retentionMs: boundedInteger(
+      input.retentionMs, DEFAULT_RETENTION_MS,
+      DEFAULT_RETENTION_MS, 30 * 24 * 60 * 60 * 1000, 'retentionMs'
     ),
     batchLimit: boundedInteger(input.batchLimit, 5000, 1, 50_000, 'batchLimit'),
     scanPageLimit: boundedInteger(input.scanPageLimit, 20_000, 1, 50_000, 'scanPageLimit'),
@@ -56,7 +61,8 @@ async function runPruneTick(retention, options) {
   let last = null;
   while (batches < options.maxBatches) {
     last = validatePruneResult(await retention.pruneOnce({
-      retentionBlocks: options.retentionBlocks, batchLimit: options.batchLimit,
+      retentionBlocks: options.retentionBlocks, retentionMs: options.retentionMs,
+      batchLimit: options.batchLimit,
       scanPageLimit: options.scanPageLimit,
     }));
     batches += 1;
@@ -67,6 +73,7 @@ async function runPruneTick(retention, options) {
   }
   return Object.freeze({
     status: last.status,
+    retentionMs: options.retentionMs,
     batches,
     deletedEvents,
     discardedBufferedEvents,

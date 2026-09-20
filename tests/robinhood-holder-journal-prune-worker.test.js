@@ -38,23 +38,34 @@ describe('Robinhood holder journal prune worker', () => {
     assert.equal(clock.scheduled.length, 0);
     assert.equal(worker.start({
       enabled: true, intervalMs: 90_000, retentionBlocks: 20_000,
+      retentionMs: 259_200_000,
       batchLimit: 5000, maxBatches: 3,
     }), true);
     await clock.scheduled[0].callback();
 
     assert.deepEqual(calls, [
-      { retentionBlocks: 20_000, batchLimit: 5000, scanPageLimit: 20_000 },
-      { retentionBlocks: 20_000, batchLimit: 5000, scanPageLimit: 20_000 },
+      { retentionBlocks: 20_000, retentionMs: 259_200_000,
+        batchLimit: 5000, scanPageLimit: 20_000 },
+      { retentionBlocks: 20_000, retentionMs: 259_200_000,
+        batchLimit: 5000, scanPageLimit: 20_000 },
     ]);
     assert.equal(clock.scheduled[1].delayMs, 90_000);
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'pruned', batches: 2, deletedEvents: 7,
+      retentionMs: 259_200_000,
       discardedBufferedEvents: 0, scannedBufferedEvents: 0, reason: null,
       cutoffBlock: '100', journalFloorBlock: '100', batchBudgetExhausted: false,
     });
     assert.equal(worker.getStatus().totalDeletedEvents, 7);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);
+  });
+
+  it('rejects an automatic retention window shorter than three days', () => {
+    const worker = createRobinhoodHolderJournalPruneWorker();
+    assert.throws(() => worker.start({
+      enabled: true, retentionMs: 259_199_999,
+    }), /retentionMs must be between/);
   });
 
   it('stops a tick immediately when pending work blocks the cutoff', async () => {

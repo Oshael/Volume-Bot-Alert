@@ -1208,6 +1208,14 @@ describe('Robinhood holder journal automatic prune scan', () => {
       let retention = createRobinhoodHolderJournalRetention({ database });
       const options = { batchLimit: 1, scanPageLimit: 2 };
 
+      const timeGuarded = await retention.pruneOnce({
+        ...options, retentionMs: 3 * 24 * 60 * 60 * 1000,
+      });
+      assert.equal(timeGuarded.status, 'blocked');
+      assert.equal(timeGuarded.reason, 'pending_event_before_cutoff');
+      assert.equal((await client.query(`SELECT COUNT(*)::int AS count
+        FROM robinhood_holder_transfer_journal`)).rows[0].count, 4);
+
       const first = await retention.pruneOnce(options);
       assert.equal(first.status, 'draining');
       assert.equal(first.scannedBufferedEvents, 2);
@@ -1245,7 +1253,7 @@ describe('Robinhood holder journal automatic prune scan', () => {
       const scan = await client.query(`SELECT cursor_block_number, completed_passes
         FROM robinhood_holder_journal_prune_scans`);
       assert.equal(scan.rows[0].cursor_block_number, null);
-      assert.equal(String(scan.rows[0].completed_passes), '1');
+      assert.equal(String(scan.rows[0].completed_passes), '2');
 
       await client.query(`UPDATE robinhood_holder_token_states
         SET ledger_status = 'drifted' WHERE token_address = $1`, [TOKEN]);

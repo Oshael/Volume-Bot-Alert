@@ -2,6 +2,7 @@ const db = require('./db');
 const { pruneJournalPrefix } = require('./robinhood-holder-journal-prefix-prune');
 
 const DEFAULT_RETENTION_BLOCKS = 20_000;
+const DEFAULT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 5_000;
 const DEFAULT_SCAN_PAGE_LIMIT = 20_000;
 
@@ -26,6 +27,10 @@ function normalizeOptions(options = {}) {
     retentionBlocks: boundedInteger(
       options.retentionBlocks, DEFAULT_RETENTION_BLOCKS,
       1, 1_000_000, 'holderJournal.retentionBlocks'
+    ),
+    retentionMs: options.retentionMs == null ? null : boundedInteger(
+      options.retentionMs, DEFAULT_RETENTION_MS,
+      DEFAULT_RETENTION_MS, 30 * 24 * 60 * 60 * 1000, 'holderJournal.retentionMs'
     ),
     batchLimit: boundedInteger(
       options.batchLimit, DEFAULT_BATCH_LIMIT,
@@ -106,12 +111,14 @@ async function lockPruneScan(client) {
   throw error;
 }
 
-async function scanExpiredBufferedPage(client, cutoffBlock, cursor, pageLimit, batchLimit) {
+async function scanExpiredBufferedPage(
+  client, cutoffBlock, cursor, pageLimit, batchLimit, retentionMs
+) {
   const cursorFilter = cursor == null ? '' : `AND (
             journal.block_number, journal.transaction_index,
             journal.log_index, journal.transaction_hash
-          ) > ($4::bigint, $5::integer, $6::integer, $7::varchar(66))`;
-  const params = [cutoffBlock, pageLimit, batchLimit];
+          ) > ($5::bigint, $6::integer, $7::integer, $8::varchar(66))`;
+  const params = [cutoffBlock, pageLimit, batchLimit, retentionMs];
   if (cursor != null) params.push(
     cursor.blockNumber, cursor.transactionIndex, cursor.logIndex, cursor.transactionHash
   );
@@ -122,6 +129,8 @@ async function scanExpiredBufferedPage(client, cutoffBlock, cursor, pageLimit, b
          FROM robinhood_holder_transfer_journal journal
         WHERE journal.chain = 'robinhood' AND journal.applied = false
           AND journal.block_number < $1
+          AND ($4::bigint IS NULL OR journal.captured_at
+            <= NOW() - ($4::bigint * INTERVAL '1 millisecond'))
           ${cursorFilter}
         ORDER BY journal.block_number, journal.transaction_index,
                  journal.log_index, journal.transaction_hash
@@ -223,12 +232,14 @@ function scanPosition(scanState, floorBlock, cutoffBlock) {
   };
 }
 
-async function deleteAppliedBatch(client, cutoffBlock, batchLimit) {
+async function deleteAppliedBatch(client, cutoffBlock, batchLimit, retentionMs) {
   const result = await client.query(
     `/* holder-prune:delete_applied */ WITH candidates AS MATERIALIZED (
        SELECT chain, transaction_hash, log_index
          FROM robinhood_holder_transfer_journal
         WHERE chain = 'robinhood' AND applied = true AND block_number < $1
+          AND ($3::bigint IS NULL OR COALESCE(applied_at, captured_at)
+            <= NOW() - ($3::bigint * INTERVAL '1 millisecond'))
         ORDER BY block_number, transaction_index, log_index
         LIMIT $2::int
         FOR UPDATE
@@ -238,7 +249,7 @@ async function deleteAppliedBatch(client, cutoffBlock, batchLimit) {
       WHERE journal.chain = candidates.chain
         AND journal.transaction_hash = candidates.transaction_hash
         AND journal.log_index = candidates.log_index`,
-    [cutoffBlock, batchLimit]
+    [cutoffBlock, batchLimit, retentionMs]
   );
   return result.rowCount;
 }
@@ -307,7 +318,7 @@ function createRobinhoodHolderJournalRetention(options = {}) {
       );
       const scan = await scanExpiredBufferedPage(
         client, scanCutoff.toString(), scanCursor,
-        normalized.scanPageLimit, normalized.batchLimit
+        normalized.scanPageLimit, normalized.batchLimit, normalized.retentionMs
       );
       const discardedBufferedEvents = Number(scan.deleted);
       const scannedBufferedEvents = Number(scan.scanned);
@@ -332,7 +343,7 @@ function createRobinhoodHolderJournalRetention(options = {}) {
         });
       }
       const deletedEvents = await deleteAppliedBatch(
-        client, scanCutoff.toString(), normalized.batchLimit
+        client, scanCutoff.toString(), normalized.batchLimit, normalized.retentionMs
       );
       if (await hasOlderJournalEvent(client, scanCutoff.toString())) {
         return Object.freeze({
@@ -354,6 +365,7 @@ function createRobinhoodHolderJournalRetention(options = {}) {
 module.exports = {
   DEFAULT_BATCH_LIMIT,
   DEFAULT_RETENTION_BLOCKS,
+  DEFAULT_RETENTION_MS,
   DEFAULT_SCAN_PAGE_LIMIT,
   createRobinhoodHolderJournalRetention,
   __private: { normalizeOptions },

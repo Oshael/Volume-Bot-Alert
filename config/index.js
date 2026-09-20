@@ -1628,6 +1628,12 @@ module.exports = {
     retentionBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_JOURNAL_RETENTION_BLOCKS, 20_000, 1, 1_000_000
     ),
+    retentionMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_JOURNAL_RETENTION_MS,
+      259_200_000,
+      259_200_000,
+      2_592_000_000
+    ),
     batchLimit: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT, 5000, 1, 50_000
     ),
