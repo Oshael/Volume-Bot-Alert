@@ -1168,6 +1168,10 @@ module.exports = {
       process.env.ROBINHOOD_CHAIN_EVENT_RETENTION_ENABLED,
       true
     ),
+    canonicalRawRetentionEnabled: parseBoolean(
+      process.env.ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED,
+      false
+    ),
     chainEventRetentionMs: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_EVENT_RETENTION_MS,
       3 * 24 * 60 * 60 * 1000,

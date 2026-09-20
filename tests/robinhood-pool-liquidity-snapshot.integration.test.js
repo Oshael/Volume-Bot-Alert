@@ -23,6 +23,7 @@ const stage198 = require('../src/utils/db-init-stage198');
 const stage212 = require('../src/utils/db-init-stage212');
 const stage222 = require('../src/utils/db-init-stage222');
 const stage239 = require('../src/utils/db-init-stage239');
+const stage240 = require('../src/utils/db-init-stage240');
 const {
   createRobinhoodPoolLiquiditySeedRepository,
 } = require('../src/models/robinhood-pool-liquidity-seed');
@@ -86,6 +87,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage212.init({ closePool: false });
     await stage222.init({ closePool: false });
     await stage239.init({ closePool: false });
+    await stage240.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (

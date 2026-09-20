@@ -17,7 +17,11 @@ function harness(input = {}) {
         return { rows: [] };
       }
       if (sql.includes('chain-event-prune:lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('chain-event-prune:storage-lock')) return { rows: [{ locked: true }] };
       if (sql.includes('chain-event-prune:indexes')) return { rows: [{ ready_indexes: 2 }] };
+      if (sql.includes('chain-event-prune:storage-indexes')) {
+        return { rows: [{ ready_indexes: 2 }] };
+      }
       if (sql.includes('chain-event-prune:retention-cutoff')) {
         return { rows: [{ cutoff_block: '56397387' }] };
       }
@@ -26,6 +30,12 @@ function harness(input = {}) {
           ? input.deletedEvents[deletion++] : input.deletedEvents ?? 1000,
         first_deleted_block: '10', last_deleted_block: '20',
       }] };
+      if (sql.includes('chain-event-prune:transactions')) {
+        return { rows: [{ deleted: input.deletedTransactions ?? 0 }] };
+      }
+      if (sql.includes('chain-event-prune:blocks')) {
+        return { rows: [{ deleted: input.deletedBlocks ?? 0 }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     },
     release() { calls.push({ sql: 'RELEASE' }); },
@@ -45,15 +55,18 @@ describe('Robinhood chain event pruner', () => {
     assert.deepEqual(parseArgs(['--write']), {
       batchLimit: 1000, maxBatches: 1, pauseMs: 1000,
       retentionMs: DEFAULT_RETENTION_MS, untilDrained: false,
+      pruneCanonicalStorage: false,
     });
     assert.deepEqual(parseArgs([
       '--write', '--batch-limit=5000', '--max-batches=2', '--pause-ms=500',
       `--retention-ms=${DEFAULT_RETENTION_MS}`,
     ]), { batchLimit: 5000, maxBatches: 2, pauseMs: 500,
-      retentionMs: DEFAULT_RETENTION_MS, untilDrained: false });
+      retentionMs: DEFAULT_RETENTION_MS, untilDrained: false,
+      pruneCanonicalStorage: false });
     assert.deepEqual(parseArgs(['--write', '--until-drained', '--pause-ms=100']), {
       batchLimit: 1000, maxBatches: 1, pauseMs: 100,
       retentionMs: DEFAULT_RETENTION_MS, untilDrained: true,
+      pruneCanonicalStorage: false,
     });
     assert.throws(() => parseArgs([]), /--write is required/);
     assert.throws(() => parseArgs(['--write', '--batch-limit=5001']), /between 1 and 5000/);
@@ -76,6 +89,7 @@ describe('Robinhood chain event pruner', () => {
     assert.deepEqual(report, {
       status: 'finished', stopReason: 'prefix_drained', cutoffBlock: '56397387',
       retentionMs: DEFAULT_RETENTION_MS, batches: 3, totalDeleted: 2012,
+      totalDeletedTransactions: 0, totalDeletedBlocks: 0,
     });
   });
 
@@ -90,6 +104,7 @@ describe('Robinhood chain event pruner', () => {
     assert.deepEqual(report, {
       status: 'finished', stopReason: 'batch_limit', cutoffBlock: '56397387',
       retentionMs: DEFAULT_RETENTION_MS, batches: 1, totalDeleted: 1000,
+      totalDeletedTransactions: 0, totalDeletedBlocks: 0,
     });
     const deletion = context.calls.find(({ sql }) => sql.includes('chain-event-prune:delete'));
     assert.deepEqual(deletion.params, [
@@ -105,6 +120,32 @@ describe('Robinhood chain event pruner', () => {
     ));
     assert.deepEqual(cutoff.params, [
       'robinhood', '1', '56397387', DEFAULT_RETENTION_MS,
+    ]);
+  });
+
+  it('prunes only event-free canonical storage behind the audited cutoff', async () => {
+    const context = harness({
+      deletedEvents: 0, deletedTransactions: 12, deletedBlocks: 7,
+    });
+    const report = await runPilot({
+      batchLimit: 1000, pruneCanonicalStorage: true,
+    }, {
+      database: context.database,
+      audit: { inspect: async () => safety() },
+    });
+
+    assert.equal(report.totalDeletedTransactions, 12);
+    assert.equal(report.totalDeletedBlocks, 7);
+    const transactionDelete = context.calls.find(({ sql }) => (
+      sql.includes('chain-event-prune:transactions')
+    ));
+    const blockDelete = context.calls.find(({ sql }) => (
+      sql.includes('chain-event-prune:blocks')
+    ));
+    assert.match(transactionDelete.sql, /NOT EXISTS[\s\S]*robinhood_chain_events/);
+    assert.match(blockDelete.sql, /NOT EXISTS[\s\S]*robinhood_chain_transactions/);
+    assert.deepEqual(transactionDelete.params, [
+      'robinhood', '56397387', 1000, DEFAULT_RETENTION_MS,
     ]);
   });
 
@@ -136,5 +177,23 @@ describe('Robinhood chain event pruner', () => {
     }), { code: 'chain_event_prune_indexes_unavailable' });
     assert.ok(context.calls.some(({ sql }) => sql === 'ROLLBACK'));
     assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:delete')), false);
+  });
+
+  it('fails closed before parent deletes when Stage 240 is unavailable', async () => {
+    const context = harness({ deletedEvents: 0 });
+    const original = context.database.getClient;
+    context.database.getClient = async () => {
+      const client = await original();
+      const query = client.query.bind(client);
+      client.query = (sql, params) => sql.includes('chain-event-prune:storage-indexes')
+        ? Promise.resolve({ rows: [{ ready_indexes: 1 }] }) : query(sql, params);
+      return client;
+    };
+    await assert.rejects(runPilot({ pruneCanonicalStorage: true }, {
+      database: context.database, audit: { inspect: async () => safety() },
+    }), { code: 'canonical_raw_prune_indexes_unavailable' });
+    assert.equal(context.calls.some(({ sql }) => (
+      sql.includes('chain-event-prune:transactions')
+    )), false);
   });
 });

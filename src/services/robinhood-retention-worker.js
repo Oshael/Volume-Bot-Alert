@@ -66,12 +66,16 @@ let status = {
   lastDeletedRealtimeOutboxRows: 0,
   lastDeletedRealtimeOutboxCycles: 0,
   lastDeletedChainEvents: 0,
+  lastDeletedChainTransactions: 0,
+  lastDeletedChainBlocks: 0,
   lastHeadCapturePruneStatus: 'not_evaluated',
   lastDeletedHeadCaptures: 0,
   lastChainEventPruneStatus: 'not_evaluated',
   lastChainEventPruneBlockers: [],
   totalDeletedRealtimeOutboxRows: 0,
   totalDeletedChainEvents: 0,
+  totalDeletedChainTransactions: 0,
+  totalDeletedChainBlocks: 0,
   totalDeletedHeadCaptures: 0,
   observedLagBlocks: null,
   finalizedLagBlocks: null,
@@ -114,6 +118,7 @@ function normalizeOptions(options = {}) {
       60 * 60 * 1000
     ),
     chainEventRetentionEnabled: options.chainEventRetentionEnabled !== false,
+    canonicalRawRetentionEnabled: options.canonicalRawRetentionEnabled === true,
     chainEventRetentionMs: boundedInteger(
       options.chainEventRetentionMs,
       DEFAULT_CHAIN_EVENT_RETENTION_MS,
@@ -502,6 +507,7 @@ async function maintainChainEvents(database, options, deps) {
     batchLimit: Math.min(options.batchLimit, 5_000),
     maxBatches: options.maxBatches,
     retentionMs: options.chainEventRetentionMs,
+    pruneCanonicalStorage: options.canonicalRawRetentionEnabled,
   }, { database, pause: deps.pause });
 }
 
@@ -572,6 +578,8 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         status.lastDeletedHeadCaptures = 0;
         status.lastHeadCapturePruneStatus = 'paused';
         status.lastDeletedChainEvents = 0;
+        status.lastDeletedChainTransactions = 0;
+        status.lastDeletedChainBlocks = 0;
         status.lastChainEventPruneStatus = 'paused';
         status.lastChainEventPruneBlockers = [];
         completeRun(startedAtMs);
@@ -622,12 +630,16 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedRealtimeOutboxRows = summary.realtimeOutboxRows;
       status.lastDeletedRealtimeOutboxCycles = summary.realtimeOutboxCycles;
       status.lastDeletedChainEvents = summary.chainEvents.totalDeleted || 0;
+      status.lastDeletedChainTransactions = summary.chainEvents.totalDeletedTransactions || 0;
+      status.lastDeletedChainBlocks = summary.chainEvents.totalDeletedBlocks || 0;
       status.lastHeadCapturePruneStatus = summary.headCaptures.status;
       status.lastDeletedHeadCaptures = summary.headCaptures.deleted;
       status.lastChainEventPruneStatus = summary.chainEvents.status;
       status.lastChainEventPruneBlockers = summary.chainEvents.blockers || [];
       status.totalDeletedRealtimeOutboxRows += summary.realtimeOutboxRows;
       status.totalDeletedChainEvents += summary.chainEvents.totalDeleted || 0;
+      status.totalDeletedChainTransactions += summary.chainEvents.totalDeletedTransactions || 0;
+      status.totalDeletedChainBlocks += summary.chainEvents.totalDeletedBlocks || 0;
       status.totalDeletedHeadCaptures += summary.headCaptures.deleted;
       status.observedLagBlocks = summary.realtimeOutbox.observedLagBlocks;
       status.finalizedLagBlocks = summary.realtimeOutbox.finalizedLagBlocks;
@@ -672,6 +684,8 @@ function schedule(options, delayMs) {
           `transferReorgJournal=${summary.transferReorgJournal}`,
           `realtimeOutbox=${summary.realtimeOutboxRows}/${summary.realtimeOutboxCycles}`,
           `chainEvents=${summary.chainEvents.totalDeleted || 0}`,
+          `chainTransactions=${summary.chainEvents.totalDeletedTransactions || 0}`,
+          `chainBlocks=${summary.chainEvents.totalDeletedBlocks || 0}`,
           `chainEventStatus=${summary.chainEvents.status}`,
           `headCaptures=${summary.headCaptures.deleted}`,
           `observedLag=${summary.realtimeOutbox.observedLagBlocks ?? 'unknown'}`,

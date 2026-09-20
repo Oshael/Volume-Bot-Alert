@@ -89,6 +89,7 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxRetentionMs: 3 * 24 * 60 * 60 * 1000,
       realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
       chainEventRetentionEnabled: true,
+      canonicalRawRetentionEnabled: false,
       chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
       canonicalMaxLagBlocks: 128,
       capturePruneEnabled: true,
@@ -206,6 +207,7 @@ describe('Robinhood retention worker', () => {
       batchLimit: 10_000,
       maxBatches: 2,
       chainEventRetentionMs: 1,
+      canonicalRawRetentionEnabled: true,
     }, {}, deps);
 
     assert.deepEqual(received, {
@@ -213,6 +215,7 @@ describe('Robinhood retention worker', () => {
         batchLimit: 5_000,
         maxBatches: 2,
         retentionMs: 3 * 24 * 60 * 60 * 1000,
+        pruneCanonicalStorage: true,
       },
       database,
     });

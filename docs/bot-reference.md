@@ -390,6 +390,16 @@ reduzido abaixo de 3 dias, e a poda pode ser isoladamente desativada com
 captura saudável, checkpoints canônicos e nenhuma frontier de outbox ou liquidity
 anterior ao cutoff. O journal compacto `robinhood_stock_usd_reference_events` não
 participa dessa poda e mantém a referência histórica necessária após o raw expirar.
+Depois de aplicar `node src/utils/db-init-stage240.js`, a retenção do journal canônico
+completo pode ser habilitada separadamente com
+`ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED=true`. A Stage 240 cria concorrentemente
+os índices de evento por transação e de bloco por número necessários para evitar
+scans globais. Sob o mesmo cutoff auditado e a mesma janela temporal, cada lote
+remove primeiro eventos, depois transações que já não possuem eventos e por último
+blocos que já não possuem transações. A flag inicia `false`; índice ausente ou
+inválido falha fechado antes de qualquer delete de transação ou bloco.
+`robinhood_transaction_positions` não participa desta poda: embora seja uma sidecar
+derivada, campanhas históricas de launch/fresh-wallet ainda consomem sua ordem exata.
 Linhas protegidas isoladas não encerram o ciclo: enquanto o prefixo limitado estiver
 cheio, o worker continua até `ROBINHOOD_RETENTION_MAX_BATCHES`. Durante uma rodada,
 as linhas já classificadas como protegidas são puladas nos lotes seguintes, evitando

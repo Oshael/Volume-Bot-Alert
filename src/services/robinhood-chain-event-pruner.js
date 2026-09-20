@@ -13,6 +13,10 @@ const REQUIRED_INDEXES = Object.freeze([
   'idx_rh_chain_domain_outbox_event_lookup',
   'idx_rh_canonical_head_candidates_event_lookup',
 ]);
+const REQUIRED_STORAGE_INDEXES = Object.freeze([
+  'idx_rh_chain_events_transaction_lookup',
+  'idx_rh_chain_blocks_retention',
+]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -35,6 +39,7 @@ function normalizeOptions(input = {}) {
       'retentionMs'
     ),
     untilDrained: input.untilDrained === true,
+    pruneCanonicalStorage: input.pruneCanonicalStorage === true,
   });
 }
 
@@ -49,6 +54,21 @@ async function assertCascadeIndexes(client) {
   if (Number(result.rows[0]?.ready_indexes) !== REQUIRED_INDEXES.length) {
     const error = new Error('Stage 201 cascade indexes are missing or invalid');
     error.code = 'chain_event_prune_indexes_unavailable';
+    throw error;
+  }
+}
+
+async function assertCanonicalStorageIndexes(client) {
+  const result = await client.query(
+    `/* chain-event-prune:storage-indexes */ SELECT COUNT(*)::int AS ready_indexes
+       FROM pg_index
+      WHERE indexrelid = ANY(ARRAY[to_regclass($1), to_regclass($2)])
+        AND indisvalid AND indisready`,
+    REQUIRED_STORAGE_INDEXES
+  );
+  if (Number(result.rows[0]?.ready_indexes) !== REQUIRED_STORAGE_INDEXES.length) {
+    const error = new Error('Stage 240 canonical raw retention indexes are missing or invalid');
+    error.code = 'canonical_raw_prune_indexes_unavailable';
     throw error;
   }
 }
@@ -152,12 +172,98 @@ async function pruneBatch(database, cutoffBlock, batchLimit, retentionMs = DEFAU
   }
 }
 
+async function pruneCanonicalStorageBatch(
+  database, cutoffBlock, batchLimit, retentionMs = DEFAULT_RETENTION_MS
+) {
+  const protectedRetentionMs = boundedInteger(
+    retentionMs, DEFAULT_RETENTION_MS, DEFAULT_RETENTION_MS,
+    30 * 24 * 60 * 60 * 1000, 'retentionMs'
+  );
+  const client = await database.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '500ms'");
+    await client.query("SET LOCAL statement_timeout = '30s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '30s'");
+    const lock = await client.query(
+      `/* chain-event-prune:storage-lock */ SELECT pg_try_advisory_xact_lock(
+         hashtext('robinhood-chain-event-pruner')) AS locked`
+    );
+    if (lock.rows[0]?.locked !== true) {
+      await client.query('COMMIT');
+      return Object.freeze({
+        status: 'blocked', reason: 'concurrent_pruner',
+        deletedTransactions: 0, deletedBlocks: 0,
+      });
+    }
+    await assertCanonicalStorageIndexes(client);
+    const transactions = await client.query(
+      `/* chain-event-prune:transactions */ WITH candidates AS MATERIALIZED (
+         SELECT transaction.ctid
+           FROM robinhood_chain_blocks block
+           JOIN robinhood_chain_transactions transaction
+             ON transaction.chain=block.chain AND transaction.block_hash=block.block_hash
+          WHERE block.chain=$1 AND block.block_number < $2::bigint
+            AND block.block_timestamp < NOW() - ($4::bigint * INTERVAL '1 millisecond')
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_chain_events event
+               WHERE event.chain=transaction.chain
+                 AND event.block_hash=transaction.block_hash
+                 AND event.transaction_hash=transaction.transaction_hash
+            )
+          ORDER BY block.block_number, transaction.transaction_index
+          LIMIT $3::int
+          FOR UPDATE OF transaction SKIP LOCKED
+       ), removed AS (
+         DELETE FROM robinhood_chain_transactions transaction USING candidates
+          WHERE transaction.ctid=candidates.ctid RETURNING 1
+       ) SELECT COUNT(*)::int AS deleted FROM removed`,
+      [CHAIN, cutoffBlock, batchLimit, protectedRetentionMs]
+    );
+    const blocks = await client.query(
+      `/* chain-event-prune:blocks */ WITH candidates AS MATERIALIZED (
+         SELECT block.ctid
+           FROM robinhood_chain_blocks block
+          WHERE block.chain=$1 AND block.block_number < $2::bigint
+            AND block.block_timestamp < NOW() - ($4::bigint * INTERVAL '1 millisecond')
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_chain_transactions transaction
+               WHERE transaction.chain=block.chain AND transaction.block_hash=block.block_hash
+            )
+          ORDER BY block.block_number, block.block_hash
+          LIMIT $3::int
+          FOR UPDATE OF block SKIP LOCKED
+       ), removed AS (
+         DELETE FROM robinhood_chain_blocks block USING candidates
+          WHERE block.ctid=candidates.ctid RETURNING 1
+       ) SELECT COUNT(*)::int AS deleted FROM removed`,
+      [CHAIN, cutoffBlock, batchLimit, protectedRetentionMs]
+    );
+    await client.query('COMMIT');
+    const deletedTransactions = Number(transactions.rows[0]?.deleted || 0);
+    const deletedBlocks = Number(blocks.rows[0]?.deleted || 0);
+    return Object.freeze({
+      status: deletedTransactions === batchLimit || deletedBlocks === batchLimit
+        ? 'draining' : 'prefix_drained',
+      deletedTransactions,
+      deletedBlocks,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function drainPrunableBatches(options, deps, database, cutoffBlock) {
   const progress = deps.progress || (() => {});
   const shouldStop = deps.shouldStop || (() => false);
   const pause = deps.pause || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   let batches = 0;
   let totalDeleted = 0;
+  let totalDeletedTransactions = 0;
+  let totalDeletedBlocks = 0;
   let stopReason = 'batch_limit';
   for (let index = 0; options.untilDrained || index < options.maxBatches; index += 1) {
     if (shouldStop()) { stopReason = 'signal'; break; }
@@ -169,13 +275,25 @@ async function drainPrunableBatches(options, deps, database, cutoffBlock) {
     );
     batches += 1;
     totalDeleted += result.deletedEvents;
-    progress({ phase: 'batch', batch: batches, cutoffBlock, ...result });
-    if (result.status !== 'draining') { stopReason = result.status; break; }
+    const storage = options.pruneCanonicalStorage
+      ? await pruneCanonicalStorageBatch(
+        database, cutoffBlock, options.batchLimit, options.retentionMs
+      ) : { status: 'disabled', deletedTransactions: 0, deletedBlocks: 0 };
+    totalDeletedTransactions += storage.deletedTransactions;
+    totalDeletedBlocks += storage.deletedBlocks;
+    progress({ phase: 'batch', batch: batches, cutoffBlock, ...result, storage });
+    const draining = result.status === 'draining' || storage.status === 'draining';
+    if (!draining) {
+      stopReason = result.status === 'blocked' ? result.status : storage.status;
+      if (stopReason === 'disabled') stopReason = result.status;
+      break;
+    }
     if (options.untilDrained || index + 1 < options.maxBatches) await pause(options.pauseMs);
   }
   return Object.freeze({
     status: 'finished', stopReason, cutoffBlock,
     retentionMs: options.retentionMs, batches, totalDeleted,
+    totalDeletedTransactions, totalDeletedBlocks,
   });
 }
 
@@ -206,6 +324,8 @@ async function runPilot(input = {}, deps = {}) {
 }
 
 module.exports = {
-  DEFAULT_BATCH_LIMIT, DEFAULT_MAX_BATCHES, DEFAULT_RETENTION_MS, REQUIRED_INDEXES,
-  assertCascadeIndexes, normalizeOptions, pruneBatch, resolveRetentionCutoff, runPilot,
+  DEFAULT_BATCH_LIMIT, DEFAULT_MAX_BATCHES, DEFAULT_RETENTION_MS,
+  REQUIRED_INDEXES, REQUIRED_STORAGE_INDEXES,
+  assertCanonicalStorageIndexes, assertCascadeIndexes, normalizeOptions,
+  pruneBatch, pruneCanonicalStorageBatch, resolveRetentionCutoff, runPilot,
 };

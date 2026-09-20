@@ -6519,6 +6519,24 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage240-robinhood-canonical-raw-retention-indexes',
+    name: 'Stage 240 Robinhood canonical raw retention indexes',
+    repair: 'node src/utils/db-init-stage240.js',
+    tables: [{
+      table: 'robinhood_chain_events',
+      indexes: [{
+        name: 'idx_rh_chain_events_transaction_lookup',
+        includes: ['chain', 'block_hash', 'transaction_hash'],
+      }],
+    }, {
+      table: 'robinhood_chain_blocks',
+      indexes: [{
+        name: 'idx_rh_chain_blocks_retention',
+        includes: ['chain', 'block_number', 'block_hash', 'block_timestamp'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

@@ -18,13 +18,28 @@ before(async () => {
     canonical boolean NOT NULL DEFAULT true,
     PRIMARY KEY (chain, block_hash)
   ) ON COMMIT PRESERVE ROWS`);
+  await client.query(`CREATE INDEX idx_rh_chain_blocks_retention
+    ON robinhood_chain_blocks(chain, block_number, block_hash)
+    INCLUDE (block_timestamp)`);
+  await client.query(`CREATE TEMP TABLE robinhood_chain_transactions (
+    chain text NOT NULL, block_hash text NOT NULL, transaction_hash text NOT NULL,
+    transaction_index int NOT NULL,
+    PRIMARY KEY (chain, block_hash, transaction_hash),
+    FOREIGN KEY (chain, block_hash) REFERENCES robinhood_chain_blocks(chain, block_hash)
+      ON DELETE CASCADE
+  ) ON COMMIT PRESERVE ROWS`);
   await client.query(`CREATE TEMP TABLE robinhood_chain_events (
     chain text NOT NULL, block_hash text NOT NULL, block_number bigint NOT NULL,
-    transaction_index int NOT NULL, log_index int NOT NULL,
-    PRIMARY KEY (chain, block_hash, log_index)
+    transaction_hash text NOT NULL, transaction_index int NOT NULL, log_index int NOT NULL,
+    PRIMARY KEY (chain, block_hash, log_index),
+    FOREIGN KEY (chain, block_hash, transaction_hash)
+      REFERENCES robinhood_chain_transactions(chain, block_hash, transaction_hash)
+      ON DELETE CASCADE
   ) ON COMMIT PRESERVE ROWS`);
   await client.query(`CREATE INDEX idx_rh_chain_events_order
     ON robinhood_chain_events(chain, block_number, transaction_index, log_index)`);
+  await client.query(`CREATE INDEX idx_rh_chain_events_transaction_lookup
+    ON robinhood_chain_events(chain, block_hash, transaction_hash)`);
   await client.query(`CREATE TEMP TABLE robinhood_chain_domain_outbox (
     chain text NOT NULL, domain text NOT NULL, block_hash text NOT NULL, log_index int NOT NULL,
     PRIMARY KEY (chain, domain, block_hash, log_index),
@@ -55,6 +70,7 @@ after(async () => {
     await client.query('DROP TABLE IF EXISTS robinhood_canonical_head_candidates');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_domain_outbox');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_events');
+    await client.query('DROP TABLE IF EXISTS robinhood_chain_transactions');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_blocks');
     client.release();
   }
@@ -74,7 +90,12 @@ describe('Robinhood chain event pruner integration', () => {
         [block, hash, age]
       );
       await client.query(
-        `INSERT INTO robinhood_chain_events VALUES ('robinhood',$1,$2,0,0)`, [hash, block]
+        `INSERT INTO robinhood_chain_transactions
+         VALUES ('robinhood',$1,$2,0)`, [hash, `tx-${hash}`]
+      );
+      await client.query(
+        `INSERT INTO robinhood_chain_events
+         VALUES ('robinhood',$1,$2,$3,0,0)`, [hash, block, `tx-${hash}`]
       );
       await client.query(
         `INSERT INTO robinhood_chain_domain_outbox VALUES ('robinhood','market',$1,0)`, [hash]
@@ -89,7 +110,7 @@ describe('Robinhood chain event pruner integration', () => {
     const database = { getClient: async () => ({
       query: client.query.bind(client), release() {},
     }) };
-    const report = await runPilot({ batchLimit: 10 }, {
+    const report = await runPilot({ batchLimit: 10, pruneCanonicalStorage: true }, {
       database,
       audit: { inspect: async () => ({ chain_events: {
         ready_for_pilot: true, journal_start_block: '10',
@@ -98,6 +119,8 @@ describe('Robinhood chain event pruner integration', () => {
       resolveRetentionCutoff: async () => '30',
     });
     assert.equal(report.totalDeleted, 2);
+    assert.equal(report.totalDeletedTransactions, 2);
+    assert.equal(report.totalDeletedBlocks, 2);
     await assert.rejects(pruneBatch(database, '30', 10, 0), /retentionMs must be between/);
     for (const table of [
       'robinhood_chain_events', 'robinhood_chain_domain_outbox',
@@ -106,6 +129,18 @@ describe('Robinhood chain event pruner integration', () => {
       const rows = await client.query(`SELECT block_hash FROM ${table} ORDER BY block_hash`);
       assert.deepEqual(rows.rows, [{ block_hash: 'cutoff' }, { block_hash: 'recent' }]);
     }
+    const transactions = await client.query(
+      'SELECT block_hash FROM robinhood_chain_transactions ORDER BY block_hash'
+    );
+    assert.deepEqual(transactions.rows, [
+      { block_hash: 'cutoff' }, { block_hash: 'recent' },
+    ]);
+    const blocks = await client.query(
+      'SELECT block_hash FROM robinhood_chain_blocks ORDER BY block_hash'
+    );
+    assert.deepEqual(blocks.rows, [
+      { block_hash: 'cutoff' }, { block_hash: 'recent' },
+    ]);
   });
 
   it('finds the three-day block boundary with indexed block-number probes', async () => {
