@@ -1,7 +1,7 @@
 const { setTimeout: delay } = require('node:timers/promises');
 const db = require('../models/db');
 const {
-  assertLegacyHeadProcessingAuthority,
+  loadHeadProcessingAuthority,
 } = require('../models/robinhood-head-processing-authority');
 const {
   createRobinhoodPersistenceRepository,
@@ -34,12 +34,16 @@ const CHAIN_ID = 4663n;
 const DEFAULT_TARGET = 'v3-pruned';
 const TARGETS = Object.freeze({
   [DEFAULT_TARGET]: Object.freeze({
-    rejection: 'v3_pool_balance_unavailable', protocols: ['uniswap-v3'],
+    rejections: [
+      'v3_pool_balance_unavailable',
+      'v3_pool_balance_snapshot_unavailable',
+    ],
+    protocols: ['uniswap-v3'],
     stockOnly: false, lockKey: 'robinhood:v3-pruned-capture-repair',
     rpcEnv: 'ROBINHOOD_V3_REPAIR_RPC_URL', event: 'v3_archive_repair_progress',
   }),
   'stock-quote': Object.freeze({
-    rejection: 'quote_usd_unavailable',
+    rejections: ['quote_usd_unavailable'],
     protocols: ['uniswap-v2', 'uniswap-v3', 'uniswap-v4'],
     stockOnly: true, lockKey: 'robinhood:v3-pruned-capture-repair',
     rpcEnv: 'ROBINHOOD_STOCK_REPAIR_RPC_URL', event: 'stock_capture_repair_progress',
@@ -101,13 +105,20 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
 function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
   const target = targetConfig(targetName);
   const parameters = (fromBlock, toBlock) => [
-    fromBlock, toBlock, target.rejection, target.protocols, target.stockOnly, STOCKS,
+    fromBlock, toBlock, target.rejections, target.protocols, target.stockOnly, STOCKS,
   ];
+  const lifecycleJoins = `JOIN robinhood_head_processing_authority authority
+           ON authority.chain = capture.chain
+         LEFT JOIN robinhood_head_capture_states state
+           ON state.chain = capture.chain
+          AND state.transaction_hash = capture.transaction_hash
+          AND state.log_index = capture.log_index`;
   const filter = `capture.chain = 'robinhood'
     AND capture.stream = 'market'
     AND capture.protocol = ANY($4::text[])
-    AND capture.processing_status = 'rejected'
-    AND capture.evidence->>'rejected' = $3
+    AND ((authority.authority = 'legacy' AND capture.processing_status = 'rejected')
+      OR (authority.authority = 'state' AND state.processing_status = 'rejected'))
+    AND capture.evidence->>'rejected' = ANY($3::text[])
     AND COALESCE(capture.evidence #>> '{archiveRepair,status}', '') <> 'blocked'
     AND capture.block_number BETWEEN $1::bigint AND $2::bigint
     AND ($5::boolean = FALSE OR registry.quote_address = ANY($6::text[]))`;
@@ -118,6 +129,7 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
               MIN(capture.block_number)::text AS first_block,
               MAX(capture.block_number)::text AS last_block
          FROM robinhood_head_captures capture
+         ${lifecycleJoins}
          LEFT JOIN robinhood_pool_registry registry
            ON registry.chain = capture.chain AND registry.protocol = capture.protocol
           AND registry.market_key = capture.market_key
@@ -133,12 +145,14 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
               capture.block_number::text, capture.block_hash,
               capture.transaction_index::text, capture.address,
               capture.topics, capture.data, capture.protocol, capture.market_key,
+              capture.evidence->>'rejected' AS rejection_reason,
               registry.market_key AS registry_market_key,
               registry.pool_address, registry.pool_id, registry.origin_address,
               registry.token_address, registry.quote_address,
               registry.currency0, registry.currency1, registry.fee,
               registry.tick_spacing, registry.metadata
          FROM robinhood_head_captures capture
+         ${lifecycleJoins}
          LEFT JOIN robinhood_pool_registry registry
            ON registry.chain = capture.chain
           AND registry.protocol = capture.protocol
@@ -152,11 +166,64 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
     return result.rows;
   }
 
-  async function markRepaired(rows) {
+  async function markRepaired(rows, authority = 'legacy') {
     const identities = rows.map((row) => ({
       transactionHash: row.transaction_hash,
       logIndex: row.log_index,
     }));
+    if (authority === 'state') {
+      const result = await database.query(
+        `WITH repaired AS MATERIALIZED (
+           SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+             "transactionHash" text, "logIndex" bigint
+           )
+         ), targets AS MATERIALIZED (
+           SELECT capture.chain, capture.transaction_hash, capture.log_index,
+                  capture.evidence->>'rejected' AS original_reason
+             FROM robinhood_head_captures capture
+             JOIN robinhood_head_capture_states state
+               USING (chain, transaction_hash, log_index)
+             JOIN repaired
+               ON capture.transaction_hash = repaired."transactionHash"
+              AND capture.log_index = repaired."logIndex"
+            WHERE capture.chain = 'robinhood'
+              AND state.processing_status = 'rejected'
+              AND capture.evidence->>'rejected' = ANY($2::text[])
+         ), annotated AS (
+           UPDATE robinhood_head_captures capture
+              SET evidence = capture.evidence || jsonb_build_object(
+                    'archiveRepair', jsonb_build_object(
+                      'status', 'completed',
+                      'target', $3::text,
+                      'originalReason', targets.original_reason,
+                      'repairedAt', NOW()
+                    )
+                  ),
+                  updated_at = NOW()
+             FROM targets
+            WHERE capture.chain = targets.chain
+              AND capture.transaction_hash = targets.transaction_hash
+              AND capture.log_index = targets.log_index
+           RETURNING capture.chain, capture.transaction_hash, capture.log_index
+         )
+         UPDATE robinhood_head_capture_states state
+            SET processing_status = 'processed', lease_owner = NULL, lease_until = NULL,
+                last_error = NULL, terminal_at = NOW(),
+                retention_eligible_at = NOW() + INTERVAL '7 days', updated_at = NOW()
+           FROM annotated
+          WHERE state.chain = annotated.chain
+            AND state.transaction_hash = annotated.transaction_hash
+            AND state.log_index = annotated.log_index
+            AND state.processing_status = 'rejected'
+        RETURNING state.transaction_hash`,
+        [JSON.stringify(identities), target.rejections, target.name]
+      );
+      if (result.rowCount !== rows.length) {
+        throw new Error(`Archive repair finalized ${result.rowCount}/${rows.length} captures`);
+      }
+      return result.rowCount;
+    }
+    if (authority !== 'legacy') throw new Error(`Unsupported lifecycle authority: ${authority}`);
     const result = await database.query(
       `UPDATE robinhood_head_captures capture
           SET processing_status = 'processed',
@@ -164,7 +231,7 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
                 'archiveRepair', jsonb_build_object(
                   'status', 'completed',
                   'target', $3::text,
-                  'originalReason', $2::text,
+                  'originalReason', capture.evidence->>'rejected',
                   'repairedAt', NOW()
                 )
               ),
@@ -179,9 +246,9 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
           AND capture.transaction_hash = repaired."transactionHash"
           AND capture.log_index = repaired."logIndex"
           AND capture.processing_status = 'rejected'
-          AND capture.evidence->>'rejected' = $2
+          AND capture.evidence->>'rejected' = ANY($2::text[])
         RETURNING capture.transaction_hash`,
-      [JSON.stringify(identities), target.rejection, target.name]
+      [JSON.stringify(identities), target.rejections, target.name]
     );
     if (result.rowCount !== rows.length) {
       throw new Error(`Archive repair finalized ${result.rowCount}/${rows.length} captures`);
@@ -189,20 +256,77 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
     return result.rowCount;
   }
 
-  async function markBlocked(failures) {
+  async function markBlocked(failures, authority = 'legacy') {
     if (!failures.length) return 0;
     const identities = failures.map(({ row, error }) => ({
       transactionHash: row.transaction_hash,
       logIndex: row.log_index,
       error: String(error?.message || error || 'archive repair failed').slice(0, 1000),
     }));
+    if (authority === 'state') {
+      const result = await database.query(
+        `WITH failed AS MATERIALIZED (
+           SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+             "transactionHash" text, "logIndex" bigint, error text
+           )
+         ), targets AS MATERIALIZED (
+           SELECT capture.chain, capture.transaction_hash, capture.log_index,
+                  capture.evidence->>'rejected' AS original_reason, failed.error
+             FROM robinhood_head_captures capture
+             JOIN robinhood_head_capture_states state
+               USING (chain, transaction_hash, log_index)
+             JOIN failed
+               ON capture.transaction_hash = failed."transactionHash"
+              AND capture.log_index = failed."logIndex"
+            WHERE capture.chain = 'robinhood'
+              AND state.processing_status = 'rejected'
+              AND capture.evidence->>'rejected' = ANY($2::text[])
+         ), annotated AS (
+           UPDATE robinhood_head_captures capture
+              SET evidence = capture.evidence || jsonb_build_object(
+                    'archiveRepair', jsonb_build_object(
+                      'status', 'blocked',
+                      'target', $3::text,
+                      'originalReason', targets.original_reason,
+                      'failedAt', NOW(),
+                      'error', targets.error
+                    )
+                  ),
+                  updated_at = NOW()
+             FROM targets
+            WHERE capture.chain = targets.chain
+              AND capture.transaction_hash = targets.transaction_hash
+              AND capture.log_index = targets.log_index
+           RETURNING capture.chain, capture.transaction_hash, capture.log_index
+         )
+         UPDATE robinhood_head_capture_states state
+            SET last_error = LEFT('Archive capture repair blocked: ' || targets.error, 4000),
+                terminal_at = NOW(), retention_eligible_at = NOW() + INTERVAL '7 days',
+                updated_at = NOW()
+           FROM targets JOIN annotated
+             ON annotated.chain = targets.chain
+            AND annotated.transaction_hash = targets.transaction_hash
+            AND annotated.log_index = targets.log_index
+          WHERE state.chain = annotated.chain
+            AND state.transaction_hash = annotated.transaction_hash
+            AND state.log_index = annotated.log_index
+            AND state.processing_status = 'rejected'
+        RETURNING state.transaction_hash`,
+        [JSON.stringify(identities), target.rejections, target.name]
+      );
+      if (result.rowCount !== failures.length) {
+        throw new Error(`Archive repair blocked ${result.rowCount}/${failures.length} captures`);
+      }
+      return result.rowCount;
+    }
+    if (authority !== 'legacy') throw new Error(`Unsupported lifecycle authority: ${authority}`);
     const result = await database.query(
       `UPDATE robinhood_head_captures capture
           SET evidence = capture.evidence || jsonb_build_object(
                 'archiveRepair', jsonb_build_object(
                   'status', 'blocked',
                   'target', $3::text,
-                  'originalReason', $2::text,
+                  'originalReason', capture.evidence->>'rejected',
                   'failedAt', NOW(),
                   'error', failed.error
                 )
@@ -218,9 +342,9 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
           AND capture.transaction_hash = failed."transactionHash"
           AND capture.log_index = failed."logIndex"
           AND capture.processing_status = 'rejected'
-          AND capture.evidence->>'rejected' = $2
+          AND capture.evidence->>'rejected' = ANY($2::text[])
         RETURNING capture.transaction_hash`,
-      [JSON.stringify(identities), target.rejection, target.name]
+      [JSON.stringify(identities), target.rejections, target.name]
     );
     if (result.rowCount !== failures.length) {
       throw new Error(`Archive repair blocked ${result.rowCount}/${failures.length} captures`);
@@ -232,8 +356,8 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
     const client = await database.getClient();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [target.lockKey]);
-      await assertLegacyHeadProcessingAuthority(client);
-      return await callback();
+      const authority = await loadHeadProcessingAuthority(client);
+      return await callback(authority.authority);
     } finally {
       try {
         await client.query('SELECT pg_advisory_unlock(hashtext($1))', [target.lockKey]);
@@ -408,7 +532,7 @@ async function runRepair(options, deps = {}) {
   const enrichBatch = deps.enrichBatch
     || ((rows) => enrich(rows, rpcClient, options, adapterOptions));
 
-  return candidates.withLock(async () => {
+  return candidates.withLock(async (authority = 'legacy') => {
     const chainId = await rpcClient.request('eth_chainId');
     if (BigInt(chainId) !== CHAIN_ID) throw new Error('Archive RPC is not on Robinhood Chain');
     let scanFromBlock = options.fromBlock;
@@ -421,8 +545,8 @@ async function runRepair(options, deps = {}) {
       const committed = built.entries.length
         ? await persistence.commitHeadProcessingBatch({ entries: built.entries })
         : null;
-      if (repairedRows.length) await candidates.markRepaired(repairedRows);
-      if (failures.length) await candidates.markBlocked(failures);
+      if (repairedRows.length) await candidates.markRepaired(repairedRows, authority);
+      if (failures.length) await candidates.markBlocked(failures, authority);
       summary.batches += 1;
       summary.repaired += repairedRows.length;
       summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;

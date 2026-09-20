@@ -33,6 +33,9 @@ const {
 const {
   activateHeadProcessingState, previewHeadProcessingActivation,
 } = require('../src/models/robinhood-head-processing-activation');
+const {
+  __private: { createCandidateRepository: createArchiveRepairRepository },
+} = require('../src/utils/repair-robinhood-v3-pruned-captures');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK_HASH = `0x${'b'.repeat(64)}`;
@@ -1146,5 +1149,33 @@ describe('Robinhood head processing repository integration', () => {
       repository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '901' }),
       /Legacy blocked recovery is disabled/
     );
+
+    const repairable = await seedPending({
+      block: 902,
+      evidence: { rejected: 'v3_pool_balance_snapshot_unavailable' },
+    });
+    await db.query(
+      `UPDATE robinhood_head_capture_states
+          SET processing_status='rejected', terminal_at=NOW(),
+              retention_eligible_at=NOW()+INTERVAL '7 days', updated_at=NOW()
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [repairable.transactionHash, repairable.logIndex]
+    );
+    const archiveRepair = createArchiveRepairRepository(db);
+    const previewRepair = await archiveRepair.summarize('902', '902');
+    assert.equal(previewRepair.candidates, '1');
+    await archiveRepair.markRepaired([{
+      transaction_hash: repairable.transactionHash,
+      log_index: String(repairable.logIndex),
+    }], 'state');
+    assert.equal((await stateStatusOf(repairable)).processing_status, 'processed');
+    assert.equal((await statusOf(repairable)).processing_status, 'pending');
+    const annotation = await db.query(
+      `SELECT evidence #>> '{archiveRepair,status}' AS status
+         FROM robinhood_head_captures
+        WHERE transaction_hash=$1 AND log_index=$2`,
+      [repairable.transactionHash, repairable.logIndex]
+    );
+    assert.equal(annotation.rows[0].status, 'completed');
   });
 });

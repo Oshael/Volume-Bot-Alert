@@ -498,8 +498,9 @@ catch-up sem elevar `ROBINHOOD_OBSERVATION_CONCURRENCY` nem a simultaneidade RPC
 O range ainda pode reduzir até `ROBINHOOD_MIN_RANGE_SIZE=1` diante de resposta
 adaptativa do provider.
 
-Capturas V3 antigas já terminalizadas como `v3_pool_balance_unavailable` não são
-recuperadas pelo catch-up v2. Use `npm run robinhood:repair-v3-pruned` para o
+Capturas V3 antigas já terminalizadas como `v3_pool_balance_unavailable` ou
+`v3_pool_balance_snapshot_unavailable` não são recuperadas pelo catch-up v2.
+Use `npm run robinhood:repair-v3-pruned` para o
 reparo direcionado, com `ROBINHOOD_V3_REPAIR_RPC_URL` apontando para um node
 archive. O comando é dry-run por default, limita o canário por `--max-batches`,
 seleciona apenas essa rejeição dentro de `--from-block`/`--to-block`, reconstrói
@@ -513,6 +514,9 @@ isola somente essa identidade como `archiveRepair.status='blocked'`, mantém a r
 original para auditoria e permite que as demais capturas do batch sejam persistidas.
 Cada evento de progresso expõe `remaining`, `progressPct`, `blocked` e até dez
 `lastFailures`; itens isolados contam como tratados, mas nunca como reparados.
+Depois da ativação da autoridade `state`, o seletor e o settlement do reparo usam
+`robinhood_head_capture_states`; o payload recebe apenas a anotação auditável
+`archiveRepair`, sem devolver autoridade aos campos de lifecycle legados.
 Dentro da mesma execução, o seletor avança seu limite inferior até o último bloco
 tratado, evitando reler desde `--from-block` o prefixo que já saiu da coorte.
 

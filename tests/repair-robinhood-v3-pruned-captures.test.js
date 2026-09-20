@@ -38,6 +38,10 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.throws(() => __private.parseArgs(['--batch-size=501'], {}), /between 1 and 500/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=9'], {}), /between 1 and 8/);
     assert.throws(() => __private.parseArgs(['--mode=erase'], {}), /dry-run or write/);
+    assert.deepEqual(__private.targetConfig('v3-pruned').rejections, [
+      'v3_pool_balance_unavailable',
+      'v3_pool_balance_snapshot_unavailable',
+    ]);
   });
 
   it('configures the stock repair as a throttled all-protocol canary', () => {
@@ -195,12 +199,17 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
 
     assert.match(calls[0].sql, /'status', 'blocked'/);
     assert.match(calls[0].sql, /Archive capture repair blocked/);
+    assert.match(calls[0].sql, /rejected' = ANY\(\$2::text\[\]\)/);
+    assert.deepEqual(calls[0].params[1], [
+      'v3_pool_balance_unavailable',
+      'v3_pool_balance_snapshot_unavailable',
+    ]);
     assert.match(calls[1].sql, /archiveRepair,status/);
     assert.match(calls[1].sql, /<> 'blocked'/);
   });
 
-  it('refuses the legacy archive repair after state authority activation', async () => {
-    let ran = false; let released = false;
+  it('holds the repair lock and exposes state lifecycle authority', async () => {
+    let observedAuthority = null; let released = false;
     const client = {
       query: async (sql) => (sql.includes('head_processing_authority')
         ? { rows: [{ authority: 'state', generation: '1', activated_at: new Date(),
@@ -210,10 +219,34 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     const repository = __private.createCandidateRepository({
       getClient: async () => client,
     });
-    await assert.rejects(repository.withLock(async () => { ran = true; }),
-      /Legacy head lifecycle repair is disabled/);
-    assert.equal(ran, false);
+    await repository.withLock(async (authority) => { observedAuthority = authority; });
+    assert.equal(observedAuthority, 'state');
     assert.equal(released, true);
+  });
+
+  it('settles repairs in the narrow state table after authority activation', async () => {
+    const calls = [];
+    const database = {
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rowCount: 1, rows: [{ transaction_hash: row(100).transaction_hash }] };
+      },
+    };
+    const repository = __private.createCandidateRepository(database);
+    await repository.markRepaired([row(100)], 'state');
+    await repository.markBlocked([{
+      row: row(101), error: new Error('historical balance unavailable'),
+    }], 'state');
+
+    assert.match(calls[0].sql, /UPDATE robinhood_head_capture_states state/);
+    assert.match(calls[0].sql, /processing_status = 'processed'/);
+    assert.match(calls[0].sql, /UPDATE robinhood_head_captures capture/);
+    assert.match(calls[1].sql, /UPDATE robinhood_head_capture_states state/);
+    assert.match(calls[1].sql, /Archive capture repair blocked/);
+    assert.deepEqual(calls[0].params[1], [
+      'v3_pool_balance_unavailable',
+      'v3_pool_balance_snapshot_unavailable',
+    ]);
   });
 
   it('limits stock candidates to official quotes and the stock rejection reason', async () => {
@@ -225,8 +258,10 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       },
     }, 'stock-quote');
     await repository.summarize('100', '200');
+    assert.match(calls[0].sql, /robinhood_head_capture_states state/);
     assert.match(calls[0].sql, /registry\.quote_address = ANY\(\$6::text\[\]\)/);
-    assert.equal(calls[0].params[2], 'quote_usd_unavailable');
+    assert.match(calls[0].sql, /rejected' = ANY\(\$3::text\[\]\)/);
+    assert.deepEqual(calls[0].params[2], ['quote_usd_unavailable']);
     assert.deepEqual(calls[0].params[3], ['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
     assert.equal(calls[0].params[4], true);
     assert.ok(calls[0].params[5].length > 1);
