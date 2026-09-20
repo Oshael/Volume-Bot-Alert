@@ -55,10 +55,20 @@ function buildSnapshot(task, evidence, decisions) {
 async function processTask(runtime, task) {
   const evidence = await runtime.source.loadToken(task.tokenAddress, {
     observationFromBlock: task.observationFromBlock,
+    eventThroughBlock: task.eventThroughBlock,
+    observationFromHash: task.observationFromHash,
+    observationFromTime: task.observationFromTime,
+    sourceThroughBlock: task.sourceThroughBlock,
+    sourceThroughHash: task.sourceThroughHash,
+    sourceThroughTime: task.sourceThroughTime,
+    sourceRequestedVersion: task.sourceRequestedVersion,
+    requestedVersion: task.requestedVersion,
   });
   if (!evidence.ready) {
     const error = new Error(`redistribution source unavailable: ${evidence.reason}`);
-    error.code = 'redistribution_source_not_ready'; error.reason = evidence.reason;
+    error.code = evidence.reason.startsWith('redistribution_anchor_')
+      ? evidence.reason : 'redistribution_source_not_ready';
+    error.reason = evidence.reason;
     throw error;
   }
   const decisions = evidence.sources.map((source) => evaluateBundleRedistribution({

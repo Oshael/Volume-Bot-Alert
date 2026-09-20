@@ -26,7 +26,9 @@ function assertedLineage(row, input) {
     throw anchorMissing();
   }
   const snapshot = input.snapshot.state;
-  if (String(input.observationFromBlock) !== row.observation_from_block
+  if (String(input.eventThroughBlock) !== row.event_through_block
+      || BigInt(row.source_through_block) < BigInt(row.event_through_block)
+      || String(input.observationFromBlock) !== row.observation_from_block
       || input.observationFromHash !== row.observation_from_hash
       || instant(input.observationFromTime) !== instant(row.observation_from_time)
       || String(snapshot.throughBlockNumber) !== row.source_through_block
@@ -50,7 +52,8 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
     const leaseMs = bounded(input.leaseMs, 300_000, 10_000, 1_200_000);
     const { rows } = await database.query(`WITH candidates AS MATERIALIZED (
       SELECT queue.chain, queue.token_address, queue.rule_version,
-             queue.requested_version, queue.source_through_block,
+             queue.requested_version, queue.event_through_block,
+             queue.source_through_block,
              queue.source_through_hash, queue.source_through_time,
              queue.source_requested_version, holder.ledger_status,
              holder.live_through_block, holder.live_through_hash,
@@ -76,24 +79,31 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
     ), frozen AS MATERIALIZED (
       SELECT candidates.*,
         CASE
-          WHEN source_requested_version = requested_version THEN source_through_block
+          WHEN source_requested_version = requested_version
+            AND source_through_block >= event_through_block THEN source_through_block
           WHEN ledger_status = 'live' AND live_through_block IS NOT NULL
+            AND live_through_block >= event_through_block
             AND live_through_hash ~ '^0x[0-9a-f]{64}$'
             AND (holder_anchor_time IS NOT NULL OR canonical_time IS NOT NULL)
           THEN live_through_block
         END AS frozen_block,
         CASE
-          WHEN source_requested_version = requested_version THEN source_through_hash
+          WHEN source_requested_version = requested_version
+            AND source_through_block >= event_through_block THEN source_through_hash
           WHEN ledger_status = 'live' AND holder_anchor_time IS NOT NULL
+            AND live_through_block >= event_through_block
           THEN live_through_hash
-          WHEN ledger_status = 'live' AND canonical_time IS NOT NULL
+          WHEN ledger_status = 'live' AND live_through_block >= event_through_block
+            AND canonical_time IS NOT NULL
           THEN capture_robinhood_chain_block_anchor(
             chain, live_through_block, live_through_hash
           )
         END AS frozen_hash,
         CASE
-          WHEN source_requested_version = requested_version THEN source_through_time
-          WHEN ledger_status = 'live' THEN COALESCE(holder_anchor_time, canonical_time)
+          WHEN source_requested_version = requested_version
+            AND source_through_block >= event_through_block THEN source_through_time
+          WHEN ledger_status = 'live' AND live_through_block >= event_through_block
+          THEN COALESCE(holder_anchor_time, canonical_time)
         END AS frozen_time
       FROM candidates
     ) UPDATE robinhood_bundle_redistribution_queue queue SET
@@ -159,6 +169,7 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
     try {
       await client.query('BEGIN');
       const locked = await client.query(`SELECT requested_version::text,
+          event_through_block::text,
           observation_from_block::text,
           observation_from_hash, observation_from_time,
           source_through_block::text, source_through_hash, source_through_time,

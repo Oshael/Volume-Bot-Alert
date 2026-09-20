@@ -12,6 +12,7 @@ const CREATOR = `0x${'2'.repeat(40)}`;
 const A = `0x${'3'.repeat(40)}`;
 const B = `0x${'4'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
+const TIME = '2026-09-01T12:00:00.000Z';
 
 function recipient(walletAddress, minute) {
   return { walletAddress, transfer: { blockNumber: '20', transactionIndex: '1',
@@ -34,8 +35,10 @@ function evidence() {
 describe('Robinhood BUNDLED redistribution LIVE worker', () => {
   it('classifies PostgreSQL evidence and atomically completes its queue version', async () => {
     let loadInput; let stored;
-    const task = { tokenAddress: TOKEN, observationFromBlock: '50',
-      requestedVersion: '2', owner: 'worker' };
+    const task = { tokenAddress: TOKEN, observationFromBlock: '50', eventThroughBlock: '90',
+      observationFromHash: HASH, observationFromTime: TIME,
+      sourceThroughBlock: '100', sourceThroughHash: HASH, sourceThroughTime: TIME,
+      sourceRequestedVersion: '2', requestedVersion: '2', owner: 'worker' };
     const result = await processTask({
       source: { async loadToken(tokenAddress, input) {
         loadInput = { tokenAddress, input }; return evidence();
@@ -45,7 +48,10 @@ describe('Robinhood BUNDLED redistribution LIVE worker', () => {
       } },
     }, task);
     assert.deepEqual(loadInput, { tokenAddress: TOKEN,
-      input: { observationFromBlock: '50' } });
+      input: { observationFromBlock: '50', eventThroughBlock: '90',
+        observationFromHash: HASH,
+        observationFromTime: TIME, sourceThroughBlock: '100', sourceThroughHash: HASH,
+        sourceThroughTime: TIME, sourceRequestedVersion: '2', requestedVersion: '2' } });
     assert.equal(stored.snapshot.state.sourceKind, 'live');
     assert.equal(stored.snapshot.state.sourceVersion, '2');
     assert.equal(stored.snapshot.groups.length, 1);
@@ -61,6 +67,13 @@ describe('Robinhood BUNDLED redistribution LIVE worker', () => {
     }, { tokenAddress: TOKEN, observationFromBlock: '50', requestedVersion: '1' }),
     (error) => error.code === 'redistribution_source_not_ready'
       && error.reason === 'transfer_frontier_behind');
+
+    await assert.rejects(processTask({
+      source: { async loadToken() { return { ready: false,
+        reason: 'redistribution_anchor_missing' }; } },
+      queue: { async replaceSnapshotAndComplete() { throw new Error('unexpected write'); } },
+    }, { tokenAddress: TOKEN, requestedVersion: '1' }),
+    (error) => error.code === 'redistribution_anchor_missing');
   });
 
   it('bounds concurrent claims and retries every independently deferred token', async () => {

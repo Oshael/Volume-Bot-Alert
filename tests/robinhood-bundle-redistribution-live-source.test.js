@@ -10,16 +10,27 @@ const SOURCE = `0x${'2'.repeat(40)}`;
 const RECIPIENT = `0x${'3'.repeat(40)}`;
 const CREATOR = `0x${'4'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
+const OTHER_HASH = `0x${'b'.repeat(64)}`;
+const OBSERVATION_TIME = '2026-09-01T00:00:00.000Z';
+const FRONTIER_TIME = '2026-09-01T00:10:00.000Z';
+
+function lineage(overrides = {}) {
+  return { observationFromBlock: '15', eventThroughBlock: '100',
+    observationFromHash: OTHER_HASH,
+    observationFromTime: OBSERVATION_TIME, sourceThroughBlock: '100',
+    sourceThroughHash: HASH, sourceThroughTime: FRONTIER_TIME,
+    requestedVersion: '3', sourceRequestedVersion: '3', ...overrides };
+}
 
 function ready(overrides = {}) {
-  return { ledger_status: 'live', live_through_block: '100', live_through_hash: HASH,
+  return { ledger_status: 'live', live_through_block: '105', live_through_hash: OTHER_HASH,
     creator_address: CREATOR, attribution_block: '1',
     first_buy_next_time: '2026-09-01T00:00:00Z',
     first_buy_source_through: '2026-09-01T00:00:00Z', first_buy_source_next_block: '101',
     swap_lifecycle_state: 'running', swap_next_block: '101', swap_safe_head: '100',
     transfer_lifecycle_state: 'running', transfer_next_block: '101',
-    observation_block_time: '2026-09-01T00:00:00Z',
-    frontier_block_time: '2026-09-01T00:10:00Z', ...overrides };
+    observation_anchor_time: OBSERVATION_TIME,
+    frontier_anchor_time: FRONTIER_TIME, ...overrides };
 }
 
 function edge(overrides = {}) {
@@ -33,18 +44,19 @@ function edge(overrides = {}) {
 }
 
 describe('Robinhood BUNDLED redistribution live source', () => {
-  it('requires a future rollout observation frontier instead of backfilling history', async () => {
+  it('requires a complete frozen lineage before querying evidence', async () => {
     const source = createRobinhoodBundleRedistributionLiveSource({ database: {
       async query() { throw new Error('database must not be queried'); },
     } });
-    assert.equal((await source.loadToken(TOKEN)).reason, 'observation_frontier_missing');
-    assert.equal((await source.loadToken(TOKEN, { observationFromBlock: '-1' })).reason,
-      'observation_frontier_missing');
-    const ahead = createRobinhoodBundleRedistributionLiveSource({ database: {
-      async query() { return { rows: [ready()] }; },
-    } });
-    assert.equal((await ahead.loadToken(TOKEN, { observationFromBlock: '101' })).reason,
-      'observation_frontier_ahead');
+    assert.equal((await source.loadToken(TOKEN)).reason, 'redistribution_anchor_missing');
+    assert.equal((await source.loadToken(TOKEN,
+      lineage({ sourceThroughTime: null }))).reason, 'redistribution_anchor_missing');
+    assert.equal((await source.loadToken(TOKEN,
+      lineage({ sourceRequestedVersion: '2' }))).reason, 'redistribution_anchor_mismatch');
+    assert.equal((await source.loadToken(TOKEN,
+      lineage({ observationFromBlock: '101' }))).reason, 'redistribution_anchor_mismatch');
+    assert.equal((await source.loadToken(TOKEN,
+      lineage({ eventThroughBlock: '101' }))).reason, 'redistribution_anchor_mismatch');
   });
 
   it('fails closed while any durable frontier is behind', () => {
@@ -54,7 +66,10 @@ describe('Robinhood BUNDLED redistribution live source', () => {
       [{ transfer_next_block: '100' }, 'transfer_frontier_behind'],
       [{ creator_address: null }, 'creator_unavailable'],
       [{ creator_address: `0x${'0'.repeat(40)}` }, 'creator_unavailable'],
-    ]) assert.equal(__private.readiness(ready(change), TOKEN).reason, reason);
+      [{ live_through_block: '99' }, 'holder_frontier_unavailable'],
+      [{ live_through_block: '100', live_through_hash: OTHER_HASH }, 'holder_frontier_fork'],
+    ]) assert.equal(__private.readiness(ready(change), TOKEN,
+      { blockNumber: '100', blockHash: HASH }).reason, reason);
   });
 
   it('returns token-scoped canonical evidence and temporal barriers', async () => {
@@ -66,35 +81,38 @@ describe('Robinhood BUNDLED redistribution live source', () => {
       return { rows: [{ address: RECIPIENT }] };
     } };
     const result = await createRobinhoodBundleRedistributionLiveSource({ database })
-      .loadToken(TOKEN, { observationFromBlock: '15' });
+      .loadToken(TOKEN, lineage());
     assert.equal(result.ready, true);
     assert.deepEqual(result.frontier, { blockNumber: '100', blockHash: HASH });
     assert.equal(result.sources[0].sourceBuy.transactionIndex, '1');
     assert.equal(result.sources[0].recipients[0].firstSell.fdvUsd, null);
     assert.deepEqual(result.barrierAddresses, [RECIPIENT]);
     assert.equal(calls.length, 3);
-    assert.equal(calls[0].params[3], '15');
+    assert.deepEqual(calls[0].params.slice(3), ['15', OTHER_HASH, '100', HASH]);
     assert.equal(calls[1].params[3], '100');
     assert.equal(calls[1].params[4], '15');
-    assert.equal(calls[1].params[5], '2026-09-01T00:00:00.000Z');
-    assert.equal(calls[1].params[6], '2026-09-01T00:10:00.000Z');
+    assert.equal(calls[1].params[5], OBSERVATION_TIME);
+    assert.equal(calls[1].params[6], FRONTIER_TIME);
     assert.match(__private.EVIDENCE_SQL, /swap\.block_time >= \$6::timestamptz/);
     assert.match(__private.EVIDENCE_SQL, /swap\.block_time <= \$7::timestamptz/);
+    assert.match(__private.READINESS_SQL, /robinhood_chain_block_anchors/);
+    assert.doesNotMatch(__private.READINESS_SQL, /robinhood_chain_blocks/);
     assert.match(calls[2].params[1], new RegExp(RECIPIENT));
   });
 
-  it('fails closed when canonical partition bounds are unavailable', async () => {
-    for (const change of [
-      { observation_block_time: null },
-      { frontier_block_time: null },
-      { observation_block_time: '2026-09-01T00:11:00Z' },
+  it('fails closed when a durable anchor is absent or its timestamp diverges', async () => {
+    for (const [change, reason] of [
+      [{ observation_anchor_time: null }, 'redistribution_anchor_missing'],
+      [{ frontier_anchor_time: null }, 'redistribution_anchor_missing'],
+      [{ observation_anchor_time: '2026-09-01T00:01:00Z' },
+        'redistribution_anchor_mismatch'],
     ]) {
       const source = createRobinhoodBundleRedistributionLiveSource({ database: {
         async query() { return { rows: [ready(change)] }; },
       } });
-      const result = await source.loadToken(TOKEN, { observationFromBlock: '15' });
+      const result = await source.loadToken(TOKEN, lineage());
       assert.equal(result.ready, false);
-      assert.equal(result.reason, 'partition_time_bounds_unavailable');
+      assert.equal(result.reason, reason);
     }
   });
 
@@ -104,7 +122,7 @@ describe('Robinhood BUNDLED redistribution live source', () => {
       return { rows: [edge({ sell_tx_index: null })] };
     } };
     const result = await createRobinhoodBundleRedistributionLiveSource({ database })
-      .loadToken(TOKEN, { observationFromBlock: '15' });
+      .loadToken(TOKEN, lineage());
     assert.equal(result.ready, false);
     assert.equal(result.reason, 'transaction_position_missing');
     assert.deepEqual(result.frontier, { blockNumber: '100', blockHash: HASH });

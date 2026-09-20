@@ -27,6 +27,7 @@ it('claims a bounded batch only behind an active activation', async () => {
   assert.match(captured.sql, /FOR UPDATE OF queue SKIP LOCKED/);
   assert.match(captured.sql, /capture_robinhood_chain_block_anchor/);
   assert.match(captured.sql, /source_requested_version = CASE/);
+  assert.match(captured.sql, /live_through_block >= event_through_block/);
   assert.equal(captured.params[2], 100);
   assert.equal(captured.params[4], 10_000);
   assert.deepEqual(result, [{ tokenAddress: TOKEN, observationFromBlock: '101',
@@ -50,11 +51,13 @@ it('retries only the exact leased version owned by the caller', async () => {
 });
 
 it('accepts completion only for the exact durable frontier returned by claim', () => {
-  const row = { observation_from_hash: HASH, observation_from_time: TIME,
+  const row = { event_through_block: '110', observation_from_hash: HASH,
+    observation_from_time: TIME,
     observation_from_block: '101',
     source_through_block: '120', source_through_hash: HASH,
     source_through_time: TIME, source_requested_version: '3' };
-  const input = { requestedVersion: '3', observationFromBlock: '101',
+  const input = { requestedVersion: '3', eventThroughBlock: '110',
+    observationFromBlock: '101',
     observationFromHash: HASH, observationFromTime: TIME, sourceThroughBlock: '120',
     sourceThroughHash: HASH, sourceThroughTime: TIME,
     snapshot: { state: { throughBlockNumber: '120', throughBlockHash: HASH } } };

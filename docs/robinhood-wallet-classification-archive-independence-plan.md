@@ -1,8 +1,8 @@
 # Plano de execução — wallet classification Robinhood com raw de 3 dias
 
-Status: Cortes 0, 1A e 1B concluídos localmente; Stage 241 ainda não aplicada na VPS.
+Status: Cortes 0, 1A, 1B e 1C concluídos localmente; Stage 241 ainda não aplicada na VPS.
 Os reparos existentes podem rodar no PC Archive enquanto os demais cortes de código
-são implementados. O reader permanece no contrato anterior até o Corte 1C.
+são implementados. O cutover depende da Stage 241 e do reparo das linhas legadas.
 
 ## 1. Objetivo
 
@@ -274,6 +274,8 @@ Validação:
 - `npm run lint` e menor suite afetada.
 
 ### Corte 1C — source usa somente âncoras duráveis
+
+Status: concluído localmente; ainda não implantado na VPS.
 
 Objetivo: remover os joins do source de redistribution com blocos raw antigos.
 

@@ -4,6 +4,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const CHAIN = 'robinhood';
 const PROJECTION_VERSION = 'rh_transfer_v1';
 const MAX_EDGES = 10_000;
+const HASH = /^0x[0-9a-f]{64}$/;
 const INVALID_CREATORS = new Set([
   `0x${'0'.repeat(40)}`,
   '0x000000000000000000000000000000000000dead',
@@ -19,26 +20,27 @@ const READINESS_SQL = `SELECT state.ledger_status,
        swap.next_block::text AS swap_next_block, swap.safe_head::text AS swap_safe_head,
        transfer.lifecycle_state AS transfer_lifecycle_state,
        transfer.next_block::text AS transfer_next_block,
-       observation_block.block_timestamp AS observation_block_time,
-       frontier_block.block_timestamp AS frontier_block_time
-  FROM robinhood_holder_token_states state
+       observation_anchor.block_timestamp AS observation_anchor_time,
+       frontier_anchor.block_timestamp AS frontier_anchor_time
+  FROM robinhood_chain_block_anchors observation_anchor
+  INNER JOIN robinhood_chain_block_anchors frontier_anchor
+    ON frontier_anchor.chain = observation_anchor.chain
+   AND frontier_anchor.block_number = $6::bigint
+   AND frontier_anchor.block_hash = $7
+  LEFT JOIN robinhood_holder_token_states state
+    ON state.chain = observation_anchor.chain AND state.token_address = $2
   LEFT JOIN robinhood_token_attributions attribution
-    ON attribution.chain = state.chain AND attribution.token_address = state.token_address
-  LEFT JOIN robinhood_first_buy_live_cursors first_buy ON first_buy.chain = state.chain
+    ON attribution.chain = observation_anchor.chain AND attribution.token_address = $2
+  LEFT JOIN robinhood_first_buy_live_cursors first_buy
+    ON first_buy.chain = observation_anchor.chain
   LEFT JOIN robinhood_wallet_swap_cursors swap
-    ON swap.chain = state.chain AND swap.stream = 'live'
+    ON swap.chain = observation_anchor.chain AND swap.stream = 'live'
   LEFT JOIN robinhood_wallet_transfer_cursors transfer
-    ON transfer.chain = state.chain AND transfer.stream = 'live'
+    ON transfer.chain = observation_anchor.chain AND transfer.stream = 'live'
    AND transfer.projection_version = $3
-  LEFT JOIN robinhood_chain_blocks observation_block
-    ON observation_block.chain = state.chain
-   AND observation_block.block_number = $4::bigint
-   AND observation_block.canonical
-  LEFT JOIN robinhood_chain_blocks frontier_block
-    ON frontier_block.chain = state.chain
-   AND frontier_block.block_hash = state.live_through_hash
-   AND frontier_block.canonical
- WHERE state.chain = $1 AND state.token_address = $2`;
+ WHERE observation_anchor.chain = $1
+   AND observation_anchor.block_number = $4::bigint
+   AND observation_anchor.block_hash = $5`;
 
 const EVIDENCE_SQL = `SELECT buy.wallet_address AS source_wallet,
        buy.block_number::text AS buy_block, buy.transaction_index::text AS buy_tx_index,
@@ -121,35 +123,48 @@ function unavailable(reason, tokenAddress, details = {}) {
   return Object.freeze({ ready: false, reason, tokenAddress, ...details });
 }
 
-function observationStart(value, tokenAddress) {
-  const normalized = String(value ?? '');
-  if (!/^\d+$/.test(normalized)) {
-    return unavailable('observation_frontier_missing', tokenAddress);
-  }
-  return Object.freeze({ ready: true, observationFromBlock: normalized });
-}
-
 function canonicalTime(value) {
   if (value == null || String(value).trim() === '') return null;
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
-function partitionBounds(row, tokenAddress) {
-  const observationTime = canonicalTime(row?.observation_block_time);
-  const frontierTime = canonicalTime(row?.frontier_block_time);
-  if (!observationTime || !frontierTime
-      || new Date(observationTime).getTime() > new Date(frontierTime).getTime()) {
-    return unavailable('partition_time_bounds_unavailable', tokenAddress);
+function frozenLineage(input, tokenAddress) {
+  const observationBlock = String(input.observationFromBlock ?? '');
+  const eventBlock = String(input.eventThroughBlock ?? '');
+  const frontierBlock = String(input.sourceThroughBlock ?? '');
+  const observationTime = canonicalTime(input.observationFromTime);
+  const frontierTime = canonicalTime(input.sourceThroughTime);
+  if (!/^\d+$/.test(observationBlock) || !/^\d+$/.test(eventBlock)
+      || !/^\d+$/.test(frontierBlock)
+      || !HASH.test(input.observationFromHash || '') || !HASH.test(input.sourceThroughHash || '')
+      || !observationTime || !frontierTime || input.sourceRequestedVersion == null) {
+    return unavailable('redistribution_anchor_missing', tokenAddress);
   }
-  return Object.freeze({ ready: true, observationTime, frontierTime });
+  if (String(input.sourceRequestedVersion) !== String(input.requestedVersion)
+      || BigInt(observationBlock) > BigInt(frontierBlock)
+      || BigInt(eventBlock) > BigInt(frontierBlock)
+      || new Date(observationTime).getTime() > new Date(frontierTime).getTime()) {
+    return unavailable('redistribution_anchor_mismatch', tokenAddress);
+  }
+  return Object.freeze({ ready: true,
+    observation: Object.freeze({ blockNumber: observationBlock,
+      blockHash: input.observationFromHash, blockTime: observationTime }),
+    frontier: Object.freeze({ blockNumber: frontierBlock,
+      blockHash: input.sourceThroughHash }), frontierTime });
 }
 
-function holderFrontier(row) {
-  if (!row || row.ledger_status !== 'live' || row.live_through_block == null
-      || !/^0x[0-9a-f]{64}$/.test(row.live_through_hash || '')) return null;
-  return Object.freeze({ blockNumber: String(row.live_through_block),
-    blockHash: row.live_through_hash });
+function anchoredBounds(row, lineage, tokenAddress) {
+  const observationTime = canonicalTime(row?.observation_anchor_time);
+  const frontierTime = canonicalTime(row?.frontier_anchor_time);
+  if (!observationTime || !frontierTime) {
+    return unavailable('redistribution_anchor_missing', tokenAddress);
+  }
+  if (observationTime !== lineage.observation.blockTime
+      || frontierTime !== lineage.frontierTime) {
+    return unavailable('redistribution_anchor_mismatch', tokenAddress);
+  }
+  return Object.freeze({ ready: true, observationTime, frontierTime });
 }
 
 function creatorReady(row, throughBlock) {
@@ -178,10 +193,17 @@ function transferReady(row, throughBlock) {
     && BigInt(row.transfer_next_block) > BigInt(throughBlock);
 }
 
-function readiness(row, tokenAddress) {
+function readiness(row, tokenAddress, frontier) {
   if (!row) return unavailable('holder_state_missing', tokenAddress);
-  const frontier = holderFrontier(row);
-  if (!frontier) return unavailable('holder_frontier_unavailable', tokenAddress);
+  if (row.ledger_status !== 'live' || row.live_through_block == null
+      || !HASH.test(row.live_through_hash || '')
+      || BigInt(row.live_through_block) < BigInt(frontier.blockNumber)) {
+    return unavailable('holder_frontier_unavailable', tokenAddress);
+  }
+  if (String(row.live_through_block) === frontier.blockNumber
+      && row.live_through_hash !== frontier.blockHash) {
+    return unavailable('holder_frontier_fork', tokenAddress);
+  }
   if (!creatorReady(row, frontier.blockNumber)) return unavailable('creator_unavailable', tokenAddress);
   if (!firstBuyReady(row, frontier.blockNumber)) return unavailable('first_buy_frontier_behind', tokenAddress);
   if (!swapReady(row, frontier.blockNumber)) return unavailable('swap_frontier_behind', tokenAddress);
@@ -247,30 +269,28 @@ function createRobinhoodBundleRedistributionLiveSource(options = {}) {
 
   async function loadToken(inputTokenAddress, input = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, inputTokenAddress);
-    const observation = observationStart(input.observationFromBlock, tokenAddress);
-    if (!observation.ready) return observation;
+    const lineage = frozenLineage(input, tokenAddress);
+    if (!lineage.ready) return lineage;
     const row = (await query(READINESS_SQL, [
-      CHAIN, tokenAddress, PROJECTION_VERSION, observation.observationFromBlock,
+      CHAIN, tokenAddress, PROJECTION_VERSION,
+      lineage.observation.blockNumber, lineage.observation.blockHash,
+      lineage.frontier.blockNumber, lineage.frontier.blockHash,
     ])).rows[0];
-    const state = readiness(row, tokenAddress);
+    const bounds = anchoredBounds(row, lineage, tokenAddress);
+    if (!bounds.ready) return Object.freeze({ ...bounds, frontier: lineage.frontier,
+      observationFromBlock: lineage.observation.blockNumber });
+    const state = readiness(row, tokenAddress, lineage.frontier);
     if (!state.ready) return state;
-    if (BigInt(observation.observationFromBlock) > BigInt(state.frontier.blockNumber)) {
-      return unavailable('observation_frontier_ahead', tokenAddress,
-        { frontier: state.frontier, observationFromBlock: observation.observationFromBlock });
-    }
-    const bounds = partitionBounds(row, tokenAddress);
-    if (!bounds.ready) return Object.freeze({ ...bounds, frontier: state.frontier,
-      observationFromBlock: observation.observationFromBlock });
     const evidence = normalizeEvidence((await query(EVIDENCE_SQL, [
       CHAIN, tokenAddress, PROJECTION_VERSION, state.frontier.blockNumber,
-      observation.observationFromBlock, bounds.observationTime, bounds.frontierTime,
+      lineage.observation.blockNumber, bounds.observationTime, bounds.frontierTime,
     ])).rows, tokenAddress);
     if (!evidence.ready) return Object.freeze({ ...evidence, frontier: state.frontier,
-      observationFromBlock: observation.observationFromBlock });
+      observationFromBlock: lineage.observation.blockNumber });
     const barrierRows = evidence.sources.length ? (await query(BARRIERS_SQL, [
       CHAIN, JSON.stringify(actors(evidence.sources)), tokenAddress,
     ])).rows : [];
-    return Object.freeze({ ...state, observationFromBlock: observation.observationFromBlock,
+    return Object.freeze({ ...state, observationFromBlock: lineage.observation.blockNumber,
       sources: evidence.sources,
       barrierAddresses: Object.freeze(barrierRows.map(({ address }) => address)) });
   }
@@ -280,4 +300,4 @@ function createRobinhoodBundleRedistributionLiveSource(options = {}) {
 
 module.exports = { createRobinhoodBundleRedistributionLiveSource,
   __private: { BARRIERS_SQL, EVIDENCE_SQL, READINESS_SQL, normalizeEvidence,
-    observationStart, partitionBounds, readiness } };
+    anchoredBounds, frozenLineage, readiness } };

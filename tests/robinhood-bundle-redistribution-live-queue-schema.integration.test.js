@@ -151,14 +151,14 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
       await client.query(`UPDATE robinhood_bundle_redistribution_queue
         SET next_attempt_at=NOW() WHERE token_address=$1`, [TOKEN_TWO]);
       const [retried] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
-      assert.equal(retried.sourceThroughBlock, '102');
+      assert.equal(retried.sourceThroughBlock, '103');
       assert.equal(retried.sourceRequestedVersion, '4');
 
       const stored = await queue.replaceSnapshotAndComplete({ ...retried, owner: 'shadow-test',
         snapshot: { state: { tokenAddress: TOKEN_TWO, ruleVersion: RULE_VERSION,
           evidenceVersion: EVIDENCE_VERSION, status: 'ready', statusReason: 'no_groups',
           sourceKind: 'live', sourceVersion: retried.requestedVersion,
-          throughBlockNumber: '102', throughBlockHash: FRONTIER_HASH, policyJson: POLICY },
+          throughBlockNumber: '103', throughBlockHash: NEXT_HASH, policyJson: POLICY },
         groups: [] } });
       assert.equal(stored.completed, true);
       assert.deepEqual((await client.query(`SELECT status, completed_version::text
