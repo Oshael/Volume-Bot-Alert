@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const {
-  pruneBatch, resolveRetentionCutoff,
+  pruneBatch, pruneCanonicalStorageBatch, resolveRetentionCutoff,
   runPilot,
 } = require('../src/services/robinhood-chain-event-pruner');
 
@@ -38,8 +38,6 @@ before(async () => {
   ) ON COMMIT PRESERVE ROWS`);
   await client.query(`CREATE INDEX idx_rh_chain_events_order
     ON robinhood_chain_events(chain, block_number, transaction_index, log_index)`);
-  await client.query(`CREATE INDEX idx_rh_chain_events_transaction_lookup
-    ON robinhood_chain_events(chain, block_hash, transaction_hash)`);
   await client.query(`CREATE TEMP TABLE robinhood_chain_domain_outbox (
     chain text NOT NULL, domain text NOT NULL, block_hash text NOT NULL, log_index int NOT NULL,
     PRIMARY KEY (chain, domain, block_hash, log_index),
@@ -162,5 +160,32 @@ describe('Robinhood chain event pruner integration', () => {
     });
 
     assert.equal(cutoff, '105');
+  });
+
+  it('keeps every transaction while its block still has an event', async () => {
+    await client.query(`INSERT INTO robinhood_chain_blocks(
+      chain, block_number, block_hash, block_timestamp
+    ) VALUES ('robinhood',25,'mixed',NOW() - INTERVAL '4 days')`);
+    await client.query(`INSERT INTO robinhood_chain_transactions VALUES
+      ('robinhood','mixed','tx-mixed-event',0),
+      ('robinhood','mixed','tx-mixed-empty',1)`);
+    await client.query(`INSERT INTO robinhood_chain_events VALUES
+      ('robinhood','mixed',25,'tx-mixed-event',0,0)`);
+    const database = { getClient: async () => ({
+      query: client.query.bind(client), release() {},
+    }) };
+
+    const report = await pruneCanonicalStorageBatch(database, '30', 10);
+
+    assert.equal(report.deletedTransactions, 0);
+    assert.equal(report.deletedBlocks, 0);
+    const transactions = await client.query(
+      `SELECT transaction_hash FROM robinhood_chain_transactions
+        WHERE block_hash='mixed' ORDER BY transaction_index`
+    );
+    assert.deepEqual(transactions.rows, [
+      { transaction_hash: 'tx-mixed-event' },
+      { transaction_hash: 'tx-mixed-empty' },
+    ]);
   });
 });

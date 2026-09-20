@@ -393,10 +393,11 @@ participa dessa poda e mantém a referência histórica necessária após o raw 
 Depois de aplicar `node src/utils/db-init-stage240.js`, a retenção do journal canônico
 completo pode ser habilitada separadamente com
 `ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED=true`. A Stage 240 cria concorrentemente
-os índices de evento por transação e de bloco por número necessários para evitar
-scans globais. Sob o mesmo cutoff auditado e a mesma janela temporal, cada lote
-remove primeiro eventos, depois transações que já não possuem eventos e por último
-blocos que já não possuem transações. A flag inicia `false`; índice ausente ou
+o índice de bloco por número necessário para evitar scans globais; a verificação de
+eventos por bloco reutiliza a chave primária existente. Sob o mesmo cutoff auditado
+e a mesma janela temporal, cada lote remove primeiro eventos, depois transações de
+blocos inteiramente sem eventos e por último blocos que já não possuem transações.
+A flag inicia `false`; índice ausente ou
 inválido falha fechado antes de qualquer delete de transação ou bloco.
 `robinhood_transaction_positions` não participa desta poda: embora seja uma sidecar
 derivada, campanhas históricas de launch/fresh-wallet ainda consomem sua ordem exata.

@@ -1,15 +1,9 @@
 'use strict';
 
-/** Stage 240 - online indexes for bounded canonical raw retention. */
+/** Stage 240 - online index for bounded canonical raw retention. */
 const db = require('../models/db');
 
 const INDEXES = Object.freeze([
-  Object.freeze({
-    name: 'idx_rh_chain_events_transaction_lookup',
-    statement: `CREATE INDEX CONCURRENTLY IF NOT EXISTS
-      idx_rh_chain_events_transaction_lookup
-      ON robinhood_chain_events (chain, block_hash, transaction_hash)`,
-  }),
   Object.freeze({
     name: 'idx_rh_chain_blocks_retention',
     statement: `CREATE INDEX CONCURRENTLY IF NOT EXISTS
@@ -51,7 +45,7 @@ async function init(options = {}) {
 }
 
 if (require.main === module) init().then(() => {
-  console.log('Stage 240 canonical raw retention indexes created successfully');
+  console.log('Stage 240 canonical raw retention index created successfully');
 }).catch((error) => {
   console.error('Failed to apply Stage 240:', error.message);
   process.exitCode = 1;

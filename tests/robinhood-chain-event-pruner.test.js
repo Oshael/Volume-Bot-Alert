@@ -20,7 +20,7 @@ function harness(input = {}) {
       if (sql.includes('chain-event-prune:storage-lock')) return { rows: [{ locked: true }] };
       if (sql.includes('chain-event-prune:indexes')) return { rows: [{ ready_indexes: 2 }] };
       if (sql.includes('chain-event-prune:storage-indexes')) {
-        return { rows: [{ ready_indexes: 2 }] };
+        return { rows: [{ ready_indexes: 1 }] };
       }
       if (sql.includes('chain-event-prune:retention-cutoff')) {
         return { rows: [{ cutoff_block: '56397387' }] };
@@ -143,6 +143,8 @@ describe('Robinhood chain event pruner', () => {
       sql.includes('chain-event-prune:blocks')
     ));
     assert.match(transactionDelete.sql, /NOT EXISTS[\s\S]*robinhood_chain_events/);
+    assert.match(transactionDelete.sql,
+      /event\.chain=block\.chain AND event\.block_hash=block\.block_hash/);
     assert.match(blockDelete.sql, /NOT EXISTS[\s\S]*robinhood_chain_transactions/);
     assert.deepEqual(transactionDelete.params, [
       'robinhood', '56397387', 1000, DEFAULT_RETENTION_MS,
@@ -186,7 +188,7 @@ describe('Robinhood chain event pruner', () => {
       const client = await original();
       const query = client.query.bind(client);
       client.query = (sql, params) => sql.includes('chain-event-prune:storage-indexes')
-        ? Promise.resolve({ rows: [{ ready_indexes: 1 }] }) : query(sql, params);
+        ? Promise.resolve({ rows: [{ ready_indexes: 0 }] }) : query(sql, params);
       return client;
     };
     await assert.rejects(runPilot({ pruneCanonicalStorage: true }, {

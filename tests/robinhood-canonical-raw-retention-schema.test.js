@@ -37,9 +37,7 @@ function databaseHarness(initial = {}) {
 describe('Robinhood canonical raw retention schema', () => {
   it('creates the concurrent indexes required by ordered parent pruning', () => {
     const sql = STATEMENTS.join('\n');
-    assert.equal(STATEMENTS.length, 2);
-    assert.match(sql,
-      /robinhood_chain_events \(chain, block_hash, transaction_hash\)/);
+    assert.equal(STATEMENTS.length, 1);
     assert.match(sql,
       /robinhood_chain_blocks \(chain, block_number, block_hash\)/);
     assert.match(sql, /INCLUDE \(block_timestamp\)/);
@@ -53,16 +51,15 @@ describe('Robinhood canonical raw retention schema', () => {
     await init({ database: context.database, closePool: false });
     const sql = context.calls.map((call) => call.sql);
     assert.ok(sql.includes(`DROP INDEX CONCURRENTLY IF EXISTS ${invalidName}`));
-    assert.equal(sql.filter((statement) => statement.startsWith('CREATE INDEX')).length, 2);
+    assert.equal(sql.filter((statement) => statement.startsWith('CREATE INDEX')).length, 1);
   });
 
-  it('registers both indexes in the runtime schema guard', () => {
+  it('registers the block retention index in the runtime schema guard', () => {
     const group = SCHEMA_GROUPS.find(({ key }) => (
       key === 'stage240-robinhood-canonical-raw-retention-indexes'
     ));
     assert.equal(group.repair, 'node src/utils/db-init-stage240.js');
     assert.deepEqual(group.tables.map(({ indexes }) => indexes[0].name), [
-      'idx_rh_chain_events_transaction_lookup',
       'idx_rh_chain_blocks_retention',
     ]);
   });

@@ -14,7 +14,6 @@ const REQUIRED_INDEXES = Object.freeze([
   'idx_rh_canonical_head_candidates_event_lookup',
 ]);
 const REQUIRED_STORAGE_INDEXES = Object.freeze([
-  'idx_rh_chain_events_transaction_lookup',
   'idx_rh_chain_blocks_retention',
 ]);
 
@@ -62,7 +61,7 @@ async function assertCanonicalStorageIndexes(client) {
   const result = await client.query(
     `/* chain-event-prune:storage-indexes */ SELECT COUNT(*)::int AS ready_indexes
        FROM pg_index
-      WHERE indexrelid = ANY(ARRAY[to_regclass($1), to_regclass($2)])
+      WHERE indexrelid = to_regclass($1)
         AND indisvalid AND indisready`,
     REQUIRED_STORAGE_INDEXES
   );
@@ -198,19 +197,22 @@ async function pruneCanonicalStorageBatch(
     }
     await assertCanonicalStorageIndexes(client);
     const transactions = await client.query(
-      `/* chain-event-prune:transactions */ WITH candidates AS MATERIALIZED (
-         SELECT transaction.ctid
+      `/* chain-event-prune:transactions */ WITH event_free_blocks AS MATERIALIZED (
+         SELECT block.chain, block.block_hash, block.block_number
            FROM robinhood_chain_blocks block
-           JOIN robinhood_chain_transactions transaction
-             ON transaction.chain=block.chain AND transaction.block_hash=block.block_hash
           WHERE block.chain=$1 AND block.block_number < $2::bigint
             AND block.block_timestamp < NOW() - ($4::bigint * INTERVAL '1 millisecond')
             AND NOT EXISTS (
               SELECT 1 FROM robinhood_chain_events event
-               WHERE event.chain=transaction.chain
-                 AND event.block_hash=transaction.block_hash
-                 AND event.transaction_hash=transaction.transaction_hash
+               WHERE event.chain=block.chain AND event.block_hash=block.block_hash
             )
+          ORDER BY block.block_number, block.block_hash
+          LIMIT $3::int
+       ), candidates AS MATERIALIZED (
+         SELECT transaction.ctid
+           FROM event_free_blocks block
+           JOIN robinhood_chain_transactions transaction
+             ON transaction.chain=block.chain AND transaction.block_hash=block.block_hash
           ORDER BY block.block_number, transaction.transaction_index
           LIMIT $3::int
           FOR UPDATE OF transaction SKIP LOCKED
