@@ -143,7 +143,7 @@ function queryWithTimeout(database, sql, params, timeoutMs) {
   return database.query(sql, params);
 }
 
-async function deleteExpiredProcessedLogs(database, options) {
+async function deleteExpiredProcessedLogs(database, options, protectedOffset = 0) {
   const result = await queryWithTimeout(
     database,
     `WITH expired_prefix AS MATERIALIZED (
@@ -152,6 +152,7 @@ async function deleteExpiredProcessedLogs(database, options) {
        WHERE processed.expires_at <= NOW()
        ORDER BY processed.expires_at ASC
        LIMIT $1::int
+       OFFSET $3::int
        FOR UPDATE OF processed SKIP LOCKED
      ),
      expired AS MATERIALIZED (
@@ -253,7 +254,7 @@ async function deleteExpiredProcessedLogs(database, options) {
        protection_stats.candidate_block_min,
        protection_stats.candidate_block_max
      FROM protection_stats`,
-    [options.batchLimit, options.walletCompleteThroughBlock],
+    [options.batchLimit, options.walletCompleteThroughBlock, protectedOffset],
     options.statementTimeoutMs
   );
   const examined = Number(result.rows[0]?.examined_logs || 0);
@@ -432,10 +433,11 @@ async function loadWalletGate(database, deps) {
 
 async function runCleanupBatches(database, options, wallet) {
   const summary = emptySummary(wallet);
+  let protectedOffset = 0;
   // Minute buckets are durable chart history. Retention is limited to raw logs
   // and their gated observation children.
   for (let index = 0; index < options.maxBatches; index += 1) {
-    const raw = await deleteExpiredProcessedLogs(database, options);
+    const raw = await deleteExpiredProcessedLogs(database, options, protectedOffset);
     summary.batches += 1;
     summary.examinedProcessedLogs += raw.examined;
     summary.processedLogs += raw.processedLogs;
@@ -452,10 +454,10 @@ async function runCleanupBatches(database, options, wallet) {
       raw.candidateBlockMax
     );
     summary.observations += raw.observations;
-    // A few protected rows must not throttle unrelated expired evidence behind
-    // them. The selected prefix is bounded, so continue only while each pass
-    // both fills the prefix and makes deletion progress.
-    if (raw.processedLogs === 0) break;
+    // Protected rows remain at the front after each delete. Skip each one once
+    // for the rest of this run, then reconsider it on the next scheduled run.
+    protectedOffset += raw.protected;
+    if (raw.examined === 0) break;
     if (raw.examined < options.batchLimit) break;
   }
   for (let index = 0; index < options.maxBatches; index += 1) {

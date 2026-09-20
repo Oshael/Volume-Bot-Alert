@@ -276,7 +276,7 @@ describe('Robinhood retention worker', () => {
     assert.match(database.calls[0].sql, /FOR UPDATE OF processed SKIP LOCKED/);
     assert.match(database.calls[0].sql, /expired_prefix AS MATERIALIZED/);
     assert.match(database.calls[0].sql,
-      /FROM robinhood_processed_logs processed[\s\S]*LIMIT \$1::int[\s\S]*FOR UPDATE/);
+      /FROM robinhood_processed_logs processed[\s\S]*LIMIT \$1::int[\s\S]*OFFSET \$3::int[\s\S]*FOR UPDATE/);
     assert.match(database.calls[0].sql,
       /FROM expired_prefix prefix[\s\S]*LEFT JOIN robinhood_market_observations/);
     assert.ok(
@@ -292,7 +292,7 @@ describe('Robinhood retention worker', () => {
     assert.match(database.calls[0].sql, /expired\.block_number <= \$2::bigint/);
     assert.match(database.calls[0].sql,
       /COUNT\(\*\) FILTER \(WHERE status IS NOT NULL\)::int AS observations/);
-    assert.deepEqual(database.calls[0].params, [100, '900']);
+    assert.deepEqual(database.calls[0].params, [100, '900', 0]);
     assert.doesNotMatch(database.calls[0].sql, /status = 'pending'/);
   });
 
@@ -406,6 +406,30 @@ describe('Robinhood retention worker', () => {
     assert.equal(summary.protectedProcessedLogs, 9);
     assert.equal(summary.candidatesProtectedByBucketCoverage, 9);
     assert.equal(database.calls.length, 3);
+    assert.deepEqual(database.calls[0].params, [100, '900', 0]);
+    assert.deepEqual(database.calls[1].params, [100, '900', 9]);
+  });
+
+  it('scans behind a full protected prefix without weakening its gates', async () => {
+    const database = createFakeDatabase([
+      {
+        examined: 100,
+        processedLogs: 0,
+        protectedByBucketCoverage: 100,
+      },
+      { examined: 25, processedLogs: 25, observations: 25 },
+    ]);
+
+    const summary = await worker.runOnce({
+      batchLimit: 100, maxBatches: 5,
+    }, {}, dependencies(database));
+
+    assert.equal(summary.batches, 2);
+    assert.equal(summary.processedLogs, 25);
+    assert.equal(summary.protectedProcessedLogs, 100);
+    assert.equal(summary.candidatesProtectedByBucketCoverage, 100);
+    assert.deepEqual(database.calls[0].params, [100, '900', 0]);
+    assert.deepEqual(database.calls[1].params, [100, '900', 100]);
   });
 
   it('fails closed for accepted rows when loading the wallet watermark fails', async () => {
@@ -433,7 +457,7 @@ describe('Robinhood retention worker', () => {
     assert.equal(summary.walletGateReason, 'watermark_load_error');
     assert.equal(summary.candidatesProtectedByWallet, 3);
     assert.equal(summary.processedLogs, 5);
-    assert.deepEqual(database.calls[0].params, [100, null]);
+    assert.deepEqual(database.calls[0].params, [100, null, 0]);
     assert.match(database.calls[0].sql, /status = 'rejected'/);
     assert.match(database.calls[0].sql, /status = 'accepted' AND wallet_complete/);
     assert.equal(worker.getStatus().lastWalletGateValid, false);

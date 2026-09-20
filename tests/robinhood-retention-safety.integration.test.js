@@ -95,6 +95,12 @@ describe('Robinhood retention safety integration', () => {
           database: {
             queryWithStatementTimeout: (sql, params) => client.query(sql, params),
           },
+          loadMaintenanceAdmission: async () => ({
+            allowed: true,
+            capturedThroughBlock: '100',
+            canonicalThroughBlock: '100',
+            canonicalLagBlocks: '0',
+          }),
           watermarkRepository: {
             loadRetentionGate: async () => ({
               valid: true,
@@ -110,6 +116,10 @@ describe('Robinhood retention safety integration', () => {
               backlogRows: 3, blockedRows: 0,
             }),
           },
+          headProcessingRepository: {
+            pruneExpiredCaptures: async () => 0,
+          },
+          headCapturePruneState: { lastRunAtMs: null },
           chainEventPruner: async () => ({ status: 'finished', totalDeleted: 0 }),
         }
       );

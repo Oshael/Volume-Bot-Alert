@@ -391,8 +391,11 @@ captura saudável, checkpoints canônicos e nenhuma frontier de outbox ou liquid
 anterior ao cutoff. O journal compacto `robinhood_stock_usd_reference_events` não
 participa dessa poda e mantém a referência histórica necessária após o raw expirar.
 Linhas protegidas isoladas não encerram o ciclo: enquanto o prefixo limitado estiver
-cheio e houver exclusões, o worker continua até `ROBINHOOD_RETENTION_MAX_BATCHES`.
-Ele para ao esvaziar o prefixo ou quando um lote inteiro não consegue progredir.
+cheio, o worker continua até `ROBINHOOD_RETENTION_MAX_BATCHES`. Durante uma rodada,
+as linhas já classificadas como protegidas são puladas nos lotes seguintes, evitando
+reavaliar repetidamente o mesmo prefixo e permitindo alcançar evidência expirada
+posterior. Elas permanecem intactas e voltam a ser avaliadas desde o início na rodada
+seguinte. O worker para quando alcança o fim do conjunto expirado.
 Esse mesmo worker é o único responsável por podar `robinhood_head_captures`;
 o processing live nunca executa retenção. A poda roda no máximo uma vez a cada
 `ROBINHOOD_RETENTION_CAPTURE_PRUNE_INTERVAL_MS` (default 5 minutos), limitada por
