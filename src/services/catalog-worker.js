@@ -53,6 +53,7 @@ const RECENT_DEX_MCAP_REFERENCE_MAX_AGE_MS = 60 * 60 * 1000;
 const WATCHLIST_GMGN_TOKEN_INFO_CONCURRENCY = 3;
 const THROTTLE_LIST_LIMIT_MULTIPLIER = 8;
 const THROTTLE_LIST_LIMIT_CAP = 2500;
+const FAIR_BACKLOG_SHARE = 0.1;
 const LOW_NEAR_JITTER_MS = 3 * 1000;
 const LOW_DUST_JITTER_MS = 60 * 1000;
 const DORMANT_JITTER_MS = 2 * 60 * 1000;
@@ -108,6 +109,8 @@ let status = {
   distributedClaimEnabled: DISTRIBUTED_CLAIM_ENABLED,
   lastSelectionMode: 'list',
   lastDistributedClaimFallbackReason: null,
+  lastFairBacklogBudget: 0,
+  lastFairBacklogSelected: 0,
   lastDueByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   lastBacklogByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   lastMaxOverdueMs: 0,
@@ -121,6 +124,12 @@ let status = {
   totalYoungExtremeChurnAlertSuppressed: 0,
   totalYoungExtremeChurnAutoBlocked: 0,
 };
+
+function persistEvaluation(token, result, previousMonitoringRow = token) {
+  return tokenCatalog.applyEvaluationResult(token.address, result, {
+    previousMonitoringRow,
+  });
+}
 
 function emptyPriorityCounts() {
   return { high: 0, normal: 0, low: 0, dormant: 0, other: 0 };
@@ -713,7 +722,7 @@ async function applyWatchlistGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval,
   const nextEvaluationAt = new Date(Date.now() + WATCHLIST_PRE_MIGRATION_GMGN_RECHECK_MS);
 
   const marketCap = snapshot.mcap || 0;
-  const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+  const updatedToken = await persistEvaluation(token, {
     evaluationSource: 'gmgn',
     eligibilityState: resolveGmgnWatchlistPreMigrationState(marketCap),
     eligibleForMonitoring: marketCap > 0,
@@ -941,7 +950,7 @@ async function applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment
     evidence: buildYoungExtremeChurnBlockEvidence(token, updatedToken, pair, snapshot, assessment),
   });
 
-  const blockedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+  const blockedToken = await persistEvaluation(token, {
     eligibilityState: 'admin-blocked',
     eligibleForMonitoring: false,
     suppressedReason: 'admin_blocked',
@@ -951,7 +960,7 @@ async function applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment
     evaluationErrorCount: 0,
     symbol: updatedToken?.symbol || pair?.baseToken?.symbol || token?.symbol || null,
     name: updatedToken?.name || pair?.baseToken?.name || token?.name || null,
-  });
+  }, updatedToken);
 
   status.lastYoungExtremeChurnAutoBlocked += 1;
   status.totalYoungExtremeChurnAutoBlocked += 1;
@@ -1052,9 +1061,10 @@ async function autoBlockYoungLowLiquidity(token, updatedToken, pair, snapshot) {
     evidence: buildYoungLowLiquidityBlockEvidence(token, updatedToken, pair, snapshot, assessment),
   });
 
-  const blockedToken = await tokenCatalog.applyEvaluationResult(
-    token.address,
-    buildBlockEvaluationPayload(token, updatedToken, pair)
+  const blockedToken = await persistEvaluation(
+    token,
+    buildBlockEvaluationPayload(token, updatedToken, pair),
+    updatedToken
   );
 
   return {
@@ -1180,9 +1190,10 @@ async function autoBlockSpamTickerLaunch(token, updatedToken, pair, snapshot) {
     return { blocked: false, assessment };
   }
 
-  const blockedToken = await tokenCatalog.applyEvaluationResult(
-    token.address,
-    buildBlockEvaluationPayload(token, updatedToken, pair)
+  const blockedToken = await persistEvaluation(
+    token,
+    buildBlockEvaluationPayload(token, updatedToken, pair),
+    updatedToken
   );
 
   return { blocked: true, blockedToken: blockedToken || updatedToken, assessment };
@@ -1612,6 +1623,35 @@ function prioritizeTokensForThrottle(tokens, throttleState = { mode: 'normal' },
     .slice(0, safeLimit);
 }
 
+function fairBacklogBudget(tokenBudget) {
+  const safeBudget = Math.max(1, Math.trunc(Number(tokenBudget) || 1));
+  return safeBudget < 10 ? 0 : Math.max(1, Math.floor(safeBudget * FAIR_BACKLOG_SHARE));
+}
+
+function mergeFairEvaluationBatch(foreground, backlog, tokenBudget) {
+  const safeBudget = Math.max(1, Math.trunc(Number(tokenBudget) || 1));
+  const backlogTarget = fairBacklogBudget(safeBudget);
+  const foregroundRows = Array.isArray(foreground) ? foreground : [];
+  const backlogRows = Array.isArray(backlog) ? backlog : [];
+  const foregroundTarget = safeBudget - backlogTarget;
+  let foregroundCount = Math.min(foregroundTarget, foregroundRows.length);
+  let backlogCount = Math.min(backlogTarget, backlogRows.length);
+  let remaining = safeBudget - foregroundCount - backlogCount;
+
+  if (remaining > 0) {
+    const foregroundExtra = Math.min(remaining, foregroundRows.length - foregroundCount);
+    foregroundCount += foregroundExtra;
+    remaining -= foregroundExtra;
+  }
+  if (remaining > 0) backlogCount += Math.min(remaining, backlogRows.length - backlogCount);
+
+  return {
+    due: [...foregroundRows.slice(0, foregroundCount), ...backlogRows.slice(0, backlogCount)],
+    backlogTarget,
+    backlogSelected: backlogCount,
+  };
+}
+
 async function selectDueForEvaluationCycle(throttleState = { mode: 'normal' }, options = {}) {
   const catalog = options.tokenCatalog || tokenCatalog;
   const tokenBudget = Math.max(1, Math.min(Number(options.tokenBudget) || MAX_TOKEN_BUDGET_PER_CYCLE, 5000));
@@ -1624,25 +1664,54 @@ async function selectDueForEvaluationCycle(throttleState = { mode: 'normal' }, o
   const claimTtlMs = options.claimTtlMs || DISTRIBUTED_CLAIM_TTL_MS;
 
   if (distributedClaimEnabled && !throttleActive) {
-    const claimedDue = await catalog.claimDueForEvaluation(tokenBudget, { claimTtlMs });
+    const backlogTarget = fairBacklogBudget(tokenBudget);
+    const [foreground, backlog] = await Promise.all([
+      catalog.claimDueForEvaluation(tokenBudget - backlogTarget, {
+        claimTtlMs, selectionClass: 'foreground',
+      }),
+      backlogTarget > 0
+        ? catalog.claimDueForEvaluation(backlogTarget, {
+          claimTtlMs, selectionClass: 'backlog',
+        })
+        : [],
+    ]);
+    const claimedDue = [...foreground, ...backlog];
     return {
       listedDue: claimedDue,
       due: claimedDue,
-      selectionMode: 'distributed-claim',
+      selectionMode: 'distributed-claim-fair',
       fallbackReason: null,
+      fairBacklogBudget: backlogTarget,
+      fairBacklogSelected: backlog.length,
     };
   }
 
-  const listedDue = await catalog.listDueForEvaluation(throttleActive ? throttleListLimit : tokenBudget);
-  const due = throttleActive
-    ? prioritizeTokensForThrottle(listedDue, throttleState, tokenBudget)
-    : listedDue;
+  if (!throttleActive) {
+    const [foreground, backlog] = await Promise.all([
+      catalog.listDueForEvaluation(tokenBudget, { selectionClass: 'foreground' }),
+      catalog.listDueForEvaluation(tokenBudget, { selectionClass: 'backlog' }),
+    ]);
+    const fair = mergeFairEvaluationBatch(foreground, backlog, tokenBudget);
+    return {
+      listedDue: [...foreground, ...backlog],
+      due: fair.due,
+      selectionMode: 'list-fair',
+      fallbackReason: null,
+      fairBacklogBudget: fair.backlogTarget,
+      fairBacklogSelected: fair.backlogSelected,
+    };
+  }
+
+  const listedDue = await catalog.listDueForEvaluation(throttleListLimit);
+  const due = prioritizeTokensForThrottle(listedDue, throttleState, tokenBudget);
 
   return {
     listedDue,
     due,
-    selectionMode: distributedClaimEnabled ? 'list-fallback' : 'list',
+    selectionMode: distributedClaimEnabled ? 'list-fallback' : 'list-throttled',
     fallbackReason: distributedClaimEnabled && throttleActive ? 'throttle-active' : null,
+    fairBacklogBudget: 0,
+    fairBacklogSelected: 0,
   };
 }
 
@@ -1654,7 +1723,7 @@ async function evaluateDexUnavailableToken(token, traceInitialEval) {
     }
 
     status.totalIneligible++;
-    return tokenCatalog.applyEvaluationResult(token.address, {
+    return persistEvaluation(token, {
       eligibilityState: 'gmgn-dex-unavailable-zombie',
       eligibleForMonitoring: false,
       suppressedReason: GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON,
@@ -1676,7 +1745,7 @@ async function evaluateDexUnavailableToken(token, traceInitialEval) {
       nextEvaluationAt: new Date(Date.now() + retryMs).toISOString(),
     }, { level: 'warn' });
   }
-  return tokenCatalog.applyEvaluationResult(token.address, {
+  return persistEvaluation(token, {
     eligibilityState: 'dex-unavailable',
     eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
     suppressedReason: 'dex_unavailable',
@@ -1718,7 +1787,7 @@ async function maybeAutoBlockGmgnDexUnavailableLowLiquidity(token) {
     evidence: buildGmgnDexUnavailableLowLiquidityEvidence(token, gmgnInfo, snapshot, label),
   });
 
-  return tokenCatalog.applyEvaluationResult(token.address, {
+  return persistEvaluation(token, {
     eligibilityState: 'admin-blocked',
     eligibleForMonitoring: false,
     suppressedReason: 'admin_blocked',
@@ -1751,7 +1820,7 @@ async function evaluateDexMissingToken(token, gmgnInfo, traceInitialEval) {
       nextEvaluationAt: new Date(Date.now() + nextRetryMs).toISOString(),
     }, { level: 'warn' });
   }
-  return tokenCatalog.applyEvaluationResult(token.address, {
+  return persistEvaluation(token, {
     eligibilityState: 'dex-missing',
     eligibleForMonitoring: false,
     suppressedReason: 'dex_pair_missing',
@@ -1826,7 +1895,7 @@ async function evaluateTokenWithData(token, data) {
   }
 
   const socialLinks = extractDexSocialLinks(bestPair);
-  const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+  const updatedToken = await persistEvaluation(token, {
     evaluationSource: 'dexscreener',
     eligibilityState: snapshot.eligibilityState,
     eligibleForMonitoring: snapshot.eligibleForMonitoring,
@@ -1964,12 +2033,16 @@ async function runOnce() {
   status.lastBacklogCount = Math.max(0, totalDueCount - due.length);
   status.lastRateLimitActive = throttleState.mode === 'cooldown';
   status.lastRateLimitBackoffRemainingMs = Number(throttleState.backoffRemainingMs) || 0;
-  status.lastRateLimitFilteredCount = Math.max(0, listedDue.length - due.length);
+  status.lastRateLimitFilteredCount = throttleState.mode === 'normal'
+    ? 0
+    : Math.max(0, listedDue.length - due.length);
   status.lastThrottleMode = throttleState.mode || 'normal';
   status.lastRecoveryPhase = throttleState.recoveryPhase || null;
   status.lastThrottleBatchDelayMs = Number(throttleState.batchDelayMs) || DEX_BATCH_DELAY_MS;
   status.lastSelectionMode = selection.selectionMode;
   status.lastDistributedClaimFallbackReason = selection.fallbackReason;
+  status.lastFairBacklogBudget = selection.fairBacklogBudget;
+  status.lastFairBacklogSelected = selection.fairBacklogSelected;
   status.lastDueByPriority = processedByPriority;
   status.lastBacklogByPriority = backlogByPriority;
   status.lastMaxOverdueMs = Number(dueSummary.maxOverdueMs) || 0;
@@ -2007,7 +2080,7 @@ async function runOnce() {
           await evaluateTokenWithData(token, dataByAddress.get(token.address) || null);
         } catch (err) {
           status.totalErrors++;
-          await tokenCatalog.applyEvaluationResult(token.address, buildEvaluationErrorResult(token, err));
+          await persistEvaluation(token, buildEvaluationErrorResult(token, err));
           console.error(`[CatalogWorker] Failed to evaluate ${token.address}:`, err.message);
         }
       }));
@@ -2112,6 +2185,7 @@ module.exports = {
     isTokenAllowedByThrottle,
     normalizeDelayMs,
     prioritizeTokensForThrottle,
+    mergeFairEvaluationBatch,
     selectDueForEvaluationCycle,
     evaluateTokenWithData,
   },

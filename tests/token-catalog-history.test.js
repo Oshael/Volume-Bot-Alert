@@ -35,6 +35,27 @@ describe('token-catalog history bucket queries', () => {
     }
   });
 
+  it('selects backlog by oldest due time without including active watchlists', async () => {
+    const originalQuery = db.query;
+    const captured = { sql: '', params: null };
+    db.query = async (sql, params) => {
+      captured.sql = String(sql);
+      captured.params = params;
+      return { rows: [] };
+    };
+
+    try {
+      await tokenCatalog.listDueForEvaluation(30, { selectionClass: 'backlog' });
+
+      assert.match(captured.sql, /COALESCE\(monitor_priority, 'dormant'\) IN \('low', 'dormant'\)/);
+      assert.match(captured.sql, /AND NOT \(COALESCE\(source, ''\) IN \('user-watchlist', 'user-manual'\)/);
+      assert.match(captured.sql, /ORDER BY next_evaluation_at ASC,/);
+      assert.deepEqual(captured.params, [30]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('builds a valid SQL statement for dashboard history buckets', async () => {
     const originalQuery = db.query;
     const captured = {

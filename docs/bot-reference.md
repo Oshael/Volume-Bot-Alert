@@ -2682,6 +2682,24 @@ central reduz a fragmentação, mas não recompõe automaticamente períodos que
 nenhum worker coletou. Backfill de lacunas deve ser uma ação explícita e
 validada por fonte.
 
+O `catalog-worker` usa ciclos com piso de 15 segundos
+(`CATALOG_WORKER_LOOP_INTERVAL_MS`, faixa aceita de 15–60 segundos), lote máximo
+de 300 e concorrência padrão 24. Em operação normal, 10% do lote fica reservado
+para candidatos automáticos `low`/`dormant` vencidos; watchlists e tokens manuais
+permanecem no conjunto prioritário independentemente da prioridade persistida.
+O backlog reservado é consumido por `next_evaluation_at` mais antigo, enquanto
+os 90% restantes preservam a ordenação de `high`/`normal`. Se uma das classes
+não preencher sua parte, o caminho padrão não distribuído reutiliza a capacidade
+livre na outra classe. Durante cooldown ou recovery do Dexscreener, a filtragem
+de throttle tem precedência sobre essa reserva.
+
+A telemetria do lease `catalog-worker` expõe `lastFairBacklogBudget`,
+`lastFairBacklogSelected`, `lastSelectionMode`, `lastRunDurationMs` e
+`lastLoopOverrunMs`. O worker passa a linha de catálogo já selecionada para a
+persistência da avaliação, evitando uma leitura pontual redundante por token;
+chamadores externos que não possuem esse snapshot preservam o fallback de
+leitura anterior.
+
 ### 12.1 Recovery recente de candles via CoinGecko
 
 `npm run market-buckets:recover-coingecko` audita as últimas 12 horas completas

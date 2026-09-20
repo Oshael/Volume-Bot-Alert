@@ -27,16 +27,16 @@ function stubLiveWatchlistAddress(value = true) {
 
 describe('catalog worker drift compensation', () => {
   it('reduces the next delay when the cycle finishes early', () => {
-    assert.equal(catalogWorker.__private.computeNextDelayMs(1300), 700);
+    assert.equal(catalogWorker.__private.computeNextDelayMs(9000), 6000);
   });
 
   it('schedules the next cycle immediately after an overrun', () => {
-    assert.equal(catalogWorker.__private.computeNextDelayMs(3500), 0);
+    assert.equal(catalogWorker.__private.computeNextDelayMs(16000), 0);
   });
 
   it('clamps invalid delay inputs to a safe non-negative value', () => {
     assert.equal(catalogWorker.__private.normalizeDelayMs(-125), 0);
-    assert.equal(catalogWorker.__private.normalizeDelayMs(Number.NaN), 2000);
+    assert.equal(catalogWorker.__private.normalizeDelayMs(Number.NaN), 15000);
   });
 
   it('keeps already monitored tokens eligible when evaluation fails transiently', () => {
@@ -485,6 +485,27 @@ describe('catalog worker drift compensation', () => {
     ], { mode: 'recovery', recoveryPhase: 'normal' }, 4);
 
     assert.deepEqual(ordered.map((item) => item.address), ['D', 'A']);
+  });
+
+  it('reserves ten percent of a normal batch for the oldest low-priority backlog', () => {
+    const foreground = Array.from({ length: 300 }, (_, index) => ({ address: `H${index}` }));
+    const backlog = Array.from({ length: 300 }, (_, index) => ({ address: `B${index}` }));
+
+    const result = catalogWorker.__private.mergeFairEvaluationBatch(foreground, backlog, 300);
+
+    assert.equal(result.due.length, 300);
+    assert.equal(result.backlogTarget, 30);
+    assert.equal(result.backlogSelected, 30);
+    assert.deepEqual(result.due.slice(-3).map((item) => item.address), ['B27', 'B28', 'B29']);
+  });
+
+  it('returns unused backlog capacity to foreground work', () => {
+    const foreground = Array.from({ length: 10 }, (_, index) => ({ address: `H${index}` }));
+
+    const result = catalogWorker.__private.mergeFairEvaluationBatch(foreground, [], 10);
+
+    assert.deepEqual(result.due.map((item) => item.address), foreground.map((item) => item.address));
+    assert.equal(result.backlogSelected, 0);
   });
 
   it('evaluates per-user matcher only after persisting the updated token and market snapshots', async () => {

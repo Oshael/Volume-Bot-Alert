@@ -431,15 +431,40 @@ async function listRecent(limit = 100, chainValue = 'solana') {
   return rows;
 }
 
-async function listDueForEvaluation(limit = 25) {
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 5000));
-  const { rows } = await db.query(
-    `SELECT *
-     FROM token_catalog
-     WHERE chain = 'solana'
-       AND is_active_monitor_candidate = TRUE
-       AND next_evaluation_at <= NOW()
-     ORDER BY CASE
+function normalizeDueSelectionClass(value) {
+  const selectionClass = String(value || 'all').trim().toLowerCase();
+  if (!['all', 'foreground', 'backlog'].includes(selectionClass)) {
+    throw new RangeError('evaluation selectionClass must be all, foreground, or backlog');
+  }
+  return selectionClass;
+}
+
+function dueSelectionScopeSql(selectionClass) {
+  const watchlistSql = `(COALESCE(source, '') IN ('user-watchlist', 'user-manual')
+          OR EXISTS (
+            SELECT 1
+            FROM user_tokens scoped_user_token
+            WHERE scoped_user_token.chain = token_catalog.chain
+              AND scoped_user_token.address = token_catalog.address
+          ))`;
+  if (selectionClass === 'foreground') {
+    return `AND (${watchlistSql}
+          OR COALESCE(monitor_priority, 'dormant') NOT IN ('low', 'dormant'))`;
+  }
+  if (selectionClass === 'backlog') {
+    return `AND NOT ${watchlistSql}
+          AND COALESCE(monitor_priority, 'dormant') IN ('low', 'dormant')`;
+  }
+  return '';
+}
+
+function dueEvaluationOrderSql(selectionClass) {
+  if (selectionClass === 'backlog') {
+    return `next_evaluation_at ASC,
+              COALESCE(last_mcap, 0) DESC,
+              last_seen_at DESC`;
+  }
+  return `CASE
                 WHEN source IN ('user-watchlist', 'user-manual')
                   OR EXISTS (
                     SELECT 1
@@ -472,7 +497,20 @@ async function listDueForEvaluation(limit = 25) {
               next_evaluation_at ASC,
               COALESCE(last_mcap, 0) DESC,
               COALESCE(last_vol_24h, last_vol_6h, last_vol_1h, last_vol_5m, 0) DESC,
-              last_seen_at DESC
+              last_seen_at DESC`;
+}
+
+async function listDueForEvaluation(limit = 25, options = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 5000));
+  const selectionClass = normalizeDueSelectionClass(options.selectionClass);
+  const { rows } = await db.query(
+    `SELECT *
+     FROM token_catalog
+     WHERE chain = 'solana'
+       AND is_active_monitor_candidate = TRUE
+       AND next_evaluation_at <= NOW()
+       ${dueSelectionScopeSql(selectionClass)}
+     ORDER BY ${dueEvaluationOrderSql(selectionClass)}
      LIMIT $1`,
     [safeLimit]
   );
@@ -482,6 +520,7 @@ async function listDueForEvaluation(limit = 25) {
 async function claimDueForEvaluation(limit = 25, options = {}, runner = db) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 5000));
   const claimTtlMs = Math.max(1000, Math.min(Math.trunc(Number(options.claimTtlMs) || 120000), 10 * 60 * 1000));
+  const selectionClass = normalizeDueSelectionClass(options.selectionClass);
   const executor = runner && typeof runner.query === 'function' ? runner : db;
   const { rows } = await executor.query(
     `WITH claimed AS (
@@ -490,40 +529,8 @@ async function claimDueForEvaluation(limit = 25, options = {}, runner = db) {
        WHERE chain = 'solana'
          AND is_active_monitor_candidate = TRUE
          AND next_evaluation_at <= NOW()
-       ORDER BY CASE
-                  WHEN source IN ('user-watchlist', 'user-manual')
-                    OR EXISTS (
-                      SELECT 1
-                      FROM user_tokens ut
-                      WHERE ut.chain = token_catalog.chain
-                        AND ut.address = token_catalog.address
-                    ) THEN 0
-                  ELSE 1
-                END ASC,
-                CASE
-                  WHEN COALESCE(monitor_priority, 'dormant') = 'high'
-                    AND COALESCE(last_mcap, 0) >= 100000
-                    AND COALESCE(last_vol_6h, 0) >= 30000 THEN 0
-                  WHEN COALESCE(monitor_priority, 'dormant') = 'high'
-                    AND COALESCE(last_mcap, 0) >= 100000
-                    AND COALESCE(last_vol_6h, 0) >= 15000 THEN 1
-                  WHEN COALESCE(monitor_priority, 'dormant') = 'high'
-                    AND COALESCE(last_mcap, 0) >= 100000 THEN 2
-                  WHEN source = 'pumpfun-migrated'
-                    AND (
-                      last_evaluated_at IS NULL
-                      OR (migration_grace_until IS NOT NULL AND migration_grace_until > NOW() AND last_eligible_at IS NULL)
-                    ) THEN 3
-                  WHEN COALESCE(monitor_priority, 'dormant') = 'normal' THEN 4
-                  WHEN COALESCE(monitor_priority, 'dormant') = 'low'
-                    AND COALESCE(last_mcap, 0) >= 15000 THEN 5
-                  WHEN COALESCE(monitor_priority, 'dormant') = 'low' THEN 6
-                  ELSE 7
-                END ASC,
-                next_evaluation_at ASC,
-                COALESCE(last_mcap, 0) DESC,
-                COALESCE(last_vol_24h, last_vol_6h, last_vol_1h, last_vol_5m, 0) DESC,
-                last_seen_at DESC
+         ${dueSelectionScopeSql(selectionClass)}
+       ORDER BY ${dueEvaluationOrderSql(selectionClass)}
        LIMIT $1
        FOR UPDATE SKIP LOCKED
      )
@@ -1006,19 +1013,22 @@ function normalizeHistoryBucketName(bucket) {
   return normalized === 'oldWeek' ? 'oldWeek' : 'recent';
 }
 
-async function preserveGmgnPositiveVolumeWindows(address, result, volumes) {
+async function preserveGmgnPositiveVolumeWindows(address, result, volumes, previousRow) {
   if (String(result.evaluationSource || '').trim().toLowerCase() !== 'gmgn') {
     return volumes;
   }
 
-  const { rows } = await db.query(
-    `SELECT last_vol_1h, last_vol_6h, last_vol_24h
-     FROM token_catalog
-     WHERE address = $1
-     LIMIT 1`,
-    [address]
-  );
-  const previous = rows[0] || {};
+  let previous = previousRow;
+  if (!previous) {
+    const { rows } = await db.query(
+      `SELECT last_vol_1h, last_vol_6h, last_vol_24h
+       FROM token_catalog
+       WHERE address = $1
+       LIMIT 1`,
+      [address]
+    );
+    previous = rows[0] || {};
+  }
   const preserved = {
     ...volumes,
     lastVol1h: volumes.lastVol1h === 0 && toNullableNumber(previous.last_vol_1h) > 0
@@ -1876,10 +1886,13 @@ async function reactivateAdminBlockedToken(address) {
   return rows[0] || null;
 }
 
-async function applyEvaluationResult(address, result) {
+async function applyEvaluationResult(address, result, options = {}) {
   await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
-  const previousMonitoringRow = await getLegacySignalExitSnapshot(addr);
+  const hasPreviousRow = Object.prototype.hasOwnProperty.call(options, 'previousMonitoringRow');
+  const previousMonitoringRow = hasPreviousRow
+    ? options.previousMonitoringRow
+    : await getLegacySignalExitSnapshot(addr);
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
   const eligibleForMonitoring = !!result.eligibleForMonitoring;
   const suppressedReason = toNullableText(result.suppressedReason);
@@ -1903,7 +1916,7 @@ async function applyEvaluationResult(address, result) {
     lastVol1h: toNullableNumber(result.vol1h),
     lastVol6h: toNullableNumber(result.vol6h),
     lastVol24h: toNullableNumber(result.vol24h),
-  });
+  }, previousMonitoringRow);
   const { lastVol1h, lastVol6h, lastVol24h } = volumeValues;
   const lastPriceChange1h = toNullableNumber(result.priceChange1h);
   const lastPriceChange6h = toNullableNumber(result.priceChange6h);

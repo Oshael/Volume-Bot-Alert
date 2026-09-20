@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const adminBlockedToken = require('../src/models/admin-blocked-token');
 const db = require('../src/models/db');
+const monitoredTokenExitEvent = require('../src/models/monitored-token-exit-event');
 const tokenCatalog = require('../src/models/token-catalog');
 
 const SOLANA = 'So11111111111111111111111111111111111111112';
@@ -112,6 +113,42 @@ describe('token catalog chain identity', () => {
     assert.match(calls[2].sql, /WHERE catalog_candidate\.chain = 'solana'/);
     assert.match(calls[2].sql, /ON pool_candidate\.chain = 'solana'/);
     assert.match(calls[3].sql, /WHERE chain = 'solana'/);
+  });
+
+  it('reuses the worker catalog row instead of selecting the token before evaluation update', async () => {
+    const originalRecordIfExited = monitoredTokenExitEvent.recordIfExited;
+    const previousRow = {
+      address: SOLANA,
+      chain: 'solana',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+    };
+    const calls = [];
+    let recordedPrevious = null;
+    monitoredTokenExitEvent.recordIfExited = async (previous) => {
+      recordedPrevious = previous;
+      return null;
+    };
+
+    try {
+      const updated = await withCatalogQueries(async (sql) => {
+        calls.push(String(sql));
+        return { rows: [{ ...previousRow, last_evaluated_at: new Date() }] };
+      }, () => tokenCatalog.applyEvaluationResult(SOLANA, {
+        evaluationSource: 'dexscreener',
+        eligibilityState: 'dex-high',
+        eligibleForMonitoring: true,
+        monitorPriority: 'high',
+        nextEvaluationAt: new Date(),
+      }, { previousMonitoringRow: previousRow }));
+
+      assert.equal(updated.address, SOLANA);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0], /^UPDATE token_catalog/);
+      assert.equal(recordedPrevious, previousRow);
+    } finally {
+      monitoredTokenExitEvent.recordIfExited = originalRecordIfExited;
+    }
   });
 
   it('scopes catalog cleanup candidates and protections to Solana identities', async () => {
