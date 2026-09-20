@@ -12,16 +12,35 @@ const { EVIDENCE_VERSION, POLICY, RULE_VERSION } = require(
 );
 const stage187 = require('../src/utils/db-init-stage187');
 const stage188 = require('../src/utils/db-init-stage188');
+const stage241 = require('../src/utils/db-init-stage241');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const TOKEN_TWO = `0x${'2'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
+const FRONTIER_HASH = `0x${'b'.repeat(64)}`;
+const NEXT_HASH = `0x${'c'.repeat(64)}`;
+const PARENT_HASH = `0x${'d'.repeat(64)}`;
+const DIGEST = `0x${'e'.repeat(64)}`;
+
+async function insertBlock(number, hash) {
+  await db.query(`INSERT INTO robinhood_chain_blocks(
+    chain, block_number, block_hash, parent_hash, capture_digest,
+    block_timestamp, finality, canonical, head_observed_at, receipts_available_at
+  ) VALUES ('robinhood', $1, $2, $3, $4, NOW(), 'finalized', TRUE, NOW(), NOW())`,
+  [number, hash, PARENT_HASH, DIGEST]);
+}
 
 async function cleanup() {
   await db.query('DELETE FROM robinhood_bundle_redistribution_queue');
   await db.query('DELETE FROM robinhood_bundle_redistribution_activations');
   await db.query('DELETE FROM robinhood_bundle_redistribution_states');
+  await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address IN ($1, $2)',
+    [TOKEN, TOKEN_TWO]);
+  await db.query(`DELETE FROM robinhood_chain_block_anchors
+    WHERE block_number BETWEEN 101 AND 103`);
+  await db.query(`DELETE FROM robinhood_chain_blocks
+    WHERE chain='robinhood' AND block_number BETWEEN 101 AND 103`);
 }
 
 describe('Robinhood BUNDLED redistribution live queue schema', () => {
@@ -31,6 +50,7 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
       robinhood_bundle_redistribution_activations CASCADE`);
     await stage187.init({ closePool: false });
     await stage188.init({ closePool: false });
+    await stage241.init({ closePool: false });
     await cleanup();
   });
   after(async () => { await cleanup(); await db.pool.end(); });
@@ -38,6 +58,9 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
   it('admits only post-activation transfers and requeues only admitted token sells', async () => {
     const client = await db.getClient();
     try {
+      await insertBlock(101, HASH);
+      await insertBlock(102, FRONTIER_HASH);
+      await insertBlock(103, NEXT_HASH);
       await client.query(`INSERT INTO robinhood_bundle_redistribution_activations (
         status, activation_at, activation_block
       ) VALUES ('planned', NOW(), 100)`);
@@ -70,6 +93,11 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
         status = 'active', activation_checkpoint_block = 101,
         activation_checkpoint_hash = $1, activated_at = NOW()`, [HASH]);
 
+      await client.query(`INSERT INTO robinhood_holder_token_states(
+        chain, token_address, holder_count, ledger_status,
+        live_through_block, live_through_hash
+      ) VALUES ('robinhood', $1, 0, 'live', 102, $2)`, [TOKEN_TWO, FRONTIER_HASH]);
+
       await client.query(`CREATE TEMP TABLE redistribution_sell_probe (
         chain TEXT, token_address TEXT, side TEXT, block_number BIGINT
       )`);
@@ -88,24 +116,66 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
         [TOKEN_TWO]);
       assert.equal((await client.query(`SELECT requested_version::text
         FROM robinhood_bundle_redistribution_queue`)).rows[0].requested_version, '3');
+      await client.query(`DELETE FROM robinhood_chain_block_anchors
+        WHERE chain='robinhood' AND block_number=102`);
 
       const queue = createRobinhoodBundleRedistributionLiveQueueRepository({
         database: db, projectionFence: async () => {},
       });
-      const [task] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
-      const stored = await queue.replaceSnapshotAndComplete({ ...task, owner: 'shadow-test',
+      const [staleTask] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
+      assert.deepEqual({ block: staleTask.sourceThroughBlock, hash: staleTask.sourceThroughHash,
+        version: staleTask.sourceRequestedVersion }, {
+        block: '102', hash: FRONTIER_HASH, version: '3',
+      });
+
+      await client.query(`INSERT INTO redistribution_sell_probe VALUES
+        ('robinhood', $1, 'sell', 103)`, [TOKEN_TWO]);
+      assert.deepEqual((await client.query(`SELECT status, requested_version::text,
+          source_requested_version::text
+        FROM robinhood_bundle_redistribution_queue`)).rows[0], {
+        status: 'pending', requested_version: '4', source_requested_version: null,
+      });
+      assert.equal((await queue.replaceSnapshotAndComplete({ ...staleTask, owner: 'shadow-test',
         snapshot: { state: { tokenAddress: TOKEN_TWO, ruleVersion: RULE_VERSION,
           evidenceVersion: EVIDENCE_VERSION, status: 'ready', statusReason: 'no_groups',
-          sourceKind: 'live', sourceVersion: task.requestedVersion,
-          throughBlockNumber: '102', throughBlockHash: HASH, policyJson: POLICY },
+          sourceKind: 'live', sourceVersion: staleTask.requestedVersion,
+          throughBlockNumber: '102', throughBlockHash: FRONTIER_HASH, policyJson: POLICY },
+        groups: [] } })).completed, false);
+
+      const [task] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
+      await queue.retry({ ...task, owner: 'shadow-test', retryMs: 1000,
+        error: { code: 'retry_probe', message: 'retry' } });
+      await client.query(`UPDATE robinhood_holder_token_states SET
+        live_through_block=103, live_through_hash=$2
+        WHERE chain='robinhood' AND token_address=$1`, [TOKEN_TWO, NEXT_HASH]);
+      await client.query(`UPDATE robinhood_bundle_redistribution_queue
+        SET next_attempt_at=NOW() WHERE token_address=$1`, [TOKEN_TWO]);
+      const [retried] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
+      assert.equal(retried.sourceThroughBlock, '102');
+      assert.equal(retried.sourceRequestedVersion, '4');
+
+      const stored = await queue.replaceSnapshotAndComplete({ ...retried, owner: 'shadow-test',
+        snapshot: { state: { tokenAddress: TOKEN_TWO, ruleVersion: RULE_VERSION,
+          evidenceVersion: EVIDENCE_VERSION, status: 'ready', statusReason: 'no_groups',
+          sourceKind: 'live', sourceVersion: retried.requestedVersion,
+          throughBlockNumber: '102', throughBlockHash: FRONTIER_HASH, policyJson: POLICY },
         groups: [] } });
       assert.equal(stored.completed, true);
       assert.deepEqual((await client.query(`SELECT status, completed_version::text
         FROM robinhood_bundle_redistribution_queue`)).rows[0], {
-        status: 'complete', completed_version: '3',
+        status: 'complete', completed_version: '4',
       });
       assert.equal((await client.query(`SELECT source_kind
         FROM robinhood_bundle_redistribution_states`)).rows[0].source_kind, 'live');
+
+      await client.query(`INSERT INTO redistribution_sell_probe VALUES
+        ('robinhood', $1, 'sell', 103)`, [TOKEN_TWO]);
+      const concurrent = await Promise.all([
+        queue.claimBatch({ owner: 'claim-a', limit: 1 }),
+        queue.claimBatch({ owner: 'claim-b', limit: 1 }),
+      ]);
+      assert.equal(concurrent[0].length + concurrent[1].length, 1);
+      assert.equal((concurrent[0][0] || concurrent[1][0]).sourceThroughBlock, '103');
 
       await assert.rejects(client.query(`UPDATE robinhood_bundle_redistribution_activations
         SET activation_block = 99`), /activation boundary is immutable/);

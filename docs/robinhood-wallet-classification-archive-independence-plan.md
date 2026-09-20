@@ -1,8 +1,8 @@
 # Plano de execução — wallet classification Robinhood com raw de 3 dias
 
-Status: Cortes 0 e 1A concluídos localmente; Stage 241 ainda não aplicada na VPS.
+Status: Cortes 0, 1A e 1B concluídos localmente; Stage 241 ainda não aplicada na VPS.
 Os reparos existentes podem rodar no PC Archive enquanto os demais cortes de código
-são implementados. O reader permanece no contrato anterior até os Cortes 1B/1C.
+são implementados. O reader permanece no contrato anterior até o Corte 1C.
 
 ## 1. Objetivo
 
@@ -246,6 +246,8 @@ Validação:
 Gate: nenhuma mudança de worker é implantada antes da Stage 241.
 
 ### Corte 1B — fila congela a fronteira por versão
+
+Status: concluído localmente; depende da Stage 241 e deve ser implantado junto do 1C.
 
 Objetivo: fazer claim/prepare fixar a fronteira exata usada pela tarefa.
 

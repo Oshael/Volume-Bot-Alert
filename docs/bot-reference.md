@@ -5850,7 +5850,12 @@ de observação e source frontier à fila, constraints all-or-none e captura eve
 Hash divergente de um bloco canônico aborta o write; raw já ausente deixa a âncora nula
 para reparo explícito. Linhas legadas não são inferidas. Neste corte o source antigo ainda
 lê `robinhood_chain_blocks`; o cutover do reader e o reparo Archive das âncoras são
-cortes posteriores. O worker shadow PostgreSQL-only
+cortes posteriores. O claim da fila congela a frontier do holder por
+`requested_version`, devolve bloco/hash/tempo ao worker e preserva a mesma lineage em
+retries. Um evento novo incrementa a versão, cancela a lease e invalida o pin anterior;
+o commit rejeita lease, versão ou frontier diferentes antes de gravar o snapshot. Como o
+reader somente passa a consumir esse pin no Corte 1C, implante 1B e 1C juntos, sempre
+depois da Stage 241. O worker shadow PostgreSQL-only
 consome a fila em lotes e concorrência limitados, adia tokens cujas frontiers ainda
 não estejam prontas e publica snapshot + conclusão da versão na mesma transação.
 No grupo `robinhood-wallet-classification`, habilite-o explicitamente com

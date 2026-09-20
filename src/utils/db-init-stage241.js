@@ -136,6 +136,12 @@ const STATEMENTS = Object.freeze([
    RETURNS TRIGGER LANGUAGE plpgsql AS $trigger$
    DECLARE captured_hash VARCHAR(66); holder_block BIGINT; holder_hash VARCHAR(66);
    BEGIN
+     IF TG_OP = 'UPDATE' AND NEW.requested_version IS DISTINCT FROM OLD.requested_version THEN
+       NEW.source_through_block := NULL;
+       NEW.source_through_hash := NULL;
+       NEW.source_through_time := NULL;
+       NEW.source_requested_version := NULL;
+     END IF;
      IF NEW.observation_from_hash IS NULL THEN
        captured_hash := capture_robinhood_chain_block_anchor(
          NEW.chain, NEW.observation_from_block, NULL

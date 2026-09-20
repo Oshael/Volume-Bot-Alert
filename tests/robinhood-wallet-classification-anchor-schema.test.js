@@ -22,6 +22,8 @@ describe('Robinhood wallet-classification anchor schema', () => {
     assert.match(sql, /source_requested_version IS NULL\)::integer\) IN \(0, 4\)/);
     assert.match(sql, /source_requested_version <= requested_version/);
     assert.match(sql, /BEFORE INSERT OR UPDATE OF observation_from_block, requested_version/);
+    assert.match(sql, /NEW\.requested_version IS DISTINCT FROM OLD\.requested_version/);
+    assert.match(sql, /NEW\.source_requested_version := NULL/);
     assert.match(sql, /AFTER INSERT OR UPDATE OF live_through_block, live_through_hash/);
     assert.match(sql, /observation_anchor_fkey/);
     assert.match(sql, /source_anchor_fkey/);
