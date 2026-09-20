@@ -5894,6 +5894,16 @@ evidência canonicamente verificada, reabre apenas tokens reparados e mantém os
 demais como `unresolved`. `--limit`, `--concurrency` e `--timeout-ms` são
 limitados; a execução é idempotente e pode ser repetida após falha do Archive.
 
+Para reparar bounds legados, rode
+`npm run robinhood:bundle-redistribution-anchor-repair -- --limit=100` em modo
+read-only. A aplicação exige `--apply
+--confirm-repair-robinhood-bundle-redistribution-anchors`. O comando procura cada
+bloco primeiro no PostgreSQL e só exige `ROBINHOOD_ARCHIVE_RPC_URL` se o raw local
+estiver ausente; nesse caso valida chain ID 4663, número, hash e timestamp. `--limit`,
+`--concurrency` e `--timeout-ms` são limitados. Apenas a versão pendente exata com
+observação e source integralmente ancorados é reaberta; tarefas bloqueadas,
+incompletas ou alteradas concorrentemente permanecem visíveis para nova execução.
+
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara

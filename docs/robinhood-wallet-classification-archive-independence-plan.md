@@ -1,6 +1,6 @@
 # Plano de execução — wallet classification Robinhood com raw de 3 dias
 
-Status: Cortes 0, 1A, 1B e 1C concluídos localmente; Stage 241 ainda não aplicada na VPS.
+Status: Cortes 0, 1A, 1B, 1C e 2 concluídos localmente; Stage 241 ainda não aplicada na VPS.
 Os reparos existentes podem rodar no PC Archive enquanto os demais cortes de código
 são implementados. O cutover depende da Stage 241 e do reparo das linhas legadas.
 
@@ -305,6 +305,8 @@ Validação:
 - `npm run lint` e suites direcionadas.
 
 ### Corte 2 — reparo histórico das âncoras
+
+Status: concluído localmente; utilitário ainda não executado na VPS/PC Archive.
 
 Objetivo: preencher linhas legadas usando PostgreSQL primeiro e Archive somente quando
 necessário.
