@@ -6531,6 +6531,61 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage241-robinhood-wallet-classification-anchors',
+    name: 'Stage 241 Robinhood wallet-classification durable anchors',
+    repair: 'node src/utils/db-init-stage241.js',
+    tables: [{
+      table: 'robinhood_chain_block_anchors',
+      columns: [
+        'chain', 'block_number', 'block_hash', 'block_timestamp', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_chain_block_anchors_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'block_number', 'block_hash'],
+      }, {
+        name: 'rh_chain_block_anchors_values_check',
+        includes: ['block_number', 'block_hash'],
+      }],
+    }, {
+      table: 'robinhood_bundle_redistribution_activations',
+      columns: ['observation_from_hash', 'observation_from_time'],
+      constraints: [{
+        name: 'rh_bundle_redistribution_activation_anchor_check',
+        includes: ['observation_from_hash', 'observation_from_time'],
+      }],
+      triggers: [{
+        name: 'trg_rh_bundle_redistribution_activation_anchor',
+        includes: ['BEFORE INSERT OR UPDATE', 'hydrate_robinhood_redistribution_activation_anchor'],
+      }],
+    }, {
+      table: 'robinhood_bundle_redistribution_queue',
+      columns: [
+        'observation_from_hash', 'observation_from_time', 'source_through_block',
+        'source_through_hash', 'source_through_time', 'source_requested_version',
+      ],
+      constraints: [{
+        name: 'rh_bundle_redistribution_queue_anchor_check',
+        includes: ['source_through_block', 'source_requested_version'],
+      }, {
+        name: 'rh_bundle_redistribution_queue_observation_anchor_fkey',
+        includes: ['FOREIGN KEY', 'robinhood_chain_block_anchors'],
+      }, {
+        name: 'rh_bundle_redistribution_queue_source_anchor_fkey',
+        includes: ['FOREIGN KEY', 'robinhood_chain_block_anchors'],
+      }],
+      triggers: [{
+        name: 'trg_rh_bundle_redistribution_queue_anchors',
+        includes: ['BEFORE INSERT OR UPDATE', 'hydrate_robinhood_redistribution_queue_anchors'],
+      }],
+    }, {
+      table: 'robinhood_holder_token_states',
+      triggers: [{
+        name: 'trg_rh_holder_redistribution_frontier_anchor',
+        includes: ['AFTER INSERT OR UPDATE', 'capture_robinhood_holder_frontier_anchor'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

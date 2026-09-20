@@ -1,8 +1,8 @@
 # Plano de execução — wallet classification Robinhood com raw de 3 dias
 
-Status: plano aprovado para iniciar os cortes; Corte 0 (este documento) concluído.
-Os reparos existentes podem rodar no PC Archive enquanto os cortes de código são
-implementados. Nenhum código de produção deste plano foi implementado ainda.
+Status: Cortes 0 e 1A concluídos localmente; Stage 241 ainda não aplicada na VPS.
+Os reparos existentes podem rodar no PC Archive enquanto os demais cortes de código
+são implementados. O reader permanece no contrato anterior até os Cortes 1B/1C.
 
 ## 1. Objetivo
 
@@ -212,6 +212,8 @@ Entrega:
 Validação: revisar texto e diff. Lint/testes não são necessários.
 
 ### Corte 1A — Stage 241 e captura de âncoras
+
+Status: concluído localmente; migration ainda não aplicada na VPS.
 
 Objetivo: criar o contrato durável sem mudar ainda o reader do redistribution.
 

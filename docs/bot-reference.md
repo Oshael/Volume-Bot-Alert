@@ -5841,7 +5841,16 @@ read-only. Após revisar, rode `npm run robinhood:bundle-redistribution-activate
 --apply`; a primeira execução reserva uma frontier 1.000 blocos à frente por padrão.
 Quando ambos os cursores a atravessarem, repita `--apply` para promovê-la. O lead é
 ajustável com `--lead-blocks=100..100000`. O comando usa somente PostgreSQL, não
-varre histórico e pode ser repetido com segurança. O worker shadow PostgreSQL-only
+varre histórico e pode ser repetido com segurança. Antes do cutover para bounds
+duráveis, aplique `node src/utils/db-init-stage241.js`. A Stage 241 cria
+`robinhood_chain_block_anchors`, que preserva apenas número/hash/timestamp dos blocos
+explicitamente referenciados por ativação, fila ou frontier de holder; transações,
+receipts e logs continuam sujeitos à retenção raw. A migration adiciona campos nullable
+de observação e source frontier à fila, constraints all-or-none e captura event-driven.
+Hash divergente de um bloco canônico aborta o write; raw já ausente deixa a âncora nula
+para reparo explícito. Linhas legadas não são inferidas. Neste corte o source antigo ainda
+lê `robinhood_chain_blocks`; o cutover do reader e o reparo Archive das âncoras são
+cortes posteriores. O worker shadow PostgreSQL-only
 consome a fila em lotes e concorrência limitados, adia tokens cujas frontiers ainda
 não estejam prontas e publica snapshot + conclusão da versão na mesma transação.
 No grupo `robinhood-wallet-classification`, habilite-o explicitamente com
