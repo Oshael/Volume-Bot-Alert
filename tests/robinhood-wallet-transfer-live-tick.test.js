@@ -125,6 +125,23 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.equal(deps.calls.evidence[0].toBlock, '100');
   });
 
+  it('reads a bounded 5000-block canonical catch-up range', async () => {
+    const range = {
+      ...captured(), toBlock: '5099', nextBlock: '5100',
+      checkpoint: { number: '5099', hash: HASH, blockTime: TIME },
+    };
+    const deps = dependencies({
+      frontier: { ready: true, completeThroughBlock: '6000', reason: null },
+      captured: range,
+    });
+    const result = await runRobinhoodWalletTransferLiveTick(deps, { maxBlocks: 5000 });
+
+    assert.equal(result.status, 'projected');
+    assert.deepEqual(deps.calls.evidence[0], {
+      tokenAddresses: [TOKEN], fromBlock: '100', toBlock: '5099',
+    });
+  });
+
   it('blocks on a non-canonical checkpoint before reading or writing a range', async () => {
     const deps = dependencies({
       canonical: false,

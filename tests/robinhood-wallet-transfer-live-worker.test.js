@@ -12,6 +12,13 @@ describe('Robinhood wallet transfer LIVE worker', () => {
       /must be rpc or canonical_journal/);
   });
 
+  it('allows large catch-up batches only for the canonical journal', () => {
+    assert.equal(normalizeOptions({ sourceMode: 'canonical_journal', maxBlocks: 5000 }, {})
+      .maxBlocks, 5000);
+    assert.equal(normalizeOptions({ sourceMode: 'rpc', maxBlocks: 5000 }, {})
+      .maxBlocks, 250);
+  });
+
   it('builds one validated RPC runtime with isolated adapters', async () => {
     const rpcClient = { name: 'rpc', requestBatch: async () => [] };
     const created = {};

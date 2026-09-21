@@ -2285,7 +2285,7 @@ module.exports = {
       process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
     ),
     maxBlocks: parseIntegerInRange(
-      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_BLOCKS_PER_TICK, 25, 1, 250
+      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_BLOCKS_PER_TICK, 25, 1, 5000
     ),
     addressShardConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_TRANSFER_ADDRESS_SHARD_CONCURRENCY, 1, 1, 4

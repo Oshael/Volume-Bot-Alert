@@ -22,14 +22,17 @@ function boundedInteger(value, fallback, minimum, maximum) {
 }
 
 function normalizeOptions(input = {}, env = process.env) {
+  const sourceMode = normalizeRobinhoodWalletTransferSource(
+    input.sourceMode ?? env.ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE
+  );
   return Object.freeze({
     enabled: input.enabled === true,
-    sourceMode: normalizeRobinhoodWalletTransferSource(
-      input.sourceMode ?? env.ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE
-    ),
+    sourceMode,
     intervalMs: boundedInteger(input.intervalMs, 2000, 250, 300_000),
     maxErrorBackoffMs: boundedInteger(input.maxErrorBackoffMs, 30_000, 1000, 300_000),
-    maxBlocks: boundedInteger(input.maxBlocks, 25, 1, 250),
+    maxBlocks: boundedInteger(
+      input.maxBlocks, 25, 1, sourceMode === CANONICAL_SOURCE ? 5000 : 250
+    ),
     addressShardConcurrency: boundedInteger(input.addressShardConcurrency, 1, 1, 4),
     blockEvidenceBatchSize: boundedInteger(input.blockEvidenceBatchSize, 50, 1, 100),
     endpointRoleBatchSize: boundedInteger(input.endpointRoleBatchSize, 50, 1, 100),

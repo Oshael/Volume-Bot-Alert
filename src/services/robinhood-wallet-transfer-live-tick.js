@@ -185,7 +185,7 @@ async function prepareUnifiedPosition(deps, input) {
 async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
   assertDependencies(deps);
   const timer = createPhaseTimer(deps.now);
-  const maxBlocks = boundedInteger(input.maxBlocks, 25, 1, 250, 'maxBlocks');
+  const maxBlocks = boundedInteger(input.maxBlocks, 25, 1, 5000, 'maxBlocks');
   const frontier = await deps.source.loadSwapFrontier();
   if (!frontier.ready) {
     return Object.freeze({ status: 'awaiting-source', reason: frontier.reason });

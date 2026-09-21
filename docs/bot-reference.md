@@ -6090,7 +6090,9 @@ O writer LIVE de transfers é opt-in por
 `trendscope-worker@robinhood-wallet-transfers.service`. Seu env exclusivo é
 `/etc/trendscope/robinhood-wallet-transfers.env`; o grupo de classification não
 registra essa lease mesmo que uma flag global seja ativada. O default é 25 blocos por
-tick, batches de evidência de bloco de 50 e concorrência de shards igual a 1. Escopos de até 100
+tick; o journal canônico aceita configuração de até 5.000 para catch-up controlado,
+enquanto RPC permanece limitado a 250. Batches de evidência de bloco são 50 e a
+concorrência de shards é 1. Escopos de até 100
 tokens usam filtro RPC por endereço; escopos maiores usam o tópico global
 `Transfer` e filtragem local, evitando payloads com dezenas de milhares de
 endereços. O worker expõe esse modo e os splits na telemetria. Ele valida chain

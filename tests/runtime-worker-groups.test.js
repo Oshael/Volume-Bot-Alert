@@ -833,7 +833,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.robinhoodWalletTransferLiveWorker, {
         enabled: true, sourceMode: 'canonical_journal', unifiedPositionEnabled: true,
         intervalMs: 250, maxErrorBackoffMs: 30_000,
-        maxBlocks: 250, addressShardConcurrency: 4,
+        maxBlocks: 999, addressShardConcurrency: 4,
         blockEvidenceBatchSize: 100, endpointRoleBatchSize: 1,
       });
     });

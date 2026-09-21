@@ -446,6 +446,16 @@ passou a fornecer as colunas do slot diretamente ao índice composto existente, 
 concatenar a identidade no predicado. Isso confirma o hot path e o desalinhamento com
 o índice, mas a contribuição causal ao lag total só será fechada pela amostra pós-deploy.
 
+#### Corte 5C — catch-up canônico controlado
+
+Status: implementado localmente; aguarda rampa e medição na VPS. Com 3,18 milhões de
+blocos restantes e ganho líquido observado de 22,2 blocos/s, a meta operacional de
+seis horas exige pelo menos 147,4 blocos/s líquidos. O teto de lote do journal
+canônico passa de 250 para 5.000 blocos, enquanto o modo RPC continua limitado a
+250. O default permanece 25; o rollout deve testar 1.000 e depois 2.000 blocos por
+tick, mantendo somente a menor configuração que atinja a meta sem regressão de WAL,
+locks, memória, disco ou latência dos demais workers.
+
 Gate de saída:
 
 - `lag_blocks=0`;
