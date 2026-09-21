@@ -346,7 +346,8 @@ Grupos existentes:
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e enfileira swaps aceitos na outbox durável; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
-| `robinhood-wallet-classification` | mantém as projeções e classificações de wallets; sob flags/leases separadas, também captura transfers ERC-20 e pode persistir `unified_transfer_v1` atomicamente após o handoff explícito |
+| `robinhood-wallet-classification` | mantém as projeções e classificações de wallets que não pertencem ao writer dedicado de transfers |
+| `robinhood-wallet-transfers` | captura e classifica transfers ERC-20 e pode persistir `unified_transfer_v1` atomicamente após o handoff explícito |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 O enrichment do `robinhood-backfill` carrega do catálogo somente as identidades
@@ -364,8 +365,8 @@ alias explícito `maintenance` preserva o comportamento misto anterior, mas o
 config rejeita combiná-lo com `all` ou com qualquer outro grupo.
 
 `robinhood-maintenance`, `robinhood`, `robinhood-head`, `robinhood-processing`,
-`robinhood-derived`, `robinhood-wallet`, `robinhood-wallet-classification` e
-`robinhood-backfill` são grupos
+`robinhood-derived`, `robinhood-wallet`, `robinhood-wallet-classification`,
+`robinhood-wallet-transfers` e `robinhood-backfill` são grupos
 isolados. O config rejeita combinar um grupo isolado com grupos compartilhados
 ou entre si. `all` inclui `solana-maintenance`, nunca `robinhood-maintenance`.
 
@@ -4250,8 +4251,8 @@ homônimo `start:worker:robinhood-wallet-classification` na porta `3015`. Instal
 `deploy/systemd/trendscope-worker@robinhood-wallet-classification.service.example`
 com `systemctl edit`. O env específico contém somente flags e o `run-id`; banco e
 segredos continuam vindo do `.env` global já carregado pelo processo. O script
-não força nenhum subworker: first-buy, SNIPER,
-posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
+não força nenhum subworker: first-buy, SNIPER e posição obedecem exclusivamente
+às respectivas flags do env. Antes
 do primeiro start, aplique as Stages 149, 151, 152, 155, 156, 157 e, para BUNDLED
 live, 171–174 e 177; confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
@@ -6082,8 +6083,11 @@ e pelo contexto completo de swaps/pools; após revisar, acrescente
 O writer LIVE de transfers é opt-in por
 `ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true`, usa a lease
 `robinhood-wallet-transfer-live-worker` no grupo isolado
-`robinhood-wallet-classification` e pode ser iniciado separadamente por
-`npm run start:worker:robinhood-wallet-transfers`. O default é 25 blocos por
+`robinhood-wallet-transfers` e é iniciado exclusivamente por
+`npm run start:worker:robinhood-wallet-transfers`, na unit
+`trendscope-worker@robinhood-wallet-transfers.service`. Seu env exclusivo é
+`/etc/trendscope/robinhood-wallet-transfers.env`; o grupo de classification não
+registra essa lease mesmo que uma flag global seja ativada. O default é 25 blocos por
 tick, batches de evidência de bloco de 50 e concorrência de shards igual a 1. Escopos de até 100
 tokens usam filtro RPC por endereço; escopos maiores usam o tópico global
 `Transfer` e filtragem local, evitando payloads com dezenas de milhares de
@@ -6103,7 +6107,7 @@ blocos e respeita as duas confirmações do wallet-transfer; os limites podem se
 ajustados com `--min-transfers`, `--blocks` e `--confirmations`.
 Após o canário ser aprovado, mantenha o default explícito
 `ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE=canonical_journal` e reinicie somente o
-grupo `robinhood-wallet-classification`. A fonte canônica lê transfers,
+grupo `robinhood-wallet-transfers`. A fonte canônica lê transfers,
 timestamps, checkpoints e posições de transação do journal PostgreSQL, sem
 `eth_getLogs` ou `eth_getBlockByNumber`. Ela reage ao `NOTIFY` durável da
 captura; o intervalo de dois segundos permanece como retry limitado enquanto

@@ -757,18 +757,21 @@ function startRobinhoodWalletClassificationWorkerGroup() {
       { metadataProvider: () => ({ telemetry: robinhoodWalletPositionLiveWorker.getStatus() }) }
     );
   }
-  if (config.robinhoodWalletTransferLiveWorker.enabled) {
-    startLockedWorker(
-      'robinhood-wallet-classification', ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY,
-      'Robinhood wallet-transfer LIVE worker', () => robinhoodWalletTransferLiveWorker.start({
-        ...config.robinhoodWalletTransferLiveWorker,
-        rpcOptions: config.robinhoodIngestionWorker,
-        onFatal: (error) => workerLeaseManager.halt(
-          ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY, error
-        ),
-      }), { metadataProvider: () => ({ telemetry: robinhoodWalletTransferLiveWorker.getStatus() }) }
-    );
-  }
+}
+
+function startRobinhoodWalletTransferWorkerGroup() {
+  if (!hasWorkerGroup('robinhood-wallet-transfers')) return;
+  if (!config.robinhoodWalletTransferLiveWorker.enabled) return;
+  startLockedWorker(
+    'robinhood-wallet-transfers', ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY,
+    'Robinhood wallet-transfer LIVE worker', () => robinhoodWalletTransferLiveWorker.start({
+      ...config.robinhoodWalletTransferLiveWorker,
+      rpcOptions: config.robinhoodIngestionWorker,
+      onFatal: (error) => workerLeaseManager.halt(
+        ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY, error
+      ),
+    }), { metadataProvider: () => ({ telemetry: robinhoodWalletTransferLiveWorker.getStatus() }) }
+  );
 }
 
 function startRobinhoodSignedOriginWorkerGroup() {
@@ -1154,6 +1157,7 @@ function startWorkerSet() {
   startRobinhoodDerivedWorkerGroup();
   startRobinhoodWalletSwapWorkerGroup();
   startRobinhoodWalletClassificationWorkerGroup();
+  startRobinhoodWalletTransferWorkerGroup();
   startRobinhoodSignedOriginWorkerGroup();
   startRobinhoodHolderWorkerGroup();
   startRobinhoodHolderGlobalBackfillWorkerGroup();

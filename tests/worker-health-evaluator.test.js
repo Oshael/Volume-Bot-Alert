@@ -44,6 +44,8 @@ describe('worker health registry', () => {
       'maintenance');
     assert.equal(getWorkerHealthDefinition('robinhood-bundle-redistribution-live-worker')
       .thresholds.maxInFlightMs, 900_000);
+    assert.equal(getWorkerHealthDefinition('robinhood-wallet-transfer-live-worker').group,
+      'robinhood-wallet-transfers');
     assert.equal(getWorkerHealthDefinition('unknown-worker'), null);
   });
 });

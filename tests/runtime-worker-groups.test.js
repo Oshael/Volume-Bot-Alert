@@ -10,7 +10,8 @@ const WORKER_GROUPS = [
   'core', 'market', 'solana-maintenance', 'maintenance', 'robinhood-maintenance',
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'robinhood-wallet-classification', 'robinhood-signed-origin',
+  'robinhood-holder-global', 'robinhood-wallet-classification',
+  'robinhood-wallet-transfers', 'robinhood-signed-origin',
   'x-match', 'x-ingest',
   'callouts', 'worker-health',
 ];
@@ -95,7 +96,7 @@ describe('runtime worker groups config', () => {
       ['robinhood.env.example', 'ROBINHOOD_WALLET_SWAP_LIVE_SOURCE'],
       ['robinhood-signed-origin.env.example', 'ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE'],
       ['robinhood-wallet-classification.env.example', 'ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE'],
-      ['robinhood-wallet-classification.env.example', 'ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE'],
+      ['robinhood-wallet-transfers.env.example', 'ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE'],
     ];
 
     for (const [filename, variable] of examples) {
@@ -736,6 +737,13 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('isolates Robinhood wallet transfers under its service name', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-wallet-transfers' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet-transfers']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet-transfers'));
+    });
+  });
+
   it('isolates the Robinhood signed-origin scanner and ships its runner', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-signed-origin',
       ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED: 'true', ROBINHOOD_RPC_URL: 'http://node',
@@ -784,7 +792,31 @@ describe('runtime worker groups config', () => {
     assert.match(server, /robinhoodFreshWalletLiveWorker\.getStatus\(\)/);
     assert.match(env, /ROBINHOOD_INSIDER_SHADOW_ENABLED=false/);
     assert.match(env, /ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=false/);
+    assert.doesNotMatch(env, /ROBINHOOD_WALLET_TRANSFER_LIVE_/);
     assert.doesNotMatch(env, /JWT_SECRET|DATABASE_URL|DB_PASSWORD/);
+  });
+
+  it('ships wallet transfers as one symmetric isolated service', () => {
+    const command = require('../package.json').scripts['start:worker:robinhood-wallet-transfers'];
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const dropIn = fs.readFileSync(path.join(
+      systemdDir, 'trendscope-worker@robinhood-wallet-transfers.service.example'
+    ), 'utf8');
+    const env = fs.readFileSync(path.join(
+      systemdDir, 'robinhood-wallet-transfers.env.example'
+    ), 'utf8');
+    const server = fs.readFileSync(path.join(ROOT_DIR, 'src', 'server.js'), 'utf8');
+
+    assert.match(command, /PORT=\$\{PORT:-3016\}/);
+    assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-wallet-transfers/);
+    assert.match(command, /ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true/);
+    assert.match(dropIn, /EnvironmentFile=\/etc\/trendscope\/robinhood-wallet-transfers\.env/);
+    assert.doesNotMatch(dropIn, /ExecStart|WorkingDirectory|User=/);
+    assert.match(env, /^ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true$/m);
+    assert.match(env, /^ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE=canonical_journal$/m);
+    assert.doesNotMatch(env, /JWT_SECRET|DATABASE_URL|DB_PASSWORD/);
+    assert.match(server,
+      /startLockedWorker\(\s*'robinhood-wallet-transfers', ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY/);
   });
 
   it('keeps Robinhood wallet transfers opt-in and bounds RPC work', () => {
