@@ -3531,6 +3531,21 @@ e também fora do limite incremental ainda devem entrar em uma coorte delta do
 backfill global abaixo; essa seleção aceita `rpc_code_transition` como deployment
 exato mesmo sem provenance de creator.
 
+Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
+que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72
+horas e move tarefas vencidas para `archive_required`; elas permanecem recuperáveis
+pelo comando Archive, mas deixam de competir por claims e RPC com evidência recente.
+Um mint canônico novo reabre a janela por 72 horas. O recovery Archive remove a tarefa
+somente depois de persistir atribuição exata. Depois da migration, `items` no auditor
+`robinhood:deployment-live-window-audit` representa apenas a lane live e
+`archiveRequired` representa o estoque separado. O rollout exige Stage 242 primeiro,
+depois código/restart; a versão nova do worker não é compatível com schema anterior.
+O avanço por deadline é uma reconciliação temporal bounded: a cada tick ela move no
+máximo o batch do worker, usa `(status, live_deadline_at, next_attempt_at)` como cursor
+indexado, é idempotente e roda antes dos claims sem consultar RPC. `totalArchiveRequired`
+mede essas transições; eventos/mints novos continuam tendo precedência ao reabrir a lane
+live, enquanto falhas Archive permanecem isoladas do scheduler live.
+
 Para recuperar deployments e registrar de uma vez pares meme/stock históricos V2, V3
 e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com

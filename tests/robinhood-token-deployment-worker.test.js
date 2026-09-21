@@ -148,7 +148,7 @@ it('drains a bounded deployment batch concurrently', async () => {
   const result = await worker.runOnce();
   assert.deepEqual(result, {
     status: 'completed', claimed: 2, resolved: 2, deferred: 0, skipped: 0,
-    ignoredMints: 0, errors: 0,
+    ignoredMints: 0, archiveRequired: 0, errors: 0,
   });
   assert.deepEqual(completed.sort(), [TOKEN, TOKEN_B].sort());
 });
@@ -322,7 +322,7 @@ it('defers a fresh task briefly while its mint reaches the journal', async () =>
   assert.equal(retries[0].retryMs, 1000);
 });
 
-it('prioritizes anchored outbox tasks and loads a confirmed canonical mint', async () => {
+it('claims only the live lane by earliest deadline and loads a canonical mint', async () => {
   const calls = [];
   const repository = createRobinhoodTokenDeploymentOutboxRepository({
     database: { query: async (sql, params) => {
@@ -341,8 +341,8 @@ it('prioritizes anchored outbox tasks and loads a confirmed canonical mint', asy
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
   });
-  assert.match(calls[0].sql, /mint_block_number IS NOT NULL THEN 0/);
-  assert.match(calls[0].sql, /created_at >= NOW\(\) - INTERVAL '10 minutes'/);
+  assert.match(calls[0].sql, /live_deadline_at > NOW\(\)/);
+  assert.match(calls[0].sql, /ORDER BY live_deadline_at, next_attempt_at, created_at/);
   assert.deepEqual(await repository.findMintHint(TOKEN), {
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
@@ -355,6 +355,18 @@ it('prioritizes anchored outbox tasks and loads a confirmed canonical mint', asy
   assert.deepEqual(calls[1].params.slice(1), [12,
     '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
     `0x${'0'.repeat(64)}`, 96]);
+});
+
+it('moves expired pending work to the Archive lane in a bounded batch', async () => {
+  let query;
+  const repository = createRobinhoodTokenDeploymentOutboxRepository({
+    database: { async query(sql, params) { query = { sql, params }; return { rowCount: 7 }; } },
+  });
+  assert.equal(await repository.archiveExpiredBatch({ limit: 16 }), 7);
+  assert.match(query.sql, /status = 'archive_required'/);
+  assert.match(query.sql, /live_deadline_at <= NOW\(\)/);
+  assert.match(query.sql, /LIMIT \$1 FOR UPDATE SKIP LOCKED/);
+  assert.deepEqual(query.params, [16]);
 });
 
 it('registers the durable mint anchor migration in runtime schema', async () => {

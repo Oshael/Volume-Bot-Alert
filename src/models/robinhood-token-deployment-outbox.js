@@ -45,12 +45,9 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
       `WITH candidate AS (
          SELECT token_address FROM robinhood_token_deployment_outbox
           WHERE chain = '${CHAIN}' AND next_attempt_at <= NOW()
+            AND live_deadline_at > NOW()
             AND (status = 'pending' OR lease_until <= NOW())
-          ORDER BY
-            CASE WHEN mint_block_number IS NOT NULL THEN 0
-                 WHEN created_at >= NOW() - INTERVAL '10 minutes' THEN 1 ELSE 2 END,
-            mint_block_number DESC NULLS LAST,
-            next_attempt_at, created_at
+          ORDER BY live_deadline_at, next_attempt_at, created_at
           LIMIT $3 FOR UPDATE SKIP LOCKED
        )
        UPDATE robinhood_token_deployment_outbox outbox
@@ -69,6 +66,26 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
 
   async function claim(input = {}) {
     return (await claimBatch({ ...input, limit: 1 }))[0] || null;
+  }
+
+  async function archiveExpiredBatch(input = {}) {
+    const limit = batchLimit(input.limit ?? 256);
+    const result = await database.query(
+      `WITH candidate AS (
+         SELECT token_address FROM robinhood_token_deployment_outbox
+          WHERE chain = '${CHAIN}' AND status = 'pending'
+            AND live_deadline_at <= NOW()
+          ORDER BY live_deadline_at, token_address
+          LIMIT $1 FOR UPDATE SKIP LOCKED
+       )
+       UPDATE robinhood_token_deployment_outbox outbox
+          SET status = 'archive_required', lease_owner = NULL, lease_until = NULL,
+              archive_required_at = COALESCE(archive_required_at, NOW()), updated_at = NOW()
+         FROM candidate WHERE outbox.chain = '${CHAIN}'
+          AND outbox.token_address = candidate.token_address`,
+      [limit]
+    );
+    return result.rowCount;
   }
 
   async function findMintHint(tokenAddress, input = {}) {
@@ -141,6 +158,15 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     return result.rowCount === 1;
   }
 
+  async function completeRecovered(tokenAddress) {
+    const result = await database.query(
+      `DELETE FROM robinhood_token_deployment_outbox
+        WHERE chain = '${CHAIN}' AND token_address = $1`,
+      [normalizeTokenAddress(CHAIN, tokenAddress)]
+    );
+    return result.rowCount === 1;
+  }
+
   async function retry(input = {}) {
     const retryMs = Math.max(1000, Math.min(Number(input.retryMs) || 15_000, 3_600_000));
     const result = await database.query(
@@ -157,7 +183,8 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
   }
 
   return Object.freeze({
-    claim, claimBatch, complete, findDiscoveryHint, findMintHint, isExact, retry,
+    archiveExpiredBatch, claim, claimBatch, complete, completeRecovered,
+    findDiscoveryHint, findMintHint, isExact, retry,
   });
 }
 

@@ -7,6 +7,9 @@ const {
   createRobinhoodArchiveDeploymentDiscovery,
 } = require('../services/robinhood-archive-deployment-discovery');
 const {
+  createRobinhoodTokenDeploymentOutboxRepository,
+} = require('../models/robinhood-token-deployment-outbox');
+const {
   createRobinhoodHolderDeploymentVerifier,
 } = require('../services/robinhood-holder-deployment-verifier');
 
@@ -62,20 +65,30 @@ async function listCandidates(database, limit, input = {}) {
     : '';
   const { rows } = await database.query(
     `WITH queued AS MATERIALIZED (
-       SELECT outbox.token_address, outbox.created_at, outbox.attempt_count
+       SELECT outbox.token_address, outbox.created_at, outbox.attempt_count,
+              attribution.attribution_block,
+              attribution.source AS attribution_source,
+              attribution.attribution_block IS NOT NULL AS exact
          FROM robinhood_token_deployment_outbox outbox
          ${catalogJoin}
          LEFT JOIN robinhood_token_attributions attribution
            ON attribution.chain = outbox.chain
           AND attribution.token_address = outbox.token_address
+          AND attribution.attribution_block IS NOT NULL
+          AND attribution.source = ANY(ARRAY[
+            'blockscout_internal', 'rpc_code_transition', 'rpc_direct',
+            'rpc_trace', 'launchpad_event'
+          ]::varchar[])
         WHERE outbox.chain = 'robinhood'
-          AND attribution.attribution_block IS NULL
+          AND (attribution.attribution_block IS NULL OR outbox.status = 'archive_required')
         ORDER BY
-          CASE WHEN outbox.created_at >= NOW() - INTERVAL '10 minutes' THEN 0 ELSE 1 END,
+          CASE WHEN attribution.attribution_block IS NOT NULL THEN 0
+               WHEN outbox.created_at >= NOW() - INTERVAL '10 minutes' THEN 1 ELSE 2 END,
           outbox.created_at DESC, outbox.token_address
         LIMIT $1::int
      )
      SELECT queued.token_address, queued.created_at, queued.attempt_count,
+            queued.attribution_block, queued.attribution_source, queued.exact,
             mint.block_number AS upper_block
        FROM queued
        LEFT JOIN LATERAL (
@@ -97,13 +110,16 @@ async function listCandidates(database, limit, input = {}) {
            ) mint
           ORDER BY mint.block_number, mint.transaction_index, mint.log_index
           LIMIT 1
-       ) mint ON TRUE
+       ) mint ON queued.exact = FALSE
       ORDER BY queued.created_at DESC, queued.token_address`,
     [limit]
   );
   return Object.freeze(rows.map((row) => Object.freeze({
     tokenAddress: row.token_address,
     upperBlock: row.upper_block == null ? null : String(row.upper_block),
+    exact: row.exact === true,
+    attributionBlock: row.attribution_block == null ? null : String(row.attribution_block),
+    attributionSource: row.attribution_source || null,
     createdAt: row.created_at,
     attemptCount: Number(row.attempt_count) || 0,
   })));
@@ -140,6 +156,7 @@ function buildRuntime(options, deps = {}) {
     return archiveHeadPromise;
   };
   return Object.freeze({
+    outbox: (deps.outboxFactory || createRobinhoodTokenDeploymentOutboxRepository)({ database }),
     attributions: (deps.attributionFactory || createRobinhoodTokenAttributionRepository)({
       database,
     }),
@@ -156,6 +173,13 @@ function buildRuntime(options, deps = {}) {
 }
 
 async function recoverCandidate(runtime, candidate) {
+  if (candidate.exact) {
+    await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
+    return Object.freeze({
+      status: 'unchanged', tokenAddress: candidate.tokenAddress,
+      source: candidate.attributionSource, deploymentBlock: candidate.attributionBlock,
+    });
+  }
   const upperBlock = candidate.upperBlock ?? await runtime.getArchiveHead();
   const discovered = await runtime.discovery.discover({
     ...candidate,
@@ -165,6 +189,7 @@ async function recoverCandidate(runtime, candidate) {
   });
   if (discovered.source === 'rpc_code_transition') {
     const result = await runtime.attributions.recordCodeTransitions([discovered]);
+    await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
     return Object.freeze({
       status: result.attributed === 1 ? 'recovered' : 'unchanged',
       tokenAddress: candidate.tokenAddress,
@@ -175,6 +200,7 @@ async function recoverCandidate(runtime, candidate) {
   const deployment = discovered.source === 'launchpad_event'
     ? discovered : await runtime.verifier.verifyDirectDeployment(discovered);
   await runtime.attributions.recordVerifiedDirectDeployments([deployment]);
+  await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
   return Object.freeze({
     status: 'recovered', tokenAddress: candidate.tokenAddress,
     source: deployment.source, deploymentBlock: deployment.blockNumber,
@@ -197,7 +223,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   if (!options.confirm) {
     const report = {
       mode: 'read-only', candidates: candidates.length,
-      headFallbackCandidates: candidates.filter(({ upperBlock }) => upperBlock == null).length,
+      headFallbackCandidates: candidates.filter(({ exact, upperBlock }) => (
+        !exact && upperBlock == null
+      )).length,
       selection: candidates,
     };
     (deps.logger || console).log(JSON.stringify(report, null, 2));
@@ -210,7 +238,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   });
   const report = {
     mode: 'apply', candidates: candidates.length,
-    headFallbackCandidates: candidates.filter(({ upperBlock }) => upperBlock == null).length,
+    headFallbackCandidates: candidates.filter(({ exact, upperBlock }) => (
+      !exact && upperBlock == null
+    )).length,
     recovered: outcomes.filter(({ status }) => status === 'recovered').length,
     unchanged: outcomes.filter(({ status }) => status === 'unchanged').length,
     failed: outcomes.filter(({ status }) => status === 'failed').length,

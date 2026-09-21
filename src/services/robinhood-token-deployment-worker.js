@@ -194,6 +194,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   const status = {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalResolved: 0, totalLocalResolved: 0, totalDeferred: 0, totalSkipped: 0,
+    totalArchiveRequired: 0,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
 
@@ -301,18 +302,24 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     status.inFlight = true; status.totalRuns += 1;
     try {
       const current = await runtime();
+      const archiveRequired = typeof current.outbox.archiveExpiredBatch === 'function'
+        ? await current.outbox.archiveExpiredBatch({ limit: options.batchSize }) : 0;
+      status.totalArchiveRequired += archiveRequired;
       const tasks = typeof current.outbox.claimBatch === 'function'
         ? await current.outbox.claimBatch({
           owner, leaseMs: options.leaseMs, limit: options.batchSize,
         })
         : [await current.outbox.claim({ owner, leaseMs: options.leaseMs })].filter(Boolean);
-      if (!tasks.length) return { status: 'caught-up', claimed: 0, errors: 0 };
+      if (!tasks.length) {
+        return { status: 'caught-up', claimed: 0, archiveRequired, errors: 0 };
+      }
       const results = await concurrentMap(
         tasks, options.concurrency, (task) => processTask(current, task)
       );
       if (results.length === 1) return results[0];
       return {
         status: 'completed', claimed: tasks.length,
+        archiveRequired,
         resolved: results.filter((item) => item?.status === 'resolved').length,
         deferred: results.filter((item) => item?.status === 'deferred').length,
         skipped: results.filter((item) => item?.status === 'already-attributed').length,

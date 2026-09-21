@@ -29,10 +29,13 @@ describe('Robinhood holder archive deployment recovery', () => {
       },
     }, 20);
     assert.match(query.sql, /WITH queued AS MATERIALIZED/);
+    assert.match(query.sql, /outbox\.status = 'archive_required'/);
+    assert.match(query.sql, /mint ON queued\.exact = FALSE/);
     assert.match(query.sql, /LIMIT \$1::int[\s\S]+LEFT JOIN LATERAL/);
     assert.match(query.sql, /applied = FALSE[\s\S]+UNION ALL[\s\S]+applied = TRUE/);
     assert.deepEqual(query.params, [20]);
     assert.equal(rows[0].upperBlock, null);
+    assert.equal(rows[0].exact, false);
   });
 
   it('can restrict deployment recovery to tokens admitted to the catalog', async () => {
@@ -100,6 +103,7 @@ describe('Robinhood holder archive deployment recovery', () => {
       attributionFactory: () => ({
         async recordCodeTransitions() { return { attributed: 1 }; },
       }),
+      outboxFactory: () => ({ async completeRecovered() {} }),
       discoveryFactory: () => ({
         async discover(input) {
           assert.equal(input.upperBlock, '200');
@@ -117,13 +121,32 @@ describe('Robinhood holder archive deployment recovery', () => {
     assert.equal(headRequests, 1);
   });
 
+  it('removes an Archive-lane task that already has exact durable attribution', async () => {
+    const completed = [];
+    const result = await recoverCandidate({
+      outbox: { async completeRecovered(tokenAddress) { completed.push(tokenAddress); } },
+      discovery: { async discover() { throw new Error('must not call RPC discovery'); } },
+    }, {
+      ...candidate(TOKEN_A, null), exact: true, attributionBlock: '40',
+      attributionSource: 'rpc_code_transition',
+    });
+    assert.deepEqual(result, {
+      status: 'unchanged', tokenAddress: TOKEN_A,
+      source: 'rpc_code_transition', deploymentBlock: '40',
+    });
+    assert.deepEqual(completed, [TOKEN_A]);
+  });
+
   it('persists exact archive evidence and isolates individual failures', async () => {
-    const saved = { transitions: [], deployments: [] };
+    const saved = { transitions: [], deployments: [], completed: [] };
     const report = await main([], {
       options: { confirm: true, limit: 3, concurrency: 2, timeoutMs: 30000 },
       logger: { log() {} },
       listCandidates: async () => [candidate(TOKEN_A), candidate(TOKEN_B), candidate(TOKEN_C)],
       runtime: {
+        outbox: {
+          async completeRecovered(tokenAddress) { saved.completed.push(tokenAddress); },
+        },
         discovery: {
           async discover(input) {
             assert.equal(input.blockEvidenceOnly, true);
@@ -166,5 +189,6 @@ describe('Robinhood holder archive deployment recovery', () => {
     });
     assert.equal(saved.transitions[0].blockNumber, '40');
     assert.equal(saved.deployments[0].blockNumber, '50');
+    assert.deepEqual(saved.completed.sort(), [TOKEN_A, TOKEN_B].sort());
   });
 });

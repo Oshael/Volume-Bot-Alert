@@ -6586,6 +6586,26 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage242-robinhood-deployment-live-archive-lanes',
+    name: 'Stage 242 Robinhood deployment live/Archive lanes',
+    repair: 'node src/utils/db-init-stage242.js',
+    tables: [{
+      table: 'robinhood_token_deployment_outbox',
+      columns: ['live_deadline_at', 'archive_required_at'],
+      constraints: [{
+        name: 'rh_token_deployment_outbox_status_check',
+        includes: ['pending', 'leased', 'archive_required'],
+      }, {
+        name: 'rh_token_deployment_outbox_lease_check',
+        includes: ['archive_required_at', 'archive_required'],
+      }],
+      indexes: [{
+        name: 'idx_rh_token_deployment_outbox_live_deadline',
+        includes: ['status', 'live_deadline_at', 'next_attempt_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

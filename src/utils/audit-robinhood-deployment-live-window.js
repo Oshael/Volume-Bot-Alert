@@ -41,19 +41,26 @@ function counter(telemetry, name) {
 async function loadSnapshot(database, sampledAt, windowStart = null) {
   const { rows } = await database.query(`/* deployment-live-window:snapshot */
     WITH queue AS (
-      SELECT COUNT(*)::int AS items,
+      SELECT COUNT(*) FILTER (WHERE status<>'archive_required')::int AS items,
+        COUNT(*) FILTER (WHERE status='archive_required')::int AS archive_required,
         COUNT(*) FILTER (WHERE status='leased')::int AS leased,
-        COUNT(*) FILTER (WHERE next_attempt_at<=NOW())::int AS due_now,
-        COUNT(*) FILTER (WHERE created_at<=$1::timestamptz-INTERVAL '48 hours')::int AS older_48h,
-        COUNT(*) FILTER (WHERE created_at<=$1::timestamptz-INTERVAL '72 hours')::int AS older_72h,
-        COUNT(*) FILTER (WHERE created_at>$1::timestamptz-INTERVAL '72 hours'
-          AND created_at<=$1::timestamptz-INTERVAL '71 hours')::int AS expiring_next_hour,
+        COUNT(*) FILTER (WHERE status<>'archive_required'
+          AND next_attempt_at<=NOW())::int AS due_now,
+        COUNT(*) FILTER (WHERE status<>'archive_required'
+          AND created_at<=$1::timestamptz-INTERVAL '48 hours')::int AS older_48h,
+        COUNT(*) FILTER (WHERE status<>'archive_required'
+          AND created_at<=$1::timestamptz-INTERVAL '72 hours')::int AS older_72h,
+        COUNT(*) FILTER (WHERE status<>'archive_required'
+          AND live_deadline_at>$1::timestamptz
+          AND live_deadline_at<=$1::timestamptz+INTERVAL '1 hour')::int AS expiring_next_hour,
         COUNT(*) FILTER (WHERE $2::timestamptz IS NOT NULL
-          AND created_at>$2::timestamptz-INTERVAL '72 hours'
-          AND created_at<=$1::timestamptz-INTERVAL '72 hours')::int AS aged_out_during_sample,
-        EXTRACT(EPOCH FROM ($1::timestamptz-MAX(created_at)))::bigint AS newest_age_s,
-        EXTRACT(EPOCH FROM ($1::timestamptz-MIN(created_at)))::bigint AS oldest_age_s,
-        MAX(attempt_count)::int AS max_attempts
+          AND archive_required_at>$2::timestamptz
+          AND archive_required_at<=$1::timestamptz)::int AS aged_out_during_sample,
+        EXTRACT(EPOCH FROM ($1::timestamptz
+          -MAX(created_at) FILTER (WHERE status<>'archive_required')))::bigint AS newest_age_s,
+        EXTRACT(EPOCH FROM ($1::timestamptz
+          -MIN(created_at) FILTER (WHERE status<>'archive_required')))::bigint AS oldest_age_s,
+        MAX(attempt_count) FILTER (WHERE status<>'archive_required')::int AS max_attempts
       FROM robinhood_token_deployment_outbox WHERE chain='robinhood'
     )
     SELECT queue.*, lease.owner_id, lease.acquired_at, lease.heartbeat_at,
@@ -63,6 +70,7 @@ async function loadSnapshot(database, sampledAt, windowStart = null) {
   const row = rows[0] || {};
   return Object.freeze({
     sampledAt: new Date(sampledAt).toISOString(), items: integer(row.items),
+    archiveRequired: integer(row.archive_required),
     leased: integer(row.leased), dueNow: integer(row.due_now),
     older48h: integer(row.older_48h), older72h: integer(row.older_72h),
     expiringNextHour: integer(row.expiring_next_hour),
@@ -78,6 +86,7 @@ async function loadSnapshot(database, sampledAt, windowStart = null) {
       totalResolved: counter(row.telemetry, 'totalResolved'),
       totalSkipped: counter(row.telemetry, 'totalSkipped'),
       totalDeferred: counter(row.telemetry, 'totalDeferred'),
+      totalArchiveRequired: counter(row.telemetry, 'totalArchiveRequired'),
     }),
   });
 }
@@ -91,12 +100,15 @@ function summarize(start, end, elapsedSeconds) {
     && start.lease.acquiredAt === end.lease.acquiredAt;
   const resolved = sameLease ? delta(end.counters.totalResolved, start.counters.totalResolved) : null;
   const skipped = sameLease ? delta(end.counters.totalSkipped, start.counters.totalSkipped) : null;
+  const archived = sameLease
+    ? delta(end.counters.totalArchiveRequired, start.counters.totalArchiveRequired) : null;
   const completed = resolved == null || skipped == null ? null : resolved + skipped;
-  const arrivals = completed == null ? null : Math.max(0, end.items - start.items + completed);
+  const arrivals = completed == null || archived == null
+    ? null : Math.max(0, end.items - start.items + completed + archived);
   const rate = (value) => value == null ? null : Number((value / elapsedSeconds).toFixed(4));
   return Object.freeze({
     elapsedSeconds, comparableWorkerCounters: sameLease,
-    arrivals, completed, resolved, skipped,
+    arrivals, completed, resolved, skipped, archived,
     arrivalsPerSecond: rate(arrivals), completedPerSecond: rate(completed),
     netDrainPerSecond: rate(start.items - end.items),
     backlogDelta: end.items - start.items, agedOutDuringSample: end.agedOutDuringSample,

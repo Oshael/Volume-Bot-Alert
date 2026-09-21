@@ -375,7 +375,7 @@ Estimativa: 250–420 linhas.
 
 ### Corte 4 — deployment/creator live dentro da janela do pruned
 
-Status: 4A concluído localmente; 4B depende do probe na VPS.
+Status: 4A e 4B concluídos localmente; 4C depende do probe na VPS.
 
 Objetivo: garantir prioridade para evidência recente e medir perda da janela de estado.
 
@@ -385,7 +385,15 @@ Primeiro passo, sem assumir solução:
 - medir taxa de entrada/saída e quantidade que envelhece para fora da janela;
 - executar probe de `trace_block`/`debug_traceBlockByNumber` em blocos recentes.
 
-Se o trace recente for suportado e couber no budget:
+O Corte 4B separa o scheduler live do estoque histórico:
+
+- cada tarefa recebe deadline live de 72 horas;
+- tarefas vencidas viram `archive_required` e saem dos claims/RPC live;
+- mints canônicos novos reabrem a janela;
+- o recovery Archive remove a tarefa depois de persistir evidência exata;
+- a lane live usa earliest-deadline-first e telemetria separada.
+
+Se o trace recente for suportado e couber no budget, o Corte 4C deve:
 
 - reutilizar `robinhood-holder-deployment-verifier`;
 - tentar creator interno somente para transições recentes ainda sem creator;
@@ -399,8 +407,8 @@ Se o trace recente não for suportado:
 - creator interno desconhecido fica como caso explícito de reparo Archive;
 - deployment continua funcional com `rpc_code_transition` sem creator inventado.
 
-Esse corte pode ser dividido em 4A (telemetria/prioridade) e 4B (trace), cada um abaixo
-de 500 linhas. A decisão de implementar 4B depende do probe.
+O Corte 4A mede a janela, o 4B isola live/Archive e o 4C acrescenta trace. A decisão
+de implementar 4C depende do probe.
 
 ### Corte 5 — convergência do wallet-transfer
 

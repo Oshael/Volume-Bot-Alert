@@ -97,6 +97,7 @@ const stage212 = require('../src/utils/db-init-stage212');
 const stage213 = require('../src/utils/db-init-stage213');
 const stage214 = require('../src/utils/db-init-stage214');
 const stage215 = require('../src/utils/db-init-stage215');
+const stage242 = require('../src/utils/db-init-stage242');
 const stage216 = require('../src/utils/db-init-stage216');
 const stage222 = require('../src/utils/db-init-stage222');
 const stage239 = require('../src/utils/db-init-stage239');
@@ -366,6 +367,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage103.init({ closePool: false });
     await stage165.init({ closePool: false });
     await stage215.init({ closePool: false });
+    await stage242.init({ closePool: false });
     await stage110.init({ closePool: false });
     await stage113.init({ closePool: false });
     await stage114.init({ closePool: false });
@@ -788,15 +790,21 @@ describe('Robinhood canonical chain capture journal', () => {
       topics: [TRANSFER_TOPIC, ZERO_TOPIC, `0x${'0'.repeat(24)}${'8'.repeat(40)}`],
       data: `0x${'0'.repeat(63)}1`,
     }];
+    await db.query(`INSERT INTO robinhood_token_deployment_outbox(
+      chain, token_address, status, live_deadline_at, archive_required_at
+    ) VALUES ('robinhood', $1, 'archive_required',
+      NOW()-INTERVAL '1 hour', NOW()-INTERVAL '1 hour')`, [TOKEN]);
     await createRobinhoodChainCaptureJournal().commitBlock(input);
     const result = await db.query(
       `SELECT token_address, status, attempt_count, mint_block_number::text,
-              mint_block_hash, mint_transaction_hash
+              mint_block_hash, mint_transaction_hash,
+              live_deadline_at>NOW() AS live_deadline, archive_required_at
          FROM robinhood_token_deployment_outbox WHERE chain='robinhood'`
     );
     assert.deepEqual(result.rows, [{
       token_address: TOKEN, status: 'pending', attempt_count: 0,
       mint_block_number: '100', mint_block_hash: HASH, mint_transaction_hash: TX,
+      live_deadline: true, archive_required_at: null,
     }]);
   });
 

@@ -102,7 +102,8 @@ async function loadClassificationRisks(client) {
         OR queue.last_error_code='archive_required')
     ), deployment AS (
       SELECT 'deployment'::text AS dependency,
-        CASE WHEN task.mint_block_number IS NOT NULL AND raw.block_number IS NULL
+        CASE WHEN task.status='archive_required' THEN 'archive_required'
+             WHEN task.mint_block_number IS NOT NULL AND raw.block_number IS NULL
                THEN 'archive_required'
              WHEN COALESCE(raw.block_timestamp, task.created_at)
                <= NOW() - INTERVAL '72 hours' THEN 'archive_required'

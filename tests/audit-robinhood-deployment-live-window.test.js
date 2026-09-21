@@ -12,12 +12,14 @@ const HASH = `0x${'a'.repeat(64)}`;
 
 function snapshot(overrides = {}) {
   return {
-    sampledAt: '2026-09-20T12:00:00.000Z', items: 100, leased: 1, dueNow: 90,
+    sampledAt: '2026-09-20T12:00:00.000Z', items: 100, archiveRequired: 2,
+    leased: 1, dueNow: 90,
     older48h: 10, older72h: 2, expiringNextHour: 3, agedOutDuringSample: 0,
     newestAgeS: 5, oldestAgeS: 300000, maxAttempts: 9,
     lease: { active: true, ownerId: 'worker-1', acquiredAt: '2026-09-20T11:00:00.000Z',
       heartbeatAt: '2026-09-20T12:00:00.000Z' },
-    counters: { totalRuns: 10, totalResolved: 20, totalSkipped: 5, totalDeferred: 7 },
+    counters: { totalRuns: 10, totalResolved: 20, totalSkipped: 5, totalDeferred: 7,
+      totalArchiveRequired: 2 },
     ...overrides,
   };
 }
@@ -34,12 +36,13 @@ describe('Robinhood deployment live-window audit', () => {
 
   it('derives arrivals, completions and net drain only across the same worker lease', () => {
     const start = snapshot();
-    const end = snapshot({ items: 94, agedOutDuringSample: 1,
-      counters: { totalRuns: 14, totalResolved: 28, totalSkipped: 6, totalDeferred: 8 } });
+    const end = snapshot({ items: 94, archiveRequired: 3, agedOutDuringSample: 1,
+      counters: { totalRuns: 14, totalResolved: 28, totalSkipped: 6, totalDeferred: 8,
+        totalArchiveRequired: 3 } });
     assert.deepEqual(summarize(start, end, 10), {
       elapsedSeconds: 10, comparableWorkerCounters: true,
-      arrivals: 3, completed: 9, resolved: 8, skipped: 1,
-      arrivalsPerSecond: 0.3, completedPerSecond: 0.9,
+      arrivals: 4, completed: 9, resolved: 8, skipped: 1, archived: 1,
+      arrivalsPerSecond: 0.4, completedPerSecond: 0.9,
       netDrainPerSecond: 0.6, backlogDelta: -6, agedOutDuringSample: 1,
     });
     assert.equal(summarize(start, snapshot({ lease: {
@@ -52,7 +55,7 @@ describe('Robinhood deployment live-window audit', () => {
     const database = { async query(sql, params) {
       calls.push({ sql, params });
       if (sql.startsWith('/* deployment-live-window:snapshot */')) return { rows: [{
-        items: 2, leased: 1, due_now: 1, older_48h: 1, older_72h: 0,
+        items: 2, archive_required: 7, leased: 1, due_now: 1, older_48h: 1, older_72h: 0,
         expiring_next_hour: 1, aged_out_during_sample: 0, newest_age_s: '2',
         oldest_age_s: '200000', max_attempts: 3, owner_id: 'worker',
         lease_active: true, telemetry: { totalRuns: 4, totalResolved: 2 },
@@ -63,6 +66,7 @@ describe('Robinhood deployment live-window audit', () => {
     const loaded = await loadSnapshot(database, sampledAt);
     const blocks = await selectProbeBlocks(database, 1);
     assert.equal(loaded.items, 2);
+    assert.equal(loaded.archiveRequired, 7);
     assert.equal(loaded.counters.totalResolved, 2);
     assert.deepEqual(blocks, [{ blockNumber: '100', blockHash: HASH, transactions: 0 }]);
     assert.match(calls[0].sql, /SELECT COUNT\(\*\)/);
@@ -96,7 +100,8 @@ describe('Robinhood deployment live-window audit', () => {
 
   it('samples without writes and reports the observed interval', async () => {
     const snapshots = [snapshot(), snapshot({ items: 99, agedOutDuringSample: 1,
-      counters: { totalRuns: 11, totalResolved: 21, totalSkipped: 5, totalDeferred: 7 } })];
+      counters: { totalRuns: 11, totalResolved: 21, totalSkipped: 5, totalDeferred: 7,
+        totalArchiveRequired: 2 } })];
     const times = [0, 10_000]; const output = [];
     const report = await main([], { options: { sampleSeconds: 10, probeBlocks: 1,
       timeoutMs: 5000 }, database: {}, now: () => times.shift(), pause: async () => {},

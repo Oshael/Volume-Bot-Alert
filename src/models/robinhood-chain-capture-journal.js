@@ -469,7 +469,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
              mint_block_hash=EXCLUDED.mint_block_hash,
              mint_transaction_hash=EXCLUDED.mint_transaction_hash,
              status='pending', attempt_count=0, next_attempt_at=NOW(),
-             lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=NOW()
+             lease_owner=NULL, lease_until=NULL, last_error=NULL,
+             live_deadline_at=NOW() + INTERVAL '72 hours', archive_required_at=NULL,
+             updated_at=NOW()
            WHERE robinhood_token_deployment_outbox.mint_block_number IS NULL
               OR NOT EXISTS (
                 SELECT 1 FROM robinhood_chain_blocks anchored
