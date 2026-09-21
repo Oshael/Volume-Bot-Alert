@@ -417,7 +417,8 @@ Objetivo: fazer o cursor live chegar ao head e manter margem de capacidade.
 
 #### Corte 5A — instrumentação
 
-Status: concluído localmente; aguarda amostra correlacionada na VPS antes do 5B.
+Status: concluído e medido na VPS. A amostra inicial de cinco minutos drenou 7.750
+blocos, com `commitMs` médio de 3.773 ms e `totalMs` médio de 9.484 ms.
 
 Medir por batch:
 
@@ -437,6 +438,13 @@ Nenhuma otimização material será escolhida antes dessa medição.
 
 Implementar somente a mudança que ataca a fase confirmada. Comparar depois a mesma
 métrica primária: redução sustentada de `lag_blocks`.
+
+Status: consulta de preimagem de evidência corrigida localmente; aguarda comparação
+controlada na VPS. A consulta observada consumia em média 3.647 ms, lia 34,8 milhões
+de blocos compartilhados em 27 chamadas e coincidia com o custo de commit. O lookup
+passou a fornecer as colunas do slot diretamente ao índice composto existente, sem
+concatenar a identidade no predicado. Isso confirma o hot path e o desalinhamento com
+o índice, mas a contribuição causal ao lag total só será fechada pela amostra pós-deploy.
 
 Gate de saída:
 

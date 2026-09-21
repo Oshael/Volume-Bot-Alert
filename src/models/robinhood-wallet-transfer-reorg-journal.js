@@ -23,6 +23,7 @@ function identities(events) {
   const edgeLookups = new Map();
   const daily = new Set();
   const evidence = new Set();
+  const evidenceLookups = new Map();
   for (const event of events) {
     const identityKey = edgeKey(event);
     edges.add(identityKey);
@@ -34,12 +35,24 @@ function identities(events) {
     });
     daily.add(dailyKey(event));
     if (event.transferKind === 'wallet_transfer') {
-      for (const role of EVIDENCE_ROLES) evidence.add(evidenceKey(event, role));
+      const [leftWallet, rightWallet] = [event.fromWallet, event.toWallet].sort();
+      for (const role of EVIDENCE_ROLES) {
+        const key = evidenceKey(event, role);
+        evidence.add(key);
+        evidenceLookups.set(key, {
+          identity_key: key,
+          token_address: event.tokenAddress,
+          left_wallet: leftWallet,
+          right_wallet: rightWallet,
+          evidence_role: role,
+        });
+      }
     }
   }
   return {
     edges: [...edges], edgeLookups: [...edgeLookups.values()],
     daily: [...daily], evidence: [...evidence],
+    evidenceLookups: [...evidenceLookups.values()],
   };
 }
 async function loadRows(client, projectionVersion, keys) {
@@ -84,18 +97,25 @@ async function loadRows(client, projectionVersion, keys) {
       [CHAIN, projectionVersion, keys.daily],
     ],
     keys.evidence.length && [
-      `SELECT 'evidence:' || token_address || ':' || left_wallet || ':' || right_wallet
-                || ':' || evidence_role AS identity_key,
+      `SELECT requested.identity_key,
               to_jsonb(evidence) || jsonb_build_object(
                 'evidence_id', evidence_id::text,
                 'evidence_block', evidence_block::text,
                 'amount_raw', amount_raw::text
               ) AS previous_row
-         FROM robinhood_wallet_relationship_evidence evidence
-        WHERE chain=$1 AND algorithm_version=$2
-          AND ('evidence:' || token_address || ':' || left_wallet || ':' || right_wallet
-                || ':' || evidence_role) = ANY($3::text[])`,
-      [CHAIN, projectionVersion, keys.evidence],
+         FROM jsonb_to_recordset($3::jsonb) AS requested(
+                identity_key text, token_address text, left_wallet text,
+                right_wallet text, evidence_role text
+              )
+         JOIN robinhood_wallet_relationship_evidence evidence
+           ON evidence.chain=$1 AND evidence.algorithm_version=$2
+          AND COALESCE(evidence.token_address,
+                '0x0000000000000000000000000000000000000000')=requested.token_address
+          AND evidence.left_wallet=requested.left_wallet
+          AND evidence.right_wallet=requested.right_wallet
+          AND evidence.relationship_kind='direct_token_transfer'
+          AND evidence.evidence_role=requested.evidence_role`,
+      [CHAIN, projectionVersion, JSON.stringify(keys.evidenceLookups)],
     ],
   ].filter(Boolean);
   for (const [sql, params] of queries) {
