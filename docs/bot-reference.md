@@ -5340,7 +5340,15 @@ As verificações usam uma transação read-only com timeout de 60 segundos. A p
 de mint é uma consulta set-based separada e não roda quando já existe backfill
 global ativo, pois nesse estado seu resultado não pode liberar a retenção de
 holders. As queries são identificadas por `retention-safety:state` e
-`retention-safety:mint` em `pg_stat_activity`.
+`retention-safety:mint` em `pg_stat_activity`. A mesma transação classifica as
+dependências de wallet-classification em `wallet_classification.status`: `safe`,
+`at_risk`, `archive_required` ou `blocked`. Funding usa o bloco inicial do lookback,
+deployment usa o mint ancorado ou a idade de admissão, e redistribution considera
+seguras as versões com âncoras duráveis completas. A query aparece como
+`retention-safety:wallet-classification`; 48 horas gera `at_risk`, sem antecipar o
+cutoff, enquanto prova expirada aos 3 dias ou divergência canônica bloqueia o piloto
+e exige Archive ou correção explícita. A retenção temporal continua fixa em no
+mínimo 3 dias.
 O marcador `applied` é prova de materialização porque balances, `holder_count` e o
 próprio marcador são commitados atomicamente. Isso autoriza somente planejar um
 piloto: não constitui replay semântico independente, não estima espaço físico

@@ -1,6 +1,7 @@
 # Plano de execução — wallet classification Robinhood com raw de 3 dias
 
-Status: Cortes 0, 1A, 1B, 1C e 2 concluídos localmente; Stage 241 ainda não aplicada na VPS.
+Status: Cortes 0, 1A, 1B, 1C, 2 e 3 concluídos localmente; Stage 241 aplicada na VPS
+e reparo histórico de âncoras em andamento no PC Archive.
 Os reparos existentes podem rodar no PC Archive enquanto os demais cortes de código
 são implementados. O cutover depende da Stage 241 e do reparo das linhas legadas.
 
@@ -339,6 +340,8 @@ Gate de saída:
 - redistribution volta a materializar snapshots.
 
 ### Corte 3 — retenção de três dias como contrato verificável
+
+Status: concluído localmente; auditor atualizado ainda não implantado na VPS.
 
 Objetivo: detectar risco antes do cutoff sem transformar o raw em armazenamento
 permanente.

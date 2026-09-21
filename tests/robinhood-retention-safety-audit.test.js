@@ -30,6 +30,13 @@ function state(overrides = {}) {
   };
 }
 
+function classificationRows(overrides = {}) {
+  return ['funding', 'deployment', 'redistribution'].map((dependency) => ({
+    dependency, items: 0, safe: 0, at_risk: 0, archive_required: 0,
+    blocked: 0, oldest_age_s: null, ...(overrides[dependency] || {}),
+  }));
+}
+
 describe('Robinhood retention safety audit', () => {
   it('calculates conservative independent cutoffs and never authorizes a write', () => {
     const report = evaluate({ state: state(),
@@ -38,6 +45,7 @@ describe('Robinhood retention safety audit', () => {
     assert.equal(report.action, 'none');
     assert.equal(report.chain_events.candidate_cutoff_block, '850');
     assert.equal(report.holder_journal.candidate_cutoff_block, '760');
+    assert.equal(report.wallet_classification.status, 'safe');
     assert.equal(report.chain_events.consumers.liquidity.checkpoint_canonical, true);
     assert.equal(report.proof.scope,
       'durable_consumer_checkpoints_and_downstream_materialization_gates');
@@ -80,6 +88,25 @@ describe('Robinhood retention safety audit', () => {
     assert.equal(report.chain_events.quarantined_liquidity_refreshes, '2');
   });
 
+  it('warns at 48 hours and blocks pruning on expired or divergent classification proof', () => {
+    const atRisk = evaluate({ state: state(), chainRetentionBlocks: 100,
+      holderRetentionBlocks: 200, classification: classificationRows({
+        funding: { items: 2, safe: 1, at_risk: 1, oldest_age_s: '172801' },
+      }) });
+    assert.equal(atRisk.wallet_classification.status, 'at_risk');
+    assert.equal(atRisk.chain_events.ready_for_pilot, true);
+
+    const unsafe = evaluate({ state: state(), chainRetentionBlocks: 100,
+      holderRetentionBlocks: 200, classification: classificationRows({
+        deployment: { items: 1, archive_required: 1, oldest_age_s: '259201' },
+        redistribution: { items: 1, blocked: 1, oldest_age_s: '100' },
+      }) });
+    assert.equal(unsafe.wallet_classification.status, 'blocked');
+    assert.deepEqual(unsafe.chain_events.blockers.slice(-2).map(({ code }) => code), [
+      'wallet_classification_archive_required', 'wallet_classification_retention_blocked',
+    ]);
+  });
+
   it('uses only a repeatable read-only database snapshot', async () => {
     const queries = [];
     const client = { async query(sql) {
@@ -87,6 +114,9 @@ describe('Robinhood retention safety audit', () => {
       if (sql.startsWith('BEGIN')) return { rows: [] };
       if (sql.startsWith('SET LOCAL')) return { rows: [] };
       if (sql.startsWith('/* retention-safety:state */')) return { rows: [state()] };
+      if (sql.startsWith('/* retention-safety:wallet-classification */')) {
+        return { rows: classificationRows() };
+      }
       if (sql.startsWith('/* retention-safety:mint */')) {
         return { rows: [{ block_number: null }] };
       }
@@ -100,9 +130,10 @@ describe('Robinhood retention safety audit', () => {
     assert.equal((await audit.inspect()).ready_for_pilot, true);
     assert.match(queries[0], /REPEATABLE READ READ ONLY/);
     assert.equal(queries[1], `SET LOCAL statement_timeout = '${DEFAULT_STATEMENT_TIMEOUT_MS}ms'`);
-    assert.match(queries[3], /EXISTS[\s\S]+robinhood_token_deployment_outbox/);
+    assert.match(queries[3], /INTERVAL '48 hours'[\s\S]+INTERVAL '72 hours'/);
+    assert.match(queries[4], /EXISTS[\s\S]+robinhood_token_deployment_outbox/);
     assert.match(queries[2], /status<>'quarantined'/);
-    assert.doesNotMatch(queries[3], /JOIN LATERAL|UNION ALL/);
+    assert.doesNotMatch(queries[4], /JOIN LATERAL|UNION ALL/);
     assert.equal(queries.at(-1), 'ROLLBACK');
     assert.equal(queries.some((sql) => /\b(DELETE|UPDATE|INSERT)\b/.test(sql)), false);
   });
@@ -118,6 +149,9 @@ describe('Robinhood retention safety audit', () => {
         return { rows: [state({
           global_run_id: '9', global_run_status: 'scanning', global_run_next_block: '400',
         })] };
+      }
+      if (sql.startsWith('/* retention-safety:wallet-classification */')) {
+        return { rows: classificationRows() };
       }
       throw new Error(`unexpected query: ${sql}`);
     }, release() {} };
@@ -140,6 +174,9 @@ describe('Robinhood retention safety audit', () => {
         return { rows: [] };
       }
       if (sql.startsWith('/* retention-safety:state */')) return { rows: [state()] };
+      if (sql.startsWith('/* retention-safety:wallet-classification */')) {
+        return { rows: classificationRows() };
+      }
       throw new Error(`unexpected query: ${sql}`);
     }, release() {} };
     const audit = createRobinhoodRetentionSafetyAudit({

@@ -8,6 +8,7 @@ const DEFAULT_RETENTION_BLOCKS = 20_000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 60_000;
 const MAX_CAPTURE_LAG = 2n;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const CLASSIFICATION_DEPENDENCIES = ['funding', 'deployment', 'redistribution'];
 
 function quantity(value) { return value == null ? null : BigInt(value); }
 function text(value) { return value == null ? null : String(value); }
@@ -66,6 +67,125 @@ function holderRisks(row, holderCutoff) {
   return { blockers, oldPending, mintRisk };
 }
 
+function classificationRisks(rows = []) {
+  const byName = new Map(rows.map((row) => [row.dependency, row]));
+  const dependencies = Object.fromEntries(CLASSIFICATION_DEPENDENCIES.map((name) => {
+    const row = byName.get(name) || {};
+    const counts = Object.fromEntries(['items', 'safe', 'at_risk', 'archive_required', 'blocked']
+      .map((key) => [key, Number(row[key] || 0)]));
+    const status = counts.blocked ? 'blocked'
+      : counts.archive_required ? 'archive_required' : counts.at_risk ? 'at_risk' : 'safe';
+    return [name, Object.freeze({ status, ...counts,
+      oldest_age_s: row.oldest_age_s == null ? null : String(row.oldest_age_s) })];
+  }));
+  const values = Object.values(dependencies);
+  const status = values.some((item) => item.status === 'blocked') ? 'blocked'
+    : values.some((item) => item.status === 'archive_required') ? 'archive_required'
+      : values.some((item) => item.status === 'at_risk') ? 'at_risk' : 'safe';
+  return Object.freeze({ status, warning_after_s: 48 * 60 * 60,
+    archive_after_s: 72 * 60 * 60, dependencies });
+}
+
+async function loadClassificationRisks(client) {
+  const result = await client.query(`/* retention-safety:wallet-classification */
+    WITH funding AS (
+      SELECT 'funding'::text AS dependency,
+        CASE WHEN queue.last_error_code='archive_required' OR raw.block_number IS NULL
+               OR raw.block_timestamp <= NOW() - INTERVAL '72 hours' THEN 'archive_required'
+             WHEN raw.block_timestamp <= NOW() - INTERVAL '48 hours' THEN 'at_risk'
+             ELSE 'safe' END AS severity,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(raw.block_timestamp, queue.created_at)))::bigint age_s
+      FROM robinhood_bundle_funding_live_queue queue
+      LEFT JOIN robinhood_chain_blocks raw ON raw.chain=queue.chain AND raw.canonical
+        AND raw.block_number=GREATEST(queue.anchor_block - queue.lookback_blocks, 0)
+      WHERE queue.chain=$1 AND (queue.status<>'complete'
+        OR queue.last_error_code='archive_required')
+    ), deployment AS (
+      SELECT 'deployment'::text AS dependency,
+        CASE WHEN task.mint_block_number IS NOT NULL AND raw.block_number IS NULL
+               THEN 'archive_required'
+             WHEN COALESCE(raw.block_timestamp, task.created_at)
+               <= NOW() - INTERVAL '72 hours' THEN 'archive_required'
+             WHEN COALESCE(raw.block_timestamp, task.created_at)
+               <= NOW() - INTERVAL '48 hours' THEN 'at_risk'
+             ELSE 'safe' END AS severity,
+        EXTRACT(EPOCH FROM (NOW()
+          - COALESCE(raw.block_timestamp, task.created_at)))::bigint age_s
+      FROM robinhood_token_deployment_outbox task
+      LEFT JOIN robinhood_chain_blocks raw ON raw.chain=task.chain AND raw.canonical
+        AND raw.block_number=task.mint_block_number
+      WHERE task.chain=$1
+    ), redistribution_inputs AS (
+      SELECT queue.*, observation_raw.block_hash AS observation_canonical_hash,
+        observation_raw.block_timestamp AS observation_raw_time,
+        source_raw.block_hash AS source_canonical_hash,
+        holder.ledger_status, holder.live_through_block, holder.live_through_hash,
+        holder_raw.block_hash AS holder_canonical_hash,
+        holder_raw.block_timestamp AS holder_raw_time,
+        holder_anchor.block_number AS holder_anchor_block
+      FROM robinhood_bundle_redistribution_queue queue
+      LEFT JOIN robinhood_chain_blocks observation_raw ON observation_raw.chain=queue.chain
+        AND observation_raw.canonical
+        AND observation_raw.block_number=queue.observation_from_block
+      LEFT JOIN robinhood_chain_blocks source_raw ON source_raw.chain=queue.chain
+        AND source_raw.canonical AND source_raw.block_number=queue.source_through_block
+      LEFT JOIN robinhood_holder_token_states holder ON holder.chain=queue.chain
+        AND holder.token_address=queue.token_address
+      LEFT JOIN robinhood_chain_blocks holder_raw ON holder_raw.chain=holder.chain
+        AND holder_raw.canonical AND holder_raw.block_number=holder.live_through_block
+      LEFT JOIN robinhood_chain_block_anchors holder_anchor ON holder_anchor.chain=holder.chain
+        AND holder_anchor.block_number=holder.live_through_block
+        AND holder_anchor.block_hash=holder.live_through_hash
+      WHERE queue.chain=$1 AND queue.status<>'complete'
+        AND (queue.observation_from_hash IS NULL
+          OR queue.source_requested_version IS DISTINCT FROM queue.requested_version)
+    ), redistribution AS (
+      SELECT 'redistribution'::text AS dependency,
+        CASE WHEN (observation_from_hash IS NOT NULL AND observation_canonical_hash IS NOT NULL
+                    AND observation_from_hash<>observation_canonical_hash)
+               OR (source_requested_version=requested_version AND source_canonical_hash IS NOT NULL
+                    AND source_through_hash<>source_canonical_hash)
+               OR (ledger_status='live' AND live_through_block>=event_through_block
+                    AND holder_canonical_hash IS NOT NULL
+                    AND live_through_hash<>holder_canonical_hash) THEN 'blocked'
+             WHEN observation_from_hash IS NULL AND observation_raw_time IS NULL
+               THEN 'archive_required'
+             WHEN observation_from_hash IS NULL
+               AND observation_raw_time <= NOW() - INTERVAL '72 hours' THEN 'archive_required'
+             WHEN source_requested_version IS DISTINCT FROM requested_version
+               AND ledger_status='live' AND live_through_block>=event_through_block
+               AND holder_anchor_block IS NULL AND holder_raw_time IS NULL THEN 'archive_required'
+             WHEN source_requested_version IS DISTINCT FROM requested_version
+               AND ledger_status='live' AND live_through_block>=event_through_block
+               AND holder_anchor_block IS NULL
+               AND holder_raw_time <= NOW() - INTERVAL '72 hours' THEN 'archive_required'
+             WHEN (observation_from_hash IS NULL
+                    AND observation_raw_time <= NOW() - INTERVAL '48 hours')
+               OR (source_requested_version IS DISTINCT FROM requested_version
+                   AND ledger_status='live' AND live_through_block>=event_through_block
+                   AND holder_anchor_block IS NULL
+                   AND holder_raw_time <= NOW() - INTERVAL '48 hours') THEN 'at_risk'
+             ELSE 'safe' END AS severity,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(observation_raw_time,
+          holder_raw_time, created_at)))::bigint age_s
+      FROM redistribution_inputs
+    ), risks AS (
+      SELECT * FROM funding UNION ALL SELECT * FROM deployment
+      UNION ALL SELECT * FROM redistribution
+    ), dependencies(dependency) AS (
+      VALUES ('funding'::text), ('deployment'::text), ('redistribution'::text)
+    )
+    SELECT dependencies.dependency, COUNT(risks.severity)::int AS items,
+      COUNT(*) FILTER (WHERE risks.severity='safe')::int AS safe,
+      COUNT(*) FILTER (WHERE risks.severity='at_risk')::int AS at_risk,
+      COUNT(*) FILTER (WHERE risks.severity='archive_required')::int AS archive_required,
+      COUNT(*) FILTER (WHERE risks.severity='blocked')::int AS blocked,
+      MAX(risks.age_s)::text AS oldest_age_s
+    FROM dependencies LEFT JOIN risks USING (dependency)
+    GROUP BY dependencies.dependency ORDER BY dependencies.dependency`, [CHAIN]);
+  return result.rows;
+}
+
 function evaluate(input = {}) {
   const row = input.state || {};
   const chainRetained = validRetentionBlocks(input.chainRetentionBlocks, 'chainRetentionBlocks');
@@ -91,6 +211,7 @@ function evaluate(input = {}) {
   const journalStart = quantity(row.journal_start_block);
   const holderFloor = quantity(row.holder_journal_floor_block);
   const common = sharedBlockers({ captureNext, captureHead, captureLag });
+  const classification = classificationRisks(input.classification);
 
   const chainBlockers = [...common];
   for (const item of consumers) {
@@ -99,6 +220,11 @@ function evaluate(input = {}) {
   add(chainBlockers, journalStart == null, 'canonical_journal_empty');
   add(chainBlockers, chainCutoff == null || journalStart == null || chainCutoff <= journalStart,
     'no_chain_event_prefix_eligible');
+  add(chainBlockers, Object.values(classification.dependencies)
+    .some((item) => item.archive_required > 0),
+  'wallet_classification_archive_required');
+  add(chainBlockers, Object.values(classification.dependencies)
+    .some((item) => item.blocked > 0), 'wallet_classification_retention_blocked');
 
   const holderBlockers = [...common];
   add(holderBlockers, !holderCursor.valid, 'holder_checkpoint_invalid');
@@ -133,6 +259,7 @@ function evaluate(input = {}) {
       oldest_unapplied_block: text(risks.oldPending),
       oldest_pending_deployment_mint_block: text(risks.mintRisk),
     },
+    wallet_classification: classification,
     proof: {
       scope: 'durable_consumer_checkpoints_and_downstream_materialization_gates',
       holder_atomicity: 'balances_token_state_and_applied_marker_commit_together',
@@ -148,7 +275,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
   const holderRetentionBlocks = Number(options.holderRetentionBlocks ?? DEFAULT_RETENTION_BLOCKS);
   async function inspect() {
     const client = await database.getClient();
-    let state;
+    let state; let classification;
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       await client.query(`SET LOCAL statement_timeout = '${DEFAULT_STATEMENT_TIMEOUT_MS}ms'`);
@@ -216,6 +343,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              ORDER BY id DESC LIMIT 1) campaign ON TRUE`,
         [CHAIN, CLASSIFICATION_VERSION]
       )).rows[0] || {};
+      classification = await loadClassificationRisks(client);
       // An active global campaign already blocks holder retention. Avoid an
       // expensive journal proof whose result cannot change that decision.
       if (includeHolderProof && state.global_run_id == null) {
@@ -240,12 +368,12 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
     } finally { client.release(); }
-    return evaluate({ state, chainRetentionBlocks, holderRetentionBlocks });
+    return evaluate({ state, classification, chainRetentionBlocks, holderRetentionBlocks });
   }
   return Object.freeze({ inspect });
 }
 
 module.exports = {
   DEFAULT_RETENTION_BLOCKS, DEFAULT_STATEMENT_TIMEOUT_MS,
-  createRobinhoodRetentionSafetyAudit, evaluate,
+  createRobinhoodRetentionSafetyAudit, evaluate, loadClassificationRisks,
 };
