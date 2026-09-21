@@ -3546,6 +3546,17 @@ indexado, é idempotente e roda antes dos claims sem consultar RPC. `totalArchiv
 mede essas transições; eventos/mints novos continuam tendo precedência ao reabrir a lane
 live, enquanto falhas Archive permanecem isoladas do scheduler live.
 
+O enriquecimento live de creator por trace é opt-in com
+`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_ENABLED`. Ele roda somente depois do
+`rpc_code_transition` durável, tenta no máximo
+`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_BATCH_SIZE` por batch (default 2), limita idade
+por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_MAX_AGE_MS` (default 10 minutos) e usa
+`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_TIMEOUT_MS` (default 2 segundos). O caminho
+reutiliza prova canônica do `robinhood-holder-deployment-verifier`; falha ou budget
+esgotado não reabre a tarefa nem impede a conclusão básica. Observe
+`totalTraceAttempts`, `totalTraceResolved`, `totalTraceFailed`,
+`totalTraceBudgetSkipped` e `lastTraceError` antes de ampliar qualquer limite.
+
 Para recuperar deployments e registrar de uma vez pares meme/stock históricos V2, V3
 e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com

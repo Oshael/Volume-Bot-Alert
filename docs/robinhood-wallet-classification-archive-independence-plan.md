@@ -375,7 +375,7 @@ Estimativa: 250–420 linhas.
 
 ### Corte 4 — deployment/creator live dentro da janela do pruned
 
-Status: 4A e 4B concluídos localmente; 4C depende do probe na VPS.
+Status: 4A, 4B e 4C concluídos localmente; rollout do 4C é opt-in.
 
 Objetivo: garantir prioridade para evidência recente e medir perda da janela de estado.
 
@@ -407,8 +407,9 @@ Se o trace recente não for suportado:
 - creator interno desconhecido fica como caso explícito de reparo Archive;
 - deployment continua funcional com `rpc_code_transition` sem creator inventado.
 
-O Corte 4A mede a janela, o 4B isola live/Archive e o 4C acrescenta trace. A decisão
-de implementar 4C depende do probe.
+O Corte 4A mede a janela, o 4B isola live/Archive e o 4C acrescenta trace opt-in,
+limitado a duas tentativas por batch, idade de dez minutos e timeout de dois segundos.
+Falha de trace não reabre nem bloqueia um deployment básico já materializado.
 
 ### Corte 5 — convergência do wallet-transfer
 

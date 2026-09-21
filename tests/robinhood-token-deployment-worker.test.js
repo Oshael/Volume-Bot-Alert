@@ -88,6 +88,75 @@ it('uses a durable mint anchor without searching the moving journal window', asy
   assert.deepEqual(fixture.calls, ['transition', 'complete']);
 });
 
+it('persists bounded live trace enrichment after the code transition', async () => {
+  const traced = [];
+  const tasks = [TOKEN, TOKEN_B].map((tokenAddress) => ({
+    tokenAddress, attemptCount: 1, createdAt: new Date(),
+    mintHint: { tokenAddress, blockNumber: '100', blockHash: BLOCK_HASH,
+      transactionHash: TRANSACTION_HASH },
+  }));
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', options: { traceEnabled: true, traceBatchSize: 1 },
+    runtime: {
+      outbox: {
+        claimBatch: async () => tasks,
+        isExact: async () => false,
+        complete: async () => {},
+        retry: async () => { throw new Error('must not retry'); },
+      },
+      localResolver: { verify: async (input) => input },
+      creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+      traceVerifier: {
+        async verifyBlockTraceDeployment(input) {
+          traced.push(input.tokenAddress);
+          return { ...input, creatorAddress: TOKEN_B, transactionHash: TRANSACTION_HASH,
+            source: 'rpc_trace', factoryAddress: TOKEN_B, blockHash: BLOCK_HASH };
+        },
+      },
+      attributions: {
+        recordCodeTransitions: async () => {},
+        recordVerifiedDirectDeployments: async () => {},
+      },
+    },
+  });
+  const result = await worker.runOnce();
+  assert.equal(result.resolved, 2);
+  assert.equal(traced.length, 1);
+  assert.equal(worker.getStatus().totalTraceAttempts, 1);
+  assert.equal(worker.getStatus().totalTraceResolved, 1);
+  assert.equal(worker.getStatus().totalTraceBudgetSkipped, 1);
+});
+
+it('completes basic deployment evidence when optional live trace fails', async () => {
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date(),
+        mintHint: { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH } }),
+      isExact: async () => false,
+      complete: async () => { fixture.calls.push('complete'); },
+      retry: async () => { throw new Error('must not retry'); },
+    },
+    localResolver: { verify: async (input) => input },
+    creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+    traceVerifier: { verifyBlockTraceDeployment: async () => {
+      throw Object.assign(new Error('trace timeout'), { code: 'rpc_timeout' });
+    } },
+    attributions: { recordCodeTransitions: async () => { fixture.calls.push('transition'); } },
+  });
+  const worker = createRobinhoodTokenDeploymentWorker({
+    runtime: fixture.value, owner: 'test', options: { traceEnabled: true },
+  });
+  assert.deepEqual(await worker.runOnce(), {
+    status: 'resolved', tokenAddress: TOKEN, source: 'rpc_code_transition',
+  });
+  assert.deepEqual(fixture.calls, ['transition', 'complete']);
+  assert.equal(worker.getStatus().totalTraceFailed, 1);
+  assert.deepEqual(worker.getStatus().lastTraceError, {
+    code: 'rpc_timeout', message: 'trace timeout',
+  });
+});
+
 it('retries a durable mint anchor rapidly without hiding the RPC failure', async () => {
   let retry;
   const mintHint = {
@@ -465,4 +534,28 @@ it('builds the live deployment runtime without an external creation lookup', () 
 
   assert.ok(built);
   assert.equal(blockscoutFactoryCalls, 0);
+});
+
+it('builds an isolated no-retry trace client only when trace is enabled', () => {
+  const clients = [];
+  let verifierOptions;
+  const built = buildRuntime({
+    env: { RH_NODE_RPC_URL: 'http://127.0.0.1:8547' }, database: {},
+    rpcClientFactory: (options) => {
+      const client = { request: async () => '0x1237' };
+      clients.push({ options, client });
+      return client;
+    },
+    outboxFactory: () => ({}), attributionFactory: () => ({}),
+    creatorSourceFactory: () => ({}), localResolverFactory: () => ({}),
+    traceVerifierFactory: (options) => { verifierOptions = options; return {}; },
+  }, { timeoutMs: 30_000, traceEnabled: true, traceTimeoutMs: 2000 });
+  assert.ok(built.traceVerifier);
+  assert.equal(clients.length, 2);
+  assert.deepEqual(clients[1].options, {
+    providers: [{ name: 'robinhood-deployment-live-trace', url: 'http://127.0.0.1:8547' }],
+    timeoutMs: 2000, maxRetries: 0,
+  });
+  assert.equal(verifierOptions.rpcClient, clients[1].client);
+  assert.equal(typeof verifierOptions.internalCreationLookup, 'function');
 });

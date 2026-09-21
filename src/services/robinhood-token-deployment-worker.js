@@ -8,6 +8,9 @@ const {
   createRobinhoodCanonicalDirectCreatorSource,
 } = require('../models/robinhood-canonical-direct-creator-source');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
+const {
+  createRobinhoodHolderDeploymentVerifier,
+} = require('./robinhood-holder-deployment-verifier');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
@@ -117,6 +120,10 @@ function normalizeOptions(input = {}) {
     retryMs: bounded(input.retryMs, 15_000, 1000, 3_600_000),
     maxRetryMs: bounded(input.maxRetryMs, 3_600_000, 60_000, 86_400_000),
     timeoutMs: bounded(input.timeoutMs, 30_000, 1000, 60_000),
+    traceEnabled: input.traceEnabled === true,
+    traceBatchSize: bounded(input.traceBatchSize, 2, 1, 8),
+    traceTimeoutMs: bounded(input.traceTimeoutMs, 2000, 500, 5000),
+    traceMaxAgeMs: bounded(input.traceMaxAgeMs, 600_000, 60_000, 259_200_000),
   });
 }
 
@@ -131,6 +138,11 @@ function buildRuntime(deps, options) {
     providers: [{ name: 'robinhood-deployment-live', url: rpcUrl }],
     timeoutMs: options.timeoutMs, maxRetries: 1,
   });
+  const traceClient = options.traceEnabled
+    ? (deps.rpcClientFactory || createEvmJsonRpcClient)({
+      providers: [{ name: 'robinhood-deployment-live-trace', url: rpcUrl }],
+      timeoutMs: options.traceTimeoutMs, maxRetries: 0,
+    }) : null;
   return Object.freeze({
     outbox: (deps.outboxFactory || createRobinhoodTokenDeploymentOutboxRepository)({ database }),
     attributions: (deps.attributionFactory || createRobinhoodTokenAttributionRepository)({ database }),
@@ -138,6 +150,10 @@ function buildRuntime(deps, options) {
       database,
     }),
     localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
+    traceVerifier: traceClient
+      ? (deps.traceVerifierFactory || createRobinhoodHolderDeploymentVerifier)({
+        rpcClient: traceClient, internalCreationLookup: async () => null,
+      }) : null,
   });
 }
 
@@ -185,7 +201,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   const cancel = deps.cancelSchedule || clearTimeout;
   const owner = deps.owner || `token-deployment-${process.pid}-${randomUUID()}`;
   const now = deps.now || Date.now;
-  let options = normalizeOptions();
+  let options = normalizeOptions(deps.options);
   let runtimePromise;
   let timer;
   let listener;
@@ -195,6 +211,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalResolved: 0, totalLocalResolved: 0, totalDeferred: 0, totalSkipped: 0,
     totalArchiveRequired: 0,
+    totalTraceAttempts: 0, totalTraceResolved: 0, totalTraceFailed: 0,
+    totalTraceBudgetSkipped: 0, lastTraceError: null,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
 
@@ -241,6 +259,53 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     return null;
   }
 
+  async function resolveTraceCreator(current, task, transition, traceBudget) {
+    if (!options.traceEnabled || taskAge(task) > options.traceMaxAgeMs
+        || typeof current.traceVerifier?.verifyBlockTraceDeployment !== 'function') return null;
+    if (!traceBudget.take()) {
+      status.totalTraceBudgetSkipped += 1;
+      return null;
+    }
+    status.totalTraceAttempts += 1;
+    try {
+      return await current.traceVerifier.verifyBlockTraceDeployment({
+        tokenAddress: transition.tokenAddress, blockNumber: transition.blockNumber,
+      });
+    } catch (error) {
+      status.totalTraceFailed += 1;
+      status.lastTraceError = {
+        code: error.code || 'deployment_trace_failed', message: error.message,
+      };
+      return null;
+    }
+  }
+
+  function recordTraceFailure(error, fallbackCode) {
+    status.totalTraceFailed += 1;
+    status.lastTraceError = {
+      code: error.code || fallbackCode, message: error.message,
+    };
+  }
+
+  async function materializeCreator(current, task, transition, traceBudget) {
+    const canonical = await resolveCanonicalCreator(current, transition);
+    if (canonical) {
+      await current.attributions.recordVerifiedDirectDeployments([canonical]);
+      return canonical;
+    }
+    const traced = await resolveTraceCreator(current, task, transition, traceBudget);
+    if (!traced) return null;
+    try {
+      await current.attributions.recordVerifiedDirectDeployments([traced]);
+      status.totalTraceResolved += 1;
+      status.lastTraceError = null;
+      return traced;
+    } catch (error) {
+      recordTraceFailure(error, 'deployment_trace_persist_failed');
+      return null;
+    }
+  }
+
   function retryFor(task, error) {
     if (error.code === 'local_mint_pending') return LOCAL_EVIDENCE_RETRY_MS;
     if (task.mintHint && task.attemptCount <= PINNED_EVIDENCE_FAST_RETRIES) {
@@ -257,7 +322,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     status.totalDeferred += 1;
   }
 
-  async function processTask(current, task) {
+  async function processTask(current, task, traceBudget) {
     try {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -272,10 +337,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       }
       if (transition) {
         await current.attributions.recordCodeTransitions([transition]);
-        const deployment = await resolveCanonicalCreator(current, transition);
-        if (deployment) {
-          await current.attributions.recordVerifiedDirectDeployments([deployment]);
-        }
+        const deployment = await materializeCreator(current, task, transition, traceBudget);
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalResolved += 1; status.totalLocalResolved += 1;
         return {
@@ -313,8 +375,16 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       if (!tasks.length) {
         return { status: 'caught-up', claimed: 0, archiveRequired, errors: 0 };
       }
+      const traceBudget = {
+        remaining: options.traceBatchSize,
+        take() {
+          if (this.remaining <= 0) return false;
+          this.remaining -= 1;
+          return true;
+        },
+      };
       const results = await concurrentMap(
-        tasks, options.concurrency, (task) => processTask(current, task)
+        tasks, options.concurrency, (task) => processTask(current, task, traceBudget)
       );
       if (results.length === 1) return results[0];
       return {

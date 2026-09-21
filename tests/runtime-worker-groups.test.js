@@ -1527,10 +1527,15 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONFIRMATIONS: '9999',
       ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_STATE_LOOKBACK_BLOCKS: '1',
       ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_RETRY_MS: '99999999',
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_ENABLED: 'true',
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_BATCH_SIZE: '99',
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_TIMEOUT_MS: '99999',
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_MAX_AGE_MS: '1',
     }, (config) => assert.deepEqual(config.robinhoodTokenDeploymentWorker, {
       enabled: true, intervalMs: 100, leaseMs: 300_000,
       batchSize: 256, concurrency: 32, confirmations: 256, stateLookbackBlocks: 16,
       retryMs: 3_600_000, maxRetryMs: 3_600_000, timeoutMs: 30_000,
+      traceEnabled: true, traceBatchSize: 8, traceTimeoutMs: 5000, traceMaxAgeMs: 60_000,
     }));
   });
 

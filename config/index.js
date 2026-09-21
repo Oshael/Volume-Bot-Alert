@@ -2235,6 +2235,19 @@ module.exports = {
     timeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TIMEOUT_MS, 30_000, 1000, 60_000
     ),
+    traceEnabled: parseBoolean(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_ENABLED, false
+    ),
+    traceBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_BATCH_SIZE, 2, 1, 8
+    ),
+    traceTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_TIMEOUT_MS, 2000, 500, 5000
+    ),
+    traceMaxAgeMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_MAX_AGE_MS,
+      600_000, 60_000, 259_200_000
+    ),
   },
 
   robinhoodInsiderShadowWorker: {
