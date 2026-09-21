@@ -85,11 +85,48 @@ describe('PostgreSQL lag diagnostics', () => {
     assert.equal(result.processingEnd.streams[0].lag_blocks, 20);
   });
 
+  it('summarizes distinct wallet-transfer phase and catch-up samples', () => {
+    const worker = (sampledAt, lagBlocks, sourceMs, netRate) => ({
+      walletTransfer: { lagBlocks, telemetry: {
+        lastCompletedAt: sampledAt,
+        lastResult: {
+          timing: { sourceReadMs: sourceMs, totalMs: sourceMs + 10,
+            processedBlocksPerSecond: 5 },
+          progress: { sampledAt, sourceBlocksPerSecond: 2,
+            cursorBlocksPerSecond: 2 + netRate, netCatchupBlocksPerSecond: netRate },
+        },
+      } },
+    });
+    const samples = [
+      sample('2026-09-17T10:00:00.000Z', {
+        processing: worker('2026-09-17T10:00:00.000Z', '100', 20, 1),
+      }),
+      sample('2026-09-17T10:00:05.000Z', {
+        processing: worker('2026-09-17T10:00:00.000Z', '90', 20, 1),
+      }),
+      sample('2026-09-17T10:00:10.000Z', {
+        processing: worker('2026-09-17T10:00:10.000Z', '80', 40, 3),
+      }),
+    ];
+    const emptyStatements = { available: false, rows: [] };
+    const result = summarize(samples, emptyStatements, emptyStatements).walletTransfer;
+
+    assert.equal(result.lagDeltaBlocks, -20);
+    assert.equal(result.distinctResults, 2);
+    assert.deepEqual(result.phaseMs.sourceReadMs, {
+      average: 30, p50: 20, p95: 40, max: 40,
+    });
+    assert.equal(result.netCatchupBlocksPerSecond.average, 2);
+  });
+
   it('measures reported, active, and immediately claimable processing frontiers', () => {
     const sql = processingSql('state');
     assert.match(sql, /processing_status IN \('pending','leased','blocked'\)/);
     assert.match(sql, /processing_status IN \('pending','leased'\)/);
     assert.match(sql, /processing_status='pending' AND item\.next_attempt_at <= NOW\(\)/);
     assert.match(sql, /active_lag_blocks/);
+    assert.match(sql, /robinhood_wallet_transfer_cursors/);
+    assert.match(sql, /robinhood-wallet-transfer-live-worker/);
+    assert.match(sql, /'walletTransfer'/);
   });
 });

@@ -9,6 +9,26 @@ const {
 
 const STREAM = 'live';
 
+function createPhaseTimer(now = Date.now) {
+  const startedAt = now();
+  let phaseStartedAt = startedAt;
+  const phases = {};
+  return Object.freeze({
+    mark(name) {
+      const observedAt = now();
+      phases[name] = Math.max(0, observedAt - phaseStartedAt);
+      phaseStartedAt = observedAt;
+    },
+    snapshot(processedBlocks) {
+      const totalMs = Object.values(phases).reduce((sum, value) => sum + value, 0);
+      return Object.freeze({
+        ...phases, totalMs, processedBlocks,
+        processedBlocksPerSecond: totalMs > 0 ? processedBlocks * 1000 / totalMs : null,
+      });
+    },
+  });
+}
+
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -164,6 +184,7 @@ async function prepareUnifiedPosition(deps, input) {
 
 async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
   assertDependencies(deps);
+  const timer = createPhaseTimer(deps.now);
   const maxBlocks = boundedInteger(input.maxBlocks, 25, 1, 250, 'maxBlocks');
   const frontier = await deps.source.loadSwapFrontier();
   if (!frontier.ready) {
@@ -188,6 +209,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
       return Object.freeze({ status: 'cursor-conflict', sourceThrough });
     }
   }
+  timer.mark('sourceReadMs');
   const context = await deps.source.loadRangeContext(classificationInput(captured, fromTime));
   if (!context.ready) {
     return Object.freeze({
@@ -195,9 +217,11 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
       completeThroughBlock: context.completeThroughBlock || null,
     });
   }
+  timer.mark('contextHydrationMs');
   const classified = classifyTransfers(
     captured.transfers, context, deps.classifierFactory
   );
+  timer.mark('classificationMs');
   const unified = await prepareUnifiedPosition(deps, {
     enabled: input.unifiedPositionEnabled,
     transfer: cursor,
@@ -208,7 +232,9 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     transfers: classified.events,
   });
   if (unified.outcome) return unified.outcome;
+  timer.mark('positionHydrationMs');
   const raw = await deps.raw.insertTransferEvents(classified.events);
+  timer.mark('rawPersistMs');
   const projected = await deps.projection.commitBatch({
     projectionVersion: CLASSIFICATION_VERSION, stream: STREAM,
     expectedVersion: cursor.version, nextBlock: captured.nextBlock,
@@ -217,6 +243,8 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     events: classified.events.filter(isEdgeEligibleTransfer),
     ...(unified.batch ? { positionBatch: unified.batch } : {}),
   });
+  timer.mark('commitMs');
+  const processedBlocks = Number(BigInt(captured.nextBlock) - BigInt(captured.fromBlock));
   return Object.freeze({
     status: projected.committed ? 'projected' : 'cursor-conflict',
     fromBlock: captured.fromBlock, toBlock: captured.toBlock,
@@ -227,6 +255,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     unifiedPosition: unified.telemetry,
     telemetry: Object.freeze({
       ...captured.telemetry, endpointRoles: context.endpointRoleCoverage,
+      timing: timer.snapshot(processedBlocks),
     }),
   });
 }
@@ -234,6 +263,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
 module.exports = {
   runRobinhoodWalletTransferLiveTick,
   __private: {
-    classificationInput, prepareUnifiedPosition, rangeFor, validateCursorAgainstSource,
+    classificationInput, createPhaseTimer, prepareUnifiedPosition, rangeFor,
+    validateCursorAgainstSource,
   },
 };

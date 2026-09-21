@@ -52,7 +52,63 @@ function count(value) {
   return Number(value) || 0;
 }
 
-function compactResult(result) {
+function safeBlockDelta(after, before) {
+  if (after == null || before == null) return null;
+  const delta = BigInt(after) - BigInt(before);
+  return delta >= 0n && delta <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(delta) : null;
+}
+
+function progressSample(result, sampledAtMs, previous) {
+  if (!['projected', 'caught-up'].includes(result?.status)
+      || result.nextBlock == null || result.sourceThrough == null) {
+    return Object.freeze({ progress: null, next: previous });
+  }
+  const lagBlocks = safeBlockDelta(result.sourceThrough, BigInt(result.nextBlock) - 1n);
+  const next = Object.freeze({
+    sampledAtMs, nextBlock: String(result.nextBlock), sourceThrough: String(result.sourceThrough),
+  });
+  if (!previous || sampledAtMs <= previous.sampledAtMs) {
+    return Object.freeze({
+      next,
+      progress: Object.freeze({
+        sampledAt: new Date(sampledAtMs).toISOString(), lagBlocks,
+        intervalSeconds: null, sourceBlocksAdvanced: null, cursorBlocksAdvanced: null,
+        netCatchupBlocks: null, sourceBlocksPerSecond: null,
+        cursorBlocksPerSecond: null, netCatchupBlocksPerSecond: null,
+      }),
+    });
+  }
+  const intervalSeconds = (sampledAtMs - previous.sampledAtMs) / 1000;
+  const sourceBlocksAdvanced = safeBlockDelta(result.sourceThrough, previous.sourceThrough);
+  const cursorBlocksAdvanced = safeBlockDelta(result.nextBlock, previous.nextBlock);
+  const netCatchupBlocks = sourceBlocksAdvanced == null || cursorBlocksAdvanced == null
+    ? null : cursorBlocksAdvanced - sourceBlocksAdvanced;
+  const rate = (value) => value == null ? null : value / intervalSeconds;
+  return Object.freeze({
+    next,
+    progress: Object.freeze({
+      sampledAt: new Date(sampledAtMs).toISOString(), lagBlocks, intervalSeconds,
+      sourceBlocksAdvanced, cursorBlocksAdvanced, netCatchupBlocks,
+      sourceBlocksPerSecond: rate(sourceBlocksAdvanced),
+      cursorBlocksPerSecond: rate(cursorBlocksAdvanced),
+      netCatchupBlocksPerSecond: rate(netCatchupBlocks),
+    }),
+  });
+}
+
+function compactTelemetry(result) {
+  const telemetry = result.telemetry || {};
+  return Object.freeze({
+    transferFilterMode: telemetry.filterMode || null,
+    transferLogRequests: count(telemetry.requests),
+    transferRangeSplits: count(telemetry.splits),
+    transferAddressSplits: count(telemetry.addressSplits),
+    endpointRoleProbes: count(telemetry.endpointRoles?.probes),
+    timing: telemetry.timing || null,
+  });
+}
+
+function compactResult(result, progress = null) {
   if (!result) return null;
   return Object.freeze({
     status: result.status || null, reason: result.reason || null,
@@ -64,11 +120,8 @@ function compactResult(result) {
     edgeGroups: count(result.edgeGroups),
     evidenceCandidates: count(result.evidenceCandidates),
     classifications: result.classifications || {},
-    transferFilterMode: result.telemetry?.filterMode || null,
-    transferLogRequests: count(result.telemetry?.requests),
-    transferRangeSplits: count(result.telemetry?.splits),
-    transferAddressSplits: count(result.telemetry?.addressSplits),
-    endpointRoleProbes: count(result.telemetry?.endpointRoles?.probes),
+    ...compactTelemetry(result),
+    progress,
     unifiedPosition: result.unifiedPosition || null,
   });
 }
@@ -80,6 +133,7 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
   const env = deps.env || process.env;
   const runtimeFactory = deps.runtimeFactory || ((options) => buildRuntime(options, deps));
   const tick = deps.runTick || runRobinhoodWalletTransferLiveTick;
+  const now = deps.now || Date.now;
   let options = normalizeOptions({}, env);
   let runtimePromise = null;
   let timer = null;
@@ -87,6 +141,7 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
   let active = null;
   let running = false;
   let onFatal = null;
+  let previousProgress = null;
   const status = {
     enabled: false, running: false, halted: false, inFlight: false, sourceMode: null,
     providerChainIds: null, lastResult: null, lastError: null,
@@ -118,7 +173,9 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
   }
 
   function recordResult(result) {
-    const compact = compactResult(result);
+    const measured = progressSample(result, now(), previousProgress);
+    previousProgress = measured.next;
+    const compact = compactResult(result, measured.progress);
     status.lastResult = compact;
     status.totalTransfers += compact.transfers;
     status.totalRawInserted += compact.rawInserted;
@@ -227,5 +284,5 @@ module.exports = {
   runOnce: worker.runOnce,
   start: worker.start,
   stop: worker.stop,
-  __private: { buildRuntime, compactResult, normalizeOptions },
+  __private: { buildRuntime, compactResult, normalizeOptions, progressSample },
 };

@@ -3557,6 +3557,14 @@ esgotado não reabre a tarefa nem impede a conclusão básica. Observe
 `totalTraceAttempts`, `totalTraceResolved`, `totalTraceFailed`,
 `totalTraceBudgetSkipped` e `lastTraceError` antes de ampliar qualquer limite.
 
+O `robinhood-wallet-transfer-live-worker` publica em `lastResult.timing` a duração de
+source read, hidratação de contexto, classificação, posições, raw persist e commit, além
+da taxa do batch. `lastResult.progress` compara amostras sucessivas e expõe avanço da
+origem, avanço do cursor, `lagBlocks` e ganho líquido de catch-up por segundo. Para
+correlacionar essas fases com waits, locks, WAL, I/O e queries no mesmo intervalo, rode
+`npm run diagnose:postgres-lag -- --duration=5m --interval=5s`; cada amostra inclui
+`processing.walletTransfer` com cursor, lag, heartbeat e a telemetria do worker.
+
 Para recuperar deployments e registrar de uma vez pares meme/stock históricos V2, V3
 e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com

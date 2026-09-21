@@ -105,6 +105,28 @@ describe('Robinhood wallet transfer LIVE worker', () => {
     await worker.stop();
   });
 
+  it('measures source growth and net catch-up across worker samples', async () => {
+    const results = [
+      { status: 'projected', fromBlock: '100', nextBlock: '125', sourceThrough: '200' },
+      { status: 'projected', fromBlock: '125', nextBlock: '150', sourceThrough: '210' },
+    ];
+    const sampledAt = [1000, 11_000];
+    const worker = createRobinhoodWalletTransferLiveWorker({
+      now: () => sampledAt.shift(),
+      runtimeFactory: async () => ({ providerChainIds: {}, tickDeps: {} }),
+      runTick: async () => results.shift(),
+    });
+
+    await worker.runOnce();
+    await worker.runOnce();
+    assert.deepEqual(worker.getStatus().lastResult.progress, {
+      sampledAt: '1970-01-01T00:00:11.000Z', lagBlocks: 61, intervalSeconds: 10,
+      sourceBlocksAdvanced: 10, cursorBlocksAdvanced: 25, netCatchupBlocks: 15,
+      sourceBlocksPerSecond: 1, cursorBlocksPerSecond: 2.5,
+      netCatchupBlocksPerSecond: 1.5,
+    });
+  });
+
   it('halts and propagates a canonical checkpoint mismatch', async () => {
     const fatal = [];
     const worker = createRobinhoodWalletTransferLiveWorker({

@@ -417,6 +417,8 @@ Objetivo: fazer o cursor live chegar ao head e manter margem de capacidade.
 
 #### Corte 5A — instrumentação
 
+Status: concluído localmente; aguarda amostra correlacionada na VPS antes do 5B.
+
 Medir por batch:
 
 - source read;

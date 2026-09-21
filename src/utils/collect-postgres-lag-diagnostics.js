@@ -159,13 +159,29 @@ function processingSql(authority) {
   ), lease AS (
     SELECT heartbeat_at, lease_until, metadata->'telemetry' AS telemetry
       FROM worker_leases WHERE lease_key='robinhood-processing-worker'
+  ), wallet_transfer AS (
+    SELECT next_block, safe_head,
+           GREATEST(0, safe_head-next_block+1) AS lag_blocks, updated_at
+      FROM robinhood_wallet_transfer_cursors
+     WHERE chain='robinhood' AND projection_version='rh_transfer_v1' AND stream='live'
+  ), wallet_transfer_lease AS (
+    SELECT heartbeat_at, lease_until, metadata->'telemetry' AS telemetry
+      FROM worker_leases WHERE lease_key='robinhood-wallet-transfer-live-worker'
   )
   SELECT jsonb_build_object(
     'authority', $1::text,
     'streams', COALESCE((SELECT jsonb_agg(to_jsonb(observed) ORDER BY stream)
                           FROM observed), '[]'::jsonb),
     'heartbeatAt', lease.heartbeat_at, 'leaseUntil', lease.lease_until,
-    'telemetry', COALESCE(lease.telemetry, '{}'::jsonb)
+    'telemetry', COALESCE(lease.telemetry, '{}'::jsonb),
+    'walletTransfer', (SELECT jsonb_build_object(
+      'nextBlock', transfer_cursor.next_block::text,
+      'safeHead', transfer_cursor.safe_head::text,
+      'lagBlocks', transfer_cursor.lag_blocks::text,
+      'updatedAt', transfer_cursor.updated_at,
+      'heartbeatAt', worker.heartbeat_at, 'leaseUntil', worker.lease_until,
+      'telemetry', COALESCE(worker.telemetry, '{}'::jsonb)
+    ) FROM wallet_transfer transfer_cursor LEFT JOIN wallet_transfer_lease worker ON TRUE)
   ) AS value FROM lease`;
 }
 
@@ -297,6 +313,59 @@ function average(values) {
   return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
 }
 
+function percentile(values, fraction) {
+  const present = values.filter((value) => value != null).sort((left, right) => left - right);
+  if (!present.length) return null;
+  return present[Math.max(0, Math.ceil(present.length * fraction) - 1)];
+}
+
+function distribution(values) {
+  return Object.freeze({
+    average: average(values), p50: percentile(values, 0.5),
+    p95: percentile(values, 0.95), max: percentile(values, 1),
+  });
+}
+
+function walletTransferSummary(samples) {
+  const results = new Map();
+  for (const sample of samples) {
+    const telemetry = sample.processing.walletTransfer?.telemetry;
+    const result = telemetry?.lastResult;
+    const identity = result?.progress?.sampledAt || telemetry?.lastCompletedAt;
+    if (result && identity) results.set(identity, result);
+  }
+  const observed = [...results.values()];
+  const timing = observed.map((result) => result.timing).filter(Boolean);
+  const progress = observed.map((result) => result.progress).filter(Boolean);
+  const phases = [
+    'sourceReadMs', 'contextHydrationMs', 'classificationMs',
+    'positionHydrationMs', 'rawPersistMs', 'commitMs', 'totalMs',
+  ];
+  const startLagBlocks = number(samples[0]?.processing.walletTransfer?.lagBlocks);
+  const endLagBlocks = number(samples.at(-1)?.processing.walletTransfer?.lagBlocks);
+  return Object.freeze({
+    startLagBlocks, endLagBlocks,
+    lagDeltaBlocks: startLagBlocks == null || endLagBlocks == null
+      ? null : endLagBlocks - startLagBlocks,
+    distinctResults: observed.length, timingSamples: timing.length,
+    phaseMs: Object.fromEntries(phases.map((phase) => [
+      phase, distribution(timing.map((item) => number(item[phase]))),
+    ])),
+    processedBlocksPerSecond: distribution(
+      timing.map((item) => number(item.processedBlocksPerSecond))
+    ),
+    sourceBlocksPerSecond: distribution(
+      progress.map((item) => number(item.sourceBlocksPerSecond))
+    ),
+    cursorBlocksPerSecond: distribution(
+      progress.map((item) => number(item.cursorBlocksPerSecond))
+    ),
+    netCatchupBlocksPerSecond: distribution(
+      progress.map((item) => number(item.netCatchupBlocksPerSecond))
+    ),
+  });
+}
+
 function summarize(samples, statementsBefore, statementsAfter) {
   const first = samples[0];
   const last = samples.at(-1);
@@ -313,6 +382,7 @@ function summarize(samples, statementsBefore, statementsAfter) {
     type: 'summary', startedAt: first?.sampledAt, completedAt: last?.sampledAt,
     samples: samples.length, sampleErrors: samples.reduce((sum, item) => sum + item.errors.length, 0),
     processingStart: first?.processing, processingEnd: last?.processing,
+    walletTransfer: walletTransferSummary(samples),
     averageWalBytesPerSecond: average(samples.map((item) => item.rates.walBytesPerSecond)),
     waitSampleCounts: waitSamples, vacuumSampleCounts: vacuumSamples,
     topTableWriteDeltas: tableDeltas(first?.tables || [], last?.tables || []),
@@ -327,7 +397,9 @@ function compactLog(sample) {
     `${item.stream}:${item.lag_blocks == null ? 'n/a' : item.lag_blocks}`
   )).join(',');
   const wal = sample.rates.walBytesPerSecond;
+  const walletLag = sample.processing.walletTransfer?.lagBlocks ?? 'n/a';
   return `${sample.sampledAt} lag=[${streams}] walMBps=${wal == null ? 'n/a' : (wal / 1048576).toFixed(2)}`
+    + ` walletTransferLag=${walletLag}`
     + ` active=${sample.activity.active ?? 'n/a'} waiting=${sample.activity.waiting ?? 'n/a'}`
     + ` blocked=${sample.activity.blocked ?? 'n/a'} vacuums=${sample.vacuums.length}`
     + ` errors=${sample.errors.length}`;
@@ -392,5 +464,5 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   collectSample, main, nonnegativeDelta, parseArgs, run, sampleRates,
-  processingSql, statementDeltas, summarize, tableDeltas,
+  processingSql, statementDeltas, summarize, tableDeltas, walletTransferSummary,
 };

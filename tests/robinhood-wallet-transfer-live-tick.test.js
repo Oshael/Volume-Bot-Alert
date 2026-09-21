@@ -70,6 +70,7 @@ function dependencies(overrides = {}) {
     raw: {
       insertTransferEvents: async (events) => { calls.raw.push(events); return { inserted: events.length }; },
     },
+    ...(overrides.now ? { now: overrides.now } : {}),
     ...(overrides.positions ? { positions: overrides.positions } : {}),
     ...(overrides.transactionPositions
       ? { transactionPositions: overrides.transactionPositions } : {}),
@@ -95,6 +96,18 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.deepEqual(deps.calls.contexts[0], {
       fromBlock: '100', toBlock: '100', fromTime: TIME, toTime: TIME,
       transactionHashes: [TX], endpointAddresses: [ALICE, BOB],
+    });
+  });
+
+  it('measures each live batch phase and its processing rate', async () => {
+    const clock = [0, 10, 20, 22, 25, 30, 40];
+    const deps = dependencies({ now: () => clock.shift() });
+    const result = await runRobinhoodWalletTransferLiveTick(deps);
+
+    assert.deepEqual(result.telemetry.timing, {
+      sourceReadMs: 10, contextHydrationMs: 10, classificationMs: 2,
+      positionHydrationMs: 3, rawPersistMs: 5, commitMs: 10,
+      totalMs: 40, processedBlocks: 1, processedBlocksPerSecond: 25,
     });
   });
 
