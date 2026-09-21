@@ -1,7 +1,7 @@
 # Plano de execução — wallet classification Robinhood com raw de 3 dias
 
-Status: Cortes 0, 1A, 1B, 1C, 2 e 3 concluídos localmente; Stage 241 aplicada na VPS
-e reparo histórico de âncoras em andamento no PC Archive.
+Status: Cortes 0, 1A, 1B, 1C, 2, 3 e 4A concluídos localmente; Stage 241 aplicada
+na VPS e reparo histórico de âncoras em andamento no PC Archive.
 Os reparos existentes podem rodar no PC Archive enquanto os demais cortes de código
 são implementados. O cutover depende da Stage 241 e do reparo das linhas legadas.
 
@@ -374,6 +374,8 @@ Regras:
 Estimativa: 250–420 linhas.
 
 ### Corte 4 — deployment/creator live dentro da janela do pruned
+
+Status: 4A concluído localmente; 4B depende do probe na VPS.
 
 Objetivo: garantir prioridade para evidência recente e medir perda da janela de estado.
 

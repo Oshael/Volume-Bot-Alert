@@ -3842,6 +3842,17 @@ disponível no node podado. Por isso captura e worker de deployment devem perman
 ativos e a fila de tarefas ancoradas deve ser monitorada; indisponibilidade maior
 que a retenção do node continua exigindo Archive para aquele intervalo perdido.
 
+Meça essa margem com `npm run robinhood:deployment-live-window-audit`. O comando é
+read-only, observa por 30 segundos a mesma lease do worker e informa backlog, idade
+mais nova/antiga, itens acima de 48/72 horas, entradas, conclusões, ganho líquido e
+quantos cruzaram 72 horas durante a amostra. Ele escolhe até três blocos canônicos
+recentes de baixo volume e testa `trace_block` e `debug_traceBlockByNumber` no mesmo
+`RH_NODE_RPC_URL`/`ROBINHOOD_RPC_URL` usado pelo LIVE, validando chain ID e hash antes
+do trace. `--sample-seconds=5..300`, `--probe-blocks=1..3` e
+`--timeout-ms=1000..60000` são limitados. Reinício da lease invalida somente as taxas
+derivadas de counters; o snapshot da fila continua válido. O resultado decide o 4B
+e nunca grava attribution, fila ou cursor.
+
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com
 `local_deployment_evidence_pending` e backoff limitado. Este worker não consulta
