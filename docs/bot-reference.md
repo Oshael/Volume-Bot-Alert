@@ -4197,6 +4197,12 @@ canônica: o worker conclui esse item preservando a evidência com o marcador
 mudança real de `anchor_block` volta a enfileirar o token. O total pendente de
 repair aparece em `historical.archive_required` no audit; o Archive continua
 obrigatório apenas para executar esse repair histórico explicitamente.
+Depois de uma campanha v2 e da materialização dos snapshots, execute
+`npm run robinhood:bundle-funding-archive-reconcile` para auditar a próxima página.
+Somente `--apply --confirm-reconcile-archive-funding` limpa o marcador quando um
+snapshot durável compatível cobre a versão/fronteira da fila ou quando holder e
+first-buy duráveis provam menos de duas candidatas elegíveis. O comando nunca lê RPC
+nem transforma um item ainda dependente do Archive em concluído.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
 de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no

@@ -31,6 +31,9 @@ const {
 const {
   createRobinhoodBundleFundingLiveSource,
 } = require('../src/models/robinhood-bundle-funding-live-source');
+const {
+  createRobinhoodBundleFundingArchiveReconciliation,
+} = require('../src/models/robinhood-bundle-funding-archive-reconciliation');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const WALLET = `0x${'d'.repeat(40)}`;
@@ -143,6 +146,17 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     });
     assert.equal((await db.query(`SELECT COUNT(*)::integer count
       FROM robinhood_bundle_funding_live_evidence WHERE token_address = $1`, [TOKEN])).rows[0].count, 1);
+    const reconciliation = createRobinhoodBundleFundingArchiveReconciliation({ database: db });
+    assert.equal((await reconciliation.run({ limit: 10 })).candidates, 0);
+    await db.query(`UPDATE robinhood_possible_bundle_states SET
+      source_version = 3, through_block_number = 252
+      WHERE chain = 'robinhood' AND token_address = $1`, [TOKEN]);
+    const repaired = await reconciliation.run({ apply: true, limit: 10 });
+    assert.equal(repaired.candidates, 1);
+    assert.equal(repaired.repaired.durable_snapshot, 1);
+    assert.equal((await db.query(`SELECT last_error_code
+      FROM robinhood_bundle_funding_live_queue WHERE token_address = $1`, [TOKEN]))
+      .rows[0].last_error_code, null);
     assert.deepEqual(await createRobinhoodBundleFundingLiveSource({ database: db })
       .loadBarrierAddresses([], []), []);
   });

@@ -158,6 +158,7 @@
     "robinhood:bundle-funding-preflight": "node src/utils/preflight-robinhood-bundle-funding.js",
     "robinhood:bundle-funding-backfill": "node src/utils/backfill-robinhood-bundle-funding.js",
     "robinhood:bundle-funding-recover-v1": "node src/utils/recover-robinhood-bundle-funding-v1.js",
+    "robinhood:bundle-funding-archive-reconcile": "node src/utils/reconcile-robinhood-bundle-funding-archive.js",
     "robinhood:possible-bundle-calibrate": "node src/utils/calibrate-robinhood-possible-bundles.js",
     "robinhood:bundle-redistribution-calibrate": "node src/utils/calibrate-robinhood-bundle-redistribution.js",
     "robinhood:bundle-redistribution-activate": "node src/utils/activate-robinhood-bundle-redistribution.js",

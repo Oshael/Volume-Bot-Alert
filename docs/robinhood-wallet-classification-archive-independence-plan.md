@@ -492,6 +492,18 @@ Readiness final deve verificar:
 Estimativa: dividir em 6A funding e 6B auditor de readiness, se o conjunto ultrapassar
 500 linhas.
 
+#### Corte 6A — reconciliação do funding histórico
+
+Status: concluído localmente; aguarda rollout e campanha Archive na VPS/PC.
+
+`npm run robinhood:bundle-funding-archive-reconcile` é read-only por padrão e lista
+somente itens `archive_required` que já possuem snapshot durável com lineage compatível
+ou cuja população durável e coberta prova menos de duas candidatas. A escrita exige
+`--apply --confirm-reconcile-archive-funding`, preserva o fence de `requested_version`
+e nunca declara reparado um item que ainda dependa do Archive. Itens restantes devem
+passar pela campanha existente `robinhood:bundle-funding-backfill`, seguida da
+materialização `robinhood:possible-bundle-shadow`, antes de nova reconciliação.
+
 ## 9. Ordem de rollout
 
 1. Continuar creator/deployment repair no PC Archive, com timestamp e métricas por batch.
