@@ -22,6 +22,10 @@ describe('PostgreSQL lag diagnostic compact summary', () => {
       summary: {
         startedAt: '2026-09-18T00:00:00.000Z', completedAt: '2026-09-18T00:00:10.000Z',
         samples: 2, sampleErrors: 2, averageWalBytesPerSecond: 1048576,
+        walletTransfer: {
+          startLagBlocks: 100, endLagBlocks: 80, lagDeltaBlocks: -20,
+          phaseMs: { sourceReadMs: { p95: 40 } },
+        },
         processingStart: {
           streams: [{ stream: 'market', safe_head: 100, pending_block: 80,
             active_block: 81, claimable_block: 82, lag_blocks: 21, active_lag_blocks: 20 }],
@@ -45,6 +49,8 @@ describe('PostgreSQL lag diagnostic compact summary', () => {
 
     assert.equal(report.processing[0].activeLagDelta, 11);
     assert.equal(report.worker.processedDelta, 30);
+    assert.equal(report.walletTransfer.lagDeltaBlocks, -20);
+    assert.equal(report.walletTransfer.phaseMs.sourceReadMs.p95, 40);
     assert.equal(report.database.averageWalMBps, 1);
     assert.equal(report.database.topResourceWaits[0].name, 'IO:DataFileRead');
     assert.equal(report.topTablesByWrites[0].writesPerSecond, 1);

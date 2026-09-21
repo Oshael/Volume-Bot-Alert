@@ -146,6 +146,7 @@ function buildReport(input, top = 8) {
       sampleErrors: number(summary.sampleErrors) || 0 },
     processing: processingReport(summary.processingStart, summary.processingEnd),
     worker: workerReport(summary.processingStart, summary.processingEnd),
+    walletTransfer: summary.walletTransfer || null,
     database: databaseReport(input, summary, top, window),
     topTablesByWrites: tableReport(
       summary.topTableWriteDeltas, top, window.durationSeconds
