@@ -11,8 +11,14 @@ describe('Robinhood deployment live/Archive lane schema', () => {
     assert.match(sql, /live_deadline_at TIMESTAMPTZ/);
     assert.match(sql, /archive_required_at TIMESTAMPTZ/);
     assert.match(sql, /created_at \+ INTERVAL '72 hours'/);
+    assert.match(sql, /deadline_guard[\s\S]+NOT VALID/);
+    assert.match(sql, /VALIDATE CONSTRAINT rh_token_deployment_outbox_deadline_guard/);
     assert.match(sql, /status IN \('pending', 'leased', 'archive_required'\)/);
     assert.match(sql, /idx_rh_token_deployment_outbox_live_deadline/);
+    const defaultIndex = sql.indexOf('SET DEFAULT');
+    const guardIndex = sql.indexOf('ADD CONSTRAINT rh_token_deployment_outbox_deadline_guard');
+    const backfillIndex = sql.indexOf('SET live_deadline_at = created_at');
+    assert.ok(defaultIndex < guardIndex && guardIndex < backfillIndex);
   });
 
   it('registers Stage 242 in the runtime schema guard', () => {
