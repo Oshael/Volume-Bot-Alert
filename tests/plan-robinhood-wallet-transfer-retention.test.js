@@ -40,6 +40,24 @@ describe('Robinhood wallet transfer retention planner', () => {
     await assert.rejects(planner.plan({ projectionVersion: 'v1', limit: 101 }), /between 1 and 100/);
   });
 
+  it('uses the UTC partition day even when the database session uses a positive timezone', async () => {
+    const database = { query: async (sql) => {
+      assert.match(sql, /watermark\.partition_day::text AS partition_day/);
+      return { rows: [{
+        partition_day: '2026-07-18', verified_at: '2026-09-21T10:54:56Z',
+        watermark_version: '0', expected_partition: 'robinhood_token_transfer_events_2026_07_18',
+        actual_partition: 'robinhood_token_transfer_events_2026_07_18', attached: true,
+        partition_bound: "FOR VALUES FROM ('2026-07-18 02:00:00+02') TO ('2026-07-19 02:00:00+02')",
+      }] };
+    } };
+    const planner = createRobinhoodWalletTransferRetentionPlanner({ database });
+    const plan = await planner.plan({
+      projectionVersion: 'rh_transfer_v1', now: '2026-09-22T00:00:00Z',
+    });
+    assert.equal(plan.catalogReady, 1);
+    assert.equal(plan.candidates[0].partitionDay, '2026-07-18');
+  });
+
   it('exposes only a dry-run CLI with explicit version and limit', async () => {
     assert.deepEqual(parseArgs(['--projection-version=v1', '--limit=3']), {
       projectionVersion: 'v1', limit: '3',

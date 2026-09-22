@@ -37,7 +37,7 @@ function matchesDailyBound(bound, day) {
     && new Date(match[2]).getTime() === new Date(to).getTime();
 }
 function candidate(row) {
-  const day = new Date(row.partition_day).toISOString().slice(0, 10);
+  const day = String(row.partition_day);
   const reasons = [
     !row.actual_partition && 'partition_missing',
     row.actual_partition && row.attached !== true && 'partition_not_attached',
@@ -63,7 +63,7 @@ function createRobinhoodWalletTransferRetentionPlanner(options = {}) {
     const cutoffDay = retentionCutoffDay(input.now);
     const result = await database.query(
       `WITH candidates AS (
-         SELECT watermark.partition_day, watermark.verified_at,
+         SELECT watermark.partition_day::text AS partition_day, watermark.verified_at,
                 watermark.version AS watermark_version,
                 'robinhood_token_transfer_events_'
                   || TO_CHAR(watermark.partition_day, 'YYYY_MM_DD') AS expected_partition
