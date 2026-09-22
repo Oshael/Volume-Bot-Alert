@@ -87,7 +87,12 @@ async function listCandidates(database, limit) {
    WHERE queue.chain=$1 AND queue.rule_version=$2 AND queue.status='pending'
      AND (queue.observation_from_hash IS NULL
        OR queue.source_requested_version IS DISTINCT FROM queue.requested_version)
-   ORDER BY queue.updated_at, queue.token_address LIMIT $3::int`,
+   ORDER BY CASE
+     WHEN queue.source_requested_version = queue.requested_version THEN 0
+     WHEN holder.ledger_status = 'live'
+       AND holder.live_through_block >= queue.event_through_block THEN 0
+     ELSE 1
+   END, queue.updated_at, queue.token_address LIMIT $3::int`,
   [CHAIN, RULE_VERSION, limit]);
   return Object.freeze(rows.map((row) => Object.freeze({
     tokenAddress: row.token_address,

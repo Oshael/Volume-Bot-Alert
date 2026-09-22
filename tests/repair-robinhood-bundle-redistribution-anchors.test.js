@@ -44,6 +44,8 @@ describe('Robinhood redistribution anchor repair', () => {
     } }, 5);
     assert.match(captured.sql, /queue\.status='pending'/);
     assert.match(captured.sql, /source_requested_version IS DISTINCT FROM/);
+    assert.match(captured.sql,
+      /ORDER BY CASE[\s\S]*holder\.live_through_block >= queue\.event_through_block/);
     assert.equal(captured.params[2], 5);
     assert.equal(result[0].tokenAddress, TOKEN_A);
     assert.equal(result[0].holder.blockHash, HASH_B);
