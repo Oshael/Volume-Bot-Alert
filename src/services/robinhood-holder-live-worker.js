@@ -51,6 +51,8 @@ function normalizeOptions(options = {}, env = process.env) {
     ),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     rangeSize: boundedInteger(options.rangeSize, 250, 1, 5000),
+    maxHandoffs: boundedInteger(options.maxHandoffs, 16, 1, 64),
+    handoffMaxDurationMs: boundedInteger(options.handoffMaxDurationMs, 2000, 100, 10_000),
     confirmations: boundedInteger(options.confirmations, 12, 0, 1000),
     addressShardConcurrency: boundedInteger(options.addressShardConcurrency, 2, 1, 4),
     admittedAfter: admittedAfter?.toISOString() || null,
@@ -116,6 +118,10 @@ function nullableMetric(value) {
   return value == null ? null : value;
 }
 
+function optionalHandoffBatch(result) {
+  return result.handoffBatch ? { handoffBatch: result.handoffBatch } : {};
+}
+
 function addMetric(target, key, value) {
   target[key] += Number(value) || 0;
 }
@@ -140,6 +146,7 @@ function compactResult(result) {
     handoffStatus: result.handoffStatus || null,
     handoffPromotions: Number(result.handoffPromotions) || 0,
     handoffResyncs: Number(result.handoffResyncs) || 0,
+    ...optionalHandoffBatch(result),
     appliedEvents: Number(result.appliedEvents) || 0,
     driftedTokens: Number(result.driftedTokens) || 0,
     driftSuspicions: Number(result.driftSuspicions) || 0,

@@ -104,7 +104,8 @@ function harness(
   const handoff = {
     runOnce: async () => {
       calls.push(['handoff']);
-      return handoffResult;
+      options.onHandoff?.();
+      return options.handoffResults?.shift() || handoffResult;
     },
   };
   return {
@@ -118,6 +119,66 @@ function harness(
 }
 
 describe('Robinhood holder live runner', () => {
+  it('batches ready handoffs after capture reaches the head and stops on idle', async () => {
+    const context = harness({
+      status: 'idle', nextBlock: '106', safeHead: '105',
+    }, [], { status: 'idle' }, async () => 0, {
+      handoffResults: [
+        { status: 'shadow' }, { status: 'resyncing' }, { status: 'shadow' },
+      ],
+    });
+
+    const result = await context.runner.captureOnce({ maxHandoffs: 8 });
+    assert.equal(result.handoffPromotions, 2);
+    assert.equal(result.handoffResyncs, 1);
+    assert.equal(result.handoffStatus, 'idle');
+    assert.equal(result.handoffBatch.attempts, 4);
+    assert.equal(result.handoffBatch.captureLagged, false);
+    assert.equal(context.calls.filter(([name]) => name === 'handoff').length, 4);
+  });
+
+  it('does only one handoff while capture is behind the safe head', async () => {
+    const context = harness({
+      status: 'captured', nextBlock: '104', safeHead: '105',
+    }, [], { status: 'shadow' });
+
+    const result = await context.runner.captureOnce({ maxHandoffs: 16 });
+    assert.equal(result.handoffPromotions, 1);
+    assert.equal(result.handoffBatch.limit, 1);
+    assert.equal(result.handoffBatch.captureLagged, true);
+    assert.equal(context.calls.filter(([name]) => name === 'handoff').length, 1);
+  });
+
+  it('never exceeds the configured handoff count even when candidates remain', async () => {
+    const context = harness({
+      status: 'idle', nextBlock: '106', safeHead: '105',
+    }, [], { status: 'shadow' });
+
+    const result = await context.runner.captureOnce({ maxHandoffs: 3 });
+    assert.equal(result.handoffPromotions, 3);
+    assert.equal(result.handoffBatch.attempts, 3);
+    assert.equal(result.handoffBatch.budgetExhausted, true);
+    assert.equal(context.calls.filter(([name]) => name === 'handoff').length, 3);
+  });
+
+  it('stops a handoff batch at the duration budget', async () => {
+    let clockMs = 0;
+    const context = harness({
+      status: 'idle', nextBlock: '106', safeHead: '105',
+    }, [], { status: 'shadow' }, async () => 0, {
+      measureNow: () => clockMs,
+      onHandoff: () => { clockMs += 1200; },
+    });
+
+    const result = await context.runner.captureOnce({
+      maxHandoffs: 16, handoffMaxDurationMs: 2000,
+    });
+    assert.equal(result.handoffPromotions, 2);
+    assert.equal(result.handoffBatch.attempts, 2);
+    assert.equal(result.handoffBatch.durationBudgetExhausted, true);
+    assert.equal(result.handoffBatch.budgetExhausted, false);
+  });
+
   it('captures one range and drains eligible events within one bounded tick', async () => {
     const context = harness({
       status: 'captured', transfers: 3, nextBlock: '106', safeHead: '105',

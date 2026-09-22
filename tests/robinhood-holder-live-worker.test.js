@@ -76,6 +76,8 @@ describe('Robinhood holder live worker', () => {
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 750);
     assert.equal(calls[0].rangeSize, 250);
+    assert.equal(calls[0].maxHandoffs, 16);
+    assert.equal(calls[0].handoffMaxDurationMs, 2000);
     assert.equal(calls[0].addressShardConcurrency, 2);
     assert.equal(calls[0].confirmations, 12);
     assert.deepEqual(worker.getStatus().lastResult, {

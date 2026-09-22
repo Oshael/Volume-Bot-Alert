@@ -3178,6 +3178,15 @@ notificação perdida, com default de 5s. O modo de rollback explícito `rpc`
 preserva suas confirmações configuradas e não abre esse listener. A telemetria da
 lease expõe `totalWakeups`, `totalFallbackRuns`, `lastWakeAt`, `listenerError` e
 `captureListener`.
+Depois de cada captura que alcançou o `safeHead`, o mesmo worker faz até
+`ROBINHOOD_HOLDER_LIVE_MAX_HANDOFFS` handoffs seriais (default 16, máximo 64),
+parando quando não há candidato ou após
+`ROBINHOOD_HOLDER_LIVE_HANDOFF_MAX_DURATION_MS` (default 2s, máximo 10s).
+Se a captura ainda está atrasada, faz apenas um handoff por ciclo para priorizar
+o avanço do cursor. O limite de tempo é verificado entre candidatos: uma única
+consulta lenta ainda pode ultrapassá-lo. `lastResult.handoffBatch` informa
+tentativas, duração, limite aplicado e se a captura ou o orçamento limitaram o lote;
+`totalHandoffPromotions` e `totalHandoffResyncs` contam os resultados cumulativos.
 O apply usa `robinhood-holder-live-apply-worker`, intervalo default de 100ms e o
 budget por lane `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Por default há uma lane,
 preservando o comportamento serial. `ROBINHOOD_HOLDER_LIVE_APPLY_CONCURRENCY`

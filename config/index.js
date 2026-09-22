@@ -1529,6 +1529,12 @@ module.exports = {
     rangeSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_RANGE_SIZE, 250, 1, 5000
     ),
+    maxHandoffs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_MAX_HANDOFFS, 16, 1, 64
+    ),
+    handoffMaxDurationMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_HANDOFF_MAX_DURATION_MS, 2000, 100, 10_000
+    ),
     confirmations: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS, 12, 0, 1000
     ),

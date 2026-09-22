@@ -436,6 +436,44 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     }
   }
 
+  async function drainHandoffs(captured, input) {
+    const maxHandoffs = boundedInteger(input.maxHandoffs, 1, 1, 64, 'maxHandoffs');
+    const maxDurationMs = boundedInteger(
+      input.handoffMaxDurationMs, 2000, 100, 10_000, 'handoffMaxDurationMs'
+    );
+    const startedAt = measureMs();
+    const captureCaughtUp = captured.nextBlock != null && captured.safeHead != null
+      && BigInt(captured.nextBlock) > BigInt(captured.safeHead);
+    const limit = captureCaughtUp ? maxHandoffs : 1;
+    let handoffStatus = 'idle';
+    let handoffPromotions = 0;
+    let handoffResyncs = 0;
+    let attempts = 0;
+    while (attempts < limit) {
+      const handedOff = await handoff.runOnce();
+      handoffStatus = handedOff?.status;
+      if (!['idle', 'shadow', 'resyncing'].includes(handoffStatus)) {
+        const error = new Error(`unexpected holder handoff status: ${handoffStatus}`);
+        error.code = 'holder_live_handoff_contract_error';
+        throw error;
+      }
+      attempts += 1;
+      if (handoffStatus === 'shadow') handoffPromotions += 1;
+      if (handoffStatus === 'resyncing') handoffResyncs += 1;
+      if (handoffStatus === 'idle' || elapsedMs(startedAt) >= maxDurationMs) break;
+    }
+    return {
+      handoffStatus, handoffPromotions, handoffResyncs,
+      ...(maxHandoffs > 1 ? { handoffBatch: {
+        attempts, durationMs: elapsedMs(startedAt), limit,
+        captureLagged: !captureCaughtUp,
+        budgetExhausted: handoffStatus !== 'idle' && attempts === limit,
+        durationBudgetExhausted: handoffStatus !== 'idle'
+          && elapsedMs(startedAt) >= maxDurationMs,
+      } } : {}),
+    };
+  }
+
   async function prepareTick(input, rangeSize, confirmations) {
     if (typeof capture?.captureOnce !== 'function') {
       throw new TypeError('holder live capture is required');
@@ -496,14 +534,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       error.code = 'holder_live_capture_contract_error';
       throw error;
     }
-    const handedOff = await handoff.runOnce();
-    const handoffStatus = handedOff?.status;
-    if (!['idle', 'shadow', 'resyncing'].includes(handoffStatus)) {
-      const error = new Error(`unexpected holder handoff status: ${handoffStatus}`);
-      error.code = 'holder_live_handoff_contract_error';
-      throw error;
-    }
-    return { captured, handoffStatus };
+    return { captured, ...await drainHandoffs(captured, input) };
   }
 
   async function drainPendingEvents(
@@ -678,8 +709,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         bufferedSeededTokens: Number(prepared.captured.bufferedSeededTokens) || 0,
       }),
       handoffStatus: prepared.handoffStatus,
-      handoffPromotions: prepared.handoffStatus === 'shadow' ? 1 : 0,
-      handoffResyncs: prepared.handoffStatus === 'resyncing' ? 1 : 0,
+      handoffPromotions: prepared.handoffPromotions,
+      handoffResyncs: prepared.handoffResyncs,
+      ...(prepared.handoffBatch ? { handoffBatch: prepared.handoffBatch } : {}),
       nextBlock: prepared.captured.nextBlock, safeHead: prepared.captured.safeHead,
     });
   }
