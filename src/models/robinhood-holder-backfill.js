@@ -247,12 +247,20 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     const throughBlock = quantity(input.throughBlock, 'throughBlock').toString();
     const excluded = tokenAddressList(input.excludeTokenAddresses);
     const shard = shardOptions(input);
-    const result = await database.query(
+    const priority = input.priority === 'redistribution_anchor_missing';
+    if (input.priority != null && !priority) throw new Error('holder backfill priority is invalid');
+    const selectionQuery = (priorityOnly) =>
       `SELECT token_address, deployment_block, backfill_next_block, tail_capture_from_block,
               live_through_block, live_through_hash, version
          FROM robinhood_holder_token_states state
         WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
           AND state.backfill_next_block <= $1
+          ${priorityOnly ? `AND EXISTS (
+            SELECT 1 FROM robinhood_bundle_redistribution_queue queue
+             WHERE queue.chain = state.chain AND queue.token_address = state.token_address
+               AND queue.status IN ('pending', 'leased')
+               AND queue.last_error_code = 'redistribution_anchor_missing'
+          )` : ''}
           AND (
             state.tail_capture_from_block IS NULL
             OR state.backfill_next_block < state.tail_capture_from_block
@@ -287,9 +295,11 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
           ) = $4::bigint
         ORDER BY (state.live_through_block IS NOT NULL) DESC,
                  state.backfill_next_block DESC, state.token_address
-        LIMIT 1`,
-      [throughBlock, excluded, shard.count, shard.index]
-    );
+        LIMIT 1`;
+    const params = [throughBlock, excluded, shard.count, shard.index];
+    const preferred = priority ? await database.query(selectionQuery(true), params) : null;
+    const result = preferred?.rowCount ? preferred
+      : await database.query(selectionQuery(false), params);
     return stateRow(result.rows[0]);
   }
 

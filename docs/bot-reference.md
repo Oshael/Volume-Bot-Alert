@@ -3492,6 +3492,15 @@ ser recapturado; rewind abaixo de `cutover_next_block` falha com
 Se uma consulta exceder o timeout, falha sem alterar dados; a captura universal
 continua obrigatória até a transição legada ter contrato e gate próprios.
 O replay incremental/cold usa `ROBINHOOD_HOLDER_BACKFILL_SOURCE=rpc` por default.
+Para recuperação pontual da fila de redistribution, somente o worker incremental
+aceita `ROBINHOOD_HOLDER_BACKFILL_PRIORITY=redistribution_anchor_missing`. Cada
+shard escolhe primeiro tokens `pending`/`leased` com esse erro e ainda elegíveis
+para replay; sem candidato prioritário, volta à seleção normal. A opção não
+altera a fonte, os limites de range, checkpoints, idempotência nem o apply live.
+Deixe a variável ausente após a drenagem para restaurar a ordem normal. O
+intervalo pode ser reduzido a 100 ms por
+`ROBINHOOD_HOLDER_BACKFILL_INTERVAL_MS=100`, mas isso aumenta a pressão no RPC e
+PostgreSQL; valide a taxa líquida da coorte e os erros antes de manter a opção.
 Com `canonical_recent`, cada range integralmente entre o floor retido de
 `robinhood_chain_blocks` e o checkpoint contínuo de
 `robinhood_chain_capture_cursor` é lido de `robinhood_chain_events` por endereço

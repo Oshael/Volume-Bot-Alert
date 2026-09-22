@@ -14,6 +14,7 @@ const DEFAULT_RECEIPT_BLOCK_LIMIT = 250;
 const DEFAULT_RECEIPT_BATCH_SIZE = 25;
 const RPC_SOURCE = 'rpc';
 const CANONICAL_RECENT_SOURCE = 'canonical_recent';
+const REDISTRIBUTION_ANCHOR_PRIORITY = 'redistribution_anchor_missing';
 const CANONICAL_STATEMENT_TIMEOUT_MS = 2000;
 const ROUTABLE_GAPS = new Set([
   'below-floor', 'partial-coverage', 'above-frontier', 'journal-empty',
@@ -47,6 +48,17 @@ function normalizeBackfillSource(value) {
     throw error;
   }
   return normalized;
+}
+
+function normalizePriority(value) {
+  if (value == null || String(value).trim() === '') return null;
+  if (String(value).trim() === REDISTRIBUTION_ANCHOR_PRIORITY) {
+    return REDISTRIBUTION_ANCHOR_PRIORITY;
+  }
+  const error = new Error('ROBINHOOD_HOLDER_BACKFILL_PRIORITY is invalid');
+  error.code = 'configuration_error';
+  error.fatal = true;
+  throw error;
 }
 
 function createRecentReplayReader(options = {}) {
@@ -155,6 +167,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
   );
   const driftEvidence = new Map();
   const adaptiveRangeSizes = new Map();
+  const priority = normalizePriority(options.priority);
 
   function clockMs() {
     const value = Number(now());
@@ -278,6 +291,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       .map(([tokenAddress]) => tokenAddress);
     const state = await repository.getNextToken({
       throughBlock: head.safeHead, excludeTokenAddresses, shardCount, shardIndex,
+      ...(priority ? { priority } : {}),
     });
     if (!state) return Object.freeze({ status: 'idle', safeHead: head.safeHead });
     const effectiveRangeSize = Math.min(
@@ -376,6 +390,8 @@ function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
     : rpcReader);
   return createRobinhoodHolderBackfillExecutor({
     repository, reader,
+    priority: options.allowPriority === true
+      ? normalizePriority(env.ROBINHOOD_HOLDER_BACKFILL_PRIORITY) : null,
     driftRecheckMs: boundedInteger(
       env.ROBINHOOD_HOLDER_DRIFT_RECHECK_MS,
       DEFAULT_DRIFT_RECHECK_MS, 1000, 600_000, 'drift recheck interval'
@@ -399,5 +415,6 @@ module.exports = {
     DEFAULT_DRIFT_RECHECK_MS, DEFAULT_RECEIPT_BATCH_SIZE, DEFAULT_RECEIPT_BLOCK_LIMIT,
     REQUIRED_DRIFT_OBSERVATIONS, createRecentReplayReader, isAdaptiveRangeError,
     normalizeBackfillSource, reachedReplayBarrier, replayRange, resolveRpcProvider,
+    normalizePriority,
   },
 };

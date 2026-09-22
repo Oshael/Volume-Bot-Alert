@@ -55,6 +55,10 @@ describe('Robinhood holder backfill persistence', () => {
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
         (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_bundle_redistribution_queue (
+        chain varchar(16), token_address varchar(42), status varchar(16),
+        last_error_code varchar(64)
+      )`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_capture_policy (
         chain varchar(16) PRIMARY KEY, capture_mode varchar(16) NOT NULL
       )`);
@@ -170,6 +174,18 @@ describe('Robinhood holder backfill persistence', () => {
         tailCaptureFromBlock: '104',
         liveThroughBlock: '102', liveThroughHash: HASH_C, version: 2,
       });
+      await client.query(`INSERT INTO robinhood_bundle_redistribution_queue
+        (chain, token_address, status, last_error_code)
+        VALUES ('robinhood', $1, 'pending', 'redistribution_anchor_missing')`,
+      [PRIORITY_TOKEN]);
+      assert.equal((await repository.getNextToken({
+        throughBlock: '200', priority: 'redistribution_anchor_missing',
+      })).tokenAddress, PRIORITY_TOKEN);
+      await client.query(`UPDATE robinhood_bundle_redistribution_queue
+        SET status = 'complete' WHERE token_address = $1`, [PRIORITY_TOKEN]);
+      assert.equal((await repository.getNextToken({
+        throughBlock: '200', priority: 'redistribution_anchor_missing',
+      })).tokenAddress, TOKEN);
       assert.deepEqual(await repository.getNextToken({
         throughBlock: '200', excludeTokenAddresses: [TOKEN],
       }), {

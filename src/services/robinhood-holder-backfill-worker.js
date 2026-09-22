@@ -62,7 +62,7 @@ function buildRuntime(deps = {}) {
     || (deps.bootstrapFactory || createRobinhoodHolderBootstrapRepository)({ database });
   const executor = deps.executor
     || (deps.executorFactory || createConfiguredRobinhoodHolderBackfillExecutor)({
-      database, env: deps.env || process.env,
+      database, env: deps.env || process.env, allowPriority: true,
     });
   return Object.freeze({ bootstrap, executor });
 }

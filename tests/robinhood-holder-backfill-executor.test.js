@@ -220,6 +220,26 @@ describe('Robinhood holder backfill executor', () => {
     }]);
   });
 
+  it('passes the opt-in redistribution priority to token selection', async () => {
+    const selections = [];
+    const executor = createRobinhoodHolderBackfillExecutor({
+      priority: 'redistribution_anchor_missing',
+      repository: {
+        getNextToken: async (input) => { selections.push(input); return null; },
+        commitRange: async () => { throw new Error('must not commit'); },
+        markResyncing: async () => { throw new Error('must not resync'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '105' }),
+        matchesCheckpoint: async () => { throw new Error('must not verify'); },
+        readRange: async () => { throw new Error('must not read'); },
+        readReceiptRange: async () => { throw new Error('must not read receipts'); },
+      },
+    });
+    assert.equal((await executor.runOnce()).status, 'idle');
+    assert.equal(selections[0].priority, 'redistribution_anchor_missing');
+  });
+
   it('isolates an orphaned checkpoint without reading or committing another range', async () => {
     const calls = [];
     const repository = {

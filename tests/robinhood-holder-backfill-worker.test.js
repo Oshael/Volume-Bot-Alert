@@ -59,6 +59,7 @@ describe('Robinhood holder backfill worker', () => {
       ['bootstrap', { database: 'database' }],
       ['executor', {
         database: 'database', env: { ROBINHOOD_RPC_URL: 'http://node' },
+        allowPriority: true,
       }],
       ['seed', { admittedAfter: CUTOFF, limit: 25, maxInitialGapBlocks: 20_000 }],
       ['replay', {
