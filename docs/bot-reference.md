@@ -3384,6 +3384,11 @@ essa fronteira. Se deployment e tail forem iguais e ainda não existir checkpoin
 o executor processa somente esse bloco para criar uma âncora verificável; o overlap
 pendente é removido atomicamente no handoff. A promoção exige replay no mínimo até
 o tail, checkpoint confirmado e encontro dentro da cobertura retida do journal.
+Em captura `tracked`, um token com tail durável também pode passar ao handoff
+quando seu primeiro evento pendente está depois do checkpoint: o intervalo sem
+evento permanece sob a cobertura capturada, e o evento futuro fica no journal
+para o apply. O handoff revalida essa condição sob a policy corrente antes de
+promover; o modo `legacy` conserva o fence do primeiro pendente.
 Estados legados com tail `NULL` mantêm o caminho universal anterior enquanto
 `captureAllTransfers=true`. Coortes globais continuam exigindo
 `tail_capture_from_block = barrier_block` na promoção.
@@ -3502,9 +3507,11 @@ encerrar o apply dos demais. Receipt indisponivel ou alem do limite mantem
 blocos/25 por batch usam `ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` e
 `ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE`.
 Evidencia diferente reinicia a contagem e restart descarta a evidencia em memoria.
-O handoff não promove um token `backfilling` enquanto seu cursor ainda estiver
-abaixo do primeiro evento pendente; esse fence impede que uma recuperação de
-cauda larga retorne prematuramente a `shadow` e repita o mesmo deferimento.
+Fora da exceção `tracked` com tail durável, o handoff não promove um token
+`backfilling` enquanto seu cursor estiver abaixo do primeiro evento pendente.
+Se uma lacuna larga causar novo requeue em `tracked`, o tail é reancorado no
+cursor live corrente para obrigar o replay da lacuna antes de outro handoff;
+isso impede um ciclo de promoção e deferimento sem avanço.
 Se o deficit aparece depois de eventos live já aplicados, o ledger reverte essa
 cauda atomicamente pela evidência de balances/proveniência do journal, devolve
 os eventos a `pending` e muda o token para `backfilling`. Tokens antes `live`

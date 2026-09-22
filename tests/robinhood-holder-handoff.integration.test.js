@@ -246,6 +246,74 @@ describe('Robinhood holder live handoff persistence', () => {
     }
   });
 
+  it('hands off a tracked tail before a later pending event without dropping the event', async () => {
+    const client = await db.getClient();
+    try {
+      for (const table of [
+        'robinhood_holder_transfer_journal', 'robinhood_holder_cursors',
+        'robinhood_holder_token_states', 'robinhood_holder_capture_policy',
+      ]) {
+        await client.query(`CREATE TEMP TABLE IF NOT EXISTS ${table} (
+          LIKE public.${table} INCLUDING ALL
+        )`);
+        await client.query(`TRUNCATE ${table}`);
+      }
+      const database = {
+        query: client.query.bind(client),
+        getClient: async () => ({ query: client.query.bind(client), release() {} }),
+      };
+      const handoff = createRobinhoodHolderHandoffRepository({ database });
+      await client.query(`INSERT INTO robinhood_holder_capture_policy (chain)
+        VALUES ('robinhood')`);
+      await client.query(`INSERT INTO robinhood_holder_cursors (
+        next_block, safe_head, checkpoint_block, checkpoint_hash, journal_floor_block
+      ) VALUES (110, 109, 109, $1, 100)`, [HASH_C]);
+      await client.query(`INSERT INTO robinhood_holder_token_states (
+        token_address, holder_count, ledger_status, deployment_block,
+        backfill_next_block, live_through_block, live_through_hash,
+        tail_capture_from_block
+      ) VALUES ($1, 0, 'backfilling', 90, 105, 104, $2, 105)`, [TOKEN, HASH_A]);
+      await client.query(`INSERT INTO robinhood_holder_transfer_journal (
+        block_number, block_hash, transaction_hash, transaction_index,
+        log_index, token_address, from_wallet, to_wallet, amount_raw
+      ) VALUES (108, $1, $2, 0, 0, $3, $4, $5, 1)`, [
+        HASH_B, `0x${'8'.repeat(64)}`, TOKEN, `0x${'0'.repeat(40)}`, ALICE,
+      ]);
+
+      assert.equal(await handoff.getNextCandidate(), null);
+      await client.query(`UPDATE robinhood_holder_capture_policy SET
+        capture_mode='tracked', coverage_generation=1, cutover_next_block=101,
+        cutover_checkpoint_block=100, cutover_checkpoint_hash=$1`, [HASH_A]);
+      assert.equal((await handoff.getNextCandidate()).tokenAddress, TOKEN);
+      assert.equal((await handoff.promoteAtLiveBarrier({
+        tokenAddress: TOKEN, verifiedCheckpoint: { number: '104', hash: HASH_A },
+      })).discardedOverlapEvents, 0);
+      const result = await client.query(`SELECT state.ledger_status, journal.applied
+        FROM robinhood_holder_token_states state
+        JOIN robinhood_holder_transfer_journal journal
+          ON journal.chain=state.chain AND journal.token_address=state.token_address
+        WHERE state.token_address=$1`, [TOKEN]);
+      assert.deepEqual(result.rows, [{ ledger_status: 'shadow', applied: false }]);
+
+      await client.query(`INSERT INTO robinhood_holder_token_states (
+        token_address, holder_count, ledger_status, deployment_block,
+        backfill_next_block, live_through_block, live_through_hash
+      ) VALUES ($1, 0, 'backfilling', 90, 105, 104, $2)`, [OTHER_TOKEN, HASH_A]);
+      await client.query(`INSERT INTO robinhood_holder_transfer_journal (
+        block_number, block_hash, transaction_hash, transaction_index,
+        log_index, token_address, from_wallet, to_wallet, amount_raw
+      ) VALUES (108, $1, $2, 1, 1, $3, $4, $5, 1)`, [
+        HASH_B, `0x${'9'.repeat(64)}`, OTHER_TOKEN, `0x${'0'.repeat(40)}`, ALICE,
+      ]);
+      assert.equal(await handoff.getNextCandidate(), null);
+      await assert.rejects(handoff.promoteAtLiveBarrier({
+        tokenAddress: OTHER_TOKEN, verifiedCheckpoint: { number: '104', hash: HASH_A },
+      }), (error) => error.code === 'holder_handoff_future_pending_uncovered');
+    } finally {
+      client.release();
+    }
+  });
+
   it('promotes an unchanged shadow count only after its pending tail is empty', async () => {
     const client = await db.getClient();
     try {

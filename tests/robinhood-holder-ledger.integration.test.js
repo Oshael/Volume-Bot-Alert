@@ -615,6 +615,8 @@ describe('Robinhood holder ledger persistence', () => {
       const trackedTail = String((await client.query(`SELECT next_block
         FROM robinhood_holder_cursors WHERE chain='robinhood' AND stream='live'`)).rows[0]
         .next_block);
+      await client.query(`UPDATE robinhood_holder_token_states
+        SET tail_capture_from_block=100 WHERE token_address=$1`, [TOKEN_2]);
       await client.query(`UPDATE robinhood_holder_capture_policy policy SET
         capture_mode='tracked', coverage_generation=1,
         cutover_next_block=cursor.next_block,
@@ -783,16 +785,17 @@ describe('Robinhood holder ledger persistence', () => {
       );
 
       for (const scenario of [
-        { ledgerStatus: 'live', liveThroughBlock: 99, liveThroughHash: HASH_B },
-        { ledgerStatus: 'shadow', liveThroughBlock: null, liveThroughHash: null },
+        { ledgerStatus: 'live', liveThroughBlock: 99, liveThroughHash: HASH_B, tail: 95 },
+        { ledgerStatus: 'shadow', liveThroughBlock: null, liveThroughHash: null, tail: null },
       ]) {
         await client.query(
           `INSERT INTO robinhood_holder_token_states
             (token_address, holder_count, ledger_status, deployment_block,
-             backfill_next_block, live_through_block, live_through_hash)
-           VALUES ($1, 7, $2, 50, 100, $3, $4)`,
+             backfill_next_block, live_through_block, live_through_hash,
+             tail_capture_from_block)
+           VALUES ($1, 7, $2, 50, 100, $3, $4, $5)`,
           [TOKEN_WIDE_TAIL, scenario.ledgerStatus,
-            scenario.liveThroughBlock, scenario.liveThroughHash]
+            scenario.liveThroughBlock, scenario.liveThroughHash, scenario.tail]
         );
         await client.query(
           `INSERT INTO robinhood_holder_transfer_journal (

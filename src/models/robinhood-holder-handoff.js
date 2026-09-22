@@ -120,6 +120,29 @@ async function hasAppliedBackfilledOverlap(client, token, backfillNextBlock) {
   return result.rowCount > 0;
 }
 
+async function validatePendingHandoff(client, token, state) {
+  const pending = await client.query(
+    `SELECT block_number
+       FROM robinhood_holder_transfer_journal
+      WHERE chain = 'robinhood' AND token_address = $1 AND applied = false
+      ORDER BY block_number, transaction_index, log_index LIMIT 1`,
+    [token]
+  );
+  if (!pending.rowCount
+      || BigInt(pending.rows[0].block_number) <= BigInt(state.backfill_next_block)) return;
+  const policy = await client.query(
+    `SELECT capture_mode FROM robinhood_holder_capture_policy
+      WHERE chain = 'robinhood' FOR SHARE`
+  );
+  if (policy.rows[0]?.capture_mode !== 'tracked'
+      || state.tail_capture_from_block == null) {
+    throw codedError(
+      'holder pending tail is ahead without tracked coverage',
+      'holder_handoff_future_pending_uncovered'
+    );
+  }
+}
+
 async function deleteBackfilledOverlap(client, token, backfillNextBlock) {
   const result = await client.query(
     `DELETE FROM robinhood_holder_transfer_journal
@@ -157,6 +180,8 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
            FROM robinhood_holder_token_states state
            INNER JOIN robinhood_holder_cursors cursor
              ON cursor.chain = state.chain AND cursor.stream = 'live'
+           INNER JOIN robinhood_holder_capture_policy policy
+             ON policy.chain = state.chain
           WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
             AND cursor.journal_floor_block IS NOT NULL
             AND state.backfill_next_block BETWEEN cursor.journal_floor_block AND cursor.next_block
@@ -164,7 +189,9 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
               OR state.backfill_next_block >= state.tail_capture_from_block)
             AND state.live_through_block + 1 = state.backfill_next_block
             AND state.live_through_hash IS NOT NULL
-            AND state.backfill_next_block >= COALESCE((
+            AND ((policy.capture_mode = 'tracked'
+                AND state.tail_capture_from_block IS NOT NULL)
+              OR state.backfill_next_block >= COALESCE((
               SELECT journal.block_number
                 FROM robinhood_holder_transfer_journal journal
                WHERE journal.chain = state.chain
@@ -172,7 +199,7 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
                  AND journal.applied = false
                ORDER BY journal.block_number, journal.transaction_index, journal.log_index
                LIMIT 1
-            ), state.backfill_next_block)
+            ), state.backfill_next_block))
           ORDER BY state.backfill_next_block DESC, state.token_address
           LIMIT 1
        )
@@ -210,6 +237,7 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
       const state = await lockBackfillState(client, token);
       validateVerifiedCheckpoint(state, input.verifiedCheckpoint);
       validateCoverage(cursor, state);
+      await validatePendingHandoff(client, token, state);
       if (await hasAppliedBackfilledOverlap(client, token, state.backfill_next_block)) {
         throw codedError(
           'backfilling token already has applied live events', 'holder_handoff_applied_overlap'

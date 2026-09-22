@@ -1552,7 +1552,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
           RETURNING version, updated_at`,
         [tokenAddress, state.version, holderDelta.toString(),
           driftRecovery ? ['drifted'] : ['shadow', 'live'],
-          recoveryTail(coverage, state, driftRecovery)]
+          recoveryTail(coverage, state, true)]
       );
       if (!reset.rowCount) throw new Error('holder tail rollback state changed while locked');
       await syncHotQueue(client, tokenAddress);
@@ -1648,7 +1648,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
           WHERE chain = 'robinhood' AND token_address = $1
             AND ledger_status = $3 AND version = $2::bigint
           RETURNING version, updated_at`,
-        [tokenAddress, state.version, state.ledger_status, recoveryTail(coverage, state)]
+        [tokenAddress, state.version, state.ledger_status, recoveryTail(coverage, state, true)]
       );
       if (!reset.rowCount) throw new Error('holder wide-tail requeue state changed while locked');
       const publication = state.ledger_status === 'live' ? Object.freeze({
