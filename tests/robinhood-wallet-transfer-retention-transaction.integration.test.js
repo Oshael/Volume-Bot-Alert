@@ -11,6 +11,7 @@ const { createRobinhoodWalletTransferRetentionTransaction } =
 const { createRobinhoodWalletTransferRetentionPilot, __private: pilotProof } =
   require('../src/models/robinhood-wallet-transfer-retention-pilot');
 const sampledReport = require('../docs/robinhood-transfer-raw-pilot-2026-07-19-report.json');
+const july18Report = require('../docs/robinhood-transfer-raw-pilot-2026-07-18-report.json');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const stages = [126, 128, 129, 131, 132, 191, 205, 243, 244, 245]
   .map((stage) => require(`../src/utils/db-init-stage${stage}`));
@@ -269,6 +270,52 @@ describe('Robinhood transfer retention transaction SQL', () => {
       await assert.rejects(pilotProof.assertSampledExceptions(
         client, 'sampled_exception_rows', sampledReport.archiveReplay
       ), /pilot exception changed/);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('checks the July 18 exception identity and self-transfer census in SQL', async () => {
+    const client = await db.getClient();
+    const item = july18Report.archiveReplay.exceptions[0];
+    try {
+      await client.query('BEGIN');
+      await client.query(`CREATE TEMP TABLE july18_pilot_rows (
+        chain text, transaction_hash text, log_index integer, block_time timestamptz,
+        block_number bigint, block_hash text, transaction_index integer,
+        token_address text, from_wallet text, to_wallet text, amount_raw numeric,
+        transfer_kind text, classification_version text
+      ) ON COMMIT DROP`);
+      await client.query(
+        `INSERT INTO july18_pilot_rows VALUES
+         ('robinhood', $1, $2, $3::timestamptz, $4, $5, $6,
+          $7, $8, $9, $10::numeric, 'wallet_transfer', 'rh_transfer_v1')`,
+        [item.transactionHash, item.logIndex, item.blockTime, item.blockNumber,
+          item.blockHash, item.transactionIndex, item.tokenAddress,
+          item.fromWallet, item.toWallet, item.amountRaw]
+      );
+      await client.query(
+        `INSERT INTO july18_pilot_rows
+         SELECT 'robinhood', 'self-' || n::text, n, $1::timestamptz,
+                $2, $3, n, $4, $5, $5, 1, 'wallet_self', 'rh_transfer_v1'
+           FROM generate_series(1, 172) n`,
+        [item.blockTime, item.blockNumber, item.blockHash, item.tokenAddress,
+          item.fromWallet]
+      );
+      await pilotProof.assertJuly18Exception(client, 'july18_pilot_rows');
+      await client.query(
+        'UPDATE july18_pilot_rows SET amount_raw=amount_raw+1 WHERE transaction_hash=$1',
+        [item.transactionHash]
+      );
+      await assert.rejects(pilotProof.assertJuly18Exception(client, 'july18_pilot_rows'),
+        /July 18 pilot exception changed/);
+      await client.query(
+        `UPDATE july18_pilot_rows SET to_wallet=$1
+          WHERE transfer_kind='wallet_self' AND log_index=1`, [item.toWallet]
+      );
+      await assert.rejects(pilotProof.assertJuly18Exception(client, 'july18_pilot_rows'),
+        /wallet_self population changed/);
     } finally {
       await client.query('ROLLBACK');
       client.release();

@@ -4,10 +4,14 @@ require('dotenv').config();
 
 const { readFileSync } = require('node:fs');
 const db = require('../models/db');
-const { PILOT_DAY, createRobinhoodWalletTransferRetentionPilot } =
+const { createRobinhoodWalletTransferRetentionPilot } =
   require('../models/robinhood-wallet-transfer-retention-pilot');
 
 const CONFIRM_FLAG = '--confirm-drop-robinhood-transfer-raw-2026-07-19';
+const CONFIRM_FLAGS = Object.freeze({
+  '2026-07-18': '--confirm-drop-robinhood-transfer-raw-2026-07-18',
+  '2026-07-19': CONFIRM_FLAG,
+});
 
 function parseArgs(argv) {
   const input = {};
@@ -19,15 +23,20 @@ function parseArgs(argv) {
       input.expectedCheckpointHash = argument.slice(27);
     } else if (argument.startsWith('--pilot-report=')) input.pilotReportPath = argument.slice(15);
     else if (argument === '--apply') input.apply = true;
-    else if (argument === CONFIRM_FLAG) input.confirmed = true;
+    else if (Object.values(CONFIRM_FLAGS).includes(argument)) input.confirmationFlag = argument;
     else throw new Error(`unknown argument: ${argument}`);
   }
-  if (input.day !== PILOT_DAY || input.apply !== true || input.confirmed !== true
+  const expectedConfirmation = CONFIRM_FLAGS[input.day];
+  if (!expectedConfirmation || input.apply !== true
+      || input.confirmationFlag !== expectedConfirmation
       || !input.pilotReportPath || !input.expectedWatermarkVersion
       || !input.expectedCheckpointHash) {
-    throw new Error(`pilot requires --day=${PILOT_DAY}, watermark version, checkpoint hash, `
-      + `--pilot-report=FILE, --apply and ${CONFIRM_FLAG}`);
+    throw new Error('pilot requires --day=2026-07-18 or --day=2026-07-19, '
+      + 'watermark version, checkpoint hash, --pilot-report=FILE, --apply '
+      + 'and the matching day confirmation flag');
   }
+  delete input.confirmationFlag;
+  input.confirmed = true;
   return input;
 }
 

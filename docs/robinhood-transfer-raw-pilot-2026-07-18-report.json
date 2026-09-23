@@ -1,0 +1,32 @@
+{
+  "day": "2026-07-18",
+  "watermarkVersion": "1",
+  "checkpointHash": "0xee4b8ae56bc408068275f7a264702a46a75194e4c9ce04859a3b4a9aea09907a",
+  "archiveReplay": {
+    "status": "sampled_with_scoped_exception",
+    "evidenceReference": "docs/robinhood-transfer-raw-pilot-2026-07-18-evidence.md",
+    "sampleRows": 24,
+    "receiptsMatched": 24,
+    "decisionMatches": 23,
+    "walletSelfPopulation": 172,
+    "walletSelfEqualEndpoints": 172,
+    "missingKinds": [],
+    "exceptions": [
+      {
+        "transactionHash": "0x23004b2d3fe35075ef78307d85f5a70c2a287a8081df4ec04fc59fa8f60e330a",
+        "logIndex": 10,
+        "blockTime": "2026-07-18T01:31:07Z",
+        "blockNumber": 12587704,
+        "blockHash": "0x0bf3967c2f3db3e16a4a05ebfca0caab00d9b5e696cae16bb8781fb9441d6d3a",
+        "transactionIndex": 4,
+        "tokenAddress": "0x7e86381a763f0ecca2bdf27c54eac403ddd48123",
+        "fromWallet": "0x42f0a3b8405e1f19e97e22cf7e5526b20c5f8982",
+        "toWallet": "0xf578b20020678ea4d5ee3700a03e7da6eacc6303",
+        "amountRaw": "3886049765533112256",
+        "storedKind": "wallet_transfer",
+        "replayedKind": "contract_flow",
+        "recipientCodeBytesAtEvent": 0
+      }
+    ]
+  }
+}

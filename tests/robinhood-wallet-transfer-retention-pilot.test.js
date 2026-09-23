@@ -8,6 +8,7 @@ const { CONFIRM_FLAG, main, parseArgs } = require(
   '../src/utils/drop-robinhood-wallet-transfer-retention-pilot'
 );
 const SAMPLED_DRAFT = require('../docs/robinhood-transfer-raw-pilot-2026-07-19-report.json');
+const JULY18_DRAFT = require('../docs/robinhood-transfer-raw-pilot-2026-07-18-report.json');
 
 const DAY = '2026-07-19';
 const HASH = `0x${'7'.repeat(64)}`;
@@ -20,6 +21,10 @@ const sampledReport = () => ({ ...SAMPLED_DRAFT,
   approvedBy: 'test-operator', approvedAt: '2026-09-23T00:00:00Z' });
 const sampledInput = () => ({ ...INPUT, expectedCheckpointHash: SAMPLED_DRAFT.checkpointHash,
   pilotReport: sampledReport() });
+const july18Input = () => ({ ...INPUT, day: JULY18_DRAFT.day,
+  expectedWatermarkVersion: JULY18_DRAFT.watermarkVersion,
+  expectedCheckpointHash: JULY18_DRAFT.checkpointHash,
+  pilotReport: structuredClone(JULY18_DRAFT) });
 
 describe('Robinhood transfer retention pilot command', () => {
   it('requires an exact day, apply, approval and matching parity report', async () => {
@@ -137,5 +142,39 @@ describe('Robinhood transfer retention pilot command', () => {
       } }),
     });
     assert.deepEqual(result, { dropped: true });
+  });
+
+  it('accepts only the exact July 18 scoped exception and matching day flag', async () => {
+    let gateCalls = 0;
+    const pilot = createRobinhoodWalletTransferRetentionPilot({
+      gate: { withVerifiedPartition: async (input) => {
+        gateCalls += 1;
+        assert.equal(input.day, '2026-07-18');
+        assert.equal(input.expectedWatermarkVersion, '1');
+      } },
+    });
+    await pilot.drop(july18Input());
+    assert.equal(gateCalls, 1);
+    for (const change of [
+      (report) => { report.archiveReplay.status = 'matched'; },
+      (report) => { report.archiveReplay.decisionMatches = 24; },
+      (report) => { report.archiveReplay.walletSelfEqualEndpoints = 171; },
+      (report) => { report.archiveReplay.exceptions[0].recipientCodeBytesAtEvent = 1; },
+      (report) => { report.archiveReplay.exceptions[0].amountRaw = '1'; },
+    ]) {
+      const invalid = july18Input();
+      change(invalid.pilotReport);
+      await assert.rejects(pilot.drop(invalid), /missing, mismatched or unapproved/);
+    }
+    await assert.rejects(pilot.drop({ ...july18Input(), day: DAY }),
+      /missing, mismatched or unapproved/);
+    assert.equal(gateCalls, 1);
+
+    const argv = ['--day=2026-07-18', '--expected-watermark-version=1',
+      `--expected-checkpoint-hash=${JULY18_DRAFT.checkpointHash}`,
+      '--pilot-report=docs/robinhood-transfer-raw-pilot-2026-07-18-report.json',
+      '--apply', '--confirm-drop-robinhood-transfer-raw-2026-07-18'];
+    assert.equal(parseArgs(argv).confirmed, true);
+    assert.throws(() => parseArgs([...argv.slice(0, -1), CONFIRM_FLAG]), /pilot requires/);
   });
 });

@@ -6036,9 +6036,9 @@ usa timeout de 120 s somente durante a cobertura de evidência; as demais
 consultas transacionais continuam limitadas a 60 s. O lock exclusivo da
 partição permanece até o fim da transação, inclusive durante essa verificação.
 O comando
-`robinhood:wallet-transfer-retention-pilot` só aceita o dia `2026-07-19`; exige
+`robinhood:wallet-transfer-retention-pilot` só aceita 18/07 ou 19/07 de 2026; exige
 `--expected-watermark-version`, `--expected-checkpoint-hash`, `--pilot-report=FILE`,
-`--apply` e `--confirm-drop-robinhood-transfer-raw-2026-07-19`. O relatório JSON
+`--apply` e a flag `--confirm-drop-robinhood-transfer-raw-YYYY-MM-DD` do mesmo dia. O relatório JSON
 deve vincular `day`, `watermarkVersion` e `checkpointHash` à auditoria atual, e
 conter `archiveReplay: {"status":"matched","evidenceReference":"..."}`,
 ou o status `sampled_with_approved_exceptions` exclusivo de 19/07, mais
@@ -6049,7 +6049,14 @@ exato das 12 diferenças em
 versionado deixa os campos de aprovação vazios; a aceitação das exceções como
 critério não aprova o drop. Sob o gate transacional, o comando confere novamente
 a população `wallet_self` e as 12 linhas canônicas antes de apagar. O relatório
-declara replay amostral, sem alegar paridade histórica integral.
+declara replay amostral, sem alegar paridade histórica integral. Para 18/07,
+o manifesto versionado em `docs/robinhood-transfer-raw-pilot-2026-07-18-report.json`
+exige checkpoint versão `1`, amostra de 24 recibos, 23 decisões iguais,
+172 `wallet_self` com endpoints iguais e uma exceção ancorada pelo evento e
+pelo `eth_getCode` histórico. O gate reconta `wallet_self` e verifica a linha
+excepcional sob lock; o resultado RPC é evidência registrada, não reconsultada
+na transação. A execução explícita com a flag específica do dia confirma esse
+piloto; o relatório de 18/07 não exige campos adicionais de operador.
 Após revalidar sob locks, ele marca o watermark `dropped` e executa `DROP TABLE`
 na mesma transação, retornando o caminho do heap e o tamanho anterior. Uma falha
 desfaz ambos. A retenção geral de transfers permanece em 30 dias.
