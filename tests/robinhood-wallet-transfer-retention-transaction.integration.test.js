@@ -8,12 +8,14 @@ const { createRobinhoodTokenTransferRepository } =
   require('../src/models/robinhood-token-transfer-persistence');
 const { createRobinhoodWalletTransferRetentionTransaction } =
   require('../src/models/robinhood-wallet-transfer-retention-transaction');
+const { createRobinhoodWalletTransferRetentionPilot } =
+  require('../src/models/robinhood-wallet-transfer-retention-pilot');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const stages = [126, 128, 129, 131, 132, 191, 205, 243, 244, 245]
   .map((stage) => require(`../src/utils/db-init-stage${stage}`));
 
-const DAY = '2099-01-09';
-const PARTITION = 'robinhood_token_transfer_events_2099_01_09';
+const DAY = '2026-07-19';
+const PARTITION = 'robinhood_token_transfer_events_2026_07_19';
 const HASH = `0x${'7'.repeat(63)}8`;
 const PARENT = `0x${'6'.repeat(64)}`;
 let previousCapture;
@@ -40,6 +42,12 @@ describe('Robinhood transfer retention transaction SQL', () => {
     )).rows[0] || null;
     previousTransfer = (await db.query("SELECT * FROM robinhood_wallet_transfer_cursors WHERE projection_version='rh_transfer_v1' AND stream='live'" )).rows[0] || null;
     previousPosition = (await db.query("SELECT * FROM robinhood_wallet_position_cursors WHERE projection_version='unified_transfer_v1' AND stream='live'" )).rows[0] || null;
+    const existing = await db.query(
+      "SELECT to_regclass($1) AS partition, EXISTS (SELECT 1 FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version='rh_transfer_v1' AND partition_day=$2::date) AS watermark",
+      [`public.${PARTITION}`, DAY]
+    );
+    assert.equal(existing.rows[0].partition, null);
+    assert.equal(existing.rows[0].watermark, false);
     await cleanup();
     await createRobinhoodTokenTransferRepository({ database: db }).ensurePartitionForDay(DAY);
     await db.query(
@@ -57,7 +65,7 @@ describe('Robinhood transfer retention transaction SQL', () => {
          chain, block_number, block_hash, parent_hash, capture_digest,
          block_timestamp, finality, canonical, head_observed_at, receipts_available_at
        ) VALUES ('robinhood', 100, $1, $2, $1,
-         '2099-01-09T12:00:00Z', 'finalized', true, NOW(), NOW())`,
+         '2026-07-19T12:00:00Z', 'finalized', true, NOW(), NOW())`,
       [HASH, PARENT]
     );
     await db.query(
@@ -65,7 +73,7 @@ describe('Robinhood transfer retention transaction SQL', () => {
          projection_version, stream, origin_block, next_block, next_block_time,
          safe_head, checkpoint_block, checkpoint_hash, lifecycle_state
        ) VALUES ('rh_transfer_v1', 'live', 1, 101,
-         '2099-01-10T00:00:00Z', 100, 100, $1, 'running')`, [HASH]
+         '2026-07-20T00:00:00Z', 100, 100, $1, 'running')`, [HASH]
     );
     await db.query(
       `INSERT INTO robinhood_wallet_position_cursors (
@@ -79,8 +87,8 @@ describe('Robinhood transfer retention transaction SQL', () => {
          chain, projection_version, from_block, through_block, checkpoint_hash,
          block_time, record_kind, identity_key, had_previous, previous_row, expires_at
        ) VALUES ('robinhood', 'unified_transfer_v1', 100, 100, $1,
-         '2099-01-09T12:00:00Z', 'batch', 'batch', false, NULL,
-         '2099-01-12T12:00:00Z')`, [HASH]
+         '2026-07-19T12:00:00Z', 'batch', 'batch', false, NULL,
+         '2026-07-22T12:00:00Z')`, [HASH]
     );
     await db.query(
       `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
@@ -91,7 +99,7 @@ describe('Robinhood transfer retention transaction SQL', () => {
          position_complete, evidence_complete, cursor_complete, checkpoint_canonical,
          audited_at, verified_at
        ) VALUES ('robinhood', 'rh_transfer_v1', $1, 'verified', 101, 0, 0,
-         '2099-01-10T00:00:00Z', 100, $2, 'unified_transfer_v1', 101,
+         '2026-07-20T00:00:00Z', 100, $2, 'unified_transfer_v1', 101,
          true, true, true, true, true, NOW(), NOW())`, [DAY, HASH]
     );
   });
@@ -123,7 +131,7 @@ describe('Robinhood transfer retention transaction SQL', () => {
 
   it('revalidates a real empty partition and rolls back a rejected action', async () => {
     const gate = createRobinhoodWalletTransferRetentionTransaction({ database: db });
-    const input = { day: DAY, expectedWatermarkVersion: '0', now: '2099-02-15T00:00:00Z' };
+    const input = { day: DAY, expectedWatermarkVersion: '0', now: '2026-09-23T00:00:00Z' };
     let ran = false;
     await assert.rejects(gate.withVerifiedPartition(input, async (client) => {
       ran = true;
@@ -145,14 +153,48 @@ describe('Robinhood transfer retention transaction SQL', () => {
          chain, block_number, block_hash, block_time, transaction_hash,
          transaction_index, log_index, token_address, from_wallet, to_wallet,
          amount_raw, transfer_kind, classification_version
-       ) VALUES ('robinhood', 100, $1, '2099-01-09T12:00:00Z', $2,
+       ) VALUES ('robinhood', 100, $1, '2026-07-19T12:00:00Z', $2,
          0, 1, $3, $4, $5, 7, 'unknown', 'rh_transfer_v1')`,
       [HASH, `0x${'a'.repeat(64)}`, `0x${'b'.repeat(40)}`,
         `0x${'c'.repeat(40)}`, `0x${'d'.repeat(40)}`]
     );
     const gate = createRobinhoodWalletTransferRetentionTransaction({ database: db });
     await assert.rejects(gate.withVerifiedPartition({
-      day: DAY, expectedWatermarkVersion: '0', now: '2099-02-15T00:00:00Z',
+      day: DAY, expectedWatermarkVersion: '0', now: '2026-09-23T00:00:00Z',
     }, async () => { throw new Error('action must not run'); }), /no longer reconcile/);
+  });
+
+  it('rolls back a physical DROP when the transaction fails', async () => {
+    await db.query(`DELETE FROM public.${PARTITION}`);
+    const gate = createRobinhoodWalletTransferRetentionTransaction({ database: db });
+    await assert.rejects(gate.withVerifiedPartition({
+      day: DAY, expectedWatermarkVersion: '0', now: '2026-09-23T00:00:00Z',
+    }, async (client, candidate) => {
+      await client.query(`DROP TABLE ${candidate.partition}`);
+      throw new Error('abort physical drop');
+    }), /abort physical drop/);
+    const state = (await db.query(
+      "SELECT to_regclass($1) IS NOT NULL AS partition_present, (SELECT lifecycle_state FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version='rh_transfer_v1' AND partition_day=$2::date) AS lifecycle_state",
+      [`public.${PARTITION}`, DAY]
+    )).rows[0];
+    assert.deepEqual(state, { partition_present: true, lifecycle_state: 'verified' });
+  });
+
+  it('drops only the approved pilot partition and marks its watermark atomically', async () => {
+    const pilot = createRobinhoodWalletTransferRetentionPilot({ database: db });
+    const result = await pilot.drop({
+      day: DAY, expectedWatermarkVersion: '0', expectedCheckpointHash: HASH,
+      now: '2026-09-23T00:00:00Z', apply: true, confirmed: true,
+      pilotReport: { day: DAY, watermarkVersion: '0', checkpointHash: HASH,
+        archiveReplay: { status: 'matched', evidenceReference: 'test-replay-report' },
+        approvedBy: 'test-operator', approvedAt: '2026-09-23T00:00:00Z' },
+    });
+    assert.equal(result.dropped, true);
+    assert.equal(result.partition, `public.${PARTITION}`);
+    const state = (await db.query(
+      "SELECT to_regclass($1) AS partition, (SELECT lifecycle_state FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version='rh_transfer_v1' AND partition_day=$2::date) AS lifecycle_state",
+      [`public.${PARTITION}`, DAY]
+    )).rows[0];
+    assert.deepEqual(state, { partition: null, lifecycle_state: 'dropped' });
   });
 });

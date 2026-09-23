@@ -6031,8 +6031,17 @@ necessária revalidação canônica imediatamente antes de qualquer remoção. O
 comando não destaca nem apaga partições e não libera espaço por si só.
 O módulo transacional de retenção já cerca recovery, dia e partição, trava o
 cursor LIVE de posições e revalida watermark, raw, resumos, cursores e as seis
-dependências antes de permitir uma ação na mesma transação. Ainda não há
-comando de poda que invoque esse módulo; nenhum drop está habilitado.
+dependências antes de permitir uma ação na mesma transação. O comando
+`robinhood:wallet-transfer-retention-pilot` só aceita o dia `2026-07-19`; exige
+`--expected-watermark-version`, `--expected-checkpoint-hash`, `--pilot-report=FILE`,
+`--apply` e `--confirm-drop-robinhood-transfer-raw-2026-07-19`. O relatório JSON
+deve vincular `day`, `watermarkVersion` e `checkpointHash` à auditoria atual, e
+conter `archiveReplay: {"status":"matched","evidenceReference":"..."}`,
+`approvedBy` e `approvedAt`. Esses campos são uma aprovação operacional da
+paridade com Archive; o comando valida o vínculo, mas não reproduz o replay.
+Após revalidar sob locks, ele marca o watermark `dropped` e executa `DROP TABLE`
+na mesma transação, retornando o caminho do heap e o tamanho anterior. Uma falha
+desfaz ambos. A retenção geral de transfers permanece em 30 dias.
 
 Para preservar `unknown` legados de um dia `verified` enquanto a partição raw
 ainda existe, use `npm run robinhood:wallet-transfer-evidence-migrate --

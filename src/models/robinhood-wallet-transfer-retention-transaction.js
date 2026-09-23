@@ -48,6 +48,7 @@ async function lockVerifiedWatermark(client, day, version, name) {
             watermark.summary_transfer_count::text,
             watermark.summary_amount_raw::text,
             watermark.raw_last_block::text,
+            watermark.checkpoint_hash,
             watermark.summary_reconciled, watermark.position_complete,
             watermark.evidence_complete, watermark.cursor_complete,
             watermark.checkpoint_canonical,
@@ -194,7 +195,7 @@ function createRobinhoodWalletTransferRetentionTransaction(options = {}) {
       await assertReconciled(client, `public.${name}`, day, watermark);
       await assertDependencies(client, day, name, watermark);
       const result = await action(client, { day, partition: `public.${name}`,
-        watermarkVersion: version });
+        watermarkVersion: version, checkpointHash: watermark.checkpoint_hash });
       await client.query('COMMIT');
       return result;
     } catch (error) {
