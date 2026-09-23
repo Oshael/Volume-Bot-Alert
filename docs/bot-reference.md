@@ -6101,6 +6101,11 @@ Antes de publicar o rollback de transfers, aplique também
 em `robinhood_wallet_transfer_evidence_dispositions` na mesma transação em que
 remove o raw órfão. A evidência pendente permanece imutável; o marcador é
 idempotente e não faz `UPDATE`/`DELETE` por evento na tabela nova.
+O comando de reclassificação exige ambas as Stages 243/244: quando encontra
+evidência preservada para o raw, grava `reclassified` na mesma transação que
+atualiza o raw e as projeções. Se a evidência divergir ou estiver marcada
+`orphaned`, falha sem reclassificar. Neste corte, a seleção e a aplicação ainda
+dependem do raw; os marcadores não tornam partições antigas descartáveis.
 Só depois de concluir a adaptação de reclassificação/reorg e medir capacidade, ative
 `ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED=true` no service exclusivo
 de wallet transfers e reinicie esse service; o padrão é `false` para não

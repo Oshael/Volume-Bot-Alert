@@ -145,6 +145,39 @@ async function updateRawEvent(client, transition) {
   if (result.rowCount !== 1) throw new Error('locked raw transfer changed unexpectedly');
 }
 
+async function markPreservedEvidenceReclassified(client, transition, raw) {
+  const result = await client.query(
+    `SELECT evidence.block_hash, evidence.classification_version,
+            EXISTS (
+              SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
+              WHERE disposition.chain = evidence.chain
+                AND disposition.transaction_hash = evidence.transaction_hash
+                AND disposition.log_index = evidence.log_index
+                AND disposition.block_time = evidence.block_time
+                AND disposition.disposition = 'orphaned'
+            ) AS orphaned
+       FROM robinhood_wallet_transfer_pending_evidence evidence
+      WHERE evidence.chain = $1 AND evidence.transaction_hash = $2
+        AND evidence.log_index = $3 AND evidence.block_time = $4::timestamptz`,
+    [CHAIN, transition.transactionHash, transition.logIndex, transition.blockTime]
+  );
+  const evidence = result.rows[0];
+  if (!evidence) return;
+  if (evidence.block_hash !== raw.block_hash
+      || evidence.classification_version !== transition.fromClassificationVersion
+      || evidence.orphaned) {
+    throw new Error('preserved transfer evidence conflicts with raw state');
+  }
+  const marked = await client.query(
+    `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
+       chain, transaction_hash, log_index, block_time, disposition, block_hash
+     ) VALUES ($1, $2, $3, $4::timestamptz, 'reclassified', $5)
+     ON CONFLICT (chain, transaction_hash, log_index, block_time, disposition) DO NOTHING`,
+    [CHAIN, transition.transactionHash, transition.logIndex, transition.blockTime, raw.block_hash]
+  );
+  if (marked.rowCount !== 1) throw new Error('preserved transfer evidence was already reclassified');
+}
+
 function projectionEvent(raw, transition) {
   if (raw.from_wallet === ZERO_ADDRESS || raw.to_wallet === ZERO_ADDRESS
       || raw.from_wallet === raw.to_wallet) {
@@ -254,6 +287,7 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
       }
       const event = EDGE_KINDS.has(transition.toTransferKind)
         ? projectionEvent(raw, transition) : null;
+      await markPreservedEvidenceReclassified(client, transition, raw);
       await insertAudit(client, transition, raw);
       await updateRawEvent(client, transition);
       const projected = event ? await persistProjection(

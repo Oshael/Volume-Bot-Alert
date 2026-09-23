@@ -21,6 +21,7 @@ const stage135 = require('../src/utils/db-init-stage135');
 const stage136 = require('../src/utils/db-init-stage136');
 const stage153 = require('../src/utils/db-init-stage153');
 const stage243 = require('../src/utils/db-init-stage243');
+const stage244 = require('../src/utils/db-init-stage244');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_reclassification_v1';
@@ -32,9 +33,14 @@ const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
 const TX1 = `0x${'9'.repeat(64)}`;
 const TX2 = `0x${'8'.repeat(64)}`;
+const TX3 = `0x${'6'.repeat(64)}`;
 const BLOCK_HASH = `0x${'7'.repeat(64)}`;
 
 async function cleanup() {
+  await db.query(
+    'DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = ANY($1::varchar[])',
+    [[TX1, TX2, TX3]]
+  );
   await db.query(
     'DELETE FROM robinhood_wallet_transfer_reclassifications WHERE to_classification_version = $1',
     [VERSION]
@@ -51,12 +57,12 @@ async function cleanup() {
   await db.query(
     `DELETE FROM robinhood_token_transfer_events
      WHERE chain = 'robinhood' AND transaction_hash = ANY($1::varchar[])`,
-    [[TX1, TX2]]
+    [[TX1, TX2, TX3]]
   );
 }
 
-async function insertUnknown(transactionHash, logIndex, amountRaw) {
-  const repository = createRobinhoodTokenTransferRepository({ database: db });
+async function insertUnknown(transactionHash, logIndex, amountRaw, preservePendingEvidence = false) {
+  const repository = createRobinhoodTokenTransferRepository({ database: db, preservePendingEvidence });
   await repository.insertTransferEvents([{
     blockNumber: '100', blockHash: BLOCK_HASH, blockTime: BLOCK_TIME,
     transactionHash, transactionIndex: String(logIndex), logIndex: String(logIndex),
@@ -109,7 +115,7 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
-      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153, stage243,
+      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153, stage243, stage244,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -122,7 +128,7 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
   });
 
   it('applies once, invalidates stale proof and rolls every effect back on failure', async () => {
-    await insertUnknown(TX1, 1, '25');
+    await insertUnknown(TX1, 1, '25', true);
     await insertRole(ALICE, 100);
     await insertRole(BOB, 101);
     const repository = createRobinhoodWalletTransferReclassificationRepository({ database: db });
@@ -155,6 +161,11 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
     assert.deepEqual(raw.rows[0], {
       transfer_kind: 'wallet_transfer', classification_version: VERSION,
     });
+    const marker = await db.query(
+      `SELECT disposition, block_hash FROM robinhood_wallet_transfer_evidence_dispositions
+       WHERE transaction_hash = $1`, [TX1]
+    );
+    assert.deepEqual(marker.rows, [{ disposition: 'reclassified', block_hash: BLOCK_HASH }]);
     const counts = await db.query(
       `SELECT
          (SELECT COUNT(*)::integer FROM robinhood_wallet_transfer_reclassifications
@@ -191,7 +202,7 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
       evidence_complete: false, verified_at: null,
     });
 
-    await insertUnknown(TX2, 2, '50');
+    await insertUnknown(TX2, 2, '50', true);
     const failing = createRobinhoodWalletTransferReclassificationRepository({
       database: db,
       persistProjection: async (...args) => {
@@ -207,6 +218,11 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
       [TX2]
     );
     assert.deepEqual(rolledBack.rows[0], { transfer_kind: 'unknown', audits: 0 });
+    const rolledBackMarker = await db.query(
+      'SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1',
+      [TX2]
+    );
+    assert.equal(rolledBackMarker.rowCount, 0);
     const projectedAfterRollback = await db.query(
       `SELECT
          (SELECT transfer_count::integer FROM robinhood_wallet_transfer_edges
@@ -218,5 +234,39 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
       [VERSION]
     );
     assert.deepEqual(projectedAfterRollback.rows[0], { edges: 1, daily: 1, evidence: 3 });
+  });
+
+  it('rejects a preserved orphan but still supports legacy raw-only events', async () => {
+    await insertUnknown(TX3, 3, '75', true);
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
+         chain, transaction_hash, log_index, block_time, disposition, block_hash
+       ) VALUES ('robinhood', $1, 3, $2::timestamptz, 'orphaned', $3)`,
+      [TX3, BLOCK_TIME, BLOCK_HASH]
+    );
+    const repository = createRobinhoodWalletTransferReclassificationRepository({ database: db });
+    await assert.rejects(repository.applyTransition(transition(TX3, 3)),
+      /preserved transfer evidence conflicts/);
+    const raw = await db.query(
+      'SELECT transfer_kind FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [TX3]
+    );
+    assert.equal(raw.rows[0].transfer_kind, 'unknown');
+    const markers = await db.query(
+      `SELECT disposition FROM robinhood_wallet_transfer_evidence_dispositions
+       WHERE transaction_hash = $1`, [TX3]
+    );
+    assert.deepEqual(markers.rows, [{ disposition: 'orphaned' }]);
+    await db.query(
+      'DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [TX3]
+    );
+    await db.query(
+      'DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [TX3]
+    );
+    assert.equal((await repository.applyTransition(transition(TX3, 3))).applied, true);
+    const legacyMarkers = await db.query(
+      'SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1',
+      [TX3]
+    );
+    assert.equal(legacyMarkers.rowCount, 0);
   });
 });

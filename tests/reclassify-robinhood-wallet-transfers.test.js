@@ -98,6 +98,7 @@ describe('Robinhood wallet transfer reclassification command', () => {
       database: { query: async () => ({ rows: [{
         events: 'events', roles: 'roles', audits: 'audits', edges: 'edges',
         evidence: 'evidence', summaries: 'summaries', watermarks: 'watermarks',
+        pending_evidence: 'pending', dispositions: 'dispositions',
       }] }) },
       repositoryFactory: ({ database }) => { created.repository = database; return {}; },
       sourceFactory: ({ database }) => { created.source = database; return {}; },

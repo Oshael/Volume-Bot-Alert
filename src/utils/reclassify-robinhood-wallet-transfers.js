@@ -50,11 +50,13 @@ async function buildRuntime(deps = {}) {
             to_regclass('robinhood_wallet_transfer_edges') AS edges,
             to_regclass('robinhood_wallet_relationship_evidence') AS evidence,
             to_regclass('robinhood_wallet_transfer_daily_summaries') AS summaries,
-            to_regclass('robinhood_wallet_transfer_compaction_watermarks') AS watermarks`
+            to_regclass('robinhood_wallet_transfer_compaction_watermarks') AS watermarks,
+            to_regclass('robinhood_wallet_transfer_pending_evidence') AS pending_evidence,
+            to_regclass('robinhood_wallet_transfer_evidence_dispositions') AS dispositions`
   );
   const tables = Object.values(schema.rows[0] || {});
-  if (tables.length !== 7 || tables.some((value) => !value)) {
-    throw new Error('schema not ready: apply Stages 128, 129, 131, 132, 135 and 136');
+  if (tables.length !== 9 || tables.some((value) => !value)) {
+    throw new Error('schema not ready: apply Stages 128, 129, 131, 132, 135, 136, 243 and 244');
   }
   return Object.freeze({
     repository: (deps.repositoryFactory
