@@ -188,6 +188,7 @@
     "robinhood:wallet-transfer-retention-plan": "node src/utils/plan-robinhood-wallet-transfer-retention.js",
     "robinhood:wallet-transfer-retention-readiness": "node src/utils/audit-robinhood-wallet-transfer-retention-readiness.js",
     "robinhood:wallet-transfer-retention-pilot": "node src/utils/drop-robinhood-wallet-transfer-retention-pilot.js",
+    "robinhood:wallet-transfer-pilot-parity-audit": "node src/utils/audit-robinhood-wallet-transfer-pilot-parity.js",
     "robinhood:wallet-transfer-evidence-migrate": "node src/utils/migrate-robinhood-wallet-transfer-evidence.js",
     "robinhood:wallet-swap-origin-repair": "node src/utils/repair-robinhood-wallet-swap-origins.js",
     "robinhood:wallet-transfer-live-origin-repair": "node src/utils/repair-robinhood-wallet-transfer-live-origin.js",

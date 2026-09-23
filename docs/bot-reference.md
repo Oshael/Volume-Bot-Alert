@@ -6042,6 +6042,13 @@ paridade com Archive; o comando valida o vínculo, mas não reproduz o replay.
 Após revalidar sob locks, ele marca o watermark `dropped` e executa `DROP TABLE`
 na mesma transação, retornando o caminho do heap e o tamanho anterior. Uma falha
 desfaz ambos. A retenção geral de transfers permanece em 30 dias.
+Antes de preparar o relatório operacional, execute
+`npm run robinhood:wallet-transfer-pilot-parity-audit -- --day=2026-07-19`
+com `ROBINHOOD_ARCHIVE_RPC_URL` apontando para o Archive. A auditoria é somente
+de leitura: compara o checkpoint no Archive, contagens e soma local com o
+watermark e 24 recibos determinísticos com os eventos raw. O resultado marca
+`archiveReplay.status=sample_only` e `readyForDrop=false`; a amostra não prova
+o replay integral das decisões e projeções exigido pelo relatório aprovado.
 
 Para preservar `unknown` legados de um dia `verified` enquanto a partição raw
 ainda existe, use `npm run robinhood:wallet-transfer-evidence-migrate --
