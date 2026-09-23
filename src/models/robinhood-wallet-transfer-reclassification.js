@@ -1,5 +1,6 @@
 const db = require('./db');
 const { persistTransferProjection } = require('./robinhood-wallet-transfer-projection');
+const { lockRobinhoodCanonicalRecoveryShared } = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -93,6 +94,82 @@ async function lockRawEvent(client, transition) {
     [CHAIN, transition.transactionHash, transition.logIndex, transition.blockTime]
   );
   return result.rows[0] || null;
+}
+
+async function lockPreservedEvent(client, transition) {
+  const result = await client.query(
+    `SELECT evidence.*, EXISTS (
+       SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
+       WHERE disposition.chain = evidence.chain
+         AND disposition.transaction_hash = evidence.transaction_hash
+         AND disposition.log_index = evidence.log_index
+         AND disposition.block_time = evidence.block_time
+         AND disposition.disposition = 'orphaned'
+     ) AS orphaned, EXISTS (
+       SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
+       WHERE disposition.chain = evidence.chain
+         AND disposition.transaction_hash = evidence.transaction_hash
+         AND disposition.log_index = evidence.log_index
+         AND disposition.block_time = evidence.block_time
+         AND disposition.disposition = 'reclassified'
+     ) AS reclassified
+     FROM robinhood_wallet_transfer_pending_evidence evidence
+     WHERE evidence.chain = $1 AND evidence.transaction_hash = $2
+       AND evidence.log_index = $3 AND evidence.block_time = $4::timestamptz
+     FOR SHARE OF evidence`,
+    [CHAIN, transition.transactionHash, transition.logIndex, transition.blockTime]
+  );
+  return result.rows[0] || null;
+}
+
+async function assertPreservedCanonical(client, evidence) {
+  const result = await client.query(
+    `SELECT cursor.recovery_state, block.block_hash, block.canonical,
+            block.block_timestamp
+     FROM robinhood_chain_capture_cursor cursor
+     LEFT JOIN robinhood_chain_blocks block ON block.chain = cursor.chain
+       AND block.block_number = $2::bigint AND block.block_hash = $3
+     WHERE cursor.chain = $1`,
+    [CHAIN, evidence.block_number, evidence.block_hash]
+  );
+  const row = result.rows[0];
+  if (!row || row.recovery_state !== 'running') {
+    throw new Error('preserved transfer evidence is fenced by canonical recovery');
+  }
+  if (!row.block_hash) {
+    const error = new Error('preserved transfer canonical block requires Archive repair');
+    error.code = 'archive_required';
+    throw error;
+  }
+  if (row.canonical !== true
+      || new Date(row.block_timestamp).getTime() !== new Date(evidence.block_time).getTime()) {
+    throw new Error('preserved transfer evidence is not canonical');
+  }
+}
+
+async function resolveTransitionSource(client, transition) {
+  const lockedRaw = await lockRawEvent(client, transition);
+  if (!lockedRaw) await lockRobinhoodCanonicalRecoveryShared(client);
+  const preserved = lockedRaw ? null : await lockPreservedEvent(client, transition);
+  if (!lockedRaw && !preserved) {
+    const alreadyApplied = await matchingAuditExists(client, transition);
+    return { reason: alreadyApplied ? 'already_applied' : 'event_not_found' };
+  }
+  if (preserved?.orphaned) throw new Error('preserved transfer evidence is orphaned');
+  if (preserved?.reclassified) {
+    const alreadyApplied = await matchingAuditExists(client, transition);
+    return { reason: alreadyApplied ? 'already_applied' : 'classification_conflict' };
+  }
+  const raw = lockedRaw || { ...preserved, transfer_kind: 'unknown' };
+  if (raw.transfer_kind !== 'unknown'
+      || raw.classification_version !== transition.fromClassificationVersion) {
+    const alreadyApplied = raw.transfer_kind === transition.toTransferKind
+      && raw.classification_version === transition.toClassificationVersion
+      && await matchingAuditExists(client, transition);
+    return { reason: alreadyApplied ? 'already_applied' : 'classification_conflict' };
+  }
+  if (preserved) await assertPreservedCanonical(client, preserved);
+  return { raw, lockedRaw };
 }
 
 async function matchingAuditExists(client, transition) {
@@ -202,7 +279,7 @@ function projectionEvent(raw, transition) {
   };
 }
 
-async function invalidateWatermarks(client, transition) {
+async function invalidateWatermarks(client, transition, rawless = false) {
   const versions = [...new Set([
     transition.fromClassificationVersion, transition.toClassificationVersion,
   ])];
@@ -213,7 +290,7 @@ async function invalidateWatermarks(client, transition) {
        AND lifecycle_state = 'dropped' FOR UPDATE`,
     [CHAIN, versions, transition.blockTime]
   );
-  if (dropped.rowCount) throw new Error('cannot reclassify a dropped transfer partition');
+  if (dropped.rowCount && !rawless) throw new Error('cannot reclassify a dropped transfer partition');
   const result = await client.query(
     `UPDATE robinhood_wallet_transfer_compaction_watermarks SET
        lifecycle_state = 'blocked', state_reason = 'reclassification_applied',
@@ -240,7 +317,33 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
       throw new Error('limit must be between 1 and 1000');
     }
     const result = await database.query(
-      `SELECT COALESCE(preserved.block_number, raw.block_number) AS block_number,
+      `WITH source AS (
+         SELECT raw.chain, raw.block_number, raw.block_hash, raw.block_time,
+                raw.transaction_hash, raw.transaction_index, raw.log_index,
+                raw.token_address, raw.from_wallet, raw.to_wallet, raw.amount_raw,
+                raw.transfer_kind, raw.classification_version
+         FROM robinhood_token_transfer_events raw
+         WHERE raw.chain = $1 AND raw.transfer_kind = 'unknown'
+           AND raw.classification_version = $2
+           AND raw.block_time >= ($3::date::timestamp AT TIME ZONE 'UTC')
+           AND raw.block_time < (($3::date + 1)::timestamp AT TIME ZONE 'UTC')
+         UNION ALL
+         SELECT evidence.chain, evidence.block_number, evidence.block_hash, evidence.block_time,
+                evidence.transaction_hash, evidence.transaction_index, evidence.log_index,
+                evidence.token_address, evidence.from_wallet, evidence.to_wallet,
+                evidence.amount_raw, 'unknown', evidence.classification_version
+         FROM robinhood_wallet_transfer_pending_evidence evidence
+         WHERE evidence.chain = $1 AND evidence.classification_version = $2
+           AND evidence.block_time >= ($3::date::timestamp AT TIME ZONE 'UTC')
+           AND evidence.block_time < (($3::date + 1)::timestamp AT TIME ZONE 'UTC')
+           AND NOT EXISTS (
+             SELECT 1 FROM robinhood_token_transfer_events raw
+             WHERE raw.chain = evidence.chain
+               AND raw.transaction_hash = evidence.transaction_hash
+               AND raw.log_index = evidence.log_index AND raw.block_time = evidence.block_time
+           )
+       )
+       SELECT COALESCE(preserved.block_number, raw.block_number) AS block_number,
          COALESCE(preserved.block_hash, raw.block_hash) AS block_hash,
          COALESCE(preserved.block_time, raw.block_time) AS block_time,
          raw.transaction_hash,
@@ -269,7 +372,7 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
            'observedFromBlock', to_role.observed_from_block::text,
            'observedThroughBlock', to_role.observed_through_block::text
          ) AS to_role_evidence
-       FROM robinhood_token_transfer_events raw
+       FROM source raw
        LEFT JOIN robinhood_wallet_transfer_pending_evidence preserved
          ON preserved.chain = raw.chain AND preserved.transaction_hash = raw.transaction_hash
         AND preserved.log_index = raw.log_index AND preserved.block_time = raw.block_time
@@ -279,11 +382,7 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
        JOIN robinhood_wallet_endpoint_roles to_role
          ON to_role.chain = raw.chain AND to_role.endpoint_address = raw.to_wallet
         AND raw.block_number BETWEEN to_role.observed_from_block AND to_role.observed_through_block
-       WHERE raw.chain = $1 AND raw.transfer_kind = 'unknown'
-         AND raw.classification_version = $2
-         AND raw.block_time >= ($3::date::timestamp AT TIME ZONE 'UTC')
-         AND raw.block_time < (($3::date + 1)::timestamp AT TIME ZONE 'UTC')
-         AND (preserved.chain IS NULL OR NOT EXISTS (
+       WHERE (preserved.chain IS NULL OR NOT EXISTS (
            SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
            WHERE disposition.chain = preserved.chain
              AND disposition.transaction_hash = preserved.transaction_hash
@@ -303,28 +402,21 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      const raw = await lockRawEvent(client, transition);
-      if (!raw) {
+      const source = await resolveTransitionSource(client, transition);
+      if (source.reason) {
         await client.query('ROLLBACK');
-        return { applied: false, reason: 'event_not_found' };
+        return { applied: false, reason: source.reason };
       }
-      if (raw.transfer_kind !== 'unknown'
-          || raw.classification_version !== transition.fromClassificationVersion) {
-        const alreadyApplied = raw.transfer_kind === transition.toTransferKind
-          && raw.classification_version === transition.toClassificationVersion
-          && await matchingAuditExists(client, transition);
-        await client.query('ROLLBACK');
-        return { applied: false, reason: alreadyApplied ? 'already_applied' : 'classification_conflict' };
-      }
+      const { raw, lockedRaw } = source;
       const event = EDGE_KINDS.has(transition.toTransferKind)
         ? projectionEvent(raw, transition) : null;
       await markPreservedEvidenceReclassified(client, transition, raw);
       await insertAudit(client, transition, raw);
-      await updateRawEvent(client, transition);
+      if (lockedRaw) await updateRawEvent(client, transition);
       const projected = event ? await persistProjection(
         client, transition.toClassificationVersion, [event]
       ) : { edgeGroups: 0, dailySummaryGroups: 0, evidenceCandidates: 0 };
-      const watermarksInvalidated = await invalidateWatermarks(client, transition);
+      const watermarksInvalidated = await invalidateWatermarks(client, transition, !lockedRaw);
       await client.query('COMMIT');
       return { applied: true, projected, watermarksInvalidated };
     } catch (error) {

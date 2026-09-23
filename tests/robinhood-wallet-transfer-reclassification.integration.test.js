@@ -20,6 +20,8 @@ const stage132 = require('../src/utils/db-init-stage132');
 const stage135 = require('../src/utils/db-init-stage135');
 const stage136 = require('../src/utils/db-init-stage136');
 const stage153 = require('../src/utils/db-init-stage153');
+const stage191 = require('../src/utils/db-init-stage191');
+const stage205 = require('../src/utils/db-init-stage205');
 const stage243 = require('../src/utils/db-init-stage243');
 const stage244 = require('../src/utils/db-init-stage244');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -35,8 +37,28 @@ const TX1 = `0x${'9'.repeat(64)}`;
 const TX2 = `0x${'8'.repeat(64)}`;
 const TX3 = `0x${'6'.repeat(64)}`;
 const BLOCK_HASH = `0x${'7'.repeat(64)}`;
+const RAWLESS_VERSION = 'test_rawless_reclassification_v1';
+const RAWLESS_DAY = '2099-10-03';
+const RAWLESS_TIME = `${RAWLESS_DAY}T00:00:00.000Z`;
+const RAWLESS_HASH = `0x${'4'.repeat(64)}`;
+const RAWLESS_TX = `0x${'5'.repeat(64)}`;
+const RAWLESS_TOKEN = `0x${'a'.repeat(40)}`;
+const RAWLESS_FROM = `0x${'b'.repeat(40)}`;
+const RAWLESS_TO = `0x${'c'.repeat(40)}`;
+let insertedCaptureCursor = false;
+let originalCaptureCursor = null;
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [RAWLESS_TX]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_reclassifications WHERE to_classification_version = $1', [RAWLESS_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = $1', [RAWLESS_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = $1', [RAWLESS_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1', [RAWLESS_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [RAWLESS_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [RAWLESS_TX]);
+  await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [RAWLESS_TX]);
+  await db.query('DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = ANY($1::varchar[])', [[RAWLESS_FROM, RAWLESS_TO]]);
+  await db.query('DELETE FROM robinhood_chain_blocks WHERE block_hash = $1', [RAWLESS_HASH]);
   await db.query(
     'DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = ANY($1::varchar[])',
     [[TX1, TX2, TX3]]
@@ -111,11 +133,22 @@ async function insertRole(endpoint, evidenceBlock) {
   );
 }
 
+async function insertRawlessCanonicalBlock() {
+  await db.query(
+    `INSERT INTO robinhood_chain_blocks (
+       chain, block_number, block_hash, parent_hash, capture_digest,
+       block_timestamp, head_observed_at, receipts_available_at
+     ) VALUES ('robinhood', 200, $1, $2, $3, $4::timestamptz, NOW(), NOW())`,
+    [RAWLESS_HASH, `0x${'e'.repeat(64)}`, `0x${'f'.repeat(64)}`, RAWLESS_TIME]
+  );
+}
+
 describe('Robinhood wallet transfer reclassification persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
-      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153, stage243, stage244,
+      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153,
+      stage191, stage205, stage243, stage244,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -124,6 +157,17 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
 
   after(async () => {
     await cleanup();
+    if (insertedCaptureCursor) {
+      await db.query("DELETE FROM robinhood_chain_capture_cursor WHERE chain = 'robinhood'");
+    } else if (originalCaptureCursor) {
+      await db.query(
+        `UPDATE robinhood_chain_capture_cursor SET recovery_state = $1,
+           recovery_plan = $2::jsonb, recovery_detected_at = $3
+         WHERE chain = 'robinhood'`,
+        [originalCaptureCursor.recovery_state, originalCaptureCursor.recovery_plan,
+          originalCaptureCursor.recovery_detected_at]
+      );
+    }
     await db.pool.end();
   });
 
@@ -300,5 +344,134 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
       [TX3]
     );
     assert.equal(legacyMarkers.rowCount, 0);
+  });
+
+  it('reclassifies preserved evidence without raw under canonical and dropped-day fences', async () => {
+    const previous = await db.query(
+      `SELECT recovery_state, recovery_plan, recovery_detected_at
+       FROM robinhood_chain_capture_cursor WHERE chain = 'robinhood'`
+    );
+    originalCaptureCursor = previous.rows[0] || null;
+    const cursor = await db.query(
+      `INSERT INTO robinhood_chain_capture_cursor(chain, next_block, recovery_state)
+       VALUES ('robinhood', 1, 'running') ON CONFLICT (chain) DO NOTHING
+       RETURNING chain`
+    );
+    insertedCaptureCursor = cursor.rowCount === 1;
+    if (originalCaptureCursor) {
+      await db.query(
+        `UPDATE robinhood_chain_capture_cursor SET recovery_state = 'running',
+           recovery_plan = NULL, recovery_detected_at = NULL WHERE chain = 'robinhood'`
+      );
+    }
+    await insertRawlessCanonicalBlock();
+    for (const endpoint of [RAWLESS_FROM, RAWLESS_TO]) {
+      await db.query(
+        `INSERT INTO robinhood_wallet_endpoint_roles (
+           chain, endpoint_address, endpoint_role, evidence_source, evidence_block,
+           evidence_block_hash, resolver_version, observed_from_block, observed_through_block
+         ) VALUES ('robinhood', $1, 'wallet', 'pc_archive', 200, $2,
+           'test_role_v1', 200, 200)`, [endpoint, RAWLESS_HASH]
+      );
+    }
+    await createRobinhoodTokenTransferRepository({
+      database: db, preservePendingEvidence: true,
+    }).insertTransferEvents([{
+      blockNumber: '200', blockHash: RAWLESS_HASH, blockTime: RAWLESS_TIME,
+      transactionHash: RAWLESS_TX, transactionIndex: '1', logIndex: '1',
+      tokenAddress: RAWLESS_TOKEN, fromWallet: RAWLESS_FROM, toWallet: RAWLESS_TO,
+      amountRaw: '35', transferKind: 'unknown', classificationVersion: RAWLESS_VERSION,
+    }]);
+    await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [RAWLESS_TX]);
+    const repository = createRobinhoodWalletTransferReclassificationRepository({ database: db });
+    const selection = { classificationVersion: RAWLESS_VERSION, day: RAWLESS_DAY, limit: 10 };
+    assert.equal((await repository.listCandidates(selection))[0].transactionHash, RAWLESS_TX);
+    const action = {
+      ...transition(RAWLESS_TX, 1), blockTime: RAWLESS_TIME,
+      fromClassificationVersion: RAWLESS_VERSION,
+      toClassificationVersion: RAWLESS_VERSION,
+    };
+    assert.deepEqual(await repository.applyTransition({
+      ...action, fromClassificationVersion: VERSION,
+    }), { applied: false, reason: 'classification_conflict' });
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
+         chain, transaction_hash, log_index, block_time, disposition, block_hash
+       ) VALUES ('robinhood', $1, 1, $2::timestamptz, 'orphaned', $3)`,
+      [RAWLESS_TX, RAWLESS_TIME, RAWLESS_HASH]
+    );
+    try {
+      await assert.rejects(repository.applyTransition(action), /evidence is orphaned/);
+    } finally {
+      await db.query(
+        'DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1',
+        [RAWLESS_TX]
+      );
+    }
+    await db.query(
+      `UPDATE robinhood_chain_capture_cursor SET recovery_state = 'recovery_required',
+         recovery_plan = '{}'::jsonb, recovery_detected_at = NOW()
+       WHERE chain = 'robinhood'`
+    );
+    try {
+      await assert.rejects(repository.applyTransition(action), /fenced by canonical recovery/);
+    } finally {
+      await db.query(
+        `UPDATE robinhood_chain_capture_cursor SET recovery_state = 'running',
+           recovery_plan = NULL, recovery_detected_at = NULL WHERE chain = 'robinhood'`
+      );
+    }
+    await db.query('UPDATE robinhood_chain_blocks SET canonical = false WHERE block_hash = $1', [RAWLESS_HASH]);
+    await assert.rejects(repository.applyTransition(action), /not canonical/);
+    await db.query('UPDATE robinhood_chain_blocks SET canonical = true WHERE block_hash = $1', [RAWLESS_HASH]);
+    await db.query('DELETE FROM robinhood_chain_blocks WHERE block_hash = $1', [RAWLESS_HASH]);
+    try {
+      await assert.rejects(repository.applyTransition(action),
+        (error) => error.code === 'archive_required');
+    } finally {
+      await insertRawlessCanonicalBlock();
+    }
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
+         chain, projection_version, partition_day, lifecycle_state,
+         raw_event_count, target_classified_event_count, eligible_transfer_count,
+         eligible_amount_raw, summary_transfer_count, summary_amount_raw,
+         raw_last_block, raw_last_transaction_index, raw_last_log_index,
+         cursor_next_block, cursor_next_transaction_index, cursor_next_log_index,
+         cursor_next_block_time, checkpoint_block, checkpoint_hash,
+         position_projection_version, position_next_block, summary_reconciled,
+         position_complete, evidence_complete, cursor_complete, checkpoint_canonical,
+         audited_at, verified_at, dropped_at
+       ) VALUES ('robinhood', $1, $2::date, 'dropped',
+         1, 1, 0, 0, 0, 0, 200, 1, 1,
+         201, 0, 0, '2099-10-04T00:00:00Z', 200, $3,
+         'test_position_v1', 201, true, true, true, true, true,
+         NOW(), NOW(), NOW())`, [RAWLESS_VERSION, RAWLESS_DAY, RAWLESS_HASH]
+    );
+    const failing = createRobinhoodWalletTransferReclassificationRepository({
+      database: db, persistProjection: async (...args) => {
+        await persistTransferProjection(...args);
+        throw new Error('rawless projection failed');
+      },
+    });
+    await assert.rejects(failing.applyTransition(action), /rawless projection failed/);
+    assert.equal((await db.query(
+      'SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1',
+      [RAWLESS_TX]
+    )).rowCount, 0);
+    const applied = await repository.applyTransition(action);
+    assert.equal(applied.applied, true);
+    assert.equal(applied.watermarksInvalidated, 0);
+    assert.deepEqual(await repository.applyTransition(action), {
+      applied: false, reason: 'already_applied',
+    });
+    assert.equal((await repository.listCandidates(selection)).length, 0);
+    assert.equal((await db.query(
+      'SELECT 1 FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [RAWLESS_TX]
+    )).rowCount, 0);
+    assert.equal((await db.query(
+      `SELECT lifecycle_state FROM robinhood_wallet_transfer_compaction_watermarks
+       WHERE projection_version = $1`, [RAWLESS_VERSION]
+    )).rows[0].lifecycle_state, 'dropped');
   });
 });

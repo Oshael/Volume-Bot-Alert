@@ -6108,16 +6108,19 @@ Antes de publicar o rollback de transfers, aplique também
 em `robinhood_wallet_transfer_evidence_dispositions` na mesma transação em que
 remove o raw órfão. A evidência pendente permanece imutável; o marcador é
 idempotente e não faz `UPDATE`/`DELETE` por evento na tabela nova.
-O comando de reclassificação exige ambas as Stages 243/244: quando encontra
-evidência preservada para o raw, grava `reclassified` na mesma transação que
-atualiza o raw e as projeções. Se a evidência divergir ou estiver marcada
-`orphaned`, falha sem reclassificar. Neste corte, a seleção e a aplicação ainda
-dependem do raw; os marcadores não tornam partições antigas descartáveis.
-Na seleção de candidatos, quando há evidência preservada, os campos do evento
-vêm dela e marcadores `orphaned`/`reclassified` excluem o candidato; eventos
-legados sem cópia preservada continuam lidos do raw. O raw ainda enumera os
-candidatos e é bloqueado/atualizado na aplicação. Evidência preservada cujo raw
-já foi removido ainda não é reclassificada por esse comando.
+O comando de reclassificação exige ambas as Stages 243/244. Ele seleciona tanto
+raw `unknown` quanto evidência pendente sem raw; eventos legados sem evidência
+continuam lidos do raw. Marcadores `orphaned`/`reclassified` excluem o candidato.
+Na aplicação com raw, exige correspondência exata da evidência preservada, grava
+`reclassified` na mesma transação que atualiza raw e projeções e invalida o
+watermark ainda não descartado. Sem raw, trava a evidência sob o fence de recovery,
+exige bloco/hash/timestamp canônico e recovery inativo, então grava auditoria,
+disposição e projeção atomicamente. Se o bloco canônico local já saiu, falha com
+`archive_required`; não infere canonicalidade só da evidência. O watermark
+`dropped` permanece como prova histórica do momento da remoção; transições
+posteriores ficam no ledger e nas disposições. Isso ainda não libera poda:
+faltam cobertura legada, orçamento da evidência, consumidores downstream e gate
+final de drop.
 Só depois de concluir a adaptação de reclassificação/reorg e medir capacidade, ative
 `ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED=true` no service exclusivo
 de wallet transfers e reinicie esse service; o padrão é `false` para não
