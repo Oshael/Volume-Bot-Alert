@@ -134,6 +134,7 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
     const candidates = [];
     for (const candidate of plan.candidates) {
       const blockedReasons = [...candidate.blockedReasons];
+      const deferredReasons = [];
       let dependencies = null;
       if (candidate.catalogReady) {
         const partition = partitionName(candidate);
@@ -145,13 +146,18 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
         ))) {
           const result = await runProbe(database, probe.sql, probe.params, probe.timeoutMs);
           dependencies[name] = result;
-          if (result.status !== 'absent') {
-            blockedReasons.push(`${name}_${result.status}`);
-          }
+        }
+        for (const [name, result] of Object.entries(dependencies)) {
+          if (result.status === 'absent') continue;
+          const reason = `${name}_${result.status}`;
+          if (name === 'endpointRoleGapOnUnknown' && result.status === 'candidate'
+              && dependencies.unpreservedUnknown.status === 'absent') {
+            deferredReasons.push(reason);
+          } else blockedReasons.push(reason);
         }
       }
       candidates.push({
-        ...candidate, dependencies, blockedReasons,
+        ...candidate, dependencies, blockedReasons, deferredReasons,
         provisionalGatesClear: blockedReasons.length === 0,
         readyForDrop: false,
       });

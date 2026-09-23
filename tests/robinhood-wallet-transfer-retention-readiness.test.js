@@ -60,6 +60,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
       'unpreservedUnknown_candidate', 'endpointRoleGapOnUnknown_candidate',
       'transferPositionRepairCandidate_candidate', 'sellPositionRepairCandidate_candidate',
     ]);
+    assert.deepEqual(result.candidates[0].deferredReasons, []);
     assert.equal(result.candidates[0].readyForDrop, false);
     assert.equal(result.destructive, false);
     assert.equal(calls.length, 4);
@@ -90,6 +91,20 @@ describe('Robinhood transfer retention dependency readiness', () => {
     assert.equal(result.candidates[0].dependencies.transferPositionRepairCandidate.status, 'candidate');
   });
 
+  it('defers a role gap only when every unknown has preserved evidence', async () => {
+    const database = { queryWithStatementTimeout: async (sql) => ({
+      rows: [{ present: sql.includes('robinhood_wallet_endpoint_roles role') }],
+    }) };
+    const audit = createRobinhoodWalletTransferRetentionReadiness({
+      database, planner: planner([CANDIDATE]),
+    });
+    const [candidate] = (await audit.inspect()).candidates;
+    assert.deepEqual(candidate.blockedReasons, []);
+    assert.deepEqual(candidate.deferredReasons, ['endpointRoleGapOnUnknown_candidate']);
+    assert.equal(candidate.provisionalGatesClear, true);
+    assert.equal(candidate.readyForDrop, false);
+  });
+
   it('isolates a timeout to its probe and never promotes provisional clearance into drop approval', async () => {
     const timeout = createRobinhoodWalletTransferRetentionReadiness({
       database: { queryWithStatementTimeout: async (sql) => {
@@ -100,6 +115,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
     });
     const timedOut = await timeout.inspect();
     assert.deepEqual(timedOut.candidates[0].blockedReasons, ['endpointRoleGapOnUnknown_unknown']);
+    assert.deepEqual(timedOut.candidates[0].deferredReasons, []);
     assert.equal(timedOut.candidates[0].dependencies.unpreservedUnknown.status, 'absent');
     assert.equal(timedOut.candidates[0].dependencies.transferPositionRepairCandidate.status, 'absent');
     assert.equal(timedOut.candidates[0].dependencies.sellPositionRepairCandidate.status, 'absent');

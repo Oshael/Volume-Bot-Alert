@@ -6011,11 +6011,13 @@ papel ausente em endpoint de transfer `unknown`, e candidatos de reparo de
 posição de transfer ou sell na fila de redistribution. Cada sonda informa
 `candidate`, `absent` ou `unknown`
 e sua duração; a cobertura de evidência tem timeout de 60 s, as demais
-sondas de 5 s, e todas falham fechadas. As sondas de posição limitam a fila
+sondas de 5 s, e timeouts falham fechados. Um gap de papel `candidate` aparece
+em `deferredReasons` somente se todos os `unknown` do dia têm evidência íntegra
+preservada; a descoberta de endpoints pode então usar essa evidência sem raw.
+Sem cobertura, o gap continua em `blockedReasons`. As sondas de posição limitam a fila
 ao último bloco raw verificado do dia e os eventos ao frontier da fonte
 quando ele pertence à versão corrente da fila.
-`candidate` é risco
-potencial, não prova de dependência do raw. Mesmo com
+`candidate` é risco potencial, não prova de dependência do raw. Mesmo com
 `provisionalGatesClear=true`, `readyForDrop` permanece `false`: ainda é
 necessária revalidação canônica imediatamente antes de qualquer remoção. O
 comando não destaca nem apaga partições e não libera espaço por si só.
