@@ -6010,7 +6010,8 @@ pendente íntegra e sem disposição `orphaned`/`reclassified`,
 papel ausente em endpoint de transfer `unknown`, e candidatos de reparo de
 posição de transfer ou sell na fila de redistribution. Cada sonda informa
 `candidate`, `absent` ou `unknown`
-e sua duração; tem timeout de 5 s e falha fechada. `candidate` é risco
+e sua duração; a cobertura de evidência tem timeout de 60 s, as demais
+sondas de 5 s, e todas falham fechadas. `candidate` é risco
 potencial, não prova de dependência do raw. Mesmo com
 `provisionalGatesClear=true`, `readyForDrop` permanece `false`: ainda é
 necessária revalidação canônica imediatamente antes de qualquer remoção. O

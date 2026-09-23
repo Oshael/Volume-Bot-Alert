@@ -5,6 +5,7 @@ const {
 
 const CHAIN = 'robinhood';
 const QUERY_TIMEOUT_MS = 5_000;
+const EVIDENCE_COVERAGE_TIMEOUT_MS = 60_000;
 
 function partitionName(candidate) {
   const expected = `robinhood_token_transfer_events_${candidate.partitionDay.replace(/-/g, '_')}`;
@@ -50,7 +51,7 @@ function probeSql(partition, from, to) {
                 AND disposition.disposition IN ('orphaned', 'reclassified')
             )
         )
-    ) AS present`, params: [CHAIN] },
+    ) AS present`, params: [CHAIN], timeoutMs: EVIDENCE_COVERAGE_TIMEOUT_MS },
     endpointRoleGapOnUnknown: { sql: `SELECT EXISTS (
       SELECT 1 FROM ${partition} raw
       CROSS JOIN LATERAL (VALUES (raw.from_wallet), (raw.to_wallet)) endpoint(address)
@@ -102,10 +103,10 @@ function probeSql(partition, from, to) {
   };
 }
 
-async function runProbe(database, sql, params) {
+async function runProbe(database, sql, params, timeoutMs = QUERY_TIMEOUT_MS) {
   const startedAt = Date.now();
   try {
-    const { rows } = await database.queryWithStatementTimeout(sql, params, QUERY_TIMEOUT_MS);
+    const { rows } = await database.queryWithStatementTimeout(sql, params, timeoutMs);
     if (typeof rows[0]?.present !== 'boolean') {
       throw new Error('dependency probe returned an incomplete result');
     }
@@ -132,7 +133,7 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
         const to = new Date(Date.parse(from) + 86_400_000).toISOString();
         dependencies = {};
         for (const [name, probe] of Object.entries(probeSql(partition, from, to))) {
-          const result = await runProbe(database, probe.sql, probe.params);
+          const result = await runProbe(database, probe.sql, probe.params, probe.timeoutMs);
           dependencies[name] = result;
           if (result.status !== 'absent') {
             blockedReasons.push(`${name}_${result.status}`);
