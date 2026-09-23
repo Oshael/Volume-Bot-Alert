@@ -34,6 +34,21 @@ classificação **não implicam**, por si, diferenças nesses agregados. Não fo
 estabelecida a causa histórica das diferenças: o conjunto de papéis atual pode
 ter mudado ou a decisão original pode ter passado pela correção da Stage 138.
 
+## Readiness e capacidade informados em 2026-09-23
+
+O operador repetiu o readiness read-only, ainda com retenção de 30 dias. Para
+`2026-07-19`, `blockedReasons=[]`, `provisionalGatesClear=true` e
+`readyForDrop=false`; o gap de papel de endpoint permanece `candidate` diferido.
+Para `2026-07-18`, `canonicalCheckpointNotProven_candidate` ainda bloqueia a
+partição. Esses resultados não substituem a revalidação transacional final.
+
+O `df -B1` enviado sem hora de medição mostrou bytes disponíveis: `/`
+`70.955.597.824`, `/srv/trendscope-data` `72.093.966.336` e
+`/srv/trendscope-data-2` `21.436.461.056`. O heap do piloto estava no volume
+`/` na medição de localização anterior; reconfirmar antes da operação. A remoção
+do piloto não recuperaria espaço no volume de `chain_events`, que exige uma
+decisão operacional independente.
+
 ## Exceções que precisam de decisão explícita
 
 O valor raw armazenado é `wallet_self` em todos os casos abaixo. O hash da
