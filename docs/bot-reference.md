@@ -6005,10 +6005,14 @@ aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
 Para verificar dependências históricas das partições listadas, execute
 `npm run robinhood:wallet-transfer-retention-readiness --
 --projection-version=rh_transfer_v1 --limit=2`. Essa auditoria somente de
-leitura executa quatro sondas independentes: transfer `unknown` sem evidência
+leitura executa cinco sondas independentes: transfer `unknown` sem evidência
 pendente íntegra e sem disposição `orphaned`/`reclassified`,
 papel ausente em endpoint de transfer `unknown`, e candidatos de reparo de
-posição de transfer ou sell na fila de redistribution. Cada sonda informa
+posição de transfer ou sell na fila de redistribution. A quinta sonda exige
+que o watermark ainda tenha a mesma versão, seu checkpoint conste como
+canônico nos blocos locais, a captura esteja fora de recovery e o checkpoint
+esteja finalizado. Se o bloco antigo já foi removido pelo pruner, o resultado
+é `candidate`: falta prova local, sem inferir que houve reorg. Cada sonda informa
 `candidate`, `absent` ou `unknown`
 e sua duração; a cobertura de evidência tem timeout de 60 s, as demais
 sondas de 5 s, e timeouts falham fechados. Um gap de papel `candidate` aparece

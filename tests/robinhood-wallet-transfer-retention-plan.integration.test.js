@@ -96,6 +96,75 @@ describe('Robinhood wallet transfer retention plan integration', () => {
     assert.deepEqual(plan.candidates[1].blockedReasons, ['partition_missing']);
   });
 
+  it('requires a current, finalized canonical checkpoint for retention readiness', async () => {
+    const client = await db.getClient();
+    const day = '2099-01-07';
+    const checkpointBlock = '9999999999';
+    const checkpointHash = `0x${'7'.repeat(64)}`;
+    const partition = 'robinhood_token_transfer_events_2099_01_07';
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
+           chain, projection_version, partition_day, lifecycle_state,
+           cursor_next_block, cursor_next_transaction_index, cursor_next_log_index,
+           cursor_next_block_time, checkpoint_block, checkpoint_hash,
+           position_projection_version, position_next_block, summary_reconciled,
+           position_complete, evidence_complete, cursor_complete, checkpoint_canonical,
+           audited_at, verified_at
+         ) VALUES ('robinhood', $1, $2, 'verified', 10000000000, 0, 0,
+           '2099-01-08T00:00:00Z', $3::bigint, $4,
+           'unified_transfer_v1', 10000000000, true, true, true, true, true, NOW(), NOW())`,
+        [VERSION, day, checkpointBlock, checkpointHash]
+      );
+      await client.query(
+        `INSERT INTO robinhood_chain_capture_cursor (
+           chain, next_block, checkpoint_block, checkpoint_hash,
+           node_head, finalized_head, recovery_state
+         ) VALUES ('robinhood', 10000000000, $1::bigint, $2,
+           10000000000, $1::bigint, 'running')
+         ON CONFLICT (chain) DO UPDATE SET
+           next_block=EXCLUDED.next_block, checkpoint_block=EXCLUDED.checkpoint_block,
+           checkpoint_hash=EXCLUDED.checkpoint_hash, node_head=EXCLUDED.node_head,
+           finalized_head=EXCLUDED.finalized_head, recovery_state='running',
+           recovery_plan=NULL, recovery_detected_at=NULL`,
+        [checkpointBlock, checkpointHash]
+      );
+      await client.query(
+        `INSERT INTO robinhood_chain_blocks (
+           chain, block_number, block_hash, parent_hash, capture_digest,
+           block_timestamp, finality, canonical, head_observed_at, receipts_available_at
+         ) VALUES ('robinhood', $1::bigint, $2, $3, $2,
+           '2099-01-07T23:59:59Z', 'finalized', true, NOW(), NOW())`,
+        [checkpointBlock, checkpointHash, `0x${'6'.repeat(64)}`]
+      );
+      const readiness = createRobinhoodWalletTransferRetentionReadiness({
+        database: { queryWithStatementTimeout: (sql, params) => (
+          sql.includes('JOIN robinhood_chain_blocks block')
+            ? client.query(sql, params) : Promise.resolve({ rows: [{ present: false }] })
+        ) },
+        planner: { plan: async () => ({
+          retentionDays: 30, cutoffDay: '2099-02-01', limit: 1, hasMore: false,
+          candidates: [{ partitionDay: day, expectedPartition: partition,
+            actualPartition: partition, watermarkVersion: '0', catalogReady: true,
+            blockedReasons: [] }],
+        }) },
+      });
+      const inspect = async () => (await readiness.inspect({ projectionVersion: VERSION }))
+        .candidates[0];
+      assert.equal((await inspect()).dependencies.canonicalCheckpointNotProven.status, 'absent');
+      await client.query('DELETE FROM robinhood_chain_blocks WHERE block_hash=$1',
+        [checkpointHash]);
+      const missing = await inspect();
+      assert.equal(missing.dependencies.canonicalCheckpointNotProven.status, 'candidate');
+      assert.deepEqual(missing.blockedReasons, ['canonicalCheckpointNotProven_candidate']);
+      assert.equal(missing.readyForDrop, false);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
   it('requires exact active evidence for each unknown transfer', async () => {
     const raw = createRobinhoodTokenTransferRepository({ database: db });
     await raw.ensurePartitionForDay(READY_DAY);

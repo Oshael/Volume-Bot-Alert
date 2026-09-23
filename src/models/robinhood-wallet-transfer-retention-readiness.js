@@ -111,6 +111,28 @@ function probeSql(partition, from, to, rawLastBlock) {
   };
 }
 
+function canonicalCheckpointProbe(candidate, projectionVersion) {
+  return {
+    sql: `SELECT NOT EXISTS (
+      SELECT 1
+        FROM robinhood_wallet_transfer_compaction_watermarks watermark
+        JOIN robinhood_chain_capture_cursor capture ON capture.chain=watermark.chain
+        JOIN robinhood_chain_blocks block
+          ON block.chain=watermark.chain
+         AND block.block_number=watermark.checkpoint_block
+         AND block.block_hash=watermark.checkpoint_hash
+         AND block.canonical
+       WHERE watermark.chain=$1 AND watermark.projection_version=$2
+         AND watermark.partition_day=$3::date
+         AND watermark.version=$4::bigint
+         AND watermark.lifecycle_state='verified' AND watermark.dropped_at IS NULL
+         AND capture.recovery_state='running'
+         AND capture.finalized_head >= watermark.checkpoint_block
+    ) AS present`,
+    params: [CHAIN, projectionVersion, candidate.partitionDay, candidate.watermarkVersion],
+  };
+}
+
 async function runProbe(database, sql, params, timeoutMs = QUERY_TIMEOUT_MS) {
   const startedAt = Date.now();
   try {
@@ -141,9 +163,13 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
         const from = `${candidate.partitionDay}T00:00:00.000Z`;
         const to = new Date(Date.parse(from) + 86_400_000).toISOString();
         dependencies = {};
-        for (const [name, probe] of Object.entries(probeSql(
-          partition, from, to, candidate.rawLastBlock ?? null
-        ))) {
+        const probes = {
+          ...probeSql(partition, from, to, candidate.rawLastBlock ?? null),
+          canonicalCheckpointNotProven: canonicalCheckpointProbe(
+            candidate, input.projectionVersion
+          ),
+        };
+        for (const [name, probe] of Object.entries(probes)) {
           const result = await runProbe(database, probe.sql, probe.params, probe.timeoutMs);
           dependencies[name] = result;
         }
