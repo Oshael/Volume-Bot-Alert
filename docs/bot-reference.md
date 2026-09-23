@@ -6049,6 +6049,16 @@ de leitura: compara o checkpoint no Archive, contagens e soma local com o
 watermark e 24 recibos determinísticos com os eventos raw. O resultado marca
 `archiveReplay.status=sample_only` e `readyForDrop=false`; a amostra não prova
 o replay integral das decisões e projeções exigido pelo relatório aprovado.
+Para conferir todos os recibos raw desse piloto no Archive, use
+`robinhood:wallet-transfer-pilot-receipt-replay -- --day=2026-07-19`
+com a mesma variável RPC. O comando é somente de leitura e percorre lotes de
+1.000 eventos, até dez lotes por execução; `--batch-size=1..5000`,
+`--max-batches=1..100` e `--after=nextCursor` permitem retomada. Guarde os
+relatórios de cada execução em sequência. `scanComplete=true` exige que a
+contagem acumulada declarada pelo cursor bata com o watermark. Em execução
+retomada, o encadeamento dos relatórios ainda precisa ser verificado; em todos
+os casos `archiveReplay` permanece `partial`, pois recibos não reproduzem
+decisões e projeções derivadas.
 
 Para preservar `unknown` legados de um dia `verified` enquanto a partição raw
 ainda existe, use `npm run robinhood:wallet-transfer-evidence-migrate --
