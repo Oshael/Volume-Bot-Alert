@@ -6147,6 +6147,12 @@ Se a faixa do reorg atravessar um dia de transfers marcado `dropped`, o rollback
 aborta com `archive_required` antes de alterar projeções ou cursores. A marcação
 `orphaned` também funciona para evidência pendente cujo raw já não existe,
 desde que a faixa não atravesse um dia `dropped`.
+O rollback de posições `unified_transfer_v1` recompõe os pares afetados desde o
+início usando swaps e transfers raw até o ancestral. Se qualquer dia raw até o
+ancestral estiver marcado `dropped`, aborta com `archive_required` antes da
+recomposição: uma reorg recente também pode precisar de transfers antigos.
+Esse bloqueio evita reconstruir posições incompletas, mas a poda permanente
+exige uma base de posições recuperável sem esse histórico raw.
 O comando de reclassificação exige ambas as Stages 243/244. Ele seleciona tanto
 raw `unknown` quanto evidência pendente sem raw; eventos legados sem evidência
 continuam lidos do raw. Marcadores `orphaned`/`reclassified` excluem o candidato.

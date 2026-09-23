@@ -105,6 +105,23 @@ async function loadRewoundCursors(client, range) {
   return result.rows;
 }
 
+async function assertUnifiedRawHistory(client, range, cursors) {
+  if (!cursors.some(({ projection_version: version }) => version === UNIFIED)) return;
+  const result = await client.query(
+    `SELECT partition_day::text FROM robinhood_wallet_transfer_compaction_watermarks
+      WHERE chain=$1 AND lifecycle_state='dropped'
+        AND partition_day <= ($2::timestamptz AT TIME ZONE 'UTC')::date
+      ORDER BY partition_day LIMIT 1`,
+    [CHAIN, range.ancestorTimestamp]
+  );
+  if (result.rowCount) {
+    throw Object.assign(
+      new Error(`unified position reorg needs raw history from dropped day ${result.rows[0].partition_day}; Archive repair required`),
+      { code: 'archive_required' }
+    );
+  }
+}
+
 async function loadAffectedPairs(client, range, cursor) {
   const result = await client.query(
     `WITH affected AS MATERIALIZED (
@@ -244,6 +261,7 @@ async function rewindCursor(client, range, cursor) {
 function createRobinhoodWalletPositionReorg() {
   async function rollback(client, range) {
     const cursors = await loadRewoundCursors(client, range);
+    await assertUnifiedRawHistory(client, range, cursors);
     const summary = {
       projections: cursors.length, affectedPositions: 0,
       removedPositions: 0, rebuiltPositions: 0, cursorsRewound: 0,
