@@ -5995,6 +5995,16 @@ Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
 `destructive=false` e exige nova validação canônica antes de qualquer drop.
+Para verificar dependências históricas das partições listadas, execute
+`npm run robinhood:wallet-transfer-retention-readiness --
+--projection-version=rh_transfer_v1 --limit=2`. Essa auditoria somente de
+leitura procura endpoints ainda sem papel persistido, transfers `unknown` e
+itens de redistribution pendentes ou alugados que possam precisar do raw do dia
+para reparo de posições. Cada consulta de dependências tem timeout de 30 s e
+falha fechada. Mesmo com
+`provisionalGatesClear=true`, `readyForDrop` permanece `false`: ainda é
+necessária revalidação canônica imediatamente antes de qualquer remoção. O
+comando não destaca nem apaga partições e não libera espaço por si só.
 
 O source de classificação de transfers mantém gates distintos para LIVE e
 backfill. O gate histórico falha fechado até o seed de swaps estar `complete`
