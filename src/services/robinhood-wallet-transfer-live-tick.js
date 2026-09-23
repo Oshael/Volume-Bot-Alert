@@ -255,6 +255,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     unifiedPosition: unified.telemetry,
     telemetry: Object.freeze({
       ...captured.telemetry, endpointRoles: context.endpointRoleCoverage,
+      unknownEvidence: classified.unknownEvidence,
       timing: timer.snapshot(processedBlocks),
     }),
   });

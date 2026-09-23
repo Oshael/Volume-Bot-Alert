@@ -139,6 +139,9 @@ describe('Robinhood wallet transfer LIVE source', () => {
     assert.deepEqual(context.poolAddresses, [POOL]);
     assert.deepEqual(context.routerAddresses, [ROUTER]);
     assert.deepEqual(context.contractAddresses, [POOL]);
+    assert.deepEqual(context.contractRoleEvidence, [{
+      endpointAddress: POOL, observedFromBlock: '110', observedThroughBlock: '110',
+    }]);
     assert.deepEqual(context.walletAddresses, [WALLET]);
     assert.deepEqual(context.endpointRoleCoverage, {
       requested: 3, persisted: 1, unpersisted: 2, probes: 0,

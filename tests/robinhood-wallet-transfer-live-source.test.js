@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   MAX_IDENTITIES,
+  createRobinhoodWalletTransferLiveSourceRepository,
   __private: { backfillFrontier, identityChunks, sourceFrontier, transferBackfillPlan },
 } = require('../src/models/robinhood-wallet-transfer-live-source');
 
@@ -19,6 +20,31 @@ const SEED = Object.freeze({
 });
 
 describe('Robinhood wallet transfer LIVE source frontier', () => {
+  it('returns the block interval of persisted contract evidence', async () => {
+    const contract = `0x${'3'.repeat(40)}`;
+    const repository = createRobinhoodWalletTransferLiveSourceRepository({
+      database: { async query(sql) {
+        if (sql.includes('FROM robinhood_wallet_swap_cursors')) return { rows: [BASE] };
+        if (sql.includes('FROM robinhood_wallet_swaps')) return { rows: [] };
+        if (sql.includes('FROM robinhood_pool_registry')) return { rows: [] };
+        if (sql.includes('FROM robinhood_wallet_endpoint_roles')) {
+          assert.match(sql, /observed_from_block, observed_through_block/);
+          return { rows: [{ endpoint_address: contract, endpoint_role: 'contract',
+            observed_from_block: '110', observed_through_block: '115' }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      } },
+    });
+    const context = await repository.loadRangeContext({
+      fromBlock: '110', toBlock: '115',
+      fromTime: '2099-01-01T00:00:00Z', toTime: '2099-01-01T00:00:01Z',
+      transactionHashes: [], endpointAddresses: [contract],
+    });
+    assert.deepEqual(context.contractRoleEvidence, [{
+      endpointAddress: contract, observedFromBlock: '110', observedThroughBlock: '115',
+    }]);
+  });
+
   it('chunks normalized classification identities instead of rejecting dense ranges', () => {
     const values = Array.from({ length: MAX_IDENTITIES + 1 }, (_, index) => (
       `0x${BigInt(index + 1).toString(16).padStart(64, '0')}`

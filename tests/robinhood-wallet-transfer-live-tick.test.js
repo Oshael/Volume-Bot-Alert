@@ -169,6 +169,35 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.deepEqual(deps.calls.projected[0].events, []);
   });
 
+  it('reports swap-ambiguous unknowns with a contract role covering their block', async () => {
+    const ambiguousContext = (fromBlock) => ({
+      ready: true, swapCoverageComplete: true,
+      swaps: [{ transactionHash: TX, actionIndex: '3', tokenAddress: TOKEN,
+        walletAddress: BOB, tokenAmountRaw: '25', side: 'sell' }],
+      poolAddresses: [], routerAddresses: [], contractAddresses: [BOB],
+      walletAddresses: [ALICE],
+      contractRoleEvidence: [{ endpointAddress: BOB,
+        observedFromBlock: fromBlock, observedThroughBlock: '101' }],
+      endpointRoleCoverage: { requested: 2, persisted: 1, unpersisted: 1, probes: 0 },
+    });
+    const covered = dependencies({ context: ambiguousContext('100') });
+    const coveredResult = await runRobinhoodWalletTransferLiveTick(covered);
+    assert.deepEqual(coveredResult.classifications, { unknown: 1 });
+    assert.deepEqual(coveredResult.telemetry.unknownEvidence, {
+      total: 1, withContractRoleCoverage: 1, withoutContractRoleCoverage: 0,
+      reasons: { swap_correlation_ambiguous: 1 },
+    });
+    assert.equal(covered.calls.raw[0][0].transferKind, 'unknown');
+    assert.deepEqual(covered.calls.projected[0].events, []);
+
+    const uncovered = dependencies({ context: ambiguousContext('101') });
+    const uncoveredResult = await runRobinhoodWalletTransferLiveTick(uncovered);
+    assert.deepEqual(uncoveredResult.telemetry.unknownEvidence, {
+      total: 1, withContractRoleCoverage: 0, withoutContractRoleCoverage: 1,
+      reasons: { swap_correlation_ambiguous: 1 },
+    });
+  });
+
   it('persists a known-wallet self-transfer as raw classification-only evidence', async () => {
     const self = captured();
     self.transfers[0] = { ...self.transfers[0], toWallet: ALICE };

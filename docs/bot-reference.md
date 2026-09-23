@@ -6100,6 +6100,10 @@ papéis compactos de endpoints. Aplique `node src/utils/db-init-stage135.js`
 antes de iniciar o writer. O worker permanente não consulta `eth_getCode` nem
 Alchemy para classificar endpoints: registro ausente permanece `unknown` sem
 bloquear o cursor.
+O resultado do worker expõe `unknownEvidence`: contagem de `unknown` por motivo
+e quantos têm um papel `contract` registrado cujo intervalo cobre o bloco do
+transfer. A telemetria não revalida a canonicalidade da prova, não reclassifica
+eventos, não preserva evidência e não autoriza poda.
 
 Antes de publicar o writer de transfers que grava evidência pendente, aplique
 `node src/utils/db-init-stage243.js` e confirme `npm run db:schema-check`.

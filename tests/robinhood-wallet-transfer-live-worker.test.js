@@ -91,8 +91,10 @@ describe('Robinhood wallet transfer LIVE worker', () => {
         evidenceCandidates: 3, telemetry: {
           filterMode: 'topics-only', requests: 2, splits: 1, addressSplits: 0,
           endpointRoles: { probes: 4 },
+          unknownEvidence: { total: 1, withContractRoleCoverage: 1,
+            withoutContractRoleCoverage: 0, reasons: { swap_correlation_ambiguous: 1 } },
         },
-        classifications: { wallet_transfer: 2 },
+        classifications: { wallet_transfer: 1, unknown: 1 },
       }),
     });
 
@@ -108,6 +110,10 @@ describe('Robinhood wallet transfer LIVE worker', () => {
     assert.equal(status.lastResult.transferFilterMode, 'topics-only');
     assert.equal(status.lastResult.transferLogRequests, 2);
     assert.equal(status.lastResult.transferRangeSplits, 1);
+    assert.deepEqual(status.lastResult.unknownEvidence, {
+      total: 1, withContractRoleCoverage: 1,
+      withoutContractRoleCoverage: 0, reasons: { swap_correlation_ambiguous: 1 },
+    });
     assert.deepEqual(status.providerChainIds, { public: '4663' });
     await worker.stop();
   });

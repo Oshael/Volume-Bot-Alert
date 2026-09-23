@@ -366,7 +366,8 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       [CHAIN, endpointAddresses]
     )));
     const rolePromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
-      `SELECT endpoint_address, endpoint_role FROM robinhood_wallet_endpoint_roles
+      `SELECT endpoint_address, endpoint_role, observed_from_block, observed_through_block
+       FROM robinhood_wallet_endpoint_roles
        WHERE chain = $1 AND endpoint_address = ANY($2::varchar[])
        ORDER BY endpoint_address`,
       [CHAIN, endpointAddresses]
@@ -388,6 +389,13 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
     const persistedContracts = roleRows
       .filter(({ endpoint_role: role }) => role === 'contract')
       .map(({ endpoint_address: endpoint }) => endpoint);
+    const contractRoleEvidence = roleRows
+      .filter(({ endpoint_role: role }) => role === 'contract')
+      .map((role) => Object.freeze({
+        endpointAddress: role.endpoint_address,
+        observedFromBlock: String(role.observed_from_block),
+        observedThroughBlock: String(role.observed_through_block),
+      }));
     const swapWalletAddresses = swaps.map(({ walletAddress }) => walletAddress);
     const routerAddresses = [...new Set(swaps.map(({ routerAddress }) => (
       routerAddress
@@ -399,6 +407,7 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       poolAddresses: Object.freeze([...poolAddresses].sort()),
       routerAddresses: Object.freeze(routerAddresses),
       contractAddresses: Object.freeze([...new Set(persistedContracts)].sort()),
+      contractRoleEvidence: Object.freeze(contractRoleEvidence),
       walletAddresses: Object.freeze([...new Set([
         ...swapWalletAddresses, ...persistedWallets,
       ])].sort()),

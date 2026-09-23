@@ -29,6 +29,25 @@ function classificationInput(captured, fromTime) {
   };
 }
 
+function contractProofs(context) {
+  return new Map((context.contractRoleEvidence || []).map((item) => [
+    item.endpointAddress, item,
+  ]));
+}
+
+function hasContractRoleCoverage(transfer, proofs) {
+  const blockValue = String(transfer.blockNumber ?? '');
+  if (!/^\d+$/.test(blockValue)) return false;
+  const block = BigInt(blockValue);
+  return [transfer.fromWallet, transfer.toWallet].some((address) => {
+    const proof = proofs.get(address);
+    if (!proof || !/^\d+$/.test(String(proof.observedFromBlock ?? ''))
+        || !/^\d+$/.test(String(proof.observedThroughBlock ?? ''))) return false;
+    return block >= BigInt(proof.observedFromBlock)
+      && block <= BigInt(proof.observedThroughBlock);
+  });
+}
+
 function classifyTransfers(transfers, context, classifierFactory = createRobinhoodTransferClassifier) {
   const classifier = classifierFactory({
     poolAddresses: context.poolAddresses,
@@ -37,9 +56,16 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
     walletAddresses: context.walletAddresses,
   });
   const counts = {};
+  const unknownReasons = {};
+  const proofs = contractProofs(context);
+  let unknownWithContractRoleCoverage = 0;
   const events = transfers.map((transfer) => {
     const decision = classifier.classify(transfer, context);
     counts[decision.kind] = (counts[decision.kind] || 0) + 1;
+    if (decision.kind === 'unknown') {
+      unknownReasons[decision.reasonCode] = (unknownReasons[decision.reasonCode] || 0) + 1;
+      if (hasContractRoleCoverage(transfer, proofs)) unknownWithContractRoleCoverage += 1;
+    }
     return {
       ...transfer, transferKind: decision.kind,
       classificationVersion: decision.classificationVersion,
@@ -49,7 +75,15 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
       duplicateOfSwap: decision.duplicateOfSwap,
     };
   });
-  return Object.freeze({ counts: Object.freeze(counts), events: Object.freeze(events) });
+  return Object.freeze({
+    counts: Object.freeze(counts), events: Object.freeze(events),
+    unknownEvidence: Object.freeze({
+      total: counts.unknown || 0,
+      withContractRoleCoverage: unknownWithContractRoleCoverage,
+      withoutContractRoleCoverage: (counts.unknown || 0) - unknownWithContractRoleCoverage,
+      reasons: Object.freeze(unknownReasons),
+    }),
+  });
 }
 
 module.exports = {

@@ -107,6 +107,7 @@ function compactTelemetry(result) {
     transferRangeSplits: count(telemetry.splits),
     transferAddressSplits: count(telemetry.addressSplits),
     endpointRoleProbes: count(telemetry.endpointRoles?.probes),
+    unknownEvidence: telemetry.unknownEvidence || null,
     timing: telemetry.timing || null,
   });
 }
