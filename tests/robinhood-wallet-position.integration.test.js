@@ -18,11 +18,13 @@ const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const stage137 = require('../src/utils/db-init-stage137');
 const stage139 = require('../src/utils/db-init-stage139');
+const stage245 = require('../src/utils/db-init-stage245');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_swap_only_v1';
 const LIVE_VERSION = 'test_unified_live_v1';
+const JOURNAL_VERSION = 'test_position_journal_v1';
 const TOKEN = `0x${'11'.repeat(20)}`;
 const WALLET = `0x${'22'.repeat(20)}`;
 const OTHER_TOKEN = `0x${'33'.repeat(20)}`;
@@ -41,7 +43,11 @@ function swapRow(overrides = {}) {
 }
 
 async function cleanup() {
-  const versions = [VERSION, LIVE_VERSION];
+  const versions = [VERSION, LIVE_VERSION, JOURNAL_VERSION];
+  await db.query(
+    'DELETE FROM robinhood_wallet_position_reorg_preimages WHERE projection_version = $1',
+    [JOURNAL_VERSION]
+  );
   await db.query(
     'DELETE FROM robinhood_wallet_token_positions WHERE projection_version = ANY($1::varchar[])',
     [versions]
@@ -72,6 +78,7 @@ describe('Robinhood wallet position persistence', () => {
     await stage127.init({ closePool: false });
     await stage137.init({ closePool: false });
     await stage139.init({ closePool: false });
+    await stage245.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -188,6 +195,58 @@ describe('Robinhood wallet position persistence', () => {
     );
     assert.equal(reconciliation.aligned, 1);
     assert.equal(reconciliation.mismatched, 1);
+  });
+
+  it('captures previous LIVE positions atomically for opt-in reorg recovery', async () => {
+    const repository = createRobinhoodWalletPositionRepository({
+      database: db, positionPreimageEnabled: true,
+    });
+    await repository.initCursor({
+      projectionVersion: JOURNAL_VERSION, stream: 'live', nextBlock: '100',
+      nextBlockTime: '2026-08-01T00:00:00.000Z', safeHead: '102',
+    });
+    for (const [version, block, quantity] of [[0, 100, '10'], [1, 101, '15']]) {
+      const result = await repository.commitBatch({
+        projectionVersion: JOURNAL_VERSION, stream: 'live', expectedVersion: version,
+        nextBlock: String(block + 1), safeHead: '102',
+        checkpointBlock: String(block), checkpointHash: `0x${String(block).padStart(64, 'a')}`,
+        nextBlockTime: `2026-08-01T00:0${version + 1}:00.000Z`,
+        positions: [{
+          tokenAddress: TOKEN, walletAddress: WALLET, quantityRaw: quantity,
+          costBasisUsd: quantity, throughBlock: String(block), throughLogIndex: '1',
+        }],
+      });
+      assert.equal(result.committed, true);
+    }
+    const journal = await db.query(
+      `SELECT through_block::text, record_kind, had_previous,
+              previous_row->>'quantity_raw' AS previous_quantity
+         FROM robinhood_wallet_position_reorg_preimages
+        WHERE projection_version=$1 ORDER BY through_block, record_kind`,
+      [JOURNAL_VERSION]
+    );
+    assert.deepEqual(journal.rows, [
+      { through_block: '100', record_kind: 'batch', had_previous: false,
+        previous_quantity: null },
+      { through_block: '100', record_kind: 'position', had_previous: false,
+        previous_quantity: null },
+      { through_block: '101', record_kind: 'batch', had_previous: false,
+        previous_quantity: null },
+      { through_block: '101', record_kind: 'position', had_previous: true,
+        previous_quantity: '10' },
+    ]);
+    const stale = await repository.commitBatch({
+      projectionVersion: JOURNAL_VERSION, stream: 'live', expectedVersion: 1,
+      nextBlock: '103', safeHead: '102', checkpointBlock: '102',
+      checkpointHash: `0x${'c'.repeat(64)}`,
+      nextBlockTime: '2026-08-01T00:03:00.000Z',
+    });
+    assert.deepEqual(stale, { committed: false, reason: 'cursor_conflict' });
+    const count = await db.query(
+      'SELECT COUNT(*)::integer AS total FROM robinhood_wallet_position_reorg_preimages WHERE projection_version=$1',
+      [JOURNAL_VERSION]
+    );
+    assert.equal(count.rows[0].total, 4);
   });
 
   it('hands a completed seed to an independently advancing LIVE cursor', async () => {

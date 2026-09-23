@@ -6649,6 +6649,30 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage245-robinhood-wallet-position-reorg-preimages',
+    name: 'Stage 245 Robinhood wallet-position reorg preimages',
+    repair: 'node src/utils/db-init-stage245.js',
+    tables: [{
+      table: 'robinhood_wallet_position_reorg_preimages',
+      columns: [
+        'chain', 'projection_version', 'from_block', 'through_block',
+        'checkpoint_hash', 'block_time', 'record_kind', 'identity_key',
+        'had_previous', 'previous_row', 'expires_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_position_reorg_preimages_pkey',
+        includes: ['PRIMARY KEY', 'checkpoint_hash', 'record_kind', 'identity_key'],
+      }, {
+        name: 'rh_wallet_position_reorg_preimages_values_check',
+        includes: ['CHECK', '3 days', 'had_previous'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_position_reorg_preimages_expiry',
+        includes: ['expires_at', 'through_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

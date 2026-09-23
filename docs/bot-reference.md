@@ -6153,6 +6153,12 @@ ancestral estiver marcado `dropped`, aborta com `archive_required` antes da
 recomposição: uma reorg recente também pode precisar de transfers antigos.
 Esse bloqueio evita reconstruir posições incompletas, mas a poda permanente
 exige uma base de posições recuperável sem esse histórico raw.
+`ROBINHOOD_WALLET_POSITION_PREIMAGE_ENABLED=true` habilita, após a Stage 245,
+a captura transacional opt-in do estado anterior de cada posição LIVE tocada
+por um lote, incluindo marcadores de lotes vazios. O padrão é `false`. Esses
+registros expiram logicamente em três dias, mas ainda não são consumidos pelo
+rollback nem removidos fisicamente; mantenha a flag desligada em produção até
+existirem recuperação, expurgo e orçamento de disco medido.
 O comando de reclassificação exige ambas as Stages 243/244. Ele seleciona tanto
 raw `unknown` quanto evidência pendente sem raw; eventos legados sem evidência
 continuam lidos do raw. Marcadores `orphaned`/`reclassified` excluem o candidato.

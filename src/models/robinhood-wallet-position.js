@@ -100,8 +100,61 @@ async function transactionScope(database, externalClient) {
   };
 }
 
+async function captureLivePreimages(client, input) {
+  if (input.checkpointBlock == null || input.checkpointHash == null
+      || input.nextBlockTime == null
+      || BigInt(input.checkpointBlock) !== BigInt(input.nextBlock) - 1n) {
+    throw new Error('LIVE position preimages require a complete batch checkpoint');
+  }
+  const locked = await client.query(
+    `SELECT next_block::text, version::text
+       FROM robinhood_wallet_position_cursors
+      WHERE chain=$1 AND projection_version=$2 AND stream='live' FOR UPDATE`,
+    [CHAIN, input.projectionVersion]
+  );
+  const current = locked.rows[0];
+  if (!current || current.version !== input.expectedVersion
+      || BigInt(current.next_block) > BigInt(input.checkpointBlock)) {
+    const error = new Error('projection cursor conflict');
+    error.code = 'CURSOR_CONFLICT';
+    throw error;
+  }
+  const params = [CHAIN, input.projectionVersion, current.next_block,
+    input.checkpointBlock, input.checkpointHash, input.nextBlockTime];
+  await client.query(
+    `INSERT INTO robinhood_wallet_position_reorg_preimages (
+       chain, projection_version, from_block, through_block, checkpoint_hash,
+       block_time, record_kind, identity_key, had_previous, previous_row, expires_at
+     ) VALUES ($1, $2, $3::bigint, $4::bigint, $5, $6::timestamptz,
+       'batch', 'batch', false, NULL, $6::timestamptz + INTERVAL '3 days')`,
+    params
+  );
+  if (!input.rows.length) return;
+  await client.query(
+    `INSERT INTO robinhood_wallet_position_reorg_preimages (
+       chain, projection_version, from_block, through_block, checkpoint_hash,
+       block_time, record_kind, identity_key, had_previous, previous_row, expires_at
+     ) SELECT $1, $2, $3::bigint, $4::bigint, $5, $6::timestamptz,
+              'position', item.token_address || ':' || item.wallet_address,
+              position.chain IS NOT NULL, to_jsonb(position),
+              $6::timestamptz + INTERVAL '3 days'
+         FROM jsonb_to_recordset($7::jsonb)
+           AS item(token_address text, wallet_address text)
+         LEFT JOIN robinhood_wallet_token_positions position
+           ON position.chain=$1 AND position.projection_version=$2
+          AND position.token_address=item.token_address
+          AND position.wallet_address=item.wallet_address`,
+    [...params, JSON.stringify(input.rows.map(({ token_address, wallet_address }) => (
+      { token_address, wallet_address }
+    )))]
+  );
+}
+
 function createRobinhoodWalletPositionRepository(options = {}) {
   const database = options.database || db;
+  const positionPreimageEnabled = options.positionPreimageEnabled == null
+    ? process.env.ROBINHOOD_WALLET_POSITION_PREIMAGE_ENABLED === 'true'
+    : options.positionPreimageEnabled === true;
 
   async function loadCursor(projectionVersion, streamName) {
     const result = await database.query(
@@ -307,6 +360,12 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     const { client } = transaction;
     try {
       await transaction.begin();
+      if (streamName === 'live' && positionPreimageEnabled) {
+        await captureLivePreimages(client, {
+          projectionVersion, expectedVersion, nextBlock, nextBlockTime,
+          checkpointBlock: nextCheckpoint.block, checkpointHash: nextCheckpoint.hash, rows,
+        });
+      }
       if (rows.length > 0) {
         const upsert = await client.query(
           `INSERT INTO robinhood_wallet_token_positions (
