@@ -36,25 +36,28 @@ describe('Robinhood transfer retention dependency readiness', () => {
     const result = await audit.inspect();
     assert.deepEqual(result.candidates[0].blockedReasons, [
       'unknownTransfer_candidate', 'endpointRoleGapOnUnknown_candidate',
-      'positionRepairCandidate_candidate',
+      'transferPositionRepairCandidate_candidate', 'sellPositionRepairCandidate_candidate',
     ]);
     assert.equal(result.candidates[0].readyForDrop, false);
     assert.equal(result.destructive, false);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
     assert.match(calls[0].sql, /FROM public\.robinhood_token_transfer_events_2026_07_18 raw/);
     assert.match(calls[1].sql, /robinhood_wallet_endpoint_roles/);
     assert.match(calls[2].sql, /robinhood_bundle_redistribution_queue/);
     assert.match(calls[2].sql, /position\.transaction_hash IS NULL/);
-    assert.match(calls[2].sql, /position\.transaction_index IS NULL/);
+    assert.match(calls[3].sql, /position\.transaction_index IS NULL/);
+    assert.deepEqual(calls[0].params, ['robinhood']);
+    assert.deepEqual(calls[1].params, ['robinhood']);
+    assert.deepEqual(calls[2].params, [
+      'robinhood', '2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z',
+    ]);
+    assert.deepEqual(calls[3].params, calls[2].params);
     for (const call of calls) {
       assert.doesNotMatch(call.sql, /\b(?:DROP|DELETE|UPDATE|INSERT)\b/i);
-      assert.deepEqual(call.params, [
-        'robinhood', '2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z',
-      ]);
       assert.equal(call.timeout, 5_000);
     }
     assert.equal(result.candidates[0].dependencies.unknownTransfer.status, 'candidate');
-    assert.equal(result.candidates[0].dependencies.positionRepairCandidate.status, 'candidate');
+    assert.equal(result.candidates[0].dependencies.transferPositionRepairCandidate.status, 'candidate');
   });
 
   it('isolates a timeout to its probe and never promotes provisional clearance into drop approval', async () => {
@@ -68,14 +71,16 @@ describe('Robinhood transfer retention dependency readiness', () => {
     const timedOut = await timeout.inspect();
     assert.deepEqual(timedOut.candidates[0].blockedReasons, ['endpointRoleGapOnUnknown_unknown']);
     assert.equal(timedOut.candidates[0].dependencies.unknownTransfer.status, 'absent');
-    assert.equal(timedOut.candidates[0].dependencies.positionRepairCandidate.status, 'absent');
+    assert.equal(timedOut.candidates[0].dependencies.transferPositionRepairCandidate.status, 'absent');
+    assert.equal(timedOut.candidates[0].dependencies.sellPositionRepairCandidate.status, 'absent');
     assert.equal(timedOut.candidates[0].dependencies.endpointRoleGapOnUnknown.error, 'statement timeout');
     const incomplete = createRobinhoodWalletTransferRetentionReadiness({
       database: { queryWithStatementTimeout: async () => ({ rows: [{}] }) },
       planner: planner([CANDIDATE]),
     });
     assert.deepEqual((await incomplete.inspect()).candidates[0].blockedReasons, [
-      'unknownTransfer_unknown', 'endpointRoleGapOnUnknown_unknown', 'positionRepairCandidate_unknown',
+      'unknownTransfer_unknown', 'endpointRoleGapOnUnknown_unknown',
+      'transferPositionRepairCandidate_unknown', 'sellPositionRepairCandidate_unknown',
     ]);
     const clear = createRobinhoodWalletTransferRetentionReadiness({
       database: { queryWithStatementTimeout: async () => ({ rows: [{ present: false }] }) },

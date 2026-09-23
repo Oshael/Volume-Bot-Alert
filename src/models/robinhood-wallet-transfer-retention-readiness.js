@@ -15,13 +15,20 @@ function partitionName(candidate) {
   return `public.${expected}`;
 }
 
-function probeSql(partition) {
+function probeSql(partition, from, to) {
+  const queuedSql = `WITH queued AS MATERIALIZED (
+    SELECT chain, token_address, observation_from_block
+    FROM robinhood_bundle_redistribution_queue
+    WHERE chain = $1 AND status IN ('pending', 'leased')
+      AND last_error_code = 'redistribution_source_not_ready'
+      AND last_error_message LIKE '%transaction_position_missing%'
+  )`;
   return {
-    unknownTransfer: `SELECT EXISTS (
+    unknownTransfer: { sql: `SELECT EXISTS (
       SELECT 1 FROM ${partition} raw
       WHERE raw.chain = $1 AND raw.transfer_kind = 'unknown'
-    ) AS present`,
-    endpointRoleGapOnUnknown: `SELECT EXISTS (
+    ) AS present`, params: [CHAIN] },
+    endpointRoleGapOnUnknown: { sql: `SELECT EXISTS (
       SELECT 1 FROM ${partition} raw
       CROSS JOIN LATERAL (VALUES (raw.from_wallet), (raw.to_wallet)) endpoint(address)
       WHERE raw.chain = $1 AND raw.transfer_kind = 'unknown'
@@ -35,16 +42,9 @@ function probeSql(partition) {
           WHERE role.chain = raw.chain AND role.endpoint_address = endpoint.address
             AND raw.block_number BETWEEN role.observed_from_block AND role.observed_through_block
         )
-    ) AS present`,
-    positionRepairCandidate: `WITH queued AS MATERIALIZED (
-      SELECT chain, token_address, observation_from_block
-      FROM robinhood_bundle_redistribution_queue
-      WHERE chain = $1 AND status IN ('pending', 'leased')
-        AND last_error_code = 'redistribution_source_not_ready'
-        AND last_error_message LIKE '%transaction_position_missing%'
-    )
-    SELECT (
-      EXISTS (
+    ) AS present`, params: [CHAIN] },
+    transferPositionRepairCandidate: { sql: `${queuedSql}
+      SELECT EXISTS (
         SELECT 1 FROM queued queue
         JOIN robinhood_wallet_transfer_edges edge
           ON edge.chain = queue.chain AND edge.token_address = queue.token_address
@@ -57,7 +57,9 @@ function probeSql(partition) {
           AND edge.first_wallet_transfer_at >= $2::timestamptz
           AND edge.first_wallet_transfer_at < $3::timestamptz
           AND position.transaction_hash IS NULL
-      ) OR EXISTS (
+      ) AS present`, params: [CHAIN, from, to] },
+    sellPositionRepairCandidate: { sql: `${queuedSql}
+      SELECT EXISTS (
         SELECT 1 FROM queued queue
         JOIN robinhood_wallet_transfer_edges edge
           ON edge.chain = queue.chain AND edge.token_address = queue.token_address
@@ -73,8 +75,7 @@ function probeSql(partition) {
           AND swap.block_time >= $2::timestamptz
           AND swap.block_time < $3::timestamptz
           AND position.transaction_index IS NULL
-      )
-    ) AS present`,
+      ) AS present`, params: [CHAIN, from, to] },
   };
 }
 
@@ -107,8 +108,8 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
         const from = `${candidate.partitionDay}T00:00:00.000Z`;
         const to = new Date(Date.parse(from) + 86_400_000).toISOString();
         dependencies = {};
-        for (const [name, sql] of Object.entries(probeSql(partition))) {
-          const result = await runProbe(database, sql, [CHAIN, from, to]);
+        for (const [name, probe] of Object.entries(probeSql(partition, from, to))) {
+          const result = await runProbe(database, probe.sql, probe.params);
           dependencies[name] = result;
           if (result.status !== 'absent') {
             blockedReasons.push(`${name}_${result.status}`);
