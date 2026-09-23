@@ -93,6 +93,8 @@ describe('Robinhood wallet endpoint role repository', () => {
     const result = await createRobinhoodWalletEndpointRoleRepository({ database: fake })
       .listUnresolvedCandidates(25);
     assert.match(fake.calls[0].sql, /robinhood_token_transfer_events/);
+    assert.match(fake.calls[0].sql, /robinhood_wallet_transfer_pending_evidence/);
+    assert.match(fake.calls[0].sql, /disposition\.disposition IN \('orphaned', 'reclassified'\)/);
     assert.match(fake.calls[0].sql, /LEFT JOIN robinhood_wallet_endpoint_roles/);
     assert.match(fake.calls[0].sql, /event\.block_number < role\.observed_from_block/);
     assert.match(fake.calls[0].sql, /event\.block_number > role\.observed_through_block/);

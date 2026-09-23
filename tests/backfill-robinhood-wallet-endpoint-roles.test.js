@@ -19,7 +19,9 @@ describe('Robinhood wallet endpoint-role backfill command', () => {
     const created = {};
     const runtime = await buildRuntime({ batchSize: 25 }, {
       env: { RH_NODE_RPC_URL: 'http://127.0.0.1:8547', DATABASE_URL: 'postgres://tunnel' },
-      database: { query: async () => ({ rows: [{ events: 'events', roles: 'roles' }] }) },
+      database: { query: async () => ({ rows: [{
+        events: 'events', roles: 'roles', evidence: 'evidence', dispositions: 'dispositions',
+      }] }) },
       rpcClientFactory: (options) => {
         created.rpc = options;
         return { request: async () => '0x1237' };

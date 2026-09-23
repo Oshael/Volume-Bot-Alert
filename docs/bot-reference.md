@@ -6158,6 +6158,12 @@ disposição e projeção atomicamente. Se o bloco canônico local já saiu, fal
 posteriores ficam no ledger e nas disposições. Isso ainda não libera poda:
 faltam cobertura legada, orçamento da evidência, consumidores downstream e gate
 final de drop.
+
+A descoberta de endpoints sem papel também lê evidência pendente ativa quando
+o raw já saiu. Ela fornece endereço e bloco para resolução posterior; não prova
+o papel do endpoint nem libera a poda. O backfill de papéis requer as Stages
+128, 135, 243 e 244.
+
 Só depois de concluir a adaptação de reclassificação/reorg e medir capacidade, ative
 `ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED=true` no service exclusivo
 de wallet transfers e reinicie esse service; o padrão é `false` para não

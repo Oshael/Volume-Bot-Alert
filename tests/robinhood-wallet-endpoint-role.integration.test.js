@@ -6,6 +6,8 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage135 = require('../src/utils/db-init-stage135');
+const stage243 = require('../src/utils/db-init-stage243');
+const stage244 = require('../src/utils/db-init-stage244');
 const {
   createRobinhoodWalletEndpointRoleRepository,
 } = require('../src/models/robinhood-wallet-endpoint-role');
@@ -33,10 +35,14 @@ describe('Robinhood wallet endpoint role persistence', () => {
     await assertUsingTestDatabase(db);
     await stage128.init({ closePool: false });
     await stage135.init({ closePool: false });
+    await stage243.init({ closePool: false });
+    await stage244.init({ closePool: false });
     await db.query(`CREATE TABLE IF NOT EXISTS ${PARTITION}
       PARTITION OF robinhood_token_transfer_events
       FOR VALUES FROM ('2099-09-01T00:00:00.000Z') TO ('2099-09-02T00:00:00.000Z')`);
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [TX]);
+    await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [TX]);
     await db.query(
       'DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = $1',
       [ADDRESS]
@@ -45,6 +51,8 @@ describe('Robinhood wallet endpoint role persistence', () => {
 
   after(async () => {
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [TX]);
+    await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [TX]);
     await db.query(
       'DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = $1',
       [ADDRESS]
@@ -84,6 +92,29 @@ describe('Robinhood wallet endpoint role persistence', () => {
     assert.equal(expanded.endpointRole, 'contract');
     assert.equal(expanded.observedFromBlock, '90');
     assert.equal(expanded.observedThroughBlock, '140');
+    assert.deepEqual(await repository.listUnresolvedCandidates(10), []);
+
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_pending_evidence (
+         chain, block_number, block_hash, block_time, transaction_hash,
+         transaction_index, log_index, token_address, from_wallet, to_wallet,
+         amount_raw, classification_version
+       ) SELECT chain, block_number, block_hash, block_time, transaction_hash,
+           transaction_index, log_index, token_address, from_wallet, to_wallet,
+           amount_raw, classification_version
+         FROM robinhood_token_transfer_events WHERE transaction_hash = $1`, [TX]
+    );
+    await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [TX]);
+    await db.query('DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = $1', [ADDRESS]);
+    assert.deepEqual(await repository.listUnresolvedCandidates(10), [{
+      endpointAddress: ADDRESS, blockNumber: '90', blockHash: HASH,
+    }]);
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
+         chain, transaction_hash, log_index, block_time, disposition, block_hash
+       ) VALUES ('robinhood', $1, 0, '2099-09-01T00:00:00Z', 'orphaned', $2)`,
+      [TX, HASH]
+    );
     assert.deepEqual(await repository.listUnresolvedCandidates(10), []);
   });
 });

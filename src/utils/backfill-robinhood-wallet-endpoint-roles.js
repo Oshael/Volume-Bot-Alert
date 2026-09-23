@@ -59,10 +59,13 @@ async function buildRuntime(options = {}, deps = {}) {
   const database = deps.database || db;
   const schema = await database.query(
     `SELECT to_regclass('robinhood_token_transfer_events') AS events,
-            to_regclass('robinhood_wallet_endpoint_roles') AS roles`
+            to_regclass('robinhood_wallet_endpoint_roles') AS roles,
+            to_regclass('robinhood_wallet_transfer_pending_evidence') AS evidence,
+            to_regclass('robinhood_wallet_transfer_evidence_dispositions') AS dispositions`
   );
-  if (!schema.rows[0]?.events || !schema.rows[0]?.roles) {
-    throw new Error('schema not ready: apply Stages 128 and 135 on the VPS');
+  if (!schema.rows[0]?.events || !schema.rows[0]?.roles
+      || !schema.rows[0]?.evidence || !schema.rows[0]?.dispositions) {
+    throw new Error('schema not ready: apply Stages 128, 135, 243 and 244 on the VPS');
   }
   const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
     providers: [{ name: 'robinhood-pc-archive', url: rpcUrl }],

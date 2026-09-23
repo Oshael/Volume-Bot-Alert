@@ -99,6 +99,22 @@ function createRobinhoodWalletEndpointRoleRepository(options = {}) {
          SELECT to_wallet AS endpoint_address, block_number, block_hash,
                 transaction_hash, log_index
            FROM robinhood_token_transfer_events WHERE chain = '${CHAIN}'
+         UNION ALL
+         SELECT endpoint.address AS endpoint_address, evidence.block_number,
+                evidence.block_hash, evidence.transaction_hash, evidence.log_index
+           FROM robinhood_wallet_transfer_pending_evidence evidence
+           CROSS JOIN LATERAL (
+             VALUES (evidence.from_wallet), (evidence.to_wallet)
+           ) endpoint(address)
+          WHERE evidence.chain = '${CHAIN}'
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
+               WHERE disposition.chain = evidence.chain
+                 AND disposition.transaction_hash = evidence.transaction_hash
+                 AND disposition.log_index = evidence.log_index
+                 AND disposition.block_time = evidence.block_time
+                 AND disposition.disposition IN ('orphaned', 'reclassified')
+            )
        ), candidates AS (
          SELECT DISTINCT ON (event.endpoint_address)
                 event.endpoint_address, event.block_number, event.block_hash
