@@ -5411,6 +5411,12 @@ Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,
 usa por default uma margem de 20.000 blocos para cada tabela e aceita
 `--chain-retention-blocks=N` e `--holder-retention-blocks=N`.
+Para diagnosticar apenas `chain_events`, `--chain-only` omite a prova cara de
+mint do holder journal e avalia a saída pelo gate `chain_events.ready_for_pilot`;
+o campo global `ready_for_pilot` permanece falso quando a prova de holder foi
+omitida. O relatório sinaliza que essa prova não foi solicitada. Em caso de erro,
+o comando identifica a fase (`state`, `wallet-classification` ou `mint`) que
+falhou. Esse modo não altera o cutoff, a política ou os gates de chain events.
 `ready_for_pilot=true` exige captura saudável, checkpoints canônicos de todos os
 consumidores diretos e um cutoff anterior ao menor frontier ainda não materializado
 da outbox ou da fila de refresh de liquidity. Para holders, também exige nenhum

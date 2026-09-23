@@ -194,6 +194,32 @@ describe('Robinhood retention safety audit', () => {
     assert.equal(queries.some((sql) => sql.startsWith('/* retention-safety:mint */')), false);
   });
 
+  it('reports the failed read-only phase without weakening the audit', async () => {
+    for (const failedPhase of ['state', 'wallet-classification', 'mint']) {
+      const queries = [];
+      const client = { async query(sql) {
+        queries.push(sql);
+        if (sql.startsWith('BEGIN') || sql.startsWith('SET LOCAL') || sql === 'ROLLBACK') {
+          return { rows: [] };
+        }
+        if (sql.startsWith(`/* retention-safety:${failedPhase} */`)) {
+          throw Object.assign(new Error('statement timeout'), { code: '57014' });
+        }
+        if (sql.startsWith('/* retention-safety:state */')) return { rows: [state()] };
+        if (sql.startsWith('/* retention-safety:wallet-classification */')) {
+          return { rows: classificationRows() };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }, release() {} };
+      const audit = createRobinhoodRetentionSafetyAudit({
+        database: { async getClient() { return client; } },
+      });
+      await assert.rejects(audit.inspect(), (error) => error.code === '57014'
+        && error.auditPhase === failedPhase);
+      assert.equal(queries.at(-1), 'ROLLBACK');
+    }
+  });
+
   it('parses options and prints the report', async () => {
     assert.deepEqual(parseArgs([]), {
       chainRetentionBlocks: 20000, holderRetentionBlocks: 20000,
@@ -201,11 +227,24 @@ describe('Robinhood retention safety audit', () => {
     assert.deepEqual(parseArgs(['--chain-retention-blocks=50000']), {
       chainRetentionBlocks: 50000, holderRetentionBlocks: 20000,
     });
+    assert.deepEqual(parseArgs(['--chain-only']), {
+      chainRetentionBlocks: 20000, holderRetentionBlocks: 20000,
+      includeHolderProof: false,
+    });
+    assert.throws(() => parseArgs(['--chain-only', '--chain-only']), /cannot be repeated/);
     assert.throws(() => parseArgs(['--apply']), /unknown argument/);
     const output = [];
     const report = await main([], { options: {},
       audit: { async inspect() { return { ready_for_pilot: false }; } },
       logger: { log(value) { output.push(value); } } });
     assert.deepEqual(JSON.parse(output[0]), report);
+    const chainReport = await main(['--chain-only'], {
+      auditFactory(options) {
+        assert.equal(options.includeHolderProof, false);
+        return { async inspect() { return { chain_events: { ready_for_pilot: true } }; } };
+      },
+      logger: { log() {} },
+    });
+    assert.equal(chainReport.chain_events.ready_for_pilot, true);
   });
 });

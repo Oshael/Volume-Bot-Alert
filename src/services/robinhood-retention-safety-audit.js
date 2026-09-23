@@ -277,9 +277,11 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
   async function inspect() {
     const client = await database.getClient();
     let state; let classification;
+    let phase = 'setup';
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       await client.query(`SET LOCAL statement_timeout = '${DEFAULT_STATEMENT_TIMEOUT_MS}ms'`);
+      phase = 'state';
       state = (await client.query(
         `/* retention-safety:state */ SELECT capture.next_block AS capture_next_block,
                 capture.node_head AS capture_node_head,
@@ -344,10 +346,12 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              ORDER BY id DESC LIMIT 1) campaign ON TRUE`,
         [CHAIN, CLASSIFICATION_VERSION]
       )).rows[0] || {};
+      phase = 'wallet-classification';
       classification = await loadClassificationRisks(client);
       // An active global campaign already blocks holder retention. Avoid an
       // expensive journal proof whose result cannot change that decision.
       if (includeHolderProof && state.global_run_id == null) {
+        phase = 'mint';
         const mint = await client.query(
           `/* retention-safety:mint */ SELECT MIN(journal.block_number) AS block_number
              FROM robinhood_holder_transfer_journal journal
@@ -367,6 +371,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
+      error.auditPhase = phase;
       throw error;
     } finally { client.release(); }
     return evaluate({ state, classification, chainRetentionBlocks, holderRetentionBlocks });
