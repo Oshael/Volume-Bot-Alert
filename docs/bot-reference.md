@@ -6060,7 +6060,8 @@ retomada, o encadeamento dos relatórios ainda precisa ser verificado; em todos
 os casos `archiveReplay` permanece `partial`, pois recibos não reproduzem
 decisões e projeções derivadas.
 `robinhood:wallet-transfer-pilot-decision-audit -- --day=2026-07-19`
-faz uma amostra determinística de até três eventos por tipo presente,
+faz uma amostra determinística de até três eventos por tipo presente e inclui
+todos os eventos dos tipos com no máximo cem registros no dia,
 confere os recibos no Archive e compara a classificação armazenada com a
 regra e os insumos duráveis atuais. O relatório mostra tipos ausentes da
 amostra e diferenças; insumos de papéis podem ter mudado desde julho, então

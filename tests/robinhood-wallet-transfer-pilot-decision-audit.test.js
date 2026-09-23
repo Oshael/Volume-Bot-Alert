@@ -22,6 +22,11 @@ const rows = [
     block_hash: BLOCK_HASH, transaction_index: 0, token_address: TOKEN,
     from_wallet: WALLET, to_wallet: DEAD, amount_raw: '9',
     transfer_kind: 'burn', classification_version: 'rh_transfer_v1' },
+  { transaction_hash: `0x${'3'.repeat(64)}`, log_index: 3,
+    block_time: new Date('2026-07-19T03:00:00Z'), block_number: '102',
+    block_hash: BLOCK_HASH, transaction_index: 0, token_address: TOKEN,
+    from_wallet: WALLET, to_wallet: WALLET, amount_raw: '11',
+    transfer_kind: 'wallet_self', classification_version: 'rh_transfer_v1' },
 ];
 
 function receipt(row) {
@@ -41,14 +46,16 @@ function fixture(options = {}) {
     queries.push(sql);
     if (sql.includes('FROM robinhood_wallet_transfer_compaction_watermarks')) {
       return { rows: [{ version: '0', checkpoint_block: '100',
-        checkpoint_hash: BLOCK_HASH, raw_event_count: options.count || '2',
+        checkpoint_hash: BLOCK_HASH, raw_event_count: options.count || '3',
         lifecycle_state: 'verified' }] };
     }
     if (sql.includes('GROUP BY transfer_kind')) return { rows: [
       { transfer_kind: sample[0].transfer_kind, events: '1' },
       { transfer_kind: 'burn', events: '1' },
+      { transfer_kind: 'wallet_self', events: '1' },
     ] };
-    if (sql.includes('TABLESAMPLE BERNOULLI')) return { rows: sample };
+    if (sql.includes('TABLESAMPLE BERNOULLI')) return { rows: sample.slice(0, 2) };
+    if (sql.includes('transfer_kind=ANY')) return { rows: sample };
     throw new Error('unexpected query');
   } };
   const rpcClient = { request: async (method) => {
@@ -63,7 +70,7 @@ function fixture(options = {}) {
     captured.sourceInput = input;
     return { ready: true, swapCoverageComplete: true, swaps: [],
       poolAddresses: [], routerAddresses: [], contractAddresses: [],
-      contractRoleEvidence: [], walletAddresses: [] };
+      contractRoleEvidence: [], walletAddresses: [WALLET] };
   } };
   return { database, rpcClient, source, logger: { log() {} }, queries, captured };
 }
@@ -72,10 +79,12 @@ describe('Robinhood transfer pilot decision audit', () => {
   it('checks Archive receipts and historical decision inputs without approving drop', async () => {
     const f = fixture();
     const report = await main(['--day=2026-07-19'], f);
-    assert.equal(report.receiptsMatched, 2);
-    assert.equal(report.decisionMatches, 2);
+    assert.equal(report.receiptsMatched, 3);
+    assert.equal(report.decisionMatches, 3);
     assert.deepEqual(report.decisionDifferences, []);
     assert.deepEqual(report.missingKinds, []);
+    assert.equal(report.sampleRows, 3);
+    assert.deepEqual(report.rareKindsFullyChecked, ['mint', 'burn', 'wallet_self']);
     assert.equal(report.readyForDrop, false);
     assert.deepEqual(f.captured.sourceInput.transactionHashes,
       rows.map((row) => row.transaction_hash));
@@ -84,10 +93,10 @@ describe('Robinhood transfer pilot decision audit', () => {
 
   it('reports decision drift and rejects incomplete population', async () => {
     const drift = await main(['--day=2026-07-19'], fixture({ drift: true }));
-    assert.equal(drift.decisionMatches, 1);
+    assert.equal(drift.decisionMatches, 2);
     assert.equal(drift.decisionDifferences[0].storedKind, 'unknown');
     assert.equal(drift.decisionDifferences[0].replayedKind, 'mint');
-    await assert.rejects(main(['--day=2026-07-19'], fixture({ count: '3' })),
+    await assert.rejects(main(['--day=2026-07-19'], fixture({ count: '4' })),
       /population differs/);
     assert.throws(() => parseArgs(['--day=2026-07-18']), /requires/);
     assert.equal(sourceInput(rows).fromBlock, '100');

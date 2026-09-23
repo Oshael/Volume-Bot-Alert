@@ -65,6 +65,29 @@ async function readSample(database) {
   )).rows;
 }
 
+async function includeRareKinds(database, sample, population) {
+  const rare = population.filter((row) => BigInt(row.events) <= 100n);
+  if (!rare.length) return { rows: sample, rareKindsFullyChecked: [] };
+  const kinds = rare.map((row) => row.transfer_kind);
+  const extra = (await database.query(
+    `SELECT transaction_hash, log_index, block_time, block_number::text,
+            block_hash, transaction_index, token_address, from_wallet,
+            to_wallet, amount_raw::text, transfer_kind, classification_version
+       FROM ${PARTITION}
+      WHERE chain='robinhood' AND transfer_kind=ANY($1::varchar[])
+      ORDER BY transaction_hash, log_index, block_time`, [kinds]
+  )).rows;
+  for (const row of rare) {
+    if (extra.filter((item) => item.transfer_kind === row.transfer_kind).length
+        !== Number(row.events)) throw new Error('rare decision population changed');
+  }
+  const byIdentity = new Map();
+  for (const row of [...sample, ...extra]) {
+    byIdentity.set(`${row.transaction_hash}:${row.log_index}:${new Date(row.block_time).toISOString()}`, row);
+  }
+  return { rows: [...byIdentity.values()], rareKindsFullyChecked: kinds };
+}
+
 function sourceInput(rows) {
   const blocks = rows.map((row) => BigInt(row.block_number));
   const times = rows.map((row) => new Date(row.block_time).getTime());
@@ -88,13 +111,17 @@ function classifierFor(context) {
 
 async function compareArchiveReceipts(rpc, rows) {
   const hashes = [...new Set(rows.map((row) => row.transaction_hash))];
-  const receipts = await rpc.requestBatch(hashes.map((hash) => ({
-    method: 'eth_getTransactionReceipt', params: [hash],
-  })));
-  if (!Array.isArray(receipts) || receipts.length !== hashes.length) {
-    throw new Error('Archive receipt sample is incomplete');
+  const byHash = new Map();
+  for (let start = 0; start < hashes.length; start += 100) {
+    const slice = hashes.slice(start, start + 100);
+    const receipts = await rpc.requestBatch(slice.map((hash) => ({
+      method: 'eth_getTransactionReceipt', params: [hash],
+    })));
+    if (!Array.isArray(receipts) || receipts.length !== slice.length) {
+      throw new Error('Archive receipt sample is incomplete');
+    }
+    slice.forEach((hash, index) => byHash.set(hash, receipts[index]));
   }
-  const byHash = new Map(hashes.map((hash, index) => [hash, receipts[index]]));
   for (const row of rows) {
     if (!compareReceipt(row, byHash.get(row.transaction_hash))) {
       throw new Error(`Archive receipt differs from raw ${row.transaction_hash}:${row.log_index}`);
@@ -144,7 +171,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const database = deps.database || db;
   const mark = await readWatermark(database);
   const population = await readPopulation(database, mark);
-  const rows = await readSample(database);
+  const { rows, rareKindsFullyChecked } = await includeRareKinds(
+    database, await readSample(database), population
+  );
   if (rows.length === 0) throw new Error('pilot decision sample is empty');
   const sampledKinds = new Set(rows.map((row) => row.transfer_kind));
   const missingKinds = population.map((row) => row.transfer_kind)
@@ -166,7 +195,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const report = { mode: 'read-only', day: DAY,
     watermarkVersion: mark.version, checkpointHash: mark.checkpoint_hash,
     population, sampleMethod: `BERNOULLI(${SAMPLE_PERCENT}) REPEATABLE (1907), ${PER_KIND} per kind`,
-    sampleRows: rows.length, missingKinds, receiptsMatched,
+    sampleRows: rows.length, rareKindsFullyChecked, missingKinds, receiptsMatched,
     decisionMatches: decisions.matches.length, decisionDifferences: decisions.differences,
     archiveReplay: { status: 'sample_only', evidenceReference: null },
     readyForDrop: false, destructive: false };
