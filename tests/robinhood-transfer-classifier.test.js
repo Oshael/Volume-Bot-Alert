@@ -65,7 +65,7 @@ describe('Robinhood transfer classifier', () => {
 
   it('fails closed when same-asset swap correlation is incompatible or ambiguous', () => {
     const classify = classifier().classify;
-    const incompatible = classify(transfer({ toWallet: POOL, amountRaw: '99' }), {
+    const incompatible = classify(transfer({ fromWallet: BOB, toWallet: POOL }), {
       swaps: [swap()], swapCoverageComplete: true,
     });
     const ambiguous = classify(transfer({ toWallet: POOL }), {
@@ -73,8 +73,28 @@ describe('Robinhood transfer classifier', () => {
     });
 
     assert.equal(incompatible.kind, 'unknown');
+    assert.equal(incompatible.swapCorrelationFailure, 'direction_mismatch');
     assert.equal(ambiguous.kind, 'unknown');
     assert.equal(ambiguous.reasonCode, 'swap_correlation_ambiguous');
+    assert.equal(ambiguous.swapCorrelationFailure, 'multiple_exact_matches');
+  });
+
+  it('diagnoses amount mismatch and same-index swaps without changing the unknown decision', () => {
+    const classify = classifier().classify;
+    const amount = classify(transfer({ amountRaw: '99' }), {
+      swaps: [swap()], swapCoverageComplete: true,
+    });
+    const sameIndex = classify(transfer(), {
+      swaps: [swap({ actionIndex: '7' })], swapCoverageComplete: true,
+    });
+
+    for (const result of [amount, sameIndex]) {
+      assert.equal(result.kind, 'unknown');
+      assert.equal(result.reasonCode, 'swap_correlation_ambiguous');
+      assert.equal(result.classificationVersion, CLASSIFICATION_VERSION);
+    }
+    assert.equal(amount.swapCorrelationFailure, 'amount_mismatch');
+    assert.equal(sameIndex.swapCorrelationFailure, 'same_log_index_only');
   });
 
   it('uses proven endpoint roles in pool, router and contract priority order', () => {

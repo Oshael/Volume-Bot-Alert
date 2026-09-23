@@ -57,6 +57,7 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
   });
   const counts = {};
   const unknownReasons = {};
+  const swapCorrelationFailures = {};
   const proofs = contractProofs(context);
   let unknownWithContractRoleCoverage = 0;
   const events = transfers.map((transfer) => {
@@ -64,6 +65,10 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
     counts[decision.kind] = (counts[decision.kind] || 0) + 1;
     if (decision.kind === 'unknown') {
       unknownReasons[decision.reasonCode] = (unknownReasons[decision.reasonCode] || 0) + 1;
+      if (decision.swapCorrelationFailure) {
+        swapCorrelationFailures[decision.swapCorrelationFailure]
+          = (swapCorrelationFailures[decision.swapCorrelationFailure] || 0) + 1;
+      }
       if (hasContractRoleCoverage(transfer, proofs)) unknownWithContractRoleCoverage += 1;
     }
     return {
@@ -82,6 +87,7 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
       withContractRoleCoverage: unknownWithContractRoleCoverage,
       withoutContractRoleCoverage: (counts.unknown || 0) - unknownWithContractRoleCoverage,
       reasons: Object.freeze(unknownReasons),
+      swapCorrelationFailures: Object.freeze(swapCorrelationFailures),
     }),
   });
 }

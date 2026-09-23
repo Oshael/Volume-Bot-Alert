@@ -61,12 +61,15 @@ function normalizeSwap(input = {}) {
   };
 }
 
-function matchesSwap(transfer, swap) {
-  if (transfer.logIndex === swap.actionIndex) return false;
-  if (transfer.amountRaw !== swap.amountRaw) return false;
+function matchesSwapDirection(transfer, swap) {
   if (swap.side === 'sell') return transfer.fromWallet === swap.walletAddress;
   const recipients = new Set([swap.walletAddress, swap.recipientAddress].filter(Boolean));
   return recipients.has(transfer.toWallet);
+}
+
+function matchesSwap(transfer, swap) {
+  return transfer.logIndex !== swap.actionIndex && transfer.amountRaw === swap.amountRaw
+    && matchesSwapDirection(transfer, swap);
 }
 
 function decision(kind, reasonCode, options = {}) {
@@ -81,6 +84,7 @@ function decision(kind, reasonCode, options = {}) {
     affectsPosition: walletTransfer,
     connectionEligible: walletTransfer,
     matchedSwap: options.matchedSwap ? Object.freeze({ ...options.matchedSwap }) : null,
+    swapCorrelationFailure: options.swapCorrelationFailure || null,
   });
 }
 
@@ -104,9 +108,16 @@ function buildSwapIndex(input) {
 
 function decideSwapFlow(transfer, sameAssetSwaps) {
   if (!sameAssetSwaps || sameAssetSwaps.length === 0) return null;
-  const matches = sameAssetSwaps.filter((swap) => matchesSwap(transfer, swap));
+  const distinctActions = sameAssetSwaps.filter((swap) => transfer.logIndex !== swap.actionIndex);
+  const matches = distinctActions.filter((swap) => matchesSwap(transfer, swap));
   if (matches.length !== 1) {
-    return decision('unknown', 'swap_correlation_ambiguous', { confidence: 'ambiguous' });
+    const swapCorrelationFailure = matches.length > 1 ? 'multiple_exact_matches'
+      : distinctActions.length === 0 ? 'same_log_index_only'
+        : distinctActions.some((swap) => matchesSwapDirection(transfer, swap))
+          ? 'amount_mismatch' : 'direction_mismatch';
+    return decision('unknown', 'swap_correlation_ambiguous', {
+      confidence: 'ambiguous', swapCorrelationFailure,
+    });
   }
   const match = matches[0];
   return decision('dex_flow', 'matched_wallet_swap', {
