@@ -8,6 +8,7 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
 const { createRobinhoodWalletReorgRollback } = require('../src/models/robinhood-wallet-reorg-rollback');
+const { createRobinhoodChainRecoveryJournal } = require('../src/models/robinhood-chain-recovery-journal');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage91 = require('../src/utils/db-init-stage91');
 const stage109 = require('../src/utils/db-init-stage109');
@@ -21,11 +22,14 @@ const stage191 = require('../src/utils/db-init-stage191');
 const stage203 = require('../src/utils/db-init-stage203');
 const stage204 = require('../src/utils/db-init-stage204');
 const stage205 = require('../src/utils/db-init-stage205');
+const stage206 = require('../src/utils/db-init-stage206');
+const stage222 = require('../src/utils/db-init-stage222');
 const stage245 = require('../src/utils/db-init-stage245');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'unified_transfer_v1';
 const DAY = '2099-09-29';
+const DROPPED_DAY = '2099-09-27';
 const TOKEN = `0x${'7'.repeat(40)}`;
 const WALLET = `0x${'8'.repeat(40)}`;
 const QUOTE = `0x${'9'.repeat(40)}`;
@@ -38,6 +42,16 @@ const TX101 = `0x${'f'.repeat(64)}`;
 const AT100 = `${DAY}T00:01:00Z`;
 const AT101 = `${DAY}T00:02:00Z`;
 const AT102 = `${DAY}T00:03:00Z`;
+const PLAN = {
+  generation: '1', reason: 'parent_hash_mismatch', recoverable: true,
+  executable: true, pendingRollbackDomains: [], maxDepth: 12,
+  rollbackManifestVersion: 2,
+  checkpoint: { blockNumber: '102', blockHash: HASH102 },
+  incoming: { blockNumber: '103', blockHash: `0x${'1'.repeat(64)}`,
+    parentHash: `0x${'2'.repeat(64)}` },
+  ancestor: { blockNumber: '100', blockHash: HASH100 },
+  affectedRange: { fromBlock: '101', throughBlock: '102', depth: '2' },
+};
 
 async function fixture(client) {
   // The real rollback filters on this production version; restore any existing
@@ -56,6 +70,7 @@ async function fixture(client) {
   );
   await client.query("DELETE FROM robinhood_wallet_swap_cursors WHERE chain='robinhood' AND stream='live'");
   await client.query("DELETE FROM robinhood_chain_capture_cursor WHERE chain='robinhood'");
+  await client.query("DELETE FROM robinhood_chain_recoveries WHERE chain='robinhood' AND generation=1");
   await client.query(
     `CREATE TABLE robinhood_wallet_swaps_dropped_raw_reorg_test
        PARTITION OF robinhood_wallet_swaps
@@ -145,22 +160,36 @@ async function fixture(client) {
     [HASH102]
   );
   await client.query(
+    `UPDATE robinhood_chain_capture_cursor SET recovery_plan=$1::jsonb
+      WHERE chain='robinhood'`,
+    [JSON.stringify(PLAN)]
+  );
+  await client.query(
+    `INSERT INTO robinhood_chain_recoveries (
+       chain, generation, status, plan, detected_at
+     ) VALUES ('robinhood',1,'detected',$1::jsonb,NOW())`,
+    [JSON.stringify(PLAN)]
+  );
+  await client.query(
     `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
        chain, projection_version, partition_day, lifecycle_state,
+       raw_event_count, target_classified_event_count, raw_last_block,
+       raw_last_transaction_index, raw_last_log_index,
        cursor_next_block, cursor_next_transaction_index, cursor_next_log_index,
        cursor_next_block_time, checkpoint_block, checkpoint_hash,
        position_projection_version, position_next_block,
        summary_reconciled, position_complete, evidence_complete,
        cursor_complete, checkpoint_canonical, audited_at, verified_at, dropped_at
      ) VALUES ('robinhood','rh_transfer_v1',$1::date,'dropped',
+       1,1,50,0,0,
        103,0,0,'2099-09-30T00:00:00Z',102,$2,$3,103,
        true,true,true,true,true,NOW(),NOW(),NOW())`,
-    [DAY, HASH102, VERSION]
+    [DROPPED_DAY, HASH102, VERSION]
   );
   const raw = await client.query(
     `SELECT COUNT(*)::int AS count FROM robinhood_token_transfer_events
       WHERE block_time >= $1::timestamptz AND block_time < $2::timestamptz`,
-    [`${DAY}T00:00:00Z`, '2099-09-30T00:00:00Z']
+    [`${DROPPED_DAY}T00:00:00Z`, '2099-09-28T00:00:00Z']
   );
   assert.equal(raw.rows[0].count, 0);
 }
@@ -182,12 +211,36 @@ async function state(client) {
   return { position: position.rows[0], cursor: cursor.rows[0] };
 }
 
+function scopedCanonicalRecovery(client) {
+  const nestedClient = {
+    async query(sql, params) {
+      if (sql === 'BEGIN') return client.query('SAVEPOINT canonical_rewind');
+      if (sql === 'COMMIT') return client.query('RELEASE SAVEPOINT canonical_rewind');
+      if (sql === 'ROLLBACK') {
+        await client.query('ROLLBACK TO SAVEPOINT canonical_rewind');
+        return client.query('RELEASE SAVEPOINT canonical_rewind');
+      }
+      return client.query(sql, params);
+    },
+    release() {},
+  };
+  const noop = { rollback: async () => ({}) };
+  return createRobinhoodChainRecoveryJournal({
+    database: { getClient: async () => nestedClient },
+    tradeLifecycle: { appendOrphanInvalidations: async () => ({}) },
+    marketRollback: noop, transferRollback: noop, liquidityRollback: noop,
+    signedOriginRollback: noop, firstBuyRollback: noop, holderRollback: noop,
+    discoveryRollback: noop, creatorRollback: noop, discoveryDerivedRollback: noop,
+  });
+}
+
 describe('Robinhood position reorg after transfer raw was dropped', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [stage90, stage91, stage109, stage126, stage127, stage128,
       stage132, stage137, stage139, stage191, stage203, stage204, stage205,
-      stage245]) await stage.init({ closePool: false });
+      stage206, stage245]) await stage.init({ closePool: false });
+    await db.query(stage222.STATEMENTS[1]);
   });
   after(async () => { await db.pool.end().catch(() => {}); });
 
@@ -262,6 +315,75 @@ describe('Robinhood position reorg after transfer raw was dropped', () => {
       assert.deepEqual(markers.rows, [{
         from_block: '100', through_block: '100', checkpoint_hash: HASH100,
       }]);
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  });
+
+  it('rewinds the canonical journal atomically through the real wallet rollback', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await fixture(client);
+      const recovery = scopedCanonicalRecovery(client);
+      await client.query('SAVEPOINT intact_fixture');
+      await client.query(
+        `DELETE FROM robinhood_wallet_position_reorg_preimages
+          WHERE chain='robinhood' AND projection_version=$1 AND record_kind='batch'`,
+        [VERSION]
+      );
+      await assert.rejects(recovery.rewindCanonical({ generation: '1' }), {
+        code: 'archive_required', message: /position preimage gap/,
+      });
+      const unchanged = await client.query(
+        `SELECT block_number::text, canonical FROM robinhood_chain_blocks
+          WHERE chain='robinhood' AND block_number IN (101,102)
+          ORDER BY block_number`
+      );
+      assert.deepEqual(unchanged.rows, [
+        { block_number: '101', canonical: true },
+        { block_number: '102', canonical: true },
+      ]);
+      assert.deepEqual(await state(client), {
+        position: { quantity: '25', cost: '25' },
+        cursor: { next_block: '103', checkpoint_block: '102',
+          checkpoint_hash: HASH102, version: '1' },
+      });
+      const retained = await client.query(
+        `SELECT capture.generation::text, capture.next_block::text,
+                recovery.status FROM robinhood_chain_capture_cursor capture
+           INNER JOIN robinhood_chain_recoveries recovery ON recovery.chain=capture.chain
+          WHERE capture.chain='robinhood' AND recovery.generation=1`
+      );
+      assert.deepEqual(retained.rows, [{
+        generation: '1', next_block: '103', status: 'detected',
+      }]);
+      await client.query('ROLLBACK TO SAVEPOINT intact_fixture');
+
+      const result = await recovery.rewindCanonical({ generation: '1' });
+      assert.equal(result.status, 'rewound');
+      assert.equal(result.wallet.positionRollback.cursorsRewound, 1);
+      assert.equal(result.wallet.deletedSwaps, 1);
+      const final = await client.query(
+        `SELECT capture.generation::text, capture.next_block::text,
+                capture.checkpoint_hash, recovery.status
+           FROM robinhood_chain_capture_cursor capture
+           INNER JOIN robinhood_chain_recoveries recovery ON recovery.chain=capture.chain
+          WHERE capture.chain='robinhood' AND recovery.generation=1`
+      );
+      assert.deepEqual(final.rows, [{ generation: '2', next_block: '101',
+        checkpoint_hash: HASH100, status: 'awaiting_domains' }]);
+      const orphaned = await client.query(
+        `SELECT block_number::text, canonical FROM robinhood_chain_blocks
+          WHERE chain='robinhood' AND block_number IN (101,102)
+          ORDER BY block_number`
+      );
+      assert.deepEqual(orphaned.rows, [
+        { block_number: '101', canonical: false },
+        { block_number: '102', canonical: false },
+      ]);
+      assert.deepEqual((await state(client)).position, { quantity: '15', cost: '15' });
     } finally {
       await client.query('ROLLBACK').catch(() => {});
       client.release();
