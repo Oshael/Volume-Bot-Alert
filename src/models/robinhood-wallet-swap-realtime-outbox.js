@@ -351,19 +351,36 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
   async function pruneTerminalCycles(input = {}) {
     const retentionMs = positiveInt(input.retentionMs, 'retentionMs');
     const limit = positiveInt(input.limit, 'limit');
+    const after = input.after || null;
+    const afterCreatedAt = after == null ? null : new Date(after.createdAt);
+    if (after != null && Number.isNaN(afterCreatedAt.getTime())) {
+      throw new Error('after.createdAt is invalid');
+    }
+    const afterParams = after == null ? [] : [
+      String(after.createdAt), quantity(after.blockNumber, 'after.blockNumber'),
+      String(after.transactionHash), quantity(after.logIndex, 'after.logIndex'),
+      String(after.blockHash),
+    ];
+    const seek = after == null ? '' : `AND (terminal.created_at, terminal.block_number,
+              terminal.transaction_hash, terminal.log_index, terminal.block_hash)
+              > ($4::timestamptz, $5::bigint, $6::varchar, $7::bigint, $8::varchar)`;
     const result = await database.query(
-      `WITH candidate_cycles AS MATERIALIZED (
+      `WITH candidate_terminals AS MATERIALIZED (
          SELECT terminal.chain, terminal.transaction_hash, terminal.log_index,
-                terminal.block_hash, MIN(terminal.created_at) AS terminal_created_at
+                terminal.block_hash, terminal.created_at, terminal.block_number
            FROM robinhood_wallet_swap_realtime_outbox terminal
           WHERE terminal.chain=$1 AND terminal.event_kind IN ('finalized', 'invalidate')
             AND terminal.audit_status='complete'
             AND terminal.status IN ('pending', 'complete')
             AND terminal.created_at<=NOW()-($2::bigint*INTERVAL '1 millisecond')
-          GROUP BY terminal.chain, terminal.transaction_hash, terminal.log_index,
-                   terminal.block_hash
-          ORDER BY MIN(terminal.created_at)
+            ${seek}
+          ORDER BY terminal.created_at, terminal.block_number,
+                   terminal.transaction_hash, terminal.log_index, terminal.block_hash
           LIMIT $3
+       ), candidate_cycles AS MATERIALIZED (
+         SELECT chain, transaction_hash, log_index, block_hash
+           FROM candidate_terminals
+          GROUP BY chain, transaction_hash, log_index, block_hash
        ), cycle_counts AS MATERIALIZED (
          SELECT cycle.chain, cycle.transaction_hash, cycle.log_index, cycle.block_hash,
                 COUNT(*)::int AS row_count
@@ -399,11 +416,22 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
             AND outbox.block_hash=cycle.block_hash
           RETURNING 1
        )
-       SELECT (SELECT COUNT(*)::int FROM eligible_cycles) AS cycles,
+       SELECT (SELECT COUNT(*)::int FROM candidate_terminals) AS scanned,
+              (SELECT jsonb_build_object(
+                 'createdAt', created_at, 'blockNumber', block_number::text,
+                 'transactionHash', transaction_hash, 'logIndex', log_index::text,
+                 'blockHash', block_hash)
+                 FROM candidate_terminals
+                ORDER BY created_at DESC, block_number DESC,
+                         transaction_hash DESC, log_index DESC, block_hash DESC
+                LIMIT 1) AS next_cursor,
+              (SELECT COUNT(*)::int FROM eligible_cycles) AS cycles,
               COUNT(*)::int AS rows FROM deleted`,
-      [CHAIN, retentionMs, limit]
+      [CHAIN, retentionMs, limit, ...afterParams]
     );
     return {
+      scanned: Number(result.rows[0]?.scanned || 0),
+      nextCursor: result.rows[0]?.next_cursor || null,
       cycles: Number(result.rows[0]?.cycles || 0),
       rows: Number(result.rows[0]?.rows || 0),
     };

@@ -1140,8 +1140,10 @@ autovacuum; a limpeza é executada pelo retention worker existente, com janela d
 (`ROBINHOOD_REALTIME_OUTBOX_RETENTION_MS=259200000`). Um ciclo só é removido inteiro: todos os
 eventos precisam estar auditados, antigos e uniformemente `pending` (nunca publicados) ou
 uniformemente `complete` (incluindo o terminal). Estado misto, `leased` ou qualquer `blocked` fica
-preservado para entrega ou investigação. O limite é contado em ciclos e cada ciclo tem no máximo
-três linhas.
+preservado para entrega ou investigação. A busca de terminais vencidos percorre páginas limitadas
+na ordem do índice de retenção; o cursor em memória passa por ciclos inelegíveis e volta ao início
+ao esgotar o prefixo, inclusive após reinício. O limite controla terminais examinados por página;
+um ciclo tem no máximo três linhas. A exclusão continua atômica por ciclo.
 
 Aplique `node src/utils/db-init-stage211.js` antes de reiniciar o
 `trendscope-worker@robinhood-wallet`. A Stage 211 acrescenta o marcador nullable

@@ -110,7 +110,9 @@ describe('Robinhood retention safety integration', () => {
             }),
           },
           realtimeOutboxRepository: {
-            pruneTerminalCycles: async () => ({ cycles: 2, rows: 4 }),
+            pruneTerminalCycles: async () => ({
+              scanned: 2, nextCursor: null, cycles: 2, rows: 4,
+            }),
             loadTelemetry: async () => ({
               observedLagBlocks: '1', finalizedLagBlocks: '2',
               backlogRows: 3, blockedRows: 0,
@@ -120,6 +122,7 @@ describe('Robinhood retention safety integration', () => {
             pruneExpiredCaptures: async () => 0,
           },
           headCapturePruneState: { lastRunAtMs: null },
+          realtimeOutboxPruneState: { cursor: null },
           chainEventPruner: async () => ({ status: 'finished', totalDeleted: 0 }),
         }
       );

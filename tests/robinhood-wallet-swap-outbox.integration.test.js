@@ -373,15 +373,21 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       }
     };
     await insertCycle('1', 200, { observed: 'pending', finalized: 'pending' }, '4 days');
-    await insertCycle('3', 201, { observed: 'complete', finalized: 'complete' }, '4 days');
-    await insertCycle('5', 202, { observed: 'complete', finalized: 'pending' }, '4 days');
+    await insertCycle('3', 201, { observed: 'complete', finalized: 'complete' }, '3 days 23 hours');
+    await insertCycle('5', 202, { observed: 'complete', finalized: 'pending' }, '5 days');
     await insertCycle('7', 203, { observed: 'pending', finalized: 'blocked' }, '4 days');
     await insertCycle('9', 204, { observed: 'complete', finalized: 'complete' }, '1 day');
 
     const lifecycle = createRobinhoodWalletSwapRealtimeOutboxRepository({ database: client });
-    assert.deepEqual(await lifecycle.pruneTerminalCycles({
-      retentionMs: 3 * 24 * 60 * 60 * 1000, limit: 10,
-    }), { cycles: 2, rows: 4 });
+    const options = { retentionMs: 3 * 24 * 60 * 60 * 1000, limit: 1 };
+    const first = await lifecycle.pruneTerminalCycles(options);
+    assert.deepEqual([first.scanned, first.cycles, first.rows], [1, 0, 0]);
+    const second = await lifecycle.pruneTerminalCycles({ ...options, after: first.nextCursor });
+    assert.deepEqual([second.scanned, second.cycles, second.rows], [1, 1, 2]);
+    const third = await lifecycle.pruneTerminalCycles({ ...options, after: second.nextCursor });
+    assert.deepEqual([third.scanned, third.cycles, third.rows], [1, 1, 2]);
+    const exhausted = await lifecycle.pruneTerminalCycles({ ...options, after: third.nextCursor });
+    assert.equal(exhausted.scanned, 0);
     const remaining = await client.query(`SELECT block_number, event_kind, status
       FROM robinhood_wallet_swap_realtime_outbox ORDER BY block_number, event_kind`);
     assert.equal(remaining.rows.length, 6);

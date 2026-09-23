@@ -29,9 +29,10 @@ function dependencies(database, gate = VALID_WALLET_GATE) {
     headProcessingRepository: { pruneExpiredCaptures: async () => 0 },
     headCapturePruneState: { lastRunAtMs: null },
     realtimeOutboxRepository: {
-      pruneTerminalCycles: async () => ({ cycles: 0, rows: 0 }),
+      pruneTerminalCycles: async () => ({ scanned: 0, nextCursor: null, cycles: 0, rows: 0 }),
       loadTelemetry: async () => EMPTY_REALTIME_TELEMETRY,
     },
+    realtimeOutboxPruneState: { cursor: null },
     realtimeOutboxTelemetryCache: { loadedAtMs: null, value: null },
     chainEventPruner: async () => ({
       status: 'finished', stopReason: 'prefix_drained',
@@ -74,6 +75,31 @@ function createFakeDatabase(rawBatches = [], journalBatches = []) {
 }
 
 describe('Robinhood retention worker', () => {
+  it('continues past an ineligible page and preserves the seek cursor across ticks', async () => {
+    const calls = [];
+    const cursor = { createdAt: '2026-09-19T00:00:00Z', blockNumber: '1' };
+    const pruneState = { cursor: null };
+    const repository = {
+      async pruneTerminalCycles(input) {
+        calls.push(input.after);
+        return calls.length === 1
+          ? { scanned: 100, nextCursor: cursor, cycles: 0, rows: 0 }
+          : { scanned: 1, nextCursor: cursor, cycles: 1, rows: 2 };
+      },
+      async loadTelemetry() { return EMPTY_REALTIME_TELEMETRY; },
+    };
+    const options = worker.__private.normalizeOptions({ batchLimit: 100, maxBatches: 1 });
+    const deps = {
+      realtimeOutboxRepository: repository, realtimeOutboxPruneState: pruneState,
+      realtimeOutboxTelemetryCache: { loadedAtMs: null, value: null },
+    };
+    await worker.__private.maintainRealtimeOutbox({}, options, deps);
+    assert.deepEqual(pruneState.cursor, cursor);
+    await worker.__private.maintainRealtimeOutbox({}, options, deps);
+    assert.deepEqual(calls, [null, cursor]);
+    assert.equal(pruneState.cursor, null);
+  });
+
   it('bounds cleanup load controls', () => {
     assert.deepEqual(worker.__private.normalizeOptions({
       intervalMs: 1,

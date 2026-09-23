@@ -27,6 +27,7 @@ const realtimeOutboxTelemetryCache = {
   loadedAtMs: null,
   value: null,
 };
+const realtimeOutboxPruneState = { cursor: null };
 const headCapturePruneState = { lastRunAtMs: null };
 
 let timer = null;
@@ -477,16 +478,23 @@ async function maintainRealtimeOutbox(database, options, deps) {
   const repository = deps.realtimeOutboxRepository
     || createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
   const telemetryCache = deps.realtimeOutboxTelemetryCache || realtimeOutboxTelemetryCache;
+  const pruneState = deps.realtimeOutboxPruneState || realtimeOutboxPruneState;
   let cycles = 0;
   let rows = 0;
   for (let index = 0; index < options.maxBatches; index += 1) {
     const result = await repository.pruneTerminalCycles({
       retentionMs: options.realtimeOutboxRetentionMs,
       limit: options.batchLimit,
+      after: pruneState.cursor,
     });
     cycles += result.cycles;
     rows += result.rows;
-    if (result.cycles < options.batchLimit) break;
+    if (result.scanned === 0 || result.scanned < options.batchLimit) {
+      pruneState.cursor = null;
+      break;
+    }
+    if (!result.nextCursor) throw new Error('Realtime outbox prune cursor is missing');
+    pruneState.cursor = result.nextCursor;
   }
   const nowMs = (deps.now || Date.now)();
   const telemetryExpired = telemetryCache.loadedAtMs == null
