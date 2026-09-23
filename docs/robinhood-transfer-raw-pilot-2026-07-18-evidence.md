@@ -1,9 +1,9 @@
 # Piloto de retenção transfer raw — evidência de 2026-07-18
 
-Estado: **relatório preparado; partição ainda presente**. Resultados enviados
-pelo operador em 2026-09-23, sem hora exata em todas as consultas. Este
-relatório habilita apenas a avaliação do piloto de 18/07. A amostra não prova
-replay histórico integral nem autoriza retenção geral de três dias.
+Estado: **piloto de 18/07 executado; o comando relatou a remoção da partição**.
+Resultados enviados pelo operador em 2026-09-23, sem hora exata em todas as
+consultas. A amostra não prova replay histórico integral nem autoriza retenção
+geral de três dias.
 
 ## Partição e projeção
 
@@ -60,7 +60,16 @@ no momento do drop.
 O [manifesto JSON](robinhood-transfer-raw-pilot-2026-07-18-report.json)
 contém uma exceção limitada a esse evento e ao dia 18. A execução exige o
 hash e versão esperados do watermark e a flag específica do dia; mudança no
-checkpoint, resumo, raw, evidência ou posição aborta a transação. Se o drop
-for executado, libera somente a partição de transfer raw no volume `/`.
-`chain_events` em `/srv/trendscope-data-2` continua uma frente separada, e a
-retenção geral de transfers continua em 30 dias.
+checkpoint, resumo, raw, evidência ou posição aborta a transação.
+
+O comando aplicado retornou `dropped=true`, partição
+`public.robinhood_token_transfer_events_2026_07_18`, heap anterior
+`base/17549/9003749`, tamanho total anterior `1.962.450.944` bytes e watermark
+versão `1 → 2`; durou 60,740 s. O `df -B1` enviado após a execução mostrou
+`72.366.526.464` bytes livres em `/` e `18.303.873.024` em
+`/srv/trendscope-data-2`. Não foi enviada uma medição imediatamente anterior
+nessa execução, portanto não há delta líquido de espaço atribuível ao drop.
+A confirmação independente por catálogo e estado dos cursores ainda está
+pendente. A remoção do transfer raw libera `/`; `chain_events` em
+`/srv/trendscope-data-2` continua uma frente separada, e a retenção geral de
+transfers continua em 30 dias.
