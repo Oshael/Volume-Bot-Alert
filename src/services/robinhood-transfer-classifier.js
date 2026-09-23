@@ -37,12 +37,13 @@ function addressSet(input, label) {
 function contractProofs(input) {
   if (input == null) return new Map();
   if (!Array.isArray(input)) throw new TypeError('contractRoleEvidence must be a list');
-  return new Map(input.map((proof) => {
+  return new Map(input.filter((proof) => (
+    proof.evidenceBlock != null && proof.evidenceBlockHash != null
+  )).map((proof) => {
     const endpoint = address(proof.endpointAddress, 'contract endpoint');
-    const from = BigInt(uint(proof.observedFromBlock, 'observedFromBlock'));
-    const through = BigInt(uint(proof.observedThroughBlock, 'observedThroughBlock'));
-    if (through < from) throw new Error('contract role interval is inverted');
-    return [endpoint, { from, through }];
+    const block = BigInt(uint(proof.evidenceBlock, 'evidenceBlock'));
+    const blockHash = hash(proof.evidenceBlockHash, 'evidenceBlockHash');
+    return [endpoint, { block, blockHash }];
   }));
 }
 
@@ -50,13 +51,15 @@ function provenContractPair(transfer, input, swaps, proofs, wallets) {
   const rawBlock = value(input, 'blockNumber', 'block_number');
   if (!/^\d+$/.test(String(rawBlock ?? ''))) return false;
   const block = BigInt(rawBlock);
+  const blockHash = String(value(input, 'blockHash', 'block_hash') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(blockHash)) return false;
   const endpoints = [transfer.fromWallet, transfer.toWallet];
   if (endpoints.some((endpoint) => wallets.has(endpoint) || swaps.some((swap) => (
     endpoint === swap.walletAddress || endpoint === swap.recipientAddress
   )))) return false;
   return endpoints.every((endpoint) => {
     const proof = proofs.get(endpoint);
-    return proof && block >= proof.from && block <= proof.through;
+    return proof && block === proof.block && blockHash === proof.blockHash;
   });
 }
 

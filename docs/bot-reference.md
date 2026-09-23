@@ -6108,8 +6108,9 @@ exatos, direção incompatível, valor incompatível ou índice de ação coinci
 dois transfers `unknown` anteriores a ele, mesma origem, soma exata do valor
 bruto e destinos na wallet signatária e no contrato do token.
 A correlação ambígua com swap só vira `contract_flow` quando os dois endpoints
-têm evidência `contract` cobrindo o bloco e nenhum é wallet signatária nem
-destinatário de qualquer swap do mesmo token na transação. A decisão mantém
+têm observação direta `contract` no mesmo bloco e hash do transfer, e nenhum
+é wallet signatária nem destinatário de qualquer swap do mesmo token na
+transação. A decisão mantém
 `rh_transfer_v1`, não gera aresta nem altera posição; casos sem
 essa prova permanecem `unknown`. Matches exatos continuam `dex_flow`.
 A telemetria não revalida a canonicalidade da prova, não reclassifica

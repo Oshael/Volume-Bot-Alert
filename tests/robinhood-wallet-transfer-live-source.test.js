@@ -28,8 +28,9 @@ describe('Robinhood wallet transfer LIVE source frontier', () => {
         if (sql.includes('FROM robinhood_wallet_swaps')) return { rows: [] };
         if (sql.includes('FROM robinhood_pool_registry')) return { rows: [] };
         if (sql.includes('FROM robinhood_wallet_endpoint_roles')) {
-          assert.match(sql, /observed_from_block, observed_through_block/);
+          assert.match(sql, /evidence_block, evidence_block_hash/);
           return { rows: [{ endpoint_address: contract, endpoint_role: 'contract',
+            evidence_block: '110', evidence_block_hash: `0x${'a'.repeat(64)}`,
             observed_from_block: '110', observed_through_block: '115' }] };
         }
         throw new Error(`unexpected query: ${sql}`);
@@ -41,6 +42,7 @@ describe('Robinhood wallet transfer LIVE source frontier', () => {
       transactionHashes: [], endpointAddresses: [contract],
     });
     assert.deepEqual(context.contractRoleEvidence, [{
+      evidenceBlock: '110', evidenceBlockHash: `0x${'a'.repeat(64)}`,
       endpointAddress: contract, observedFromBlock: '110', observedThroughBlock: '115',
     }]);
   });

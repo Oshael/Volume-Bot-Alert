@@ -91,7 +91,7 @@ describe('Robinhood wallet transfer reclassification command', () => {
     assert.equal(test.calls.applied[0].decisionReason, 'known_wallet_pair');
   });
 
-  it('uses block-covered contract proof for a raw unknown with ambiguous swap', async () => {
+  it('uses an exact-block contract observation for a raw unknown with ambiguous swap', async () => {
     const test = harness();
     const contractRole = { ...candidate().fromRoleEvidence, endpointRole: 'contract' };
     test.deps.repository.listCandidates = async () => [{ ...candidate(),
@@ -104,6 +104,7 @@ describe('Robinhood wallet transfer reclassification command', () => {
         tokenAmountRaw: '99', side: 'sell' }],
       poolAddresses: [], routerAddresses: [], contractAddresses: [ALICE, BOB],
       contractRoleEvidence: [ALICE, BOB].map((endpointAddress) => ({
+        evidenceBlock: '100', evidenceBlockHash: candidate().blockHash,
         endpointAddress, observedFromBlock: '100', observedThroughBlock: '100',
       })), walletAddresses: [],
     });

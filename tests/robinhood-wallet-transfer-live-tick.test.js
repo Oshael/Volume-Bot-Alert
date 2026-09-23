@@ -209,6 +209,7 @@ describe('Robinhood wallet transfer LIVE tick', () => {
         walletAddress: `0x${'4'.repeat(40)}`, tokenAmountRaw: '99', side: 'sell' }],
       poolAddresses: [], routerAddresses: [], contractAddresses: [ALICE, BOB],
       contractRoleEvidence: [ALICE, BOB].map((endpointAddress) => ({
+        evidenceBlock: '100', evidenceBlockHash: HASH,
         endpointAddress, observedFromBlock: '100', observedThroughBlock: '100',
       })), walletAddresses: [],
       endpointRoleCoverage: { requested: 2, persisted: 2, unpersisted: 0, probes: 0 },

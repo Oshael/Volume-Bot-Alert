@@ -366,7 +366,8 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       [CHAIN, endpointAddresses]
     )));
     const rolePromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
-      `SELECT endpoint_address, endpoint_role, observed_from_block, observed_through_block
+      `SELECT endpoint_address, endpoint_role, evidence_block, evidence_block_hash,
+              observed_from_block, observed_through_block
        FROM robinhood_wallet_endpoint_roles
        WHERE chain = $1 AND endpoint_address = ANY($2::varchar[])
        ORDER BY endpoint_address`,
@@ -393,6 +394,8 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       .filter(({ endpoint_role: role }) => role === 'contract')
       .map((role) => Object.freeze({
         endpointAddress: role.endpoint_address,
+        evidenceBlock: String(role.evidence_block),
+        evidenceBlockHash: role.evidence_block_hash,
         observedFromBlock: String(role.observed_from_block),
         observedThroughBlock: String(role.observed_through_block),
       }));

@@ -14,6 +14,7 @@ const POOL = `0x${'4'.repeat(40)}`;
 const ROUTER = `0x${'5'.repeat(40)}`;
 const CONTRACT = `0x${'6'.repeat(40)}`;
 const TX = `0x${'a'.repeat(64)}`;
+const HASH = `0x${'b'.repeat(64)}`;
 
 function transfer(overrides = {}) {
   return {
@@ -100,8 +101,10 @@ describe('Robinhood transfer classifier', () => {
   it('classifies an ambiguous swap movement only when both contracts are proven at its block', () => {
     const proof = (endpointAddress, observedFromBlock = '100', observedThroughBlock = '100') => ({
       endpointAddress, observedFromBlock, observedThroughBlock,
+      evidenceBlock: '100', evidenceBlockHash: HASH,
     });
-    const input = transfer({ blockNumber: '100', fromWallet: CONTRACT, toWallet: ROUTER });
+    const input = transfer({ blockNumber: '100', blockHash: HASH,
+      fromWallet: CONTRACT, toWallet: ROUTER });
     const context = { swaps: [swap({ walletAddress: ALICE, tokenAmountRaw: '99' })],
       swapCoverageComplete: true };
     const classify = (evidence, wallets = []) => classifier({
@@ -116,8 +119,16 @@ describe('Robinhood transfer classifier', () => {
     assert.equal(result.connectionEligible, false);
     assert.equal(result.duplicateOfSwap, false);
     assert.equal(classify([proof(CONTRACT)]).kind, 'unknown');
-    assert.equal(classify([proof(CONTRACT, '99', '99'), proof(ROUTER)]).kind, 'unknown');
+    assert.equal(classify([{
+      ...proof(CONTRACT, '99', '99'), evidenceBlock: '99',
+    }, proof(ROUTER)]).kind, 'unknown');
     assert.equal(classify([proof(CONTRACT), proof(ROUTER)], [ROUTER]).kind, 'unknown');
+    assert.equal(classify([proof(CONTRACT, '99', '101'), {
+      ...proof(ROUTER, '99', '101'), evidenceBlock: '101',
+    }]).kind, 'unknown');
+    assert.equal(classify([proof(CONTRACT), {
+      ...proof(ROUTER), evidenceBlockHash: `0x${'c'.repeat(64)}`,
+    }]).kind, 'unknown');
 
     const recipient = classifier({ contractRoleEvidence: [proof(CONTRACT), proof(ROUTER)] });
     assert.equal(recipient.classify(input, { ...context,
