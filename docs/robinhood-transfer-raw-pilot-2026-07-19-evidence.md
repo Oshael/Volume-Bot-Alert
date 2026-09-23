@@ -1,9 +1,9 @@
 # Piloto de retenção transfer raw — evidência de 2026-07-19
 
-Estado: **rascunho para decisão operacional; remoção não autorizada**. Este
-documento preserva o resultado enviado pelo operador em 2026-09-23. Os comandos
-não informaram uma hora de medição para todos os resultados. Revalidar os gates
-imediatamente antes de qualquer operação destrutiva.
+Estado: **partição de 2026-07-19 removida no piloto aprovado**. Este documento
+preserva os resultados enviados pelo operador em 2026-09-23. Os comandos não
+informaram uma hora de medição para todos os resultados. A remoção do piloto não
+autoriza automaticamente a poda das outras partições nem a retenção de três dias.
 
 ## Identidade da partição
 
@@ -45,9 +45,9 @@ partição. Esses resultados não substituem a revalidação transacional final.
 O `df -B1` enviado sem hora de medição mostrou bytes disponíveis: `/`
 `70.955.597.824`, `/srv/trendscope-data` `72.093.966.336` e
 `/srv/trendscope-data-2` `21.436.461.056`. O heap do piloto estava no volume
-`/` na medição de localização anterior; reconfirmar antes da operação. A remoção
-do piloto não recuperaria espaço no volume de `chain_events`, que exige uma
-decisão operacional independente.
+`/` na medição de localização anterior. A remoção do piloto não recuperaria
+espaço no volume de `chain_events`, que exige uma decisão operacional
+independente.
 
 Em 2026-09-23 às 22:38:15+02, a tentativa aprovada de remover somente 19/07
 parou em `transfer raw, summaries or watermark no longer reconcile`, antes do
@@ -55,8 +55,37 @@ parou em `transfer raw, summaries or watermark no longer reconcile`, antes do
 bytes livres em `/` e `20.708.737.024` em `/srv/trendscope-data-2`. O SQL do
 gate tinha um `FULL JOIN` que preservava resumos de outros dias; um teste de
 integração reproduziu o mesmo erro com um resumo alheio ao piloto. A correção
-filtra dia e versão antes do join. Uma auditoria read-only atual ainda precisa
-confirmar se existe também alguma divergência real no dia 19.
+filtra dia e versão antes do join. Após o deploy da correção, a auditoria
+read-only do dia 19 informou `lifecycleState=verified`,
+`summaryMismatchCount=0`, `rawEventCount=targetClassifiedEventCount=2135606`,
+`eligibleTransferCount=summaryTransferCount=604928` e somas elegíveis iguais.
+Isso não estabelece que o bug do join foi a única causa possível da falha
+operacional anterior; a revalidação transacional posterior passou.
+
+## Remoção e observação posterior
+
+O piloto aprovado retornou `mode=apply`, `dropped=true`,
+`heapPathBefore=base/17549/9005029`, `totalBytesBefore=1768628224`, watermark
+versão `0 → 1` e duração de 40,350 s. A consulta posterior encontrou
+`to_regclass(...)` nulo e watermark `dropped`, versão `1`, com `dropped_at`
+`2026-09-23 17:44:06.539698-03`. O drop e a marcação do watermark foram
+confirmados como uma única transação.
+
+Entre a última medição disponível antes da tentativa bem-sucedida e a medição
+posterior, os bytes livres em `/` passaram de `70.086.881.280` para
+`71.604.912.128`: ganho líquido observado de `1.518.030.848` bytes. O tamanho
+anterior da partição (`1.768.628.224` bytes) não é igual ao delta de `df`, que
+também inclui outras atividades do volume no intervalo. Em
+`/srv/trendscope-data-2`, os bytes livres passaram de `20.708.737.024` para
+`20.523.958.272`; este piloto não aliviou o volume de `chain_events`.
+
+Na consulta posterior, `finalized_head=70811128`; os cursores LIVE de transfer e
+posição estavam ambos em `next_block=70811019`, `lifecycle_state=running`, a
+109 blocos do finalized head. É uma observação pontual, não um teste de soak ou
+restart. Antes da extensão do rollout, confirmar que esses cursores avançam,
+avaliar erros e filas relevantes e testar a continuidade sem Archive no caminho
+LIVE. A partição de 18/07 ainda tem o gate
+`canonicalCheckpointNotProven_candidate`; não foi incluída neste drop.
 
 ## Exceções aprovadas como critério do piloto
 
@@ -84,7 +113,7 @@ essa concentração temporal não estabelece sua causa.
 | `0xfb5209bad7e19a487a8038081941ffbe55f2624892c5a42f50895500ba354667` | 8 | `2026-07-18 21:34:14-03` | 13414226 | `0x79270673ae32ea522a791cdfc7af7b150af8590cc30334cb5ea537f6242b1dc5` | 3 | `unknown` |
 | `0xfc9e9a0cec30bc90d9f5b3cbb114cf481f24bafa9ef349e287e62aa8faad9266` | 0 | `2026-07-18 21:20:57-03` | 13406277 | `0x7df4c3642e3486145e4a4c05ceee78034426e10d7ed62f6385508bd19c77a806` | 4 | `contract_flow` |
 
-## Limites e aprovação operacional pendente
+## Limites do piloto
 
 As 12 entradas acima preservam a classificação armazenada e sua âncora
 canônica mínima. O relatório **não** demonstra paridade histórica integral
@@ -92,10 +121,6 @@ nem converte `archiveReplay.status=sample_only` em `matched`. O operador aceitou
 em 2026-09-23 essas 12 diferenças como exceções **somente para o critério do
 piloto de 19/07**. A causa histórica continua desconhecida. O
 [relatório JSON](robinhood-transfer-raw-pilot-2026-07-19-report.json) identifica a amostra e as
-12 âncoras sob o status `sampled_with_approved_exceptions`. Ele ainda não contém
-`approvedBy` e `approvedAt`, portanto não autoriza o comando de drop.
-
-Antes do drop: reexecutar readiness, conferir espaço e localização física, e
-obter aprovação operacional do relatório vinculado ao watermark/checkpoint
-atuais. A transação de drop deve revalidar os gates e as 12 exceções sob locks.
-A política geral continua em 30 dias.
+12 âncoras sob o status `sampled_with_approved_exceptions`. O modelo versionado
+mantém `approvedBy` e `approvedAt` vazios; a cópia operacional preenchida foi
+usada somente para o drop de 19/07. A política geral continua em 30 dias.
