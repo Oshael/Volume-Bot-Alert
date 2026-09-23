@@ -5998,10 +5998,11 @@ aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
 Para verificar dependências históricas das partições listadas, execute
 `npm run robinhood:wallet-transfer-retention-readiness --
 --projection-version=rh_transfer_v1 --limit=2`. Essa auditoria somente de
-leitura procura endpoints ainda sem papel persistido, transfers `unknown` e
-itens de redistribution pendentes ou alugados que possam precisar do raw do dia
-para reparo de posições. Cada consulta de dependências tem timeout de 30 s e
-falha fechada. Mesmo com
+leitura executa três sondas independentes: presença de transfer `unknown`,
+papel ausente em endpoint de transfer `unknown` e candidato de reparo de posição
+na fila de redistribution. Cada sonda informa `candidate`, `absent` ou `unknown`
+e sua duração; tem timeout de 5 s e falha fechada. `candidate` é risco
+potencial, não prova de dependência do raw. Mesmo com
 `provisionalGatesClear=true`, `readyForDrop` permanece `false`: ainda é
 necessária revalidação canônica imediatamente antes de qualquer remoção. O
 comando não destaca nem apaga partições e não libera espaço por si só.

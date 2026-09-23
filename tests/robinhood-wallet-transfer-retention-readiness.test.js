@@ -28,49 +28,57 @@ describe('Robinhood transfer retention dependency readiness', () => {
     const calls = [];
     const database = { queryWithStatementTimeout: async (sql, params, timeout) => {
       calls.push({ sql, params, timeout });
-      return { rows: [{
-        endpoint_role_missing: true,
-        unknown_transfer_present: true,
-        redistribution_raw_dependency: true,
-      }] };
+      return { rows: [{ present: true }] };
     } };
     const audit = createRobinhoodWalletTransferRetentionReadiness({
       database, planner: planner([CANDIDATE]),
     });
     const result = await audit.inspect();
     assert.deepEqual(result.candidates[0].blockedReasons, [
-      'endpoint_role_missing', 'unknown_transfer_present', 'redistribution_raw_dependency',
+      'unknownTransfer_candidate', 'endpointRoleGapOnUnknown_candidate',
+      'positionRepairCandidate_candidate',
     ]);
     assert.equal(result.candidates[0].readyForDrop, false);
     assert.equal(result.destructive, false);
+    assert.equal(calls.length, 3);
     assert.match(calls[0].sql, /FROM public\.robinhood_token_transfer_events_2026_07_18 raw/);
-    assert.match(calls[0].sql, /robinhood_wallet_endpoint_roles/);
-    assert.match(calls[0].sql, /robinhood_bundle_redistribution_queue/);
-    assert.doesNotMatch(calls[0].sql, /\b(?:DROP|DELETE|UPDATE|INSERT)\b/i);
-    assert.deepEqual(calls[0].params, [
-      'robinhood', '2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z',
-    ]);
-    assert.equal(calls[0].timeout, 30_000);
+    assert.match(calls[1].sql, /robinhood_wallet_endpoint_roles/);
+    assert.match(calls[2].sql, /robinhood_bundle_redistribution_queue/);
+    assert.match(calls[2].sql, /position\.transaction_hash IS NULL/);
+    assert.match(calls[2].sql, /position\.transaction_index IS NULL/);
+    for (const call of calls) {
+      assert.doesNotMatch(call.sql, /\b(?:DROP|DELETE|UPDATE|INSERT)\b/i);
+      assert.deepEqual(call.params, [
+        'robinhood', '2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z',
+      ]);
+      assert.equal(call.timeout, 5_000);
+    }
+    assert.equal(result.candidates[0].dependencies.unknownTransfer.status, 'candidate');
+    assert.equal(result.candidates[0].dependencies.positionRepairCandidate.status, 'candidate');
   });
 
-  it('fails closed on timeout and never promotes provisional clearance into drop approval', async () => {
+  it('isolates a timeout to its probe and never promotes provisional clearance into drop approval', async () => {
     const timeout = createRobinhoodWalletTransferRetentionReadiness({
-      database: { queryWithStatementTimeout: async () => { throw new Error('statement timeout'); } },
+      database: { queryWithStatementTimeout: async (sql) => {
+        if (sql.includes('robinhood_wallet_endpoint_roles')) throw new Error('statement timeout');
+        return { rows: [{ present: false }] };
+      } },
       planner: planner([CANDIDATE]),
     });
     const timedOut = await timeout.inspect();
-    assert.deepEqual(timedOut.candidates[0].blockedReasons, ['dependency_audit_failed']);
+    assert.deepEqual(timedOut.candidates[0].blockedReasons, ['endpointRoleGapOnUnknown_unknown']);
+    assert.equal(timedOut.candidates[0].dependencies.unknownTransfer.status, 'absent');
+    assert.equal(timedOut.candidates[0].dependencies.positionRepairCandidate.status, 'absent');
+    assert.equal(timedOut.candidates[0].dependencies.endpointRoleGapOnUnknown.error, 'statement timeout');
     const incomplete = createRobinhoodWalletTransferRetentionReadiness({
       database: { queryWithStatementTimeout: async () => ({ rows: [{}] }) },
       planner: planner([CANDIDATE]),
     });
-    assert.deepEqual((await incomplete.inspect()).candidates[0].blockedReasons, ['dependency_audit_failed']);
+    assert.deepEqual((await incomplete.inspect()).candidates[0].blockedReasons, [
+      'unknownTransfer_unknown', 'endpointRoleGapOnUnknown_unknown', 'positionRepairCandidate_unknown',
+    ]);
     const clear = createRobinhoodWalletTransferRetentionReadiness({
-      database: { queryWithStatementTimeout: async () => ({ rows: [{
-        endpoint_role_missing: false,
-        unknown_transfer_present: false,
-        redistribution_raw_dependency: false,
-      }] }) },
+      database: { queryWithStatementTimeout: async () => ({ rows: [{ present: false }] }) },
       planner: planner([CANDIDATE]),
     });
     const result = await clear.inspect();
