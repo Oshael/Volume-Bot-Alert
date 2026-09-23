@@ -93,7 +93,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
     for (const call of calls) {
       assert.doesNotMatch(call.sql, /\b(?:DROP|DELETE|UPDATE|INSERT)\b/i);
     }
-    assert.equal(calls[0].timeout, 60_000);
+    assert.equal(calls[0].timeout, 120_000);
     for (const call of calls.slice(1)) assert.equal(call.timeout, 5_000);
     assert.equal(result.candidates[0].dependencies.unpreservedUnknown.status, 'candidate');
     assert.equal(result.candidates[0].dependencies.transferPositionRepairCandidate.status, 'candidate');

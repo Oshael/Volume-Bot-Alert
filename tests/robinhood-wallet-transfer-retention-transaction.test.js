@@ -86,6 +86,8 @@ describe('Robinhood transfer retention transaction', () => {
     const evidence = f.calls.findIndex((sql) => sql.includes('pending_evidence evidence'));
     assert.ok(recovery < dayLock && dayLock < partition && partition < position
       && position < watermark && watermark < evidence);
+    assert.equal(f.calls[evidence - 1], "SET LOCAL statement_timeout = '120s'");
+    assert.equal(f.calls[evidence + 1], "SET LOCAL statement_timeout = '60s'");
   });
 
   it('rolls back on changed reconciliation or unpreserved evidence', async () => {

@@ -161,7 +161,13 @@ async function assertDependencies(client, day, name, watermark) {
     positionPreimageCoverageMissing: { sql: PREIMAGE_COVERAGE_SQL, params: [CHAIN] },
   };
   for (const [nameOfProbe, probe] of Object.entries(probes)) {
+    if (nameOfProbe === 'unpreservedUnknown') {
+      await client.query("SET LOCAL statement_timeout = '120s'");
+    }
     const result = await client.query(probe.sql, probe.params);
+    if (nameOfProbe === 'unpreservedUnknown') {
+      await client.query("SET LOCAL statement_timeout = '60s'");
+    }
     const present = result.rows[0]?.present;
     if (typeof present !== 'boolean') throw new Error(`${nameOfProbe} returned no verdict`);
     if (present && nameOfProbe !== 'endpointRoleGapOnUnknown') {

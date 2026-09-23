@@ -6018,7 +6018,7 @@ confere o marcador do checkpoint LIVE `unified_transfer_v1` e a cobertura
 contínua dos lotes acima do `finalized_head`; lacuna ou marcador não canônico
 bloqueia o dia. Cada sonda informa
 `candidate`, `absent` ou `unknown`
-e sua duração; a cobertura de evidência tem timeout de 60 s, as demais
+e sua duração; a cobertura de evidência tem timeout de 120 s, as demais
 sondas de 5 s, e timeouts falham fechados. Um gap de papel `candidate` aparece
 em `deferredReasons` somente se todos os `unknown` do dia têm evidência íntegra
 preservada; a descoberta de endpoints pode então usar essa evidência sem raw.
@@ -6031,7 +6031,11 @@ necessária revalidação canônica imediatamente antes de qualquer remoção. O
 comando não destaca nem apaga partições e não libera espaço por si só.
 O módulo transacional de retenção já cerca recovery, dia e partição, trava o
 cursor LIVE de posições e revalida watermark, raw, resumos, cursores e as seis
-dependências antes de permitir uma ação na mesma transação. O comando
+dependências antes de permitir uma ação na mesma transação. A revalidação
+usa timeout de 120 s somente durante a cobertura de evidência; as demais
+consultas transacionais continuam limitadas a 60 s. O lock exclusivo da
+partição permanece até o fim da transação, inclusive durante essa verificação.
+O comando
 `robinhood:wallet-transfer-retention-pilot` só aceita o dia `2026-07-19`; exige
 `--expected-watermark-version`, `--expected-checkpoint-hash`, `--pilot-report=FILE`,
 `--apply` e `--confirm-drop-robinhood-transfer-raw-2026-07-19`. O relatório JSON

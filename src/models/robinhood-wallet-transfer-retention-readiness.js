@@ -8,7 +8,7 @@ const {
 
 const CHAIN = 'robinhood';
 const QUERY_TIMEOUT_MS = 5_000;
-const EVIDENCE_COVERAGE_TIMEOUT_MS = 60_000;
+const EVIDENCE_COVERAGE_TIMEOUT_MS = 120_000;
 
 function partitionName(candidate) {
   const expected = `robinhood_token_transfer_events_${candidate.partitionDay.replace(/-/g, '_')}`;
