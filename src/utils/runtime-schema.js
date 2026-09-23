@@ -6630,6 +6630,25 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage244-robinhood-wallet-transfer-evidence-dispositions',
+    name: 'Stage 244 Robinhood transfer evidence dispositions',
+    repair: 'node src/utils/db-init-stage244.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_evidence_dispositions',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'block_time', 'disposition',
+        'block_hash', 'recorded_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_transfer_evidence_dispositions_pkey',
+        includes: ['PRIMARY KEY', 'transaction_hash', 'disposition'],
+      }, {
+        name: 'rh_wallet_transfer_evidence_dispositions_values_check',
+        includes: ['CHECK', 'orphaned', 'reclassified'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

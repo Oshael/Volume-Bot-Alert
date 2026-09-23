@@ -203,6 +203,23 @@ function createRobinhoodWalletTransferReorgRollback() {
       }
       await restoreCursor(client, range, cursor);
     }
+    await client.query(
+      `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
+         chain, transaction_hash, log_index, block_time, disposition, block_hash
+       ) SELECT evidence.chain, evidence.transaction_hash, evidence.log_index,
+           evidence.block_time, 'orphaned', evidence.block_hash
+         FROM robinhood_wallet_transfer_pending_evidence evidence
+         INNER JOIN robinhood_chain_blocks block
+           ON block.chain = evidence.chain AND block.canonical
+          AND block.block_number = evidence.block_number
+          AND block.block_hash = evidence.block_hash
+        WHERE evidence.chain = $1
+          AND evidence.block_number BETWEEN $2::bigint AND $3::bigint
+          AND evidence.block_time BETWEEN $4::timestamptz AND $5::timestamptz
+       ON CONFLICT (chain, transaction_hash, log_index, block_time, disposition)
+         DO NOTHING`,
+      [CHAIN, range.fromBlock, range.throughBlock, range.fromTimestamp, range.throughTimestamp]
+    );
     const deleted = await client.query(
       `DELETE FROM robinhood_token_transfer_events transfer USING robinhood_chain_blocks block
         WHERE transfer.chain=$1 AND block.chain=transfer.chain AND block.canonical

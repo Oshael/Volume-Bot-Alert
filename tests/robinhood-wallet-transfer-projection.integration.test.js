@@ -18,6 +18,7 @@ const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage243 = require('../src/utils/db-init-stage243');
+const stage244 = require('../src/utils/db-init-stage244');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
@@ -53,6 +54,8 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [event(102, 4, 40).transactionHash]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [event(102, 4, 40).transactionHash]);
   await db.query('DELETE FROM robinhood_token_transfer_events WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_token_positions WHERE projection_version = $1', [POSITION_VERSION]);
   await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [POSITION_VERSION]);
@@ -66,6 +69,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage127.init({ closePool: false });
     await stage128.init({ closePool: false });
     await stage243.init({ closePool: false });
+    await stage244.init({ closePool: false });
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });
@@ -318,6 +322,10 @@ describe('Robinhood wallet transfer projection persistence', () => {
       { ...event(101, 2, 20), classificationVersion: LIVE_VERSION },
       { ...event(102, 3, 30), classificationVersion: LIVE_VERSION },
     ]);
+    const unknown = { ...event(102, 4, 40, 'unknown'), classificationVersion: LIVE_VERSION };
+    await createRobinhoodTokenTransferRepository({
+      database: db, preservePendingEvidence: true,
+    }).insertTransferEvents([unknown]);
     const hashes = [100, 101, 102].map((block) => event(block, 1, 1).blockHash);
     await db.query(
       `INSERT INTO robinhood_chain_blocks(
@@ -349,8 +357,22 @@ describe('Robinhood wallet transfer projection persistence', () => {
     }
     assert.deepEqual(rolledBack, {
       projections: 1, restoredBatches: 1, replayedPrefix: 1,
-      deletedRawTransfers: 1, cursorsRewound: 1,
+      deletedRawTransfers: 2, cursorsRewound: 1,
     });
+    const orphanedEvidence = await db.query(
+      `SELECT disposition.block_hash, evidence.transaction_hash
+         FROM robinhood_wallet_transfer_pending_evidence evidence
+         JOIN robinhood_wallet_transfer_evidence_dispositions disposition
+           ON disposition.chain = evidence.chain
+          AND disposition.transaction_hash = evidence.transaction_hash
+          AND disposition.log_index = evidence.log_index
+          AND disposition.block_time = evidence.block_time
+        WHERE evidence.transaction_hash = $1 AND disposition.disposition = 'orphaned'`,
+      [unknown.transactionHash]
+    );
+    assert.deepEqual(orphanedEvidence.rows, [{
+      block_hash: unknown.blockHash, transaction_hash: unknown.transactionHash,
+    }]);
     const restored = await db.query(
       `SELECT transfer_count::text, total_amount_raw::text, last_block::text
          FROM robinhood_wallet_transfer_edges WHERE classification_version=$1`,

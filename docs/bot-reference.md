@@ -6096,6 +6096,11 @@ bloquear o cursor.
 
 Antes de publicar o writer de transfers que grava evidência pendente, aplique
 `node src/utils/db-init-stage243.js` e confirme `npm run db:schema-check`.
+Antes de publicar o rollback de transfers, aplique também
+`node src/utils/db-init-stage244.js`. O rollback grava um marcador `orphaned`
+em `robinhood_wallet_transfer_evidence_dispositions` na mesma transação em que
+remove o raw órfão. A evidência pendente permanece imutável; o marcador é
+idempotente e não faz `UPDATE`/`DELETE` por evento na tabela nova.
 Só depois de concluir a adaptação de reclassificação/reorg e medir capacidade, ative
 `ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED=true` no service exclusivo
 de wallet transfers e reinicie esse service; o padrão é `false` para não
@@ -6105,7 +6110,7 @@ reclassificação em `robinhood_wallet_transfer_pending_evidence`, na mesma
 instrução SQL; falha em preservar a evidência aborta a inserção raw. Repetições
 são idempotentes pela identidade `(chain, transaction_hash, log_index,
 block_time)`. Esta etapa ainda não migra `unknown` antigos, não muda os leitores
-nem cobre rollback/reorg da tabela nova. **Não habilite a flag em produção nem
+e ainda não faz leitores filtrarem marcadores de reorg. **Não habilite a flag em produção nem
 remova partições raw com base apenas na Stage 243**; a retenção continua
 bloqueada até migração, adaptação dos consumidores e auditoria de cobertura.
 Monitore o tamanho da nova tabela: o acervo de `unknown` ainda não tem poda e
