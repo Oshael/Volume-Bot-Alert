@@ -238,13 +238,30 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
 
   it('rejects a preserved orphan but still supports legacy raw-only events', async () => {
     await insertUnknown(TX3, 3, '75', true);
+    const repository = createRobinhoodWalletTransferReclassificationRepository({ database: db });
+    const selection = { classificationVersion: VERSION, day: DAY, limit: 10 };
+    await db.query(
+      'UPDATE robinhood_wallet_transfer_pending_evidence SET amount_raw = 76 WHERE transaction_hash = $1',
+      [TX3]
+    );
+    assert.equal((await repository.listCandidates(selection)).find((item) => (
+      item.transactionHash === TX3
+    )).amountRaw, '76');
+    await assert.rejects(repository.applyTransition(transition(TX3, 3)),
+      /preserved transfer evidence conflicts/);
+    await db.query(
+      'UPDATE robinhood_wallet_transfer_pending_evidence SET amount_raw = 75 WHERE transaction_hash = $1',
+      [TX3]
+    );
     await db.query(
       `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
          chain, transaction_hash, log_index, block_time, disposition, block_hash
        ) VALUES ('robinhood', $1, 3, $2::timestamptz, 'orphaned', $3)`,
       [TX3, BLOCK_TIME, BLOCK_HASH]
     );
-    const repository = createRobinhoodWalletTransferReclassificationRepository({ database: db });
+    assert.equal((await repository.listCandidates(selection)).some((item) => (
+      item.transactionHash === TX3
+    )), false);
     await assert.rejects(repository.applyTransition(transition(TX3, 3)),
       /preserved transfer evidence conflicts/);
     const raw = await db.query(
@@ -260,8 +277,23 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
       'DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [TX3]
     );
     await db.query(
+      `INSERT INTO robinhood_wallet_transfer_evidence_dispositions (
+         chain, transaction_hash, log_index, block_time, disposition, block_hash
+       ) VALUES ('robinhood', $1, 3, $2::timestamptz, 'reclassified', $3)`,
+      [TX3, BLOCK_TIME, BLOCK_HASH]
+    );
+    assert.equal((await repository.listCandidates(selection)).some((item) => (
+      item.transactionHash === TX3
+    )), false);
+    await db.query(
+      'DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [TX3]
+    );
+    await db.query(
       'DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [TX3]
     );
+    assert.equal((await repository.listCandidates(selection)).some((item) => (
+      item.transactionHash === TX3
+    )), true);
     assert.equal((await repository.applyTransition(transition(TX3, 3))).applied, true);
     const legacyMarkers = await db.query(
       'SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1',

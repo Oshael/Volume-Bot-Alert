@@ -6106,6 +6106,11 @@ evidência preservada para o raw, grava `reclassified` na mesma transação que
 atualiza o raw e as projeções. Se a evidência divergir ou estiver marcada
 `orphaned`, falha sem reclassificar. Neste corte, a seleção e a aplicação ainda
 dependem do raw; os marcadores não tornam partições antigas descartáveis.
+Na seleção de candidatos, quando há evidência preservada, os campos do evento
+vêm dela e marcadores `orphaned`/`reclassified` excluem o candidato; eventos
+legados sem cópia preservada continuam lidos do raw. O raw ainda enumera os
+candidatos e é bloqueado/atualizado na aplicação. Evidência preservada cujo raw
+já foi removido ainda não é reclassificada por esse comando.
 Só depois de concluir a adaptação de reclassificação/reorg e medir capacidade, ative
 `ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED=true` no service exclusivo
 de wallet transfers e reinicie esse service; o padrão é `false` para não
@@ -6114,8 +6119,8 @@ nova de raw `unknown` também grava os campos necessários para
 reclassificação em `robinhood_wallet_transfer_pending_evidence`, na mesma
 instrução SQL; falha em preservar a evidência aborta a inserção raw. Repetições
 são idempotentes pela identidade `(chain, transaction_hash, log_index,
-block_time)`. Esta etapa ainda não migra `unknown` antigos, não muda os leitores
-e ainda não faz leitores filtrarem marcadores de reorg. **Não habilite a flag em produção nem
+block_time)`. Esta etapa ainda não migra `unknown` antigos nem prova a
+cobertura necessária para remover o raw. **Não habilite a flag em produção nem
 remova partições raw com base apenas na Stage 243**; a retenção continua
 bloqueada até migração, adaptação dos consumidores e auditoria de cobertura.
 Monitore o tamanho da nova tabela: o acervo de `unknown` ainda não tem poda e

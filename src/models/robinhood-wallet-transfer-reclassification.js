@@ -147,7 +147,9 @@ async function updateRawEvent(client, transition) {
 
 async function markPreservedEvidenceReclassified(client, transition, raw) {
   const result = await client.query(
-    `SELECT evidence.block_hash, evidence.classification_version,
+    `SELECT evidence.block_number, evidence.block_hash, evidence.transaction_index,
+            evidence.token_address, evidence.from_wallet, evidence.to_wallet,
+            evidence.amount_raw, evidence.classification_version,
             EXISTS (
               SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
               WHERE disposition.chain = evidence.chain
@@ -163,7 +165,13 @@ async function markPreservedEvidenceReclassified(client, transition, raw) {
   );
   const evidence = result.rows[0];
   if (!evidence) return;
-  if (evidence.block_hash !== raw.block_hash
+  if (String(evidence.block_number) !== String(raw.block_number)
+      || evidence.block_hash !== raw.block_hash
+      || evidence.transaction_index !== raw.transaction_index
+      || evidence.token_address !== raw.token_address
+      || evidence.from_wallet !== raw.from_wallet
+      || evidence.to_wallet !== raw.to_wallet
+      || String(evidence.amount_raw) !== String(raw.amount_raw)
       || evidence.classification_version !== transition.fromClassificationVersion
       || evidence.orphaned) {
     throw new Error('preserved transfer evidence conflicts with raw state');
@@ -232,7 +240,19 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
       throw new Error('limit must be between 1 and 1000');
     }
     const result = await database.query(
-      `SELECT raw.*,
+      `SELECT COALESCE(preserved.block_number, raw.block_number) AS block_number,
+         COALESCE(preserved.block_hash, raw.block_hash) AS block_hash,
+         COALESCE(preserved.block_time, raw.block_time) AS block_time,
+         raw.transaction_hash,
+         COALESCE(preserved.transaction_index, raw.transaction_index) AS transaction_index,
+         raw.log_index,
+         COALESCE(preserved.token_address, raw.token_address) AS token_address,
+         COALESCE(preserved.from_wallet, raw.from_wallet) AS from_wallet,
+         COALESCE(preserved.to_wallet, raw.to_wallet) AS to_wallet,
+         COALESCE(preserved.amount_raw, raw.amount_raw) AS amount_raw,
+         raw.transfer_kind,
+         COALESCE(preserved.classification_version, raw.classification_version)
+           AS classification_version,
          jsonb_build_object(
            'endpointRole', from_role.endpoint_role, 'evidenceSource', from_role.evidence_source,
            'evidenceBlock', from_role.evidence_block::text,
@@ -250,6 +270,9 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
            'observedThroughBlock', to_role.observed_through_block::text
          ) AS to_role_evidence
        FROM robinhood_token_transfer_events raw
+       LEFT JOIN robinhood_wallet_transfer_pending_evidence preserved
+         ON preserved.chain = raw.chain AND preserved.transaction_hash = raw.transaction_hash
+        AND preserved.log_index = raw.log_index AND preserved.block_time = raw.block_time
        JOIN robinhood_wallet_endpoint_roles from_role
          ON from_role.chain = raw.chain AND from_role.endpoint_address = raw.from_wallet
         AND raw.block_number BETWEEN from_role.observed_from_block AND from_role.observed_through_block
@@ -260,7 +283,15 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
          AND raw.classification_version = $2
          AND raw.block_time >= ($3::date::timestamp AT TIME ZONE 'UTC')
          AND raw.block_time < (($3::date + 1)::timestamp AT TIME ZONE 'UTC')
-       ORDER BY raw.block_number, raw.transaction_index, raw.log_index, raw.transaction_hash
+         AND (preserved.chain IS NULL OR NOT EXISTS (
+           SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
+           WHERE disposition.chain = preserved.chain
+             AND disposition.transaction_hash = preserved.transaction_hash
+             AND disposition.log_index = preserved.log_index
+             AND disposition.block_time = preserved.block_time
+             AND disposition.disposition IN ('orphaned', 'reclassified')
+         ))
+       ORDER BY block_number, transaction_index, raw.log_index, raw.transaction_hash
        LIMIT $4::integer`,
       [CHAIN, version, day, limit]
     );
