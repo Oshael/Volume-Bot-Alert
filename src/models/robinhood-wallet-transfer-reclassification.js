@@ -1,6 +1,7 @@
 const db = require('./db');
 const { persistTransferProjection } = require('./robinhood-wallet-transfer-projection');
 const { lockRobinhoodCanonicalRecoveryShared } = require('./robinhood-canonical-projection-fence');
+const { lockRobinhoodTransferRetentionDay } = require('./robinhood-token-transfer-persistence');
 
 const CHAIN = 'robinhood';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -402,6 +403,7 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await lockRobinhoodTransferRetentionDay(client, transition.blockTime.slice(0, 10));
       const source = await resolveTransitionSource(client, transition);
       if (source.reason) {
         await client.query('ROLLBACK');

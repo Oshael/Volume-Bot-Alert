@@ -250,6 +250,18 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
     const failing = createRobinhoodWalletTransferReclassificationRepository({
       database: db,
       persistProjection: async (...args) => {
+        const competitor = await db.getClient();
+        try {
+          await competitor.query('BEGIN');
+          const lock = await competitor.query(
+            'SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired',
+            [`rh-transfer-retention-day:${DAY}`]
+          );
+          assert.equal(lock.rows[0].acquired, false);
+        } finally {
+          await competitor.query('ROLLBACK').catch(() => {});
+          competitor.release();
+        }
         await persistTransferProjection(...args);
         throw new Error('projection failed');
       },

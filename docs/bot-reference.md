@@ -5858,8 +5858,9 @@ cursor e checkpoint canônico. Ainda não há scheduler ou executor de drop;
 a retenção segue desligada.
 
 O writer de raw de transfers exige a Stage 132 antes de inserir. Ele trava o dia
-durante a criação da partição e a inserção e recusa qualquer dia com watermark
-`dropped`, inclusive em backfill; um lote com vários dias falha inteiro sem
+durante a criação da partição e a inserção; a reclassificação adquire o mesmo
+lock antes de ler o evento e aplicar a transição. O writer recusa qualquer dia
+com watermark `dropped`, inclusive em backfill; um lote com vários dias falha inteiro sem
 recriar partições anteriores. Um futuro executor de drop deve usar o mesmo lock
 transacional `hashtextextended('rh-transfer-retention-day:' || YYYY-MM-DD, 0)`
 antes da revalidação e remoção daquele dia.

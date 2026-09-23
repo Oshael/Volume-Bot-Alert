@@ -55,6 +55,13 @@ function dayBounds(day) {
   };
 }
 
+async function lockRobinhoodTransferRetentionDay(client, day) {
+  dayBounds(day);
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+    `${RETENTION_DAY_LOCK_PREFIX}${day}`,
+  ]);
+}
+
 function classification(input) {
   const kind = String(input.transferKind ?? 'unclassified').trim();
   if (!TRANSFER_KINDS.has(kind)) throw new Error('transferKind is invalid');
@@ -100,9 +107,7 @@ function createRobinhoodTokenTransferRepository(options = {}) {
   async function ensurePartitionInTransaction(client, day) {
     const name = partitionName(day);
     const { from, to } = dayBounds(day);
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-      `${RETENTION_DAY_LOCK_PREFIX}${day}`,
-    ]);
+    await lockRobinhoodTransferRetentionDay(client, day);
     const dropped = await client.query(
       `SELECT EXISTS (
          SELECT 1 FROM robinhood_wallet_transfer_compaction_watermarks
@@ -203,6 +208,7 @@ module.exports = {
   RAW_RETENTION_DAYS,
   TRANSFER_KINDS,
   dayBounds,
+  lockRobinhoodTransferRetentionDay,
   partitionName,
   createRobinhoodTokenTransferRepository,
   __private: { dayBounds, dayKey, normalizeTransferEvent, partitionName },
