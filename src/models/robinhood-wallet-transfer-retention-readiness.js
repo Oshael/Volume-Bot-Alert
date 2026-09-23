@@ -2,6 +2,9 @@ const db = require('./db');
 const {
   createRobinhoodWalletTransferRetentionPlanner,
 } = require('./robinhood-wallet-transfer-retention-plan');
+const {
+  PREIMAGE_COVERAGE_SQL,
+} = require('./robinhood-wallet-position-preimage-coverage');
 
 const CHAIN = 'robinhood';
 const QUERY_TIMEOUT_MS = 5_000;
@@ -168,6 +171,9 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
           canonicalCheckpointNotProven: canonicalCheckpointProbe(
             candidate, input.projectionVersion
           ),
+          positionPreimageCoverageMissing: {
+            sql: PREIMAGE_COVERAGE_SQL, params: [CHAIN],
+          },
         };
         for (const [name, probe] of Object.entries(probes)) {
           const result = await runProbe(database, probe.sql, probe.params, probe.timeoutMs);

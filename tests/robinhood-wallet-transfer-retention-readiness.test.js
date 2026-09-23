@@ -61,11 +61,12 @@ describe('Robinhood transfer retention dependency readiness', () => {
       'unpreservedUnknown_candidate', 'endpointRoleGapOnUnknown_candidate',
       'transferPositionRepairCandidate_candidate', 'sellPositionRepairCandidate_candidate',
       'canonicalCheckpointNotProven_candidate',
+      'positionPreimageCoverageMissing_candidate',
     ]);
     assert.deepEqual(result.candidates[0].deferredReasons, []);
     assert.equal(result.candidates[0].readyForDrop, false);
     assert.equal(result.destructive, false);
-    assert.equal(calls.length, 5);
+    assert.equal(calls.length, 6);
     assert.match(calls[0].sql, /FROM public\.robinhood_token_transfer_events_2026_07_18 raw/);
     assert.match(calls[0].sql, /robinhood_wallet_transfer_pending_evidence evidence/);
     assert.match(calls[0].sql, /evidence\.amount_raw = raw\.amount_raw/);
@@ -79,6 +80,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
     assert.match(calls[3].sql, /position\.transaction_index IS NULL/);
     assert.match(calls[4].sql, /JOIN robinhood_chain_blocks block/);
     assert.match(calls[4].sql, /capture\.finalized_head >= watermark\.checkpoint_block/);
+    assert.match(calls[5].sql, /robinhood_wallet_position_reorg_preimages marker/);
     assert.deepEqual(calls[0].params, ['robinhood']);
     assert.deepEqual(calls[1].params, ['robinhood']);
     assert.deepEqual(calls[2].params, [
@@ -87,6 +89,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
     ]);
     assert.deepEqual(calls[3].params, calls[2].params);
     assert.deepEqual(calls[4].params, ['robinhood', 'rh_transfer_v1', '2026-07-18', '0']);
+    assert.deepEqual(calls[5].params, ['robinhood']);
     for (const call of calls) {
       assert.doesNotMatch(call.sql, /\b(?:DROP|DELETE|UPDATE|INSERT)\b/i);
     }
@@ -133,6 +136,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
       'unpreservedUnknown_unknown', 'endpointRoleGapOnUnknown_unknown',
       'transferPositionRepairCandidate_unknown', 'sellPositionRepairCandidate_unknown',
       'canonicalCheckpointNotProven_unknown',
+      'positionPreimageCoverageMissing_unknown',
     ]);
     const clear = createRobinhoodWalletTransferRetentionReadiness({
       database: { queryWithStatementTimeout: async () => ({ rows: [{ present: false }] }) },
@@ -146,7 +150,7 @@ describe('Robinhood transfer retention dependency readiness', () => {
 
   it('blocks when the recorded canonical checkpoint is no longer provable', async () => {
     const database = { queryWithStatementTimeout: async (sql) => ({
-      rows: [{ present: sql.includes('JOIN robinhood_chain_blocks block') }],
+      rows: [{ present: sql.includes('FROM robinhood_wallet_transfer_compaction_watermarks watermark') }],
     }) };
     const audit = createRobinhoodWalletTransferRetentionReadiness({
       database, planner: planner([CANDIDATE]),
@@ -154,6 +158,18 @@ describe('Robinhood transfer retention dependency readiness', () => {
     const [candidate] = (await audit.inspect({ projectionVersion: 'rh_transfer_v1' })).candidates;
     assert.deepEqual(candidate.blockedReasons, ['canonicalCheckpointNotProven_candidate']);
     assert.equal(candidate.provisionalGatesClear, false);
+    assert.equal(candidate.readyForDrop, false);
+  });
+
+  it('blocks when recent unified position batches have no preimage coverage', async () => {
+    const database = { queryWithStatementTimeout: async (sql) => ({
+      rows: [{ present: sql.includes('WITH state AS') }],
+    }) };
+    const audit = createRobinhoodWalletTransferRetentionReadiness({
+      database, planner: planner([CANDIDATE]),
+    });
+    const [candidate] = (await audit.inspect({ projectionVersion: 'rh_transfer_v1' })).candidates;
+    assert.deepEqual(candidate.blockedReasons, ['positionPreimageCoverageMissing_candidate']);
     assert.equal(candidate.readyForDrop, false);
   });
 

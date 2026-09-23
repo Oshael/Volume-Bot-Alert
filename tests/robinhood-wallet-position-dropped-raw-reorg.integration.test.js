@@ -7,6 +7,9 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
+const {
+  PREIMAGE_COVERAGE_SQL,
+} = require('../src/models/robinhood-wallet-position-preimage-coverage');
 const { createRobinhoodWalletReorgRollback } = require('../src/models/robinhood-wallet-reorg-rollback');
 const { createRobinhoodChainRecoveryJournal } = require('../src/models/robinhood-chain-recovery-journal');
 const stage90 = require('../src/utils/db-init-stage90');
@@ -243,6 +246,50 @@ describe('Robinhood position reorg after transfer raw was dropped', () => {
     await db.query(stage222.STATEMENTS[1]);
   });
   after(async () => { await db.pool.end().catch(() => {}); });
+
+  it('checks canonical batch coverage above the finalized rewind boundary', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await fixture(client);
+      await client.query(
+        `UPDATE robinhood_chain_capture_cursor
+            SET recovery_state='running', recovery_plan=NULL, recovery_detected_at=NULL
+          WHERE chain='robinhood'`
+      );
+      const uncovered = async () => (await client.query(PREIMAGE_COVERAGE_SQL,
+        ['robinhood'])).rows[0].present;
+      assert.equal(await uncovered(), false);
+      await client.query(
+        `UPDATE robinhood_wallet_position_reorg_preimages SET from_block=101
+          WHERE projection_version=$1 AND record_kind='batch'`, [VERSION]
+      );
+      assert.equal(await uncovered(), true);
+      await client.query(
+        `UPDATE robinhood_wallet_position_reorg_preimages
+            SET from_block=100, through_block=100, checkpoint_hash=$2,
+                block_time=$3::timestamptz,
+                expires_at=$3::timestamptz + INTERVAL '3 days'
+          WHERE projection_version=$1 AND record_kind='batch'`,
+        [VERSION, HASH100, AT100]
+      );
+      const insertMarker = async (block, hash, at) => client.query(
+        `INSERT INTO robinhood_wallet_position_reorg_preimages (
+           chain, projection_version, from_block, through_block, checkpoint_hash,
+           block_time, record_kind, identity_key, had_previous, expires_at
+         ) VALUES ('robinhood',$1,$2::bigint,$2::bigint,$3,$4::timestamptz,
+           'batch','batch',false,$4::timestamptz + INTERVAL '3 days')`,
+        [VERSION, block, hash, at]
+      );
+      await insertMarker('102', HASH102, AT102);
+      assert.equal(await uncovered(), true);
+      await insertMarker('101', HASH101, AT101);
+      assert.equal(await uncovered(), false);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
 
   it('keeps capturing unified LIVE preimages after raw drop when the pilot flag is off', async () => {
     const client = await db.getClient();

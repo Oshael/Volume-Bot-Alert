@@ -140,7 +140,7 @@ describe('Robinhood wallet transfer retention plan integration', () => {
       );
       const readiness = createRobinhoodWalletTransferRetentionReadiness({
         database: { queryWithStatementTimeout: (sql, params) => (
-          sql.includes('JOIN robinhood_chain_blocks block')
+          sql.includes('FROM robinhood_wallet_transfer_compaction_watermarks watermark')
             ? client.query(sql, params) : Promise.resolve({ rows: [{ present: false }] })
         ) },
         planner: { plan: async () => ({
