@@ -49,7 +49,7 @@ O `df -B1` enviado sem hora de medição mostrou bytes disponíveis: `/`
 do piloto não recuperaria espaço no volume de `chain_events`, que exige uma
 decisão operacional independente.
 
-## Exceções que precisam de decisão explícita
+## Exceções aprovadas como critério do piloto
 
 O valor raw armazenado é `wallet_self` em todos os casos abaixo. O hash da
 transação, índice do log e tempo identificam a linha raw; bloco/hash e índice
@@ -75,16 +75,18 @@ essa concentração temporal não estabelece sua causa.
 | `0xfb5209bad7e19a487a8038081941ffbe55f2624892c5a42f50895500ba354667` | 8 | `2026-07-18 21:34:14-03` | 13414226 | `0x79270673ae32ea522a791cdfc7af7b150af8590cc30334cb5ea537f6242b1dc5` | 3 | `unknown` |
 | `0xfc9e9a0cec30bc90d9f5b3cbb114cf481f24bafa9ef349e287e62aa8faad9266` | 0 | `2026-07-18 21:20:57-03` | 13406277 | `0x7df4c3642e3486145e4a4c05ceee78034426e10d7ed62f6385508bd19c77a806` | 4 | `contract_flow` |
 
-## Limites e decisão pendente
+## Limites e aprovação operacional pendente
 
 As 12 entradas acima preservam a classificação armazenada e sua âncora
 canônica mínima. O relatório **não** demonstra paridade histórica integral
-nem converte `archiveReplay.status=sample_only` em `matched`. Ele também
-não contém aprovação de operador e não serve como `--pilot-report` para o
-comando de drop.
+nem converte `archiveReplay.status=sample_only` em `matched`. O operador aceitou
+em 2026-09-23 essas 12 diferenças como exceções **somente para o critério do
+piloto de 19/07**. A causa histórica continua desconhecida. O
+[relatório JSON](robinhood-transfer-raw-pilot-2026-07-19-report.json) identifica a amostra e as
+12 âncoras sob o status `sampled_with_approved_exceptions`. Ele ainda não contém
+`approvedBy` e `approvedAt`, portanto não autoriza o comando de drop.
 
-Antes do piloto: decidir explicitamente se essas âncoras e o invariante sem
-efeito financeiro bastam para as exceções; reexecutar
-readiness, conferir espaço e localização física, e obter relatório operacional
-aprovado vinculado ao watermark/checkpoint atuais. A transação de drop deve
-revalidar os gates sob locks. A política geral continua em 30 dias.
+Antes do drop: reexecutar readiness, conferir espaço e localização física, e
+obter aprovação operacional do relatório vinculado ao watermark/checkpoint
+atuais. A transação de drop deve revalidar os gates e as 12 exceções sob locks.
+A política geral continua em 30 dias.

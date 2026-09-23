@@ -1,5 +1,6 @@
 'use strict';
 
+const { createHash } = require('node:crypto');
 const db = require('./db');
 const { createRobinhoodWalletTransferRetentionTransaction } =
   require('./robinhood-wallet-transfer-retention-transaction');
@@ -9,6 +10,31 @@ const VERSION = 'rh_transfer_v1';
 const PILOT_DAY = '2026-07-19';
 const PILOT_PARTITION = 'public.robinhood_token_transfer_events_2026_07_19';
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
+const SAMPLE_STATUS = 'sampled_with_approved_exceptions';
+const EVIDENCE_REFERENCE = 'docs/robinhood-transfer-raw-pilot-2026-07-19-evidence.md';
+const EXCEPTION_DIGEST = 'ace37565221e38090aaea1750d2999ae41021c96f242acf3f7eead22bbc7f9f1';
+
+function exceptionDigest(exceptions) {
+  if (!Array.isArray(exceptions) || exceptions.length !== 12) return null;
+  const tuples = exceptions.map((item) => [item.transactionHash, item.logIndex,
+    item.blockTime, item.blockNumber, item.blockHash, item.transactionIndex,
+    item.storedKind, item.replayedKind]);
+  tuples.sort((left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0);
+  return createHash('sha256').update(JSON.stringify(tuples)).digest('hex');
+}
+
+function validArchiveReplay(replay) {
+  if (!replay || typeof replay.evidenceReference !== 'string'
+      || !replay.evidenceReference.trim()) return false;
+  if (replay.status === 'matched') return true;
+  return replay.status === SAMPLE_STATUS
+    && replay.evidenceReference === EVIDENCE_REFERENCE
+    && replay.sampleRows === 56 && replay.receiptsMatched === 56
+    && replay.decisionMatches === 44 && replay.walletSelfPopulation === 35
+    && replay.walletSelfEqualEndpoints === 35 && replay.walletSelfReceiptsMatched === 35
+    && Array.isArray(replay.missingKinds) && replay.missingKinds.length === 0
+    && exceptionDigest(replay.exceptions) === EXCEPTION_DIGEST;
+}
 
 function approvedReport(input) {
   if (input.day !== PILOT_DAY) throw new Error('pilot drop is limited to 2026-07-19');
@@ -20,14 +46,41 @@ function approvedReport(input) {
   }
   if (!report || report.day !== PILOT_DAY || String(report.watermarkVersion) !== version
       || report.checkpointHash !== hash
-      || report.archiveReplay?.status !== 'matched'
-      || typeof report.archiveReplay.evidenceReference !== 'string'
-      || !report.archiveReplay.evidenceReference.trim()
+      || !validArchiveReplay(report.archiveReplay)
       || typeof report.approvedBy !== 'string' || !report.approvedBy.trim()
       || !report.approvedAt || Number.isNaN(Date.parse(report.approvedAt))) {
     throw new Error('pilot parity report is missing, mismatched or unapproved');
   }
   return { version, hash, report };
+}
+
+async function assertSampledExceptions(client, partition, replay) {
+  if (replay.status !== SAMPLE_STATUS) return;
+  const population = await client.query(
+    `SELECT COUNT(*)::int AS events,
+            COUNT(*) FILTER (WHERE from_wallet=to_wallet)::int AS equal_endpoints
+       FROM ${partition} WHERE chain=$1 AND transfer_kind='wallet_self'`, [CHAIN]
+  );
+  if (population.rows[0]?.events !== 35 || population.rows[0]?.equal_endpoints !== 35) {
+    throw new Error('pilot wallet_self population changed since approval');
+  }
+  for (const item of replay.exceptions) {
+    const row = (await client.query(
+      `SELECT block_number::text, block_hash, transaction_index, transfer_kind,
+              classification_version, from_wallet=to_wallet AS equal_endpoints
+         FROM ${partition}
+        WHERE chain=$1 AND transaction_hash=$2 AND log_index=$3
+          AND block_time=$4::timestamptz`,
+      [CHAIN, item.transactionHash, item.logIndex, item.blockTime]
+    )).rows[0];
+    if (!row || row.block_number !== String(item.blockNumber)
+        || row.block_hash !== item.blockHash
+        || row.transaction_index !== item.transactionIndex
+        || row.transfer_kind !== 'wallet_self'
+        || row.classification_version !== VERSION || row.equal_endpoints !== true) {
+      throw new Error(`pilot exception changed: ${item.transactionHash}:${item.logIndex}`);
+    }
+  }
 }
 
 function createRobinhoodWalletTransferRetentionPilot(options = {}) {
@@ -39,7 +92,7 @@ function createRobinhoodWalletTransferRetentionPilot(options = {}) {
     if (input.apply !== true || input.confirmed !== true) {
       throw new Error('pilot drop requires apply and exact day confirmation');
     }
-    const { version, hash } = approvedReport(input);
+    const { version, hash, report } = approvedReport(input);
     return gate.withVerifiedPartition({
       day: PILOT_DAY, expectedWatermarkVersion: version, now: input.now,
     }, async (client, candidate) => {
@@ -47,6 +100,7 @@ function createRobinhoodWalletTransferRetentionPilot(options = {}) {
           || candidate.watermarkVersion !== version || candidate.checkpointHash !== hash) {
         throw new Error('pilot checkpoint changed after parity approval');
       }
+      await assertSampledExceptions(client, candidate.partition, report.archiveReplay);
       const relation = await client.query(
         `SELECT pg_relation_filepath($1::regclass) AS heap_path,
                 pg_total_relation_size($1::regclass)::text AS total_bytes`,
@@ -77,4 +131,5 @@ function createRobinhoodWalletTransferRetentionPilot(options = {}) {
   return { drop };
 }
 
-module.exports = { PILOT_DAY, createRobinhoodWalletTransferRetentionPilot };
+module.exports = { PILOT_DAY, createRobinhoodWalletTransferRetentionPilot,
+  __private: { assertSampledExceptions } };

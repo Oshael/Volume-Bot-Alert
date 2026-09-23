@@ -1,0 +1,32 @@
+{
+  "day": "2026-07-19",
+  "watermarkVersion": "0",
+  "checkpointHash": "0x928ef2879d82050a8f4f5872b2c95bcd13a61ce60f5ae6afe2350a49a2492f08",
+  "archiveReplay": {
+    "status": "sampled_with_approved_exceptions",
+    "evidenceReference": "docs/robinhood-transfer-raw-pilot-2026-07-19-evidence.md",
+    "sampleRows": 56,
+    "receiptsMatched": 56,
+    "decisionMatches": 44,
+    "walletSelfPopulation": 35,
+    "walletSelfEqualEndpoints": 35,
+    "walletSelfReceiptsMatched": 35,
+    "missingKinds": [],
+    "exceptions": [
+      { "transactionHash": "0x01ffa5c1f91a89751f12351695d8d4016099d4da14b1a28427746f80606be043", "logIndex": 1, "blockTime": "2026-07-19T00:27:16Z", "blockNumber": 13410055, "blockHash": "0xbb58c196f19bbfed674ef5d0ad213720e6bedfa12526e471302b03bfef42492f", "transactionIndex": 2, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0x24fd28499139094c674a518f8191fb0960b74f59b1f3a0728e6fbfc92bf537d6", "logIndex": 30, "blockTime": "2026-07-19T00:03:01Z", "blockNumber": 13395564, "blockHash": "0x7951e0eebe5ba15a64d60f72b58a9f890a65950cc8fd84df118a0753a176516c", "transactionIndex": 4, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0x37692e985529c37a5d6f11956d4f60f4998927935612fbf9633e44f5fff1173e", "logIndex": 17, "blockTime": "2026-07-19T00:23:49Z", "blockNumber": 13408001, "blockHash": "0x8d4d124a0eab60459e4da50a1492af89c3cf915a9998a1b891b0dcee75cab604", "transactionIndex": 4, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0x54985f1b6ac95550b949e301fa22b1fc335c3b88cc42df2e4f58d2f435655d22", "logIndex": 62, "blockTime": "2026-07-19T00:20:17Z", "blockNumber": 13405878, "blockHash": "0x582a731ef60b9f9175f260976231d2e2d5c4a573ed5ca801ac94b37140a46994", "transactionIndex": 9, "storedKind": "wallet_self", "replayedKind": "contract_flow" },
+      { "transactionHash": "0x8c0c35ab6f17563523404dbc34ceb3ca092c4e2cc077bd2bab3f8e41125841c4", "logIndex": 48, "blockTime": "2026-07-19T00:03:25Z", "blockNumber": 13395797, "blockHash": "0x993f718900e74a49ab85505151160369d9b43b67339d04615346b9f125fca308", "transactionIndex": 4, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0x951df386ad80c57f61dafe3448aeb7f53aadc9dc779bb26d0b476bd1055c4f19", "logIndex": 6, "blockTime": "2026-07-19T00:17:20Z", "blockNumber": 13404121, "blockHash": "0xa0d0641a25a29d98ef393b63f0e7e664f0a53c5b6ff3a8226ffdbef68f18d184", "transactionIndex": 2, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0xab50364c0ccea7e3015f7444d8da15842fbf0dd484ed31b37758408d14843165", "logIndex": 40, "blockTime": "2026-07-19T00:24:20Z", "blockNumber": 13408309, "blockHash": "0xe4af693eb0190dd86be55b96b704360e2e55819ca13fa689bc3dc7a5ed022fa9", "transactionIndex": 5, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0xbd5b3ba8b3a65a98c664c29a0d83efb115ac7a8edb0dc10fe483e6ea5ec3b696", "logIndex": 14, "blockTime": "2026-07-19T00:27:10Z", "blockNumber": 13409997, "blockHash": "0xb829446dfee7550e1f75fa407e6828e2b0ecf0c51f7285292fb51b6486a64f0d", "transactionIndex": 5, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0xeff1c519cc2fc8005037b8e786861485620b0d0679d50647b27103499b9cf0f2", "logIndex": 1, "blockTime": "2026-07-19T00:14:12Z", "blockNumber": 13402250, "blockHash": "0x0af4088267644372b0eebf5bc4d028e817ab3d7f3ffe4751aa95ad5924d1fffe", "transactionIndex": 2, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0xf85d3f0068e75174ed3aa203274c264353fda87bee74c413c02a9dd28a94a487", "logIndex": 5, "blockTime": "2026-07-19T00:13:34Z", "blockNumber": 13401867, "blockHash": "0x5c42be2fb7165cb02ea5ae66fccb665a376ee137de12e2a2bd10b0714269a3f7", "transactionIndex": 5, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0xfb5209bad7e19a487a8038081941ffbe55f2624892c5a42f50895500ba354667", "logIndex": 8, "blockTime": "2026-07-19T00:34:14Z", "blockNumber": 13414226, "blockHash": "0x79270673ae32ea522a791cdfc7af7b150af8590cc30334cb5ea537f6242b1dc5", "transactionIndex": 3, "storedKind": "wallet_self", "replayedKind": "unknown" },
+      { "transactionHash": "0xfc9e9a0cec30bc90d9f5b3cbb114cf481f24bafa9ef349e287e62aa8faad9266", "logIndex": 0, "blockTime": "2026-07-19T00:20:57Z", "blockNumber": 13406277, "blockHash": "0x7df4c3642e3486145e4a4c05ceee78034426e10d7ed62f6385508bd19c77a806", "transactionIndex": 4, "storedKind": "wallet_self", "replayedKind": "contract_flow" }
+    ]
+  },
+  "approvedBy": null,
+  "approvedAt": null
+}

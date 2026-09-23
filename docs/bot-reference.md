@@ -6037,8 +6037,15 @@ dependências antes de permitir uma ação na mesma transação. O comando
 `--apply` e `--confirm-drop-robinhood-transfer-raw-2026-07-19`. O relatório JSON
 deve vincular `day`, `watermarkVersion` e `checkpointHash` à auditoria atual, e
 conter `archiveReplay: {"status":"matched","evidenceReference":"..."}`,
-`approvedBy` e `approvedAt`. Esses campos são uma aprovação operacional da
-paridade com Archive; o comando valida o vínculo, mas não reproduz o replay.
+ou o status `sampled_with_approved_exceptions` exclusivo de 19/07, mais
+`approvedBy` e `approvedAt`. O segundo caminho exige a amostra de 56 recibos,
+44 decisões reproduzidas, 35 `wallet_self` com endpoints iguais e o manifesto
+exato das 12 diferenças em
+`docs/robinhood-transfer-raw-pilot-2026-07-19-report.json`. O modelo JSON
+versionado deixa os campos de aprovação vazios; a aceitação das exceções como
+critério não aprova o drop. Sob o gate transacional, o comando confere novamente
+a população `wallet_self` e as 12 linhas canônicas antes de apagar. O relatório
+declara replay amostral, sem alegar paridade histórica integral.
 Após revalidar sob locks, ele marca o watermark `dropped` e executa `DROP TABLE`
 na mesma transação, retornando o caminho do heap e o tamanho anterior. Uma falha
 desfaz ambos. A retenção geral de transfers permanece em 30 dias.
@@ -6048,7 +6055,8 @@ com `ROBINHOOD_ARCHIVE_RPC_URL` apontando para o Archive. A auditoria é somente
 de leitura: compara o checkpoint no Archive, contagens e soma local com o
 watermark e 24 recibos determinísticos com os eventos raw. O resultado marca
 `archiveReplay.status=sample_only` e `readyForDrop=false`; a amostra não prova
-o replay integral das decisões e projeções exigido pelo relatório aprovado.
+o replay integral das decisões e projeções. A exceção aprovada para 19/07
+permanece identificada explicitamente no relatório operacional.
 Para conferir todos os recibos raw desse piloto no Archive, use
 `robinhood:wallet-transfer-pilot-receipt-replay -- --day=2026-07-19`
 com a mesma variável RPC. O comando é somente de leitura e percorre lotes de

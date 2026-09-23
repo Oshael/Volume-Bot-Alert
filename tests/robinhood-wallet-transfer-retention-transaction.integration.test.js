@@ -8,8 +8,9 @@ const { createRobinhoodTokenTransferRepository } =
   require('../src/models/robinhood-token-transfer-persistence');
 const { createRobinhoodWalletTransferRetentionTransaction } =
   require('../src/models/robinhood-wallet-transfer-retention-transaction');
-const { createRobinhoodWalletTransferRetentionPilot } =
+const { createRobinhoodWalletTransferRetentionPilot, __private: pilotProof } =
   require('../src/models/robinhood-wallet-transfer-retention-pilot');
+const sampledReport = require('../docs/robinhood-transfer-raw-pilot-2026-07-19-report.json');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const stages = [126, 128, 129, 131, 132, 191, 205, 243, 244, 245]
   .map((stage) => require(`../src/utils/db-init-stage${stage}`));
@@ -196,5 +197,47 @@ describe('Robinhood transfer retention transaction SQL', () => {
       [`public.${PARTITION}`, DAY]
     )).rows[0];
     assert.deepEqual(state, { partition: null, lifecycle_state: 'dropped' });
+  });
+
+  it('checks sampled exception anchors against persisted rows', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(`CREATE TEMP TABLE sampled_exception_rows (
+        chain text, transaction_hash text, log_index integer, block_time timestamptz,
+        block_number bigint, block_hash text, transaction_index integer,
+        transfer_kind text, classification_version text, from_wallet text, to_wallet text
+      ) ON COMMIT DROP`);
+      const wallet = `0x${'a'.repeat(40)}`;
+      for (const item of sampledReport.archiveReplay.exceptions) {
+        await client.query(
+          `INSERT INTO sampled_exception_rows VALUES
+             ('robinhood', $1, $2, $3::timestamptz, $4, $5, $6,
+              'wallet_self', 'rh_transfer_v1', $7, $7)`,
+          [item.transactionHash, item.logIndex, item.blockTime, item.blockNumber,
+            item.blockHash, item.transactionIndex, wallet]
+        );
+      }
+      await client.query(
+        `INSERT INTO sampled_exception_rows
+         SELECT 'robinhood', 'extra-' || n::text, n, '2026-07-19T12:00:00Z',
+                100, $1, n, 'wallet_self', 'rh_transfer_v1', $2, $2
+           FROM generate_series(1, 23) n`, [HASH, wallet]
+      );
+      await pilotProof.assertSampledExceptions(
+        client, 'sampled_exception_rows', sampledReport.archiveReplay
+      );
+      const first = sampledReport.archiveReplay.exceptions[0];
+      await client.query(
+        `UPDATE sampled_exception_rows SET block_hash=$1
+          WHERE transaction_hash=$2`, [HASH, first.transactionHash]
+      );
+      await assert.rejects(pilotProof.assertSampledExceptions(
+        client, 'sampled_exception_rows', sampledReport.archiveReplay
+      ), /pilot exception changed/);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 });
