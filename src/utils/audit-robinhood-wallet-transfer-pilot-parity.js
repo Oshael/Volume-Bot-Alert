@@ -6,8 +6,7 @@ const db = require('../models/db');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
 const { TRANSFER_TOPIC } = require('../services/evm-erc20-supply-delta');
 
-const DAY = '2026-07-19';
-const PARTITION = 'public.robinhood_token_transfer_events_2026_07_19';
+const PILOT_DAYS = new Set(['2026-07-18', '2026-07-19']);
 const CHAIN = 'robinhood';
 const VERSION = 'rh_transfer_v1';
 const SAMPLE_SIZE = 24;
@@ -54,10 +53,12 @@ function compareReceipt(raw, receipt) {
 }
 
 function parseArgs(argv) {
-  if (argv.length !== 1 || argv[0] !== `--day=${DAY}`) {
-    throw new Error(`read-only pilot audit requires --day=${DAY}`);
+  const day = argv.length === 1 && argv[0]?.startsWith('--day=')
+    ? argv[0].slice('--day='.length) : null;
+  if (!PILOT_DAYS.has(day)) {
+    throw new Error('read-only pilot audit requires --day=2026-07-18 or --day=2026-07-19');
   }
-  return { day: DAY };
+  return { day, partition: `public.robinhood_token_transfer_events_${day.replace(/-/g, '_')}` };
 }
 
 function archiveClient(deps) {
@@ -68,7 +69,7 @@ function archiveClient(deps) {
   });
 }
 
-async function verifiedWatermark(database) {
+async function verifiedWatermark(database, day) {
   const watermark = (await database.query(
     `SELECT version::text, checkpoint_block::text, checkpoint_hash,
             raw_event_count::text, eligible_transfer_count::text,
@@ -76,7 +77,7 @@ async function verifiedWatermark(database) {
             summary_amount_raw::text, lifecycle_state
        FROM robinhood_wallet_transfer_compaction_watermarks
       WHERE chain=$1 AND projection_version=$2 AND partition_day=$3::date`,
-    [CHAIN, VERSION, DAY]
+    [CHAIN, VERSION, day]
   )).rows[0];
   if (!watermark || watermark.lifecycle_state !== 'verified'
       || !HASH.test(watermark.checkpoint_hash || '')) {
@@ -95,7 +96,7 @@ async function assertArchiveCheckpoint(rpc, watermark) {
   }
 }
 
-async function verifiedTotals(database, watermark) {
+async function verifiedTotals(database, watermark, partition) {
   const totals = (await database.query(
     `SELECT COUNT(*)::text AS raw_event_count,
             COUNT(*) FILTER (WHERE classification_version=$1
@@ -104,7 +105,7 @@ async function verifiedTotals(database, watermark) {
             COALESCE(SUM(amount_raw) FILTER (WHERE classification_version=$1
               AND transfer_kind IN ('wallet_transfer', 'dex_flow')), 0)::text
               AS eligible_amount_raw
-       FROM ${PARTITION} WHERE chain=$2`, [VERSION, CHAIN]
+       FROM ${partition} WHERE chain=$2`, [VERSION, CHAIN]
   )).rows[0];
   for (const key of ['raw_event_count', 'eligible_transfer_count', 'eligible_amount_raw']) {
     if (totals?.[key] !== watermark[key]) {
@@ -118,12 +119,12 @@ async function verifiedTotals(database, watermark) {
   return totals;
 }
 
-async function compareSample(database, rpc) {
+async function compareSample(database, rpc, partition) {
   const { rows: sample } = await database.query(
     `SELECT transaction_hash, log_index, block_number::text, block_hash,
             transaction_index, token_address, from_wallet, to_wallet,
             amount_raw::text, transfer_kind, classification_version
-       FROM ${PARTITION} WHERE chain=$1
+       FROM ${partition} WHERE chain=$1
       ORDER BY transaction_hash, log_index, block_time
       LIMIT $2::integer`, [CHAIN, SAMPLE_SIZE]
   );
@@ -145,16 +146,16 @@ async function compareSample(database, rpc) {
 }
 
 async function main(argv = process.argv.slice(2), deps = {}) {
-  parseArgs(argv);
+  const { day, partition } = parseArgs(argv);
   const database = deps.database || db;
   const rpc = archiveClient(deps);
   const chainId = quantity(await rpc.request('eth_chainId'), 'archive.chainId');
   if (chainId !== '4663') throw new Error('Archive chain ID is not Robinhood');
-  const watermark = await verifiedWatermark(database);
+  const watermark = await verifiedWatermark(database, day);
   await assertArchiveCheckpoint(rpc, watermark);
-  const totals = await verifiedTotals(database, watermark);
-  const deterministicReceiptSample = await compareSample(database, rpc);
-  const report = { mode: 'read-only', day: DAY, watermarkVersion: watermark.version,
+  const totals = await verifiedTotals(database, watermark, partition);
+  const deterministicReceiptSample = await compareSample(database, rpc, partition);
+  const report = { mode: 'read-only', day, watermarkVersion: watermark.version,
     checkpointBlock: watermark.checkpoint_block, checkpointHash: watermark.checkpoint_hash,
     chainId, totals, deterministicReceiptSample,
     archiveReplay: { status: 'sample_only', evidenceReference: null },

@@ -30,9 +30,10 @@ function receipt(row) {
 }
 
 function fixture(overrides = {}) {
-  const queries = []; const calls = [];
-  const database = { query: async (sql) => {
+  const queries = []; const queryParams = []; const calls = [];
+  const database = { query: async (sql, params) => {
     queries.push(sql);
+    queryParams.push(params);
     if (sql.includes('FROM robinhood_wallet_transfer_compaction_watermarks')) {
       return { rows: [{ version: '0', checkpoint_block: '100',
         checkpoint_hash: BLOCK_HASH, raw_event_count: '24',
@@ -61,7 +62,7 @@ function fixture(overrides = {}) {
     }
     throw new Error('unexpected RPC');
   } };
-  return { database, rpcClient, queries, calls };
+  return { database, rpcClient, queries, queryParams, calls };
 }
 
 describe('Robinhood transfer pilot parity audit', () => {
@@ -78,6 +79,17 @@ describe('Robinhood transfer pilot parity audit', () => {
     for (const sql of f.queries) assert.doesNotMatch(sql, /\b(?:DROP|UPDATE|DELETE|INSERT)\b/i);
   });
 
+  it('targets only the verified 18 July partition when requested', async () => {
+    const f = fixture();
+    const report = await main(['--day=2026-07-18'], { ...f, logger: { log() {} } });
+    assert.equal(report.day, '2026-07-18');
+    assert.deepEqual(f.queryParams[0], ['robinhood', 'rh_transfer_v1', '2026-07-18']);
+    assert.equal(f.queries.filter((sql) => sql.includes(
+      'FROM public.robinhood_token_transfer_events_2026_07_18'
+    )).length, 2);
+    assert.equal(report.readyForDrop, false);
+  });
+
   it('fails closed on chain, checkpoint, totals and receipt differences', async () => {
     for (const [overrides, error] of [
       [{ chainId: '0x1' }, /chain ID/],
@@ -91,6 +103,6 @@ describe('Robinhood transfer pilot parity audit', () => {
     }
     assert.equal(compareReceipt(sample[0], receipt(sample[0])), true);
     assert.equal(compareReceipt(sample[0], null), false);
-    assert.throws(() => parseArgs(['--day=2026-07-18']), /requires/);
+    assert.throws(() => parseArgs(['--day=2026-07-17']), /requires/);
   });
 });

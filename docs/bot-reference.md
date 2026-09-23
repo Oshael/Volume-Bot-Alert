@@ -6054,14 +6054,15 @@ Após revalidar sob locks, ele marca o watermark `dropped` e executa `DROP TABLE
 na mesma transação, retornando o caminho do heap e o tamanho anterior. Uma falha
 desfaz ambos. A retenção geral de transfers permanece em 30 dias.
 Antes de preparar o relatório operacional, execute
-`npm run robinhood:wallet-transfer-pilot-parity-audit -- --day=2026-07-19`
+`npm run robinhood:wallet-transfer-pilot-parity-audit -- --day=YYYY-MM-DD`
 com `ROBINHOOD_ARCHIVE_RPC_URL` apontando para o Archive. A auditoria é somente
-de leitura: compara o checkpoint no Archive, contagens e soma local com o
-watermark e 24 recibos determinísticos com os eventos raw. O resultado marca
+de leitura e aceita apenas 18/07 ou 19/07 de 2026: compara o checkpoint no
+Archive, contagens e soma local com o watermark e 24 recibos determinísticos
+com os eventos raw. O resultado marca
 `archiveReplay.status=sample_only` e `readyForDrop=false`; a amostra não prova
 o replay integral das decisões e projeções. A exceção aprovada para 19/07
 permanece identificada explicitamente no relatório operacional.
-Para conferir todos os recibos raw desse piloto no Archive, use
+Para conferir todos os recibos raw do piloto de 19/07 no Archive, use
 `robinhood:wallet-transfer-pilot-receipt-replay -- --day=2026-07-19`
 com a mesma variável RPC. O comando é somente de leitura e percorre lotes de
 1.000 eventos, até dez lotes por execução; `--batch-size=1..5000`,
@@ -6071,9 +6072,10 @@ contagem acumulada declarada pelo cursor bata com o watermark. Em execução
 retomada, o encadeamento dos relatórios ainda precisa ser verificado; em todos
 os casos `archiveReplay` permanece `partial`, pois recibos não reproduzem
 decisões e projeções derivadas.
-`robinhood:wallet-transfer-pilot-decision-audit -- --day=2026-07-19`
-faz uma amostra determinística de até três eventos por tipo presente e inclui
-todos os eventos dos tipos com no máximo cem registros no dia,
+`robinhood:wallet-transfer-pilot-decision-audit -- --day=YYYY-MM-DD`
+aceita os mesmos dois dias, faz uma amostra determinística de até três eventos
+por tipo presente e inclui todos os eventos dos tipos com no máximo cem
+registros no dia,
 confere os recibos no Archive e compara a classificação armazenada com a
 regra e os insumos duráveis atuais. O relatório mostra tipos ausentes da
 amostra e diferenças; insumos de papéis podem ter mudado desde julho, então

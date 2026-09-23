@@ -10,25 +10,27 @@ const { createRobinhoodTransferClassifier } =
   require('../services/robinhood-transfer-classifier');
 const { compareReceipt } = require('./audit-robinhood-wallet-transfer-pilot-parity');
 
-const DAY = '2026-07-19';
-const PARTITION = 'public.robinhood_token_transfer_events_2026_07_19';
+const PILOT_DAYS = new Set(['2026-07-18', '2026-07-19']);
 const VERSION = 'rh_transfer_v1';
 const SAMPLE_PERCENT = 1;
 const PER_KIND = 3;
 
 function parseArgs(argv) {
-  if (argv.length !== 1 || argv[0] !== `--day=${DAY}`) {
-    throw new Error(`decision audit requires --day=${DAY}`);
+  const day = argv.length === 1 && argv[0]?.startsWith('--day=')
+    ? argv[0].slice('--day='.length) : null;
+  if (!PILOT_DAYS.has(day)) {
+    throw new Error('decision audit requires --day=2026-07-18 or --day=2026-07-19');
   }
+  return { day, partition: `public.robinhood_token_transfer_events_${day.replace(/-/g, '_')}` };
 }
 
-async function readWatermark(database) {
+async function readWatermark(database, day) {
   const mark = (await database.query(
     `SELECT version::text, checkpoint_block::text, checkpoint_hash,
             raw_event_count::text, lifecycle_state
        FROM robinhood_wallet_transfer_compaction_watermarks
       WHERE chain='robinhood' AND projection_version=$1 AND partition_day=$2::date`,
-    [VERSION, DAY]
+    [VERSION, day]
   )).rows[0];
   if (!mark || mark.lifecycle_state !== 'verified'
       || !/^0x[0-9a-f]{64}$/.test(mark.checkpoint_hash || '')) {
@@ -37,10 +39,10 @@ async function readWatermark(database) {
   return mark;
 }
 
-async function readPopulation(database, mark) {
+async function readPopulation(database, mark, partition) {
   const rows = (await database.query(
     `SELECT transfer_kind, COUNT(*)::text AS events
-       FROM ${PARTITION} WHERE chain='robinhood'
+       FROM ${partition} WHERE chain='robinhood'
       GROUP BY transfer_kind ORDER BY transfer_kind`
   )).rows;
   const count = rows.reduce((sum, row) => sum + BigInt(row.events), 0n);
@@ -50,7 +52,7 @@ async function readPopulation(database, mark) {
   return rows;
 }
 
-async function readSample(database) {
+async function readSample(database, partition) {
   return (await database.query(
     `WITH sampled AS (
        SELECT transaction_hash, log_index, block_time, block_number::text,
@@ -58,14 +60,14 @@ async function readSample(database) {
               to_wallet, amount_raw::text, transfer_kind, classification_version,
               ROW_NUMBER() OVER (PARTITION BY transfer_kind
                 ORDER BY md5(transaction_hash || ':' || log_index::text)) AS pick
-         FROM ${PARTITION} TABLESAMPLE BERNOULLI (${SAMPLE_PERCENT}) REPEATABLE (1907)
+         FROM ${partition} TABLESAMPLE BERNOULLI (${SAMPLE_PERCENT}) REPEATABLE (1907)
         WHERE chain='robinhood'
      ) SELECT * FROM sampled WHERE pick <= ${PER_KIND}
       ORDER BY transfer_kind, pick`
   )).rows;
 }
 
-async function includeRareKinds(database, sample, population) {
+async function includeRareKinds(database, sample, population, partition) {
   const rare = population.filter((row) => BigInt(row.events) <= 100n);
   if (!rare.length) return { rows: sample, rareKindsFullyChecked: [] };
   const kinds = rare.map((row) => row.transfer_kind);
@@ -73,7 +75,7 @@ async function includeRareKinds(database, sample, population) {
     `SELECT transaction_hash, log_index, block_time, block_number::text,
             block_hash, transaction_index, token_address, from_wallet,
             to_wallet, amount_raw::text, transfer_kind, classification_version
-       FROM ${PARTITION}
+       FROM ${partition}
       WHERE chain='robinhood' AND transfer_kind=ANY($1::varchar[])
       ORDER BY transaction_hash, log_index, block_time`, [kinds]
   )).rows;
@@ -167,12 +169,12 @@ function makeRpc(deps) {
 }
 
 async function main(argv = process.argv.slice(2), deps = {}) {
-  parseArgs(argv);
+  const { day, partition } = parseArgs(argv);
   const database = deps.database || db;
-  const mark = await readWatermark(database);
-  const population = await readPopulation(database, mark);
+  const mark = await readWatermark(database, day);
+  const population = await readPopulation(database, mark, partition);
   const { rows, rareKindsFullyChecked } = await includeRareKinds(
-    database, await readSample(database), population
+    database, await readSample(database, partition), population, partition
   );
   if (rows.length === 0) throw new Error('pilot decision sample is empty');
   const sampledKinds = new Set(rows.map((row) => row.transfer_kind));
@@ -187,12 +189,12 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     throw new Error(`historical classification context unavailable: ${context.reason}`);
   }
   const decisions = compareDecisions(rows, context);
-  const currentMark = await readWatermark(database);
+  const currentMark = await readWatermark(database, day);
   if (currentMark.version !== mark.version || currentMark.checkpoint_hash !== mark.checkpoint_hash
       || currentMark.raw_event_count !== mark.raw_event_count) {
     throw new Error('pilot watermark changed during decision audit');
   }
-  const report = { mode: 'read-only', day: DAY,
+  const report = { mode: 'read-only', day,
     watermarkVersion: mark.version, checkpointHash: mark.checkpoint_hash,
     population, sampleMethod: `BERNOULLI(${SAMPLE_PERCENT}) REPEATABLE (1907), ${PER_KIND} per kind`,
     sampleRows: rows.length, rareKindsFullyChecked, missingKinds, receiptsMatched,

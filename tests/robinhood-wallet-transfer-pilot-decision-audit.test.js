@@ -39,11 +39,12 @@ function receipt(row) {
 }
 
 function fixture(options = {}) {
-  const queries = []; const captured = { sourceInput: null };
+  const queries = []; const queryParams = []; const captured = { sourceInput: null };
   const sample = rows.map((row) => ({ ...row }));
   if (options.drift) sample[0].transfer_kind = 'unknown';
-  const database = { query: async (sql) => {
+  const database = { query: async (sql, params) => {
     queries.push(sql);
+    queryParams.push(params);
     if (sql.includes('FROM robinhood_wallet_transfer_compaction_watermarks')) {
       return { rows: [{ version: '0', checkpoint_block: '100',
         checkpoint_hash: BLOCK_HASH, raw_event_count: options.count || '3',
@@ -72,7 +73,8 @@ function fixture(options = {}) {
       poolAddresses: [], routerAddresses: [], contractAddresses: [],
       contractRoleEvidence: [], walletAddresses: [WALLET] };
   } };
-  return { database, rpcClient, source, logger: { log() {} }, queries, captured };
+  return { database, rpcClient, source, logger: { log() {} }, queries, queryParams,
+    captured };
 }
 
 describe('Robinhood transfer pilot decision audit', () => {
@@ -91,6 +93,17 @@ describe('Robinhood transfer pilot decision audit', () => {
     for (const sql of f.queries) assert.doesNotMatch(sql, /\b(?:DROP|UPDATE|DELETE|INSERT)\b/i);
   });
 
+  it('uses 18 July watermark and raw partition only when that day is requested', async () => {
+    const f = fixture();
+    const report = await main(['--day=2026-07-18'], f);
+    assert.equal(report.day, '2026-07-18');
+    assert.deepEqual(f.queryParams[0], ['rh_transfer_v1', '2026-07-18']);
+    assert.equal(f.queries.filter((sql) => sql.includes(
+      'FROM public.robinhood_token_transfer_events_2026_07_18'
+    )).length, 3);
+    assert.equal(report.readyForDrop, false);
+  });
+
   it('reports decision drift and rejects incomplete population', async () => {
     const drift = await main(['--day=2026-07-19'], fixture({ drift: true }));
     assert.equal(drift.decisionMatches, 2);
@@ -98,7 +111,7 @@ describe('Robinhood transfer pilot decision audit', () => {
     assert.equal(drift.decisionDifferences[0].replayedKind, 'mint');
     await assert.rejects(main(['--day=2026-07-19'], fixture({ count: '4' })),
       /population differs/);
-    assert.throws(() => parseArgs(['--day=2026-07-18']), /requires/);
+    assert.throws(() => parseArgs(['--day=2026-07-17']), /requires/);
     assert.equal(sourceInput(rows).fromBlock, '100');
   });
 });
