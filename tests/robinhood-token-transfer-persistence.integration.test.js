@@ -5,6 +5,7 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const stage128 = require('../src/utils/db-init-stage128');
+const stage132 = require('../src/utils/db-init-stage132');
 const stage138 = require('../src/utils/db-init-stage138');
 const stage243 = require('../src/utils/db-init-stage243');
 const {
@@ -13,6 +14,9 @@ const {
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
+const RETENTION_VERSION = 'test_writer_retention_v1';
+const FIRST_GUARDED_DAY = '2199-01-02';
+const DROPPED_GUARDED_DAY = '2199-01-03';
 
 function event(day, suffix, overrides = {}) {
   return {
@@ -29,16 +33,21 @@ describe('Robinhood token transfer persistence integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage128.init({ closePool: false });
+    await stage132.init({ closePool: false });
     await stage138.init({ closePool: false });
     await stage243.init({ closePool: false });
+    await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [RETENTION_VERSION]);
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
     await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
   });
   after(async () => {
+    await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [RETENTION_VERSION]);
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
     await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2098_12_31');
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2099_01_01');
+    await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2199_01_02');
+    await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2199_01_03');
     await db.pool.end();
   });
 
@@ -128,5 +137,40 @@ describe('Robinhood token transfer persistence integration', () => {
       await db.query('DROP TRIGGER rh_test_pending_evidence_reject ON robinhood_wallet_transfer_pending_evidence');
       await db.query('DROP FUNCTION rh_test_pending_evidence_reject()');
     }
+  });
+
+  it('refuses a dropped day and rolls back partitions created earlier in the same batch', async () => {
+    const before = await db.query(
+      `SELECT to_regclass('robinhood_token_transfer_events_2199_01_02') AS first,
+              to_regclass('robinhood_token_transfer_events_2199_01_03') AS dropped`
+    );
+    assert.deepEqual(before.rows[0], { first: null, dropped: null });
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
+         chain, projection_version, partition_day, lifecycle_state,
+         raw_event_count, target_classified_event_count, eligible_transfer_count,
+         eligible_amount_raw, summary_transfer_count, summary_amount_raw,
+         cursor_next_block, cursor_next_transaction_index, cursor_next_log_index,
+         cursor_next_block_time, checkpoint_block, checkpoint_hash,
+         position_projection_version, position_next_block, summary_reconciled,
+         position_complete, evidence_complete, cursor_complete, checkpoint_canonical,
+         audited_at, verified_at, dropped_at
+       ) VALUES ('robinhood', $1, $3::date, 'dropped',
+         0, 0, 0, 0, 0, 0, 101, 0, 0, '2200-01-01T00:00:00Z',
+         100, $2, 'test_position_v1', 101, true, true, true, true, true,
+         NOW(), NOW(), NOW())`,
+      [RETENTION_VERSION, `0x${'a'.repeat(64)}`, DROPPED_GUARDED_DAY]
+    );
+    const repository = createRobinhoodTokenTransferRepository({ database: db });
+    await assert.rejects(repository.insertTransferEvents([
+      event(FIRST_GUARDED_DAY, 4), event(DROPPED_GUARDED_DAY, 5),
+    ]), /cannot recreate dropped transfer partition for 2199-01-03/);
+    await assert.rejects(repository.ensurePartitionForDay(DROPPED_GUARDED_DAY),
+      /cannot recreate dropped transfer partition for 2199-01-03/);
+    const partitions = await db.query(
+      `SELECT to_regclass('robinhood_token_transfer_events_2199_01_02') AS first,
+              to_regclass('robinhood_token_transfer_events_2199_01_03') AS dropped`
+    );
+    assert.deepEqual(partitions.rows[0], { first: null, dropped: null });
   });
 });

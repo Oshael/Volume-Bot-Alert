@@ -23,14 +23,19 @@ function event(overrides = {}) {
 
 function fakeDb() {
   const calls = [];
-  return {
-    calls,
+  const client = {
+    release() {},
     async query(sql, params) {
       calls.push({ sql, params });
+      if (/SELECT EXISTS \(/.test(sql)) return { rows: [{ dropped: false }] };
       return /^WITH inserted AS/.test(sql.trim())
         ? { rows: [{ inserted: 2, preserved: 1 }] }
         : { rowCount: /^INSERT INTO robinhood_token_transfer_events/.test(sql.trim()) ? 2 : 0 };
     },
+  };
+  return {
+    calls,
+    getClient: async () => client,
   };
 }
 
@@ -114,6 +119,9 @@ describe('Robinhood token transfer persistence', () => {
     const insert = database.calls.find(({ sql }) => /^WITH inserted AS/.test(sql.trim()));
 
     assert.deepEqual(result, { inserted: 2, ensuredDays: ['2026-08-14', '2026-08-15'] });
+    assert.equal(database.calls[0].sql, 'BEGIN');
+    assert.equal(database.calls.at(-1).sql, 'COMMIT');
+    assert.equal(database.calls.filter(({ sql }) => /SELECT EXISTS \(/.test(sql)).length, 2);
     assert.equal(database.calls.indexOf(insert) > database.calls.indexOf(partitions[1]), true);
     assert.match(insert.sql, /ON CONFLICT \(chain, transaction_hash, log_index, block_time\) DO NOTHING/);
     assert.match(insert.sql, /FROM inserted WHERE transfer_kind = 'unknown'/);

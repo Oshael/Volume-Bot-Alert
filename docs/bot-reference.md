@@ -5857,6 +5857,13 @@ diários com estados `pending`/`blocked`/`verified`/`dropped`; constraints imped
 cursor e checkpoint canônico. Ainda não há scheduler ou executor de drop;
 a retenção segue desligada.
 
+O writer de raw de transfers exige a Stage 132 antes de inserir. Ele trava o dia
+durante a criação da partição e a inserção e recusa qualquer dia com watermark
+`dropped`, inclusive em backfill; um lote com vários dias falha inteiro sem
+recriar partições anteriores. Um futuro executor de drop deve usar o mesmo lock
+transacional `hashtextextended('rh-transfer-retention-day:' || YYYY-MM-DD, 0)`
+antes da revalidação e remoção daquele dia.
+
 O auditor de compactação lê um dia em snapshot `REPEATABLE READ`, compara
 raw/resumo por token e valida o checkpoint por callback canônico. `inspectDay`
 não escreve; `auditDay` persiste `blocked` ou `verified`. Ele rejeita

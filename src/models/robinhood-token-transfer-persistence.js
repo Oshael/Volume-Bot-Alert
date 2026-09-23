@@ -3,6 +3,7 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const RAW_RETENTION_DAYS = 30;
+const RETENTION_DAY_LOCK_PREFIX = 'rh-transfer-retention-day:';
 const TRANSFER_KINDS = new Set([
   'unclassified', 'mint', 'burn', 'dex_flow', 'liquidity_flow',
   'router_flow', 'wallet_transfer', 'wallet_self', 'contract_flow', 'unknown',
@@ -96,10 +97,22 @@ function createRobinhoodTokenTransferRepository(options = {}) {
     ? process.env.ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED === 'true'
     : options.preservePendingEvidence === true;
 
-  async function ensurePartitionForDay(day) {
+  async function ensurePartitionInTransaction(client, day) {
     const name = partitionName(day);
     const { from, to } = dayBounds(day);
-    await database.query(
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      `${RETENTION_DAY_LOCK_PREFIX}${day}`,
+    ]);
+    const dropped = await client.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM robinhood_wallet_transfer_compaction_watermarks
+         WHERE chain = $1 AND partition_day = $2::date AND lifecycle_state = 'dropped'
+       ) AS dropped`, [CHAIN, day]
+    );
+    if (dropped.rows[0]?.dropped !== false) {
+      throw new Error(`cannot recreate dropped transfer partition for ${day}`);
+    }
+    await client.query(
       `CREATE TABLE IF NOT EXISTS ${name}
          PARTITION OF robinhood_token_transfer_events
          FOR VALUES FROM ('${from}') TO ('${to}')`
@@ -107,11 +120,25 @@ function createRobinhoodTokenTransferRepository(options = {}) {
     return name;
   }
 
+  async function ensurePartitionForDay(day) {
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const name = await ensurePartitionInTransaction(client, day);
+      await client.query('COMMIT');
+      return name;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function insertTransferEvents(rows = []) {
     const normalized = (Array.isArray(rows) ? rows : []).map(normalizeTransferEvent);
     if (normalized.length === 0) return { inserted: 0, ensuredDays: [] };
     const ensuredDays = [...new Set(normalized.map((row) => row.__dayKey))].sort();
-    for (const day of ensuredDays) await ensurePartitionForDay(day);
     const payload = normalized.map(({ __dayKey, ...row }) => ({ chain: CHAIN, ...row }));
     const insertSql = `INSERT INTO robinhood_token_transfer_events (
          chain, block_number, block_hash, block_time, transaction_hash,
@@ -147,10 +174,22 @@ function createRobinhoodTokenTransferRepository(options = {}) {
        )
        SELECT (SELECT COUNT(*) FROM inserted)::integer AS inserted,
               (SELECT COUNT(*) FROM preserved)::integer AS preserved`;
-    const result = await database.query(
-      preservePendingEvidence ? preservationSql : insertSql,
-      [JSON.stringify(payload)]
-    );
+    const client = await database.getClient();
+    let result;
+    try {
+      await client.query('BEGIN');
+      for (const day of ensuredDays) await ensurePartitionInTransaction(client, day);
+      result = await client.query(
+        preservePendingEvidence ? preservationSql : insertSql,
+        [JSON.stringify(payload)]
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
     return {
       inserted: preservePendingEvidence ? result.rows[0].inserted : result.rowCount || 0,
       ensuredDays,
