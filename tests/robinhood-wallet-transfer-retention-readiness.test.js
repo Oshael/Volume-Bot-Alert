@@ -5,6 +5,9 @@ const {
   createRobinhoodWalletTransferRetentionReadiness,
 } = require('../src/models/robinhood-wallet-transfer-retention-readiness');
 const {
+  createRobinhoodWalletTransferRetentionPlanner,
+} = require('../src/models/robinhood-wallet-transfer-retention-plan');
+const {
   main,
 } = require('../src/utils/audit-robinhood-wallet-transfer-retention-readiness');
 
@@ -13,6 +16,7 @@ const CANDIDATE = {
   expectedPartition: 'robinhood_token_transfer_events_2026_07_18',
   actualPartition: 'robinhood_token_transfer_events_2026_07_18',
   catalogReady: true,
+  rawLastBlock: '13393753',
   blockedReasons: [],
 };
 
@@ -24,6 +28,24 @@ function planner(candidates) {
 }
 
 describe('Robinhood transfer retention dependency readiness', () => {
+  it('passes the verified raw block ceiling from the planner to the readiness probes', async () => {
+    const database = { query: async (sql) => {
+      assert.match(sql, /watermark\.raw_last_block/);
+      return { rows: [{ partition_day: '2026-07-18',
+        expected_partition: CANDIDATE.expectedPartition,
+        actual_partition: CANDIDATE.actualPartition,
+        attached: true,
+        partition_bound: `FOR VALUES FROM ('2026-07-18 00:00:00+00') TO ('2026-07-19 00:00:00+00')`,
+        watermark_version: '0', raw_last_block: '13393753',
+        verified_at: '2026-08-30T08:22:25.049Z' }] };
+    } };
+    const plan = await createRobinhoodWalletTransferRetentionPlanner({ database }).plan({
+      projectionVersion: 'rh_transfer_v1', now: '2026-09-23T00:00:00Z', limit: 1,
+    });
+    assert.equal(plan.candidates[0].catalogReady, true);
+    assert.equal(plan.candidates[0].rawLastBlock, '13393753');
+  });
+
   it('blocks partition deletion when historical raw consumers still need it', async () => {
     const calls = [];
     const database = { queryWithStatementTimeout: async (sql, params, timeout) => {
@@ -47,12 +69,16 @@ describe('Robinhood transfer retention dependency readiness', () => {
     assert.match(calls[0].sql, /robinhood_wallet_transfer_evidence_dispositions disposition/);
     assert.match(calls[1].sql, /robinhood_wallet_endpoint_roles/);
     assert.match(calls[2].sql, /robinhood_bundle_redistribution_queue/);
+    assert.match(calls[2].sql, /observation_from_block <= \$4::bigint/);
+    assert.match(calls[2].sql, /edge\.first_wallet_transfer_block <= queue\.source_through_block/);
     assert.match(calls[2].sql, /position\.transaction_hash IS NULL/);
+    assert.match(calls[3].sql, /swap\.block_number <= queue\.source_through_block/);
     assert.match(calls[3].sql, /position\.transaction_index IS NULL/);
     assert.deepEqual(calls[0].params, ['robinhood']);
     assert.deepEqual(calls[1].params, ['robinhood']);
     assert.deepEqual(calls[2].params, [
       'robinhood', '2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z',
+      '13393753',
     ]);
     assert.deepEqual(calls[3].params, calls[2].params);
     for (const call of calls) {

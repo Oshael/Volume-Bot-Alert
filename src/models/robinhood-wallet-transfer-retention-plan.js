@@ -49,6 +49,7 @@ function candidate(row) {
     actualPartition: row.actual_partition || null,
     partitionBound: row.partition_bound || null,
     watermarkVersion: String(row.watermark_version),
+    rawLastBlock: row.raw_last_block == null ? null : String(row.raw_last_block),
     verifiedAt: new Date(row.verified_at).toISOString(),
     catalogReady: reasons.length === 0,
     blockedReasons: Object.freeze(reasons),
@@ -64,7 +65,7 @@ function createRobinhoodWalletTransferRetentionPlanner(options = {}) {
     const result = await database.query(
       `WITH candidates AS (
          SELECT watermark.partition_day::text AS partition_day, watermark.verified_at,
-                watermark.version AS watermark_version,
+                watermark.version AS watermark_version, watermark.raw_last_block,
                 'robinhood_token_transfer_events_'
                   || TO_CHAR(watermark.partition_day, 'YYYY_MM_DD') AS expected_partition
          FROM robinhood_wallet_transfer_compaction_watermarks watermark

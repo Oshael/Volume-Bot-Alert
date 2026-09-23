@@ -16,13 +16,15 @@ function partitionName(candidate) {
   return `public.${expected}`;
 }
 
-function probeSql(partition, from, to) {
+function probeSql(partition, from, to, rawLastBlock) {
   const queuedSql = `WITH queued AS MATERIALIZED (
-    SELECT chain, token_address, observation_from_block
+    SELECT chain, token_address, observation_from_block, source_through_block,
+           source_requested_version, requested_version
     FROM robinhood_bundle_redistribution_queue
     WHERE chain = $1 AND status IN ('pending', 'leased')
       AND last_error_code = 'redistribution_source_not_ready'
       AND last_error_message LIKE '%transaction_position_missing%'
+      AND ($4::bigint IS NULL OR observation_from_block <= $4::bigint)
   )`;
   return {
     unpreservedUnknown: { sql: `SELECT EXISTS (
@@ -78,10 +80,13 @@ function probeSql(partition, from, to) {
          AND position.transaction_hash = edge.first_wallet_transfer_transaction_hash
          AND position.block_number = edge.first_wallet_transfer_block
         WHERE edge.first_wallet_transfer_block >= queue.observation_from_block
+          AND (queue.source_through_block IS NULL
+            OR queue.source_requested_version IS DISTINCT FROM queue.requested_version
+            OR edge.first_wallet_transfer_block <= queue.source_through_block)
           AND edge.first_wallet_transfer_at >= $2::timestamptz
           AND edge.first_wallet_transfer_at < $3::timestamptz
           AND position.transaction_hash IS NULL
-      ) AS present`, params: [CHAIN, from, to] },
+      ) AS present`, params: [CHAIN, from, to, rawLastBlock] },
     sellPositionRepairCandidate: { sql: `${queuedSql}
       SELECT EXISTS (
         SELECT 1 FROM queued queue
@@ -96,10 +101,13 @@ function probeSql(partition, from, to) {
           ON position.chain = swap.chain AND position.transaction_hash = swap.transaction_hash
          AND position.block_number = swap.block_number
         WHERE edge.first_wallet_transfer_block >= queue.observation_from_block
+          AND (queue.source_through_block IS NULL
+            OR queue.source_requested_version IS DISTINCT FROM queue.requested_version
+            OR swap.block_number <= queue.source_through_block)
           AND swap.block_time >= $2::timestamptz
           AND swap.block_time < $3::timestamptz
           AND position.transaction_index IS NULL
-      ) AS present`, params: [CHAIN, from, to] },
+      ) AS present`, params: [CHAIN, from, to, rawLastBlock] },
   };
 }
 
@@ -132,7 +140,9 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
         const from = `${candidate.partitionDay}T00:00:00.000Z`;
         const to = new Date(Date.parse(from) + 86_400_000).toISOString();
         dependencies = {};
-        for (const [name, probe] of Object.entries(probeSql(partition, from, to))) {
+        for (const [name, probe] of Object.entries(probeSql(
+          partition, from, to, candidate.rawLastBlock ?? null
+        ))) {
           const result = await runProbe(database, probe.sql, probe.params, probe.timeoutMs);
           dependencies[name] = result;
           if (result.status !== 'absent') {
