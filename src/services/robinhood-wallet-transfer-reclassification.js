@@ -75,6 +75,7 @@ async function runRobinhoodWalletTransferReclassification(deps, input = {}) {
   const classifier = (deps.classifierFactory || createRobinhoodTransferClassifier)({
     poolAddresses: context.poolAddresses, routerAddresses: context.routerAddresses,
     contractAddresses: context.contractAddresses, walletAddresses: context.walletAddresses,
+    contractRoleEvidence: context.contractRoleEvidence,
   });
   const prepared = candidates.map((item) => prepareAction(item, classifier, context));
   const actions = prepared.filter(({ transition }) => transition);

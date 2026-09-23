@@ -202,6 +202,26 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     });
   });
 
+  it('persists a block-proven contract pair without creating a wallet edge', async () => {
+    const deps = dependencies({ context: {
+      ready: true, swapCoverageComplete: true,
+      swaps: [{ transactionHash: TX, actionIndex: '3', tokenAddress: TOKEN,
+        walletAddress: `0x${'4'.repeat(40)}`, tokenAmountRaw: '99', side: 'sell' }],
+      poolAddresses: [], routerAddresses: [], contractAddresses: [ALICE, BOB],
+      contractRoleEvidence: [ALICE, BOB].map((endpointAddress) => ({
+        endpointAddress, observedFromBlock: '100', observedThroughBlock: '100',
+      })), walletAddresses: [],
+      endpointRoleCoverage: { requested: 2, persisted: 2, unpersisted: 0, probes: 0 },
+    } });
+    const result = await runRobinhoodWalletTransferLiveTick(deps);
+
+    assert.deepEqual(result.classifications, { contract_flow: 1 });
+    assert.equal(deps.calls.raw[0][0].reasonCode, 'proven_contract_pair_swap_ambiguous');
+    assert.equal(deps.calls.raw[0][0].classificationVersion, 'rh_transfer_v1');
+    assert.deepEqual(deps.calls.projected[0].events, []);
+    assert.equal(result.telemetry.unknownEvidence.total, 0);
+  });
+
   it('persists a known-wallet self-transfer as raw classification-only evidence', async () => {
     const self = captured();
     self.transfers[0] = { ...self.transfers[0], toWallet: ALICE };

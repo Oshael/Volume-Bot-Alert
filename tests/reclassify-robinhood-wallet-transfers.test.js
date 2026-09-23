@@ -91,6 +91,31 @@ describe('Robinhood wallet transfer reclassification command', () => {
     assert.equal(test.calls.applied[0].decisionReason, 'known_wallet_pair');
   });
 
+  it('uses block-covered contract proof for a raw unknown with ambiguous swap', async () => {
+    const test = harness();
+    const contractRole = { ...candidate().fromRoleEvidence, endpointRole: 'contract' };
+    test.deps.repository.listCandidates = async () => [{ ...candidate(),
+      fromRoleEvidence: contractRole, toRoleEvidence: contractRole,
+    }];
+    test.deps.source.loadBackfillRangeContext = async () => ({
+      ready: true, swapCoverageComplete: true,
+      swaps: [{ transactionHash: candidate().transactionHash, actionIndex: '2',
+        tokenAddress: candidate().tokenAddress, walletAddress: `0x${'6'.repeat(40)}`,
+        tokenAmountRaw: '99', side: 'sell' }],
+      poolAddresses: [], routerAddresses: [], contractAddresses: [ALICE, BOB],
+      contractRoleEvidence: [ALICE, BOB].map((endpointAddress) => ({
+        endpointAddress, observedFromBlock: '100', observedThroughBlock: '100',
+      })), walletAddresses: [],
+    });
+
+    const result = await runRobinhoodWalletTransferReclassification(test.deps, {
+      day: DAY, limit: 10,
+    });
+    assert.deepEqual(result.classifications, { contract_flow: 1 });
+    assert.equal(result.actionable, 1);
+    assert.equal(test.calls.applied.length, 0);
+  });
+
   it('builds a PostgreSQL-only runtime and keeps main dry-run by default', async () => {
     const created = {};
     const runtime = await buildRuntime({

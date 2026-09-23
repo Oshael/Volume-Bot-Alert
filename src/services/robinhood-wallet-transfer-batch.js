@@ -54,6 +54,7 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
     poolAddresses: context.poolAddresses,
     routerAddresses: context.routerAddresses,
     contractAddresses: context.contractAddresses,
+    contractRoleEvidence: context.contractRoleEvidence,
     walletAddresses: context.walletAddresses,
   });
   const counts = {};

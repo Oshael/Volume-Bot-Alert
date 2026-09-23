@@ -97,6 +97,41 @@ describe('Robinhood transfer classifier', () => {
     assert.equal(sameIndex.swapCorrelationFailure, 'same_log_index_only');
   });
 
+  it('classifies an ambiguous swap movement only when both contracts are proven at its block', () => {
+    const proof = (endpointAddress, observedFromBlock = '100', observedThroughBlock = '100') => ({
+      endpointAddress, observedFromBlock, observedThroughBlock,
+    });
+    const input = transfer({ blockNumber: '100', fromWallet: CONTRACT, toWallet: ROUTER });
+    const context = { swaps: [swap({ walletAddress: ALICE, tokenAmountRaw: '99' })],
+      swapCoverageComplete: true };
+    const classify = (evidence, wallets = []) => classifier({
+      walletAddresses: wallets, contractRoleEvidence: evidence,
+    }).classify(input, context);
+    const result = classify([proof(CONTRACT), proof(ROUTER)]);
+
+    assert.equal(result.kind, 'contract_flow');
+    assert.equal(result.reasonCode, 'proven_contract_pair_swap_ambiguous');
+    assert.equal(result.classificationVersion, CLASSIFICATION_VERSION);
+    assert.equal(result.affectsPosition, false);
+    assert.equal(result.connectionEligible, false);
+    assert.equal(result.duplicateOfSwap, false);
+    assert.equal(classify([proof(CONTRACT)]).kind, 'unknown');
+    assert.equal(classify([proof(CONTRACT, '99', '99'), proof(ROUTER)]).kind, 'unknown');
+    assert.equal(classify([proof(CONTRACT), proof(ROUTER)], [ROUTER]).kind, 'unknown');
+
+    const recipient = classifier({ contractRoleEvidence: [proof(CONTRACT), proof(ROUTER)] });
+    assert.equal(recipient.classify(input, { ...context,
+      swaps: [swap({ side: 'buy', walletAddress: ALICE, recipientAddress: ROUTER,
+        tokenAmountRaw: '99' })],
+    }).kind, 'unknown');
+    assert.equal(recipient.classify(input, { ...context,
+      swaps: [swap({ walletAddress: CONTRACT, tokenAmountRaw: '99' })],
+    }).kind, 'unknown');
+    assert.equal(recipient.classify(transfer({ ...input, amountRaw: '100' }), {
+      ...context, swaps: [swap({ walletAddress: CONTRACT })],
+    }).kind, 'dex_flow');
+  });
+
   it('uses proven endpoint roles in pool, router and contract priority order', () => {
     const classify = classifier().classify;
     const cases = [

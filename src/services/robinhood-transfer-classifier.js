@@ -34,6 +34,32 @@ function addressSet(input, label) {
   return new Set([...input].map((item) => address(item, label)));
 }
 
+function contractProofs(input) {
+  if (input == null) return new Map();
+  if (!Array.isArray(input)) throw new TypeError('contractRoleEvidence must be a list');
+  return new Map(input.map((proof) => {
+    const endpoint = address(proof.endpointAddress, 'contract endpoint');
+    const from = BigInt(uint(proof.observedFromBlock, 'observedFromBlock'));
+    const through = BigInt(uint(proof.observedThroughBlock, 'observedThroughBlock'));
+    if (through < from) throw new Error('contract role interval is inverted');
+    return [endpoint, { from, through }];
+  }));
+}
+
+function provenContractPair(transfer, input, swaps, proofs, wallets) {
+  const rawBlock = value(input, 'blockNumber', 'block_number');
+  if (!/^\d+$/.test(String(rawBlock ?? ''))) return false;
+  const block = BigInt(rawBlock);
+  const endpoints = [transfer.fromWallet, transfer.toWallet];
+  if (endpoints.some((endpoint) => wallets.has(endpoint) || swaps.some((swap) => (
+    endpoint === swap.walletAddress || endpoint === swap.recipientAddress
+  )))) return false;
+  return endpoints.every((endpoint) => {
+    const proof = proofs.get(endpoint);
+    return proof && block >= proof.from && block <= proof.through;
+  });
+}
+
 function normalizeTransfer(input = {}) {
   return {
     transactionHash: hash(value(input, 'transactionHash', 'transaction_hash'), 'transactionHash'),
@@ -142,6 +168,7 @@ function createRobinhoodTransferClassifier(options = {}) {
   const routers = addressSet(options.routerAddresses, 'routerAddresses');
   const contracts = addressSet(options.contractAddresses, 'contractAddresses');
   const wallets = addressSet(options.walletAddresses, 'walletAddresses');
+  const proofs = contractProofs(options.contractRoleEvidence);
   const burns = addressSet(options.burnAddresses, 'burnAddresses');
   burns.add(ZERO_ADDRESS);
   burns.add(DEAD_ADDRESS);
@@ -195,6 +222,11 @@ function createRobinhoodTransferClassifier(options = {}) {
     const index = swapIndex(context.swaps);
     const sameAssetSwaps = index && index.get(`${transfer.transactionHash}:${transfer.tokenAddress}`);
     const swapFlow = decideSwapFlow(transfer, sameAssetSwaps || null);
+    if (swapFlow?.kind === 'unknown' && provenContractPair(
+      transfer, input, sameAssetSwaps, proofs, wallets
+    )) {
+      return decision('contract_flow', 'proven_contract_pair_swap_ambiguous');
+    }
     if (swapFlow) return swapFlow;
     return classifyKnownFlow(transfer);
   }
