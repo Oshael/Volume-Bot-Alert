@@ -244,6 +244,40 @@ describe('Robinhood position reorg after transfer raw was dropped', () => {
   });
   after(async () => { await db.pool.end().catch(() => {}); });
 
+  it('keeps capturing unified LIVE preimages after raw drop when the pilot flag is off', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await fixture(client);
+      const position = createRobinhoodWalletPositionRepository({
+        database: client, positionPreimageEnabled: false,
+      });
+      const committed = await position.commitBatch({
+        projectionVersion: VERSION, stream: 'live', expectedVersion: 1,
+        nextBlock: '104', safeHead: '103', checkpointBlock: '103',
+        checkpointHash: PLAN.incoming.blockHash,
+        nextBlockTime: `${DAY}T00:04:00Z`,
+        positions: [{ tokenAddress: TOKEN, walletAddress: WALLET,
+          quantityRaw: '30', costBasisUsd: '30', throughBlock: '103', throughLogIndex: '1' }],
+        transactionClient: client,
+      });
+      assert.equal(committed.committed, true);
+      const journal = await client.query(
+        `SELECT record_kind, had_previous, previous_row->>'quantity_raw' AS previous_quantity
+           FROM robinhood_wallet_position_reorg_preimages
+          WHERE projection_version=$1 AND through_block=103
+          ORDER BY record_kind`, [VERSION]
+      );
+      assert.deepEqual(journal.rows, [
+        { record_kind: 'batch', had_previous: false, previous_quantity: null },
+        { record_kind: 'position', had_previous: true, previous_quantity: '25' },
+      ]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
   it('fails closed on a preimage gap, then restores and replays the canonical prefix', async () => {
     const client = await db.getClient();
     try {

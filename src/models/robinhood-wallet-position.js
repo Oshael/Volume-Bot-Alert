@@ -150,6 +150,24 @@ async function captureLivePreimages(client, input) {
   );
 }
 
+async function droppedRawRequiresPreimages(client, projectionVersion) {
+  if (projectionVersion !== 'unified_transfer_v1') return false;
+  // The first raw drop must lock this cursor before marking its watermark dropped.
+  // This serializes that transition with a LIVE batch using a disabled pilot flag.
+  await client.query(
+    `SELECT 1 FROM robinhood_wallet_position_cursors
+      WHERE chain=$1 AND projection_version=$2 AND stream='live' FOR UPDATE`,
+    [CHAIN, projectionVersion]
+  );
+  const result = await client.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM robinhood_wallet_transfer_compaction_watermarks
+        WHERE chain=$1 AND lifecycle_state='dropped'
+     ) AS required`, [CHAIN]
+  );
+  return result.rows[0]?.required === true;
+}
+
 function createRobinhoodWalletPositionRepository(options = {}) {
   const database = options.database || db;
   const positionPreimageEnabled = options.positionPreimageEnabled == null
@@ -360,7 +378,11 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     const { client } = transaction;
     try {
       await transaction.begin();
-      if (streamName === 'live' && positionPreimageEnabled) {
+      const capturePreimages = streamName === 'live' && (
+        positionPreimageEnabled
+        || await droppedRawRequiresPreimages(client, projectionVersion)
+      );
+      if (capturePreimages) {
         await captureLivePreimages(client, {
           projectionVersion, expectedVersion, nextBlock, nextBlockTime,
           checkpointBlock: nextCheckpoint.block, checkpointHash: nextCheckpoint.hash, rows,

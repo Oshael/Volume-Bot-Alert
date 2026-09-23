@@ -6162,6 +6162,11 @@ não canônico ou identidade de preimagem inconsistente falha com
 a captura transacional opt-in do estado anterior de cada posição LIVE tocada
 por um lote, incluindo marcadores de lotes vazios. O padrão é `false`. Esses
 registros expiram em três dias. Após aplicar a Stage 245,
+se qualquer dia de transfer já estiver marcado `dropped`, a projeção LIVE
+`unified_transfer_v1` exige essas preimagens mesmo com a flag desligada;
+o primeiro drop deve travar o cursor de posições antes de marcar o watermark
+para não cruzar um lote sem captura. Um rollback de configuração que desligue
+a flag após o drop não desliga essa proteção.
 `ROBINHOOD_RETENTION_POSITION_PREIMAGE_PRUNE_ENABLED=true` habilita o expurgo
 em lotes no retention worker existente, somente para linhas vencidas cujo lote
 esteja até o `finalized_head`; o padrão é `false`. O expurgo libera espaço
