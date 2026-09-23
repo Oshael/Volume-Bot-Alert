@@ -6029,6 +6029,10 @@ quando ele pertence à versão corrente da fila.
 `provisionalGatesClear=true`, `readyForDrop` permanece `false`: ainda é
 necessária revalidação canônica imediatamente antes de qualquer remoção. O
 comando não destaca nem apaga partições e não libera espaço por si só.
+O módulo transacional de retenção já cerca recovery, dia e partição, trava o
+cursor LIVE de posições e revalida watermark, raw, resumos, cursores e as seis
+dependências antes de permitir uma ação na mesma transação. Ainda não há
+comando de poda que invoque esse módulo; nenhum drop está habilitado.
 
 Para preservar `unknown` legados de um dia `verified` enquanto a partição raw
 ainda existe, use `npm run robinhood:wallet-transfer-evidence-migrate --

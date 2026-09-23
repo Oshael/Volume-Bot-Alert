@@ -38,6 +38,7 @@ const INTEGRATION_TESTS = [
   'robinhood-wallet-transfer-compaction-schema.integration.test.js',
   'robinhood-wallet-transfer-compaction.integration.test.js',
   'robinhood-wallet-transfer-retention-plan.integration.test.js',
+  'robinhood-wallet-transfer-retention-transaction.integration.test.js',
   'robinhood-wallet-transfer-live-source.integration.test.js',
   'robinhood-wallet-transfer-backfill-tick.integration.test.js',
   'repair-robinhood-wallet-swap-origins.integration.test.js',

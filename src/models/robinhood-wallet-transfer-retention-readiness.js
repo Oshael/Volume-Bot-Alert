@@ -208,4 +208,7 @@ function createRobinhoodWalletTransferRetentionReadiness(options = {}) {
   return { inspect };
 }
 
-module.exports = { createRobinhoodWalletTransferRetentionReadiness };
+module.exports = {
+  createRobinhoodWalletTransferRetentionReadiness,
+  __private: { probeSql, canonicalCheckpointProbe },
+};
