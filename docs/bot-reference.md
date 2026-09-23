@@ -6094,6 +6094,23 @@ antes de iniciar o writer. O worker permanente não consulta `eth_getCode` nem
 Alchemy para classificar endpoints: registro ausente permanece `unknown` sem
 bloquear o cursor.
 
+Antes de publicar o writer de transfers que grava evidência pendente, aplique
+`node src/utils/db-init-stage243.js` e confirme `npm run db:schema-check`.
+Só depois de concluir a adaptação de reclassificação/reorg e medir capacidade, ative
+`ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED=true` no service exclusivo
+de wallet transfers e reinicie esse service; o padrão é `false` para não
+aumentar o uso do disco inadvertidamente. Com a flag ativa, toda inserção
+nova de raw `unknown` também grava os campos necessários para
+reclassificação em `robinhood_wallet_transfer_pending_evidence`, na mesma
+instrução SQL; falha em preservar a evidência aborta a inserção raw. Repetições
+são idempotentes pela identidade `(chain, transaction_hash, log_index,
+block_time)`. Esta etapa ainda não migra `unknown` antigos, não muda os leitores
+nem cobre rollback/reorg da tabela nova. **Não habilite a flag em produção nem
+remova partições raw com base apenas na Stage 243**; a retenção continua
+bloqueada até migração, adaptação dos consumidores e auditoria de cobertura.
+Monitore o tamanho da nova tabela: o acervo de `unknown` ainda não tem poda e
+pode crescer continuamente até os cortes de consumo/reclassificação.
+
 No PC com o archive node, configure `RH_NODE_RPC_URL` para o RPC local e
 `DATABASE_URL` para o PostgreSQL da VPS através do túnel. Execute
 `npm run robinhood:wallet-endpoint-role-backfill -- --limit=100`; após revisar o

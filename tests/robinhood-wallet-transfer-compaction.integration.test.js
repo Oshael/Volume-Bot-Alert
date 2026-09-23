@@ -16,6 +16,7 @@ const stage129 = require('../src/utils/db-init-stage129');
 const stage131 = require('../src/utils/db-init-stage131');
 const stage132 = require('../src/utils/db-init-stage132');
 const stage138 = require('../src/utils/db-init-stage138');
+const stage243 = require('../src/utils/db-init-stage243');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_compaction_audit_v1';
@@ -40,6 +41,7 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [POSITION_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE classification_version = $1', [VERSION]);
   await db.query(
     `DELETE FROM robinhood_token_transfer_events
      WHERE block_time >= $1::date AND block_time < $1::date + INTERVAL '1 day'`,
@@ -50,7 +52,7 @@ async function cleanup() {
 describe('Robinhood wallet transfer compaction audit', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage126, stage127, stage128, stage129, stage131, stage132, stage138]) {
+    for (const stage of [stage126, stage127, stage128, stage129, stage131, stage132, stage138, stage243]) {
       await stage.init({ closePool: false });
     }
     await cleanup();

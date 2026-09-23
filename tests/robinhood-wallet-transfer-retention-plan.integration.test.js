@@ -8,6 +8,7 @@ const { createRobinhoodTokenTransferRepository } = require('../src/models/robinh
 const { createRobinhoodWalletTransferRetentionPlanner } = require('../src/models/robinhood-wallet-transfer-retention-plan');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage132 = require('../src/utils/db-init-stage132');
+const stage243 = require('../src/utils/db-init-stage243');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_retention_plan_v1';
@@ -40,6 +41,7 @@ describe('Robinhood wallet transfer retention plan integration', () => {
     await assertUsingTestDatabase(db);
     await stage128.init({ closePool: false });
     await stage132.init({ closePool: false });
+    await stage243.init({ closePool: false });
     await cleanup();
   });
   after(async () => {

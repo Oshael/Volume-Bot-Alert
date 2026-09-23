@@ -92,6 +92,9 @@ function normalizeTransferEvent(input = {}) {
 
 function createRobinhoodTokenTransferRepository(options = {}) {
   const database = options.database || db;
+  const preservePendingEvidence = options.preservePendingEvidence === undefined
+    ? process.env.ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED === 'true'
+    : options.preservePendingEvidence === true;
 
   async function ensurePartitionForDay(day) {
     const name = partitionName(day);
@@ -110,8 +113,7 @@ function createRobinhoodTokenTransferRepository(options = {}) {
     const ensuredDays = [...new Set(normalized.map((row) => row.__dayKey))].sort();
     for (const day of ensuredDays) await ensurePartitionForDay(day);
     const payload = normalized.map(({ __dayKey, ...row }) => ({ chain: CHAIN, ...row }));
-    const result = await database.query(
-      `INSERT INTO robinhood_token_transfer_events (
+    const insertSql = `INSERT INTO robinhood_token_transfer_events (
          chain, block_number, block_hash, block_time, transaction_hash,
          transaction_index, log_index, token_address, from_wallet, to_wallet,
          amount_raw, transfer_kind, classification_version
@@ -125,10 +127,34 @@ function createRobinhoodTokenTransferRepository(options = {}) {
          transaction_hash text, transaction_index text, log_index text,
          token_address text, from_wallet text, to_wallet text, amount_raw text,
          transfer_kind text, classification_version text
-       ) ON CONFLICT (chain, transaction_hash, log_index, block_time) DO NOTHING`,
+       ) ON CONFLICT (chain, transaction_hash, log_index, block_time) DO NOTHING`;
+    const preservationSql = `WITH inserted AS (
+       ${insertSql}
+       RETURNING chain, block_number, block_hash, block_time, transaction_hash,
+         transaction_index, log_index, token_address, from_wallet, to_wallet,
+         amount_raw, transfer_kind, classification_version
+       ), preserved AS (
+         INSERT INTO robinhood_wallet_transfer_pending_evidence (
+           chain, block_number, block_hash, block_time, transaction_hash,
+           transaction_index, log_index, token_address, from_wallet, to_wallet,
+           amount_raw, classification_version
+         ) SELECT chain, block_number, block_hash, block_time, transaction_hash,
+           transaction_index, log_index, token_address, from_wallet, to_wallet,
+           amount_raw, classification_version
+         FROM inserted WHERE transfer_kind = 'unknown'
+         ON CONFLICT (chain, transaction_hash, log_index, block_time) DO NOTHING
+         RETURNING 1
+       )
+       SELECT (SELECT COUNT(*) FROM inserted)::integer AS inserted,
+              (SELECT COUNT(*) FROM preserved)::integer AS preserved`;
+    const result = await database.query(
+      preservePendingEvidence ? preservationSql : insertSql,
       [JSON.stringify(payload)]
     );
-    return { inserted: result.rowCount || 0, ensuredDays };
+    return {
+      inserted: preservePendingEvidence ? result.rows[0].inserted : result.rowCount || 0,
+      ensuredDays,
+    };
   }
 
   return { ensurePartitionForDay, insertTransferEvents };

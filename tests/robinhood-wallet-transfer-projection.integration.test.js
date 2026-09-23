@@ -17,6 +17,7 @@ const {
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const stage128 = require('../src/utils/db-init-stage128');
+const stage243 = require('../src/utils/db-init-stage243');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
@@ -64,6 +65,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
     await stage128.init({ closePool: false });
+    await stage243.init({ closePool: false });
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });

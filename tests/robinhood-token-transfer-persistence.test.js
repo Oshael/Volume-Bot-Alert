@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const stage128 = require('../src/utils/db-init-stage128');
 const stage138 = require('../src/utils/db-init-stage138');
+const stage243 = require('../src/utils/db-init-stage243');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
   RAW_RETENTION_DAYS,
@@ -26,7 +27,9 @@ function fakeDb() {
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
-      return { rowCount: /^INSERT/.test(sql.trim()) ? 2 : 0 };
+      return /^WITH inserted AS/.test(sql.trim())
+        ? { rows: [{ inserted: 2, preserved: 1 }] }
+        : { rowCount: /^INSERT INTO robinhood_token_transfer_events/.test(sql.trim()) ? 2 : 0 };
     },
   };
 }
@@ -60,6 +63,17 @@ describe('Robinhood token transfer persistence', () => {
     assert.equal(group.repair, 'node src/utils/db-init-stage138.js');
   });
 
+  it('defines unpartitioned pending evidence without a raw-table foreign key', () => {
+    const sql = stage243.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage243-robinhood-wallet-transfer-pending-evidence'
+    ));
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_wallet_transfer_pending_evidence/);
+    assert.match(sql, /PRIMARY KEY \(\s*chain, transaction_hash, log_index, block_time/);
+    assert.doesNotMatch(sql, /PARTITION BY|REFERENCES robinhood_token_transfer_events|DELETE|DROP/i);
+    assert.equal(group.repair, 'node src/utils/db-init-stage243.js');
+  });
+
   it('derives strict UTC daily partition identities', () => {
     const date = new Date('2026-08-14T23:59:59.000Z');
     assert.equal(dayKey(date), '2026-08-14');
@@ -91,17 +105,32 @@ describe('Robinhood token transfer persistence', () => {
 
   it('ensures sorted daily partitions before one idempotent bulk insert', async () => {
     const database = fakeDb();
-    const repository = createRobinhoodTokenTransferRepository({ database });
+    const repository = createRobinhoodTokenTransferRepository({ database, preservePendingEvidence: true });
     const result = await repository.insertTransferEvents([
       event({ blockTime: '2026-08-15T00:00:00.000Z', transactionHash: `0x${'c'.repeat(64)}` }),
       event(),
     ]);
     const partitions = database.calls.filter(({ sql }) => /PARTITION OF/.test(sql));
-    const insert = database.calls.find(({ sql }) => /^INSERT/.test(sql.trim()));
+    const insert = database.calls.find(({ sql }) => /^WITH inserted AS/.test(sql.trim()));
 
     assert.deepEqual(result, { inserted: 2, ensuredDays: ['2026-08-14', '2026-08-15'] });
     assert.equal(database.calls.indexOf(insert) > database.calls.indexOf(partitions[1]), true);
     assert.match(insert.sql, /ON CONFLICT \(chain, transaction_hash, log_index, block_time\) DO NOTHING/);
+    assert.match(insert.sql, /FROM inserted WHERE transfer_kind = 'unknown'/);
+    assert.match(insert.sql, /INSERT INTO robinhood_wallet_transfer_pending_evidence/);
     assert.equal(JSON.parse(insert.params[0]).every((row) => row.chain === 'robinhood'), true);
+  });
+
+  it('keeps preservation disabled by default for a migration-first rollout', async () => {
+    const database = fakeDb();
+    const repository = createRobinhoodTokenTransferRepository({
+      database, preservePendingEvidence: false,
+    });
+    const result = await repository.insertTransferEvents([event({
+      transferKind: 'unknown', classificationVersion: 'rh_transfer_v1',
+    })]);
+    const insert = database.calls.find(({ sql }) => /^INSERT INTO robinhood_token_transfer_events/.test(sql.trim()));
+    assert.equal(result.inserted, 2);
+    assert.doesNotMatch(insert.sql, /robinhood_wallet_transfer_pending_evidence/);
   });
 });

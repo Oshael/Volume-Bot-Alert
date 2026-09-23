@@ -11,6 +11,7 @@ const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
 const stage134 = require('../src/utils/db-init-stage134');
+const stage243 = require('../src/utils/db-init-stage243');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'rh_transfer_v1';
@@ -31,6 +32,7 @@ function event(blockNumber, blockTime, suffix) {
 
 async function cleanup() {
   await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = $1 AND token_address = $2', [VERSION, TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = $1 AND token_address = $2', [VERSION, TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1 AND token_address = $2', [VERSION, TOKEN]);
@@ -40,7 +42,7 @@ async function cleanup() {
 describe('Robinhood wallet-transfer backfill commit integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage128, stage129, stage130, stage131, stage134]) {
+    for (const stage of [stage128, stage129, stage130, stage131, stage134, stage243]) {
       await stage.init({ closePool: false });
     }
     await cleanup();

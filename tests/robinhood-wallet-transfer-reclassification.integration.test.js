@@ -20,6 +20,7 @@ const stage132 = require('../src/utils/db-init-stage132');
 const stage135 = require('../src/utils/db-init-stage135');
 const stage136 = require('../src/utils/db-init-stage136');
 const stage153 = require('../src/utils/db-init-stage153');
+const stage243 = require('../src/utils/db-init-stage243');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_reclassification_v1';
@@ -42,6 +43,7 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE classification_version = $1', [VERSION]);
   await db.query(
     'DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = ANY($1::varchar[])',
     [[ALICE, BOB]]
@@ -107,7 +109,7 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
-      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153,
+      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153, stage243,
     ]) {
       await stage.init({ closePool: false });
     }

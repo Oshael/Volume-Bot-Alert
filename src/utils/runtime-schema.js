@@ -6606,6 +6606,30 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage243-robinhood-wallet-transfer-pending-evidence',
+    name: 'Stage 243 Robinhood pending transfer evidence',
+    repair: 'node src/utils/db-init-stage243.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_pending_evidence',
+      columns: [
+        'chain', 'block_number', 'block_hash', 'block_time', 'transaction_hash',
+        'transaction_index', 'log_index', 'token_address', 'from_wallet',
+        'to_wallet', 'amount_raw', 'classification_version', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_transfer_pending_evidence_pkey',
+        includes: ['PRIMARY KEY', 'transaction_hash', 'block_time'],
+      }, {
+        name: 'rh_wallet_transfer_pending_evidence_values_check',
+        includes: ['CHECK', 'classification_version'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_transfer_pending_evidence_day',
+        includes: ['chain', 'block_time', 'block_number'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

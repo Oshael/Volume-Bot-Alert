@@ -6,6 +6,7 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage138 = require('../src/utils/db-init-stage138');
+const stage243 = require('../src/utils/db-init-stage243');
 const {
   createRobinhoodTokenTransferRepository,
 } = require('../src/models/robinhood-token-transfer-persistence');
@@ -29,10 +30,13 @@ describe('Robinhood token transfer persistence integration', () => {
     await assertUsingTestDatabase(db);
     await stage128.init({ closePool: false });
     await stage138.init({ closePool: false });
+    await stage243.init({ closePool: false });
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
   });
   after(async () => {
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2098_12_31');
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2099_01_01');
     await db.pool.end();
@@ -75,5 +79,54 @@ describe('Robinhood token transfer persistence integration', () => {
       { kind: 'unclassified', version: null },
       { kind: 'wallet_self', version: 'rh_transfer_v1' },
     ]);
+  });
+
+  it('preserves only new unknown transfers and deduplicates the durable copy', async () => {
+    const repository = createRobinhoodTokenTransferRepository({
+      database: db, preservePendingEvidence: true,
+    });
+    const unknown = event('2099-01-01', 2, {
+      transferKind: 'unknown', classificationVersion: 'rh_transfer_v1',
+    });
+    assert.equal((await repository.insertTransferEvents([unknown])).inserted, 1);
+    assert.equal((await repository.insertTransferEvents([unknown])).inserted, 0);
+    const { rows } = await db.query(
+      `SELECT block_number::text, transaction_index, amount_raw::text,
+              classification_version, block_time
+       FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1`,
+      [TOKEN]
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].block_number, unknown.blockNumber);
+    assert.equal(rows[0].transaction_index, Number(unknown.transactionIndex));
+    assert.equal(rows[0].amount_raw, unknown.amountRaw);
+    assert.equal(rows[0].classification_version, unknown.classificationVersion);
+    assert.equal(new Date(rows[0].block_time).toISOString(), unknown.blockTime);
+  });
+
+  it('rolls back the raw insert if preserving unknown evidence fails', async () => {
+    const repository = createRobinhoodTokenTransferRepository({
+      database: db, preservePendingEvidence: true,
+    });
+    const unknown = event('2099-01-01', 3, {
+      transferKind: 'unknown', classificationVersion: 'rh_transfer_v1',
+    });
+    await db.query(`CREATE OR REPLACE FUNCTION rh_test_pending_evidence_reject()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'forced pending evidence failure'; END $$`);
+    await db.query(`CREATE TRIGGER rh_test_pending_evidence_reject
+      BEFORE INSERT ON robinhood_wallet_transfer_pending_evidence
+      FOR EACH ROW EXECUTE FUNCTION rh_test_pending_evidence_reject()`);
+    try {
+      await assert.rejects(repository.insertTransferEvents([unknown]), /forced pending evidence failure/);
+      const raw = await db.query(
+        'SELECT 1 FROM robinhood_token_transfer_events WHERE transaction_hash = $1',
+        [unknown.transactionHash]
+      );
+      assert.equal(raw.rowCount, 0);
+    } finally {
+      await db.query('DROP TRIGGER rh_test_pending_evidence_reject ON robinhood_wallet_transfer_pending_evidence');
+      await db.query('DROP FUNCTION rh_test_pending_evidence_reject()');
+    }
   });
 });
