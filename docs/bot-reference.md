@@ -6104,6 +6104,9 @@ O resultado do worker expõe `unknownEvidence`: contagem de `unknown` por motivo
 quantos têm um papel `contract` registrado cujo intervalo cobre o bloco do
 transfer e, para swaps ambíguos, `swapCorrelationFailures` com múltiplos matches
 exatos, direção incompatível, valor incompatível ou índice de ação coincidente.
+`exactBuySplitTransactions` conta, sem reclassificar, compras com um único swap,
+dois transfers `unknown` anteriores a ele, mesma origem, soma exata do valor
+bruto e destinos na wallet signatária e no contrato do token.
 A telemetria não revalida a canonicalidade da prova, não reclassifica
 eventos, não preserva evidência e não autoriza poda.
 

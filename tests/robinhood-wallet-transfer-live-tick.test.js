@@ -187,6 +187,7 @@ describe('Robinhood wallet transfer LIVE tick', () => {
       total: 1, withContractRoleCoverage: 1, withoutContractRoleCoverage: 0,
       reasons: { swap_correlation_ambiguous: 1 },
       swapCorrelationFailures: { direction_mismatch: 1 },
+      exactBuySplitTransactions: 0,
     });
     assert.equal(covered.calls.raw[0][0].transferKind, 'unknown');
     assert.deepEqual(covered.calls.projected[0].events, []);
@@ -197,6 +198,7 @@ describe('Robinhood wallet transfer LIVE tick', () => {
       total: 1, withContractRoleCoverage: 0, withoutContractRoleCoverage: 1,
       reasons: { swap_correlation_ambiguous: 1 },
       swapCorrelationFailures: { direction_mismatch: 1 },
+      exactBuySplitTransactions: 0,
     });
   });
 

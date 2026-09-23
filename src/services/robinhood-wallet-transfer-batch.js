@@ -2,6 +2,7 @@ const {
   CLASSIFICATION_VERSION,
   createRobinhoodTransferClassifier,
 } = require('./robinhood-transfer-classifier');
+const { findExactBuySplitEvidence } = require('./robinhood-wallet-transfer-split-evidence');
 
 const EDGE_KINDS = new Set(['wallet_transfer', 'dex_flow']);
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -80,6 +81,7 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
       duplicateOfSwap: decision.duplicateOfSwap,
     };
   });
+  const splitEvidence = findExactBuySplitEvidence(events, context.swaps || []);
   return Object.freeze({
     counts: Object.freeze(counts), events: Object.freeze(events),
     unknownEvidence: Object.freeze({
@@ -88,6 +90,7 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
       withoutContractRoleCoverage: (counts.unknown || 0) - unknownWithContractRoleCoverage,
       reasons: Object.freeze(unknownReasons),
       swapCorrelationFailures: Object.freeze(swapCorrelationFailures),
+      exactBuySplitTransactions: splitEvidence.length,
     }),
   });
 }
