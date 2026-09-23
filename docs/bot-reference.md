@@ -6108,6 +6108,10 @@ Antes de publicar o rollback de transfers, aplique também
 em `robinhood_wallet_transfer_evidence_dispositions` na mesma transação em que
 remove o raw órfão. A evidência pendente permanece imutável; o marcador é
 idempotente e não faz `UPDATE`/`DELETE` por evento na tabela nova.
+Se a faixa do reorg atravessar um dia de transfers marcado `dropped`, o rollback
+aborta com `archive_required` antes de alterar projeções ou cursores. A marcação
+`orphaned` também funciona para evidência pendente cujo raw já não existe,
+desde que a faixa não atravesse um dia `dropped`.
 O comando de reclassificação exige ambas as Stages 243/244. Ele seleciona tanto
 raw `unknown` quanto evidência pendente sem raw; eventos legados sem evidência
 continuam lidos do raw. Marcadores `orphaned`/`reclassified` excluem o candidato.

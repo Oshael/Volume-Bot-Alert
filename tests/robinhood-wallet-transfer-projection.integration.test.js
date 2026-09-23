@@ -22,6 +22,7 @@ const stage244 = require('../src/utils/db-init-stage244');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
+const stage132 = require('../src/utils/db-init-stage132');
 const stage134 = require('../src/utils/db-init-stage134');
 const stage137 = require('../src/utils/db-init-stage137');
 const stage153 = require('../src/utils/db-init-stage153');
@@ -54,6 +55,7 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [LIVE_VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [event(102, 4, 40).transactionHash]);
   await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [event(102, 4, 40).transactionHash]);
   await db.query('DELETE FROM robinhood_token_transfer_events WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
@@ -73,6 +75,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });
+    await stage132.init({ closePool: false });
     await stage134.init({ closePool: false });
     await stage137.init({ closePool: false });
     await stage153.init({ closePool: false });
@@ -337,17 +340,44 @@ describe('Robinhood wallet transfer projection persistence', () => {
          ('robinhood',102,$3,$2,$5,'2099-01-03T00:00:00Z','observed',TRUE,NOW(),NOW())`,
       [...hashes, `0x${'f'.repeat(64)}`, `0x${'c'.repeat(64)}`]
     );
+    await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = $1',
+      [unknown.transactionHash]);
+    const range = {
+      ancestorBlock: '101', ancestorHash: hashes[1],
+      ancestorTimestamp: '2099-01-02T00:00:00.000Z',
+      fromBlock: '102', throughBlock: '102',
+      fromTimestamp: '2099-01-03T00:00:00.000Z',
+      throughTimestamp: '2099-01-03T00:00:00.000Z',
+    };
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
+         chain, projection_version, partition_day, lifecycle_state,
+         cursor_next_block, cursor_next_transaction_index, cursor_next_log_index,
+         cursor_next_block_time, checkpoint_block, checkpoint_hash,
+         position_projection_version, position_next_block,
+         summary_reconciled, position_complete, evidence_complete,
+         cursor_complete, checkpoint_canonical, audited_at, verified_at, dropped_at
+       ) VALUES ('robinhood', $1, '2099-01-03', 'dropped',
+         103, 0, 0, '2099-01-04T00:00:00Z', 102, $2,
+         $3, 103, true, true, true, true, true, NOW(), NOW(), NOW())`,
+      [LIVE_VERSION, hashes[2], POSITION_VERSION]
+    );
+    const blockedClient = await db.getClient();
+    try {
+      await blockedClient.query('BEGIN');
+      await assert.rejects(createRobinhoodWalletTransferReorgRollback().rollback(blockedClient, range),
+        (error) => error.code === 'archive_required');
+    } finally {
+      await blockedClient.query('ROLLBACK').catch(() => {});
+      blockedClient.release();
+    }
+    await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1',
+      [LIVE_VERSION]);
     const client = await db.getClient();
     let rolledBack;
     try {
       await client.query('BEGIN');
-      rolledBack = await createRobinhoodWalletTransferReorgRollback().rollback(client, {
-        ancestorBlock: '101', ancestorHash: hashes[1],
-        ancestorTimestamp: '2099-01-02T00:00:00.000Z',
-        fromBlock: '102', throughBlock: '102',
-        fromTimestamp: '2099-01-03T00:00:00.000Z',
-        throughTimestamp: '2099-01-03T00:00:00.000Z',
-      });
+      rolledBack = await createRobinhoodWalletTransferReorgRollback().rollback(client, range);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -357,7 +387,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     }
     assert.deepEqual(rolledBack, {
       projections: 1, restoredBatches: 1, replayedPrefix: 1,
-      deletedRawTransfers: 2, cursorsRewound: 1,
+      deletedRawTransfers: 1, cursorsRewound: 1,
     });
     const orphanedEvidence = await db.query(
       `SELECT disposition.block_hash, evidence.transaction_hash

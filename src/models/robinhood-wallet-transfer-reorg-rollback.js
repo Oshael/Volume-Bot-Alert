@@ -15,6 +15,22 @@ function markerStart(marker) {
   if (!match) throw conflict('transfer journal range marker is invalid');
   return { block: match[1], hash: match[2] };
 }
+async function assertRawRetentionCoverage(client, range) {
+  const result = await client.query(
+    `SELECT partition_day::text FROM robinhood_wallet_transfer_compaction_watermarks
+      WHERE chain=$1 AND lifecycle_state='dropped'
+        AND partition_day BETWEEN ($2::timestamptz AT TIME ZONE 'UTC')::date
+          AND ($3::timestamptz AT TIME ZONE 'UTC')::date
+      LIMIT 1`,
+    [CHAIN, range.fromTimestamp, range.throughTimestamp]
+  );
+  if (result.rowCount) {
+    throw Object.assign(
+      new Error(`transfer reorg crosses dropped raw day ${result.rows[0].partition_day}; Archive repair required`),
+      { code: 'archive_required' }
+    );
+  }
+}
 async function loadCursors(client, range) {
   const result = await client.query(
     `SELECT cursor.*, EXISTS (
@@ -183,6 +199,7 @@ function createRobinhoodWalletTransferReorgRollback() {
     if (!client || typeof client.query !== 'function') {
       throw new Error('transfer rollback requires a transaction client');
     }
+    await assertRawRetentionCoverage(client, range);
     const cursors = await loadCursors(client, range);
     const summary = { projections: cursors.length, restoredBatches: 0, replayedPrefix: 0 };
     for (const cursor of cursors) {
