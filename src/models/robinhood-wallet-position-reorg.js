@@ -4,6 +4,9 @@ const { applyWalletPositionEvent } = require('../services/robinhood-wallet-posit
 const {
   buildRobinhoodWalletUnifiedPositionBatch,
 } = require('../services/robinhood-wallet-unified-position-batch');
+const {
+  loadCoveredMarkers, restoreMarker,
+} = require('./robinhood-wallet-position-preimage-recovery');
 
 const CHAIN = 'robinhood';
 const SWAP_ONLY = 'swap_only_v1';
@@ -105,8 +108,8 @@ async function loadRewoundCursors(client, range) {
   return result.rows;
 }
 
-async function assertUnifiedRawHistory(client, range, cursors) {
-  if (!cursors.some(({ projection_version: version }) => version === UNIFIED)) return;
+async function droppedRawDay(client, range, cursors) {
+  if (!cursors.some(({ projection_version: version }) => version === UNIFIED)) return null;
   const result = await client.query(
     `SELECT partition_day::text FROM robinhood_wallet_transfer_compaction_watermarks
       WHERE chain=$1 AND lifecycle_state='dropped'
@@ -114,12 +117,7 @@ async function assertUnifiedRawHistory(client, range, cursors) {
       ORDER BY partition_day LIMIT 1`,
     [CHAIN, range.ancestorTimestamp]
   );
-  if (result.rowCount) {
-    throw Object.assign(
-      new Error(`unified position reorg needs raw history from dropped day ${result.rows[0].partition_day}; Archive repair required`),
-      { code: 'archive_required' }
-    );
-  }
+  return result.rows[0]?.partition_day || null;
 }
 
 async function loadAffectedPairs(client, range, cursor) {
@@ -160,7 +158,29 @@ async function loadAffectedPairs(client, range, cursor) {
   return result.rows;
 }
 
-async function loadCanonicalLedger(client, range, pairs, includeTransfers) {
+async function assertPreimagePairs(client, range, cursor, markers) {
+  const affected = await loadAffectedPairs(client, range, cursor);
+  if (!affected.length) return;
+  const found = await client.query(
+    `SELECT DISTINCT preimage.identity_key
+       FROM robinhood_wallet_position_reorg_preimages preimage
+       INNER JOIN jsonb_to_recordset($3::jsonb)
+         AS marker(through_block bigint, checkpoint_hash text)
+         ON marker.through_block=preimage.through_block
+        AND marker.checkpoint_hash=preimage.checkpoint_hash
+      WHERE preimage.chain=$1 AND preimage.projection_version=$2
+        AND preimage.record_kind='position'`,
+    [CHAIN, cursor.projection_version, JSON.stringify(markers)]
+  );
+  const keys = new Set(found.rows.map(({ identity_key: key }) => key));
+  const missing = affected.find((pair) => !keys.has(pairKey(pair)));
+  if (missing) {
+    throw Object.assign(new Error('position preimage is missing for an orphan event'),
+      { code: 'archive_required' });
+  }
+}
+
+async function loadCanonicalLedger(client, range, pairs, includeTransfers, lower = null) {
   if (!pairs.length) return { swaps: [], transfers: [] };
   const payload = JSON.stringify(pairs);
   const swaps = await client.query(
@@ -179,8 +199,11 @@ async function loadCanonicalLedger(client, range, pairs, includeTransfers) {
         AND position.block_number=swap.block_number
       WHERE swap.chain=$1 AND swap.block_number <= $2::bigint
         AND swap.block_time <= $3::timestamptz
+        AND ($5::bigint IS NULL OR swap.block_number >= $5::bigint)
+        AND ($6::timestamptz IS NULL OR swap.block_time >= $6::timestamptz)
       ORDER BY swap.block_time, swap.block_number, swap.action_index, swap.transaction_hash`,
-    [CHAIN, range.ancestorBlock, range.ancestorTimestamp, payload]
+    [CHAIN, range.ancestorBlock, range.ancestorTimestamp, payload,
+      lower?.block || null, lower?.time || null]
   );
   if (!includeTransfers) return { swaps: swaps.rows, transfers: [] };
   const transfers = await client.query(
@@ -192,12 +215,44 @@ async function loadCanonicalLedger(client, range, pairs, includeTransfers) {
         AND item.wallet_address IN (transfer.from_wallet, transfer.to_wallet)
       WHERE transfer.chain=$1 AND transfer.block_number <= $2::bigint
         AND transfer.block_time <= $3::timestamptz
+        AND ($5::bigint IS NULL OR transfer.block_number >= $5::bigint)
+        AND ($6::timestamptz IS NULL OR transfer.block_time >= $6::timestamptz)
         AND transfer.classification_version='rh_transfer_v1'
         AND transfer.transfer_kind='wallet_transfer'
       ORDER BY transfer.block_number, transfer.transaction_index, transfer.log_index`,
-    [CHAIN, range.ancestorBlock, range.ancestorTimestamp, payload]
+    [CHAIN, range.ancestorBlock, range.ancestorTimestamp, payload,
+      lower?.block || null, lower?.time || null]
   );
   return { swaps: swaps.rows, transfers: transfers.rows };
+}
+
+async function replayCanonicalPrefix(client, range, marker, pairs, projectionVersion = UNIFIED) {
+  if (!pairs.length) return { removed: 0, rebuilt: 0 };
+  const base = await client.query(
+    `SELECT position.* FROM robinhood_wallet_token_positions position
+       INNER JOIN jsonb_to_recordset($3::jsonb)
+         AS item(token_address text, wallet_address text)
+         ON item.token_address=position.token_address
+        AND item.wallet_address=position.wallet_address
+      WHERE position.chain=$1 AND position.projection_version=$2`,
+    [CHAIN, projectionVersion, JSON.stringify(pairs)]
+  );
+  const positions = base.rows.map((row) => Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()), value,
+    ])
+  ));
+  const ledger = await loadCanonicalLedger(client, range, pairs, true, {
+    block: marker.from_block, time: marker.from_time,
+  });
+  const replayed = buildRobinhoodWalletUnifiedPositionBatch({ ...ledger, positions }).positions;
+  const known = new Set(pairs.map(pairKey));
+  if (replayed.some((state) => !known.has(`${state.tokenAddress}:${state.walletAddress}`))) {
+    throw conflict('position prefix contains an endpoint without a preimage');
+  }
+  return replacePositions(client, projectionVersion, replayed.map((state) => ({
+    token_address: state.tokenAddress, wallet_address: state.walletAddress,
+  })), replayed);
 }
 
 async function replacePositions(client, projectionVersion, pairs, states) {
@@ -261,12 +316,38 @@ async function rewindCursor(client, range, cursor) {
 function createRobinhoodWalletPositionReorg() {
   async function rollback(client, range) {
     const cursors = await loadRewoundCursors(client, range);
-    await assertUnifiedRawHistory(client, range, cursors);
+    const droppedDay = await droppedRawDay(client, range, cursors);
+    const covered = new Map();
+    if (droppedDay) {
+      for (const cursor of cursors.filter((item) => item.projection_version === UNIFIED)) {
+        const markers = await loadCoveredMarkers(client, range, cursor);
+        await assertPreimagePairs(client, range, cursor, markers);
+        covered.set(UNIFIED, markers);
+      }
+    }
     const summary = {
       projections: cursors.length, affectedPositions: 0,
       removedPositions: 0, rebuiltPositions: 0, cursorsRewound: 0,
     };
     for (const cursor of cursors) {
+      if (cursor.projection_version === UNIFIED && droppedDay) {
+        for (const marker of covered.get(UNIFIED)) {
+          const restored = await restoreMarker(client, cursor, marker, range);
+          summary.affectedPositions += restored.pairs.length;
+          summary.removedPositions += restored.removed;
+          summary.rebuiltPositions += restored.rebuilt;
+          if (restored.hasPrefix) {
+            const replayed = await replayCanonicalPrefix(
+              client, range, marker, restored.pairs, cursor.projection_version
+            );
+            summary.removedPositions += replayed.removed;
+            summary.rebuiltPositions += replayed.rebuilt;
+          }
+        }
+        await rewindCursor(client, range, cursor);
+        summary.cursorsRewound += 1;
+        continue;
+      }
       const pairs = await loadAffectedPairs(client, range, cursor);
       const affected = new Set(pairs.map(pairKey));
       const unified = cursor.projection_version === UNIFIED;
@@ -290,5 +371,5 @@ function createRobinhoodWalletPositionReorg() {
 module.exports = {
   SUPPORTED_VERSIONS,
   createRobinhoodWalletPositionReorg,
-  __private: { rebuildSwapOnly },
+  __private: { rebuildSwapOnly, loadCanonicalLedger, replayCanonicalPrefix },
 };

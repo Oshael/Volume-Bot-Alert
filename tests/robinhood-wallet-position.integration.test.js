@@ -6,6 +6,12 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
 const {
+  restoreMarker,
+} = require('../src/models/robinhood-wallet-position-preimage-recovery');
+const {
+  __private: { loadCanonicalLedger, replayCanonicalPrefix },
+} = require('../src/models/robinhood-wallet-position-reorg');
+const {
   createRobinhoodWalletSwapRepository,
 } = require('../src/models/robinhood-wallet-swap-persistence');
 const {
@@ -16,6 +22,7 @@ const stage109 = require('../src/utils/db-init-stage109');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
+const stage128 = require('../src/utils/db-init-stage128');
 const stage137 = require('../src/utils/db-init-stage137');
 const stage139 = require('../src/utils/db-init-stage139');
 const stage245 = require('../src/utils/db-init-stage245');
@@ -25,11 +32,15 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const VERSION = 'test_swap_only_v1';
 const LIVE_VERSION = 'test_unified_live_v1';
 const JOURNAL_VERSION = 'test_position_journal_v1';
+const PREFIX_VERSION = 'test_position_prefix_v1';
 const TOKEN = `0x${'11'.repeat(20)}`;
 const WALLET = `0x${'22'.repeat(20)}`;
 const OTHER_TOKEN = `0x${'33'.repeat(20)}`;
 const QUOTE = `0x${'44'.repeat(20)}`;
 const SWAP_HASHES = [`0x${'a1'.repeat(32)}`, `0x${'b2'.repeat(32)}`];
+const PREFIX_TX = `0x${'e3'.repeat(32)}`;
+const PREFIX_TOKEN = `0x${'77'.repeat(20)}`;
+const PREFIX_WALLET = `0x${'88'.repeat(20)}`;
 
 function swapRow(overrides = {}) {
   return {
@@ -43,10 +54,10 @@ function swapRow(overrides = {}) {
 }
 
 async function cleanup() {
-  const versions = [VERSION, LIVE_VERSION, JOURNAL_VERSION];
+  const versions = [VERSION, LIVE_VERSION, JOURNAL_VERSION, PREFIX_VERSION];
   await db.query(
-    'DELETE FROM robinhood_wallet_position_reorg_preimages WHERE projection_version = $1',
-    [JOURNAL_VERSION]
+    'DELETE FROM robinhood_wallet_position_reorg_preimages WHERE projection_version = ANY($1::varchar[])',
+    [[JOURNAL_VERSION, PREFIX_VERSION]]
   );
   await db.query(
     'DELETE FROM robinhood_wallet_token_positions WHERE projection_version = ANY($1::varchar[])',
@@ -59,12 +70,12 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_holder_balances WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_swaps WHERE transaction_hash = ANY($1::varchar[])',
-    [SWAP_HASHES]);
+    [[...SWAP_HASHES, PREFIX_TX]]);
   await db.query('DELETE FROM robinhood_swap_mc WHERE transaction_hash = ANY($1::varchar[])',
-    [SWAP_HASHES]);
+    [[...SWAP_HASHES, PREFIX_TX]]);
   await db.query(
     'DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])',
-    [SWAP_HASHES]
+    [[...SWAP_HASHES, PREFIX_TX]]
   );
 }
 
@@ -76,6 +87,7 @@ describe('Robinhood wallet position persistence', () => {
     await stage116.init({ closePool: false });
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
+    await stage128.init({ closePool: false });
     await stage137.init({ closePool: false });
     await stage139.init({ closePool: false });
     await stage245.init({ closePool: false });
@@ -247,6 +259,123 @@ describe('Robinhood wallet position persistence', () => {
       [JOURNAL_VERSION]
     );
     assert.equal(count.rows[0].total, 4);
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      const restored = await restoreMarker(client, { projection_version: JOURNAL_VERSION }, {
+        from_block: '101', through_block: '101',
+        checkpoint_hash: `0x${String(101).padStart(64, 'a')}`,
+      }, { ancestorBlock: '100' });
+      assert.equal(restored.removed, 1);
+      assert.equal(restored.rebuilt, 1);
+      assert.equal(restored.hasPrefix, false);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    const restoredPosition = await db.query(
+      `SELECT quantity_raw::text FROM robinhood_wallet_token_positions
+        WHERE projection_version=$1 AND token_address=$2 AND wallet_address=$3`,
+      [JOURNAL_VERSION, TOKEN, WALLET]
+    );
+    assert.equal(restoredPosition.rows[0].quantity_raw, '10');
+  });
+
+  it('restores a crossing batch and replays only its canonical prefix', async () => {
+    const repository = createRobinhoodWalletPositionRepository({
+      database: db, positionPreimageEnabled: true,
+    });
+    await repository.initCursor({
+      projectionVersion: PREFIX_VERSION, stream: 'live', nextBlock: '100',
+      nextBlockTime: '2026-08-01T00:00:00.000Z', safeHead: '101',
+    });
+    await db.query(
+      `INSERT INTO robinhood_wallet_token_positions (
+         chain, projection_version, token_address, wallet_address, quantity_raw,
+         cost_basis_usd, through_block, through_log_index
+       ) VALUES ('robinhood',$1,$2,$3,5,5,99,1)`,
+      [PREFIX_VERSION, PREFIX_TOKEN, PREFIX_WALLET]
+    );
+    const checkpointHash = `0x${'f'.repeat(64)}`;
+    const advanced = await repository.commitBatch({
+      projectionVersion: PREFIX_VERSION, stream: 'live', expectedVersion: 0,
+      nextBlock: '102', safeHead: '101', checkpointBlock: '101', checkpointHash,
+      nextBlockTime: '2026-08-01T00:02:00.000Z',
+      positions: [{ tokenAddress: PREFIX_TOKEN, walletAddress: PREFIX_WALLET,
+        quantityRaw: '25', costBasisUsd: '25', throughBlock: '101', throughLogIndex: '3' }],
+    });
+    assert.equal(advanced.committed, true);
+    const insertedSwap = await createRobinhoodWalletSwapRepository({ database: db }).insertWalletSwaps([
+      swapRow({ transactionHash: PREFIX_TX, blockNumber: '100',
+        blockTime: '2026-08-01T00:01:00.000Z', tokenAmountRaw: '10',
+        tokenAddress: PREFIX_TOKEN, walletAddress: PREFIX_WALLET,
+        marketKey: `uniswap-v2:${PREFIX_TOKEN}:${QUOTE}`,
+        volumeUsd: '10', fdvUsd: null }),
+    ]);
+    assert.equal(insertedSwap.inserted, 1);
+    await createRobinhoodTransactionPositionRepository({ database: db }).upsertPositions([{
+      transactionHash: PREFIX_TX, blockNumber: '100',
+      blockHash: `0x${'e'.repeat(64)}`, transactionIndex: '0',
+    }]);
+    const range = {
+      ancestorBlock: '100', ancestorHash: `0x${'e'.repeat(64)}`,
+      ancestorTimestamp: '2026-08-01T00:01:00.000Z',
+    };
+    const marker = { from_block: '100', through_block: '101', checkpoint_hash: checkpointHash,
+      from_time: '2026-08-01T00:01:00.000Z' };
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      const ledger = await loadCanonicalLedger(client, range, [{
+        token_address: PREFIX_TOKEN, wallet_address: PREFIX_WALLET,
+      }], true, { block: '100', time: marker.from_time });
+      assert.equal(ledger.swaps.length, 1);
+      assert.equal(ledger.transfers.length, 0);
+      const restored = await restoreMarker(client, { projection_version: PREFIX_VERSION },
+        marker, range);
+      assert.equal(restored.hasPrefix, true);
+      assert.deepEqual(restored.pairs, [{
+        token_address: PREFIX_TOKEN, wallet_address: PREFIX_WALLET,
+      }]);
+      const replayed = await replayCanonicalPrefix(
+        client, range, marker, restored.pairs, PREFIX_VERSION
+      );
+      assert.equal(replayed.rebuilt, 1);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    const position = await db.query(
+      `SELECT quantity_raw::text, cost_basis_usd::text
+         FROM robinhood_wallet_token_positions WHERE projection_version=$1`,
+      [PREFIX_VERSION]
+    );
+    assert.deepEqual(position.rows[0], { quantity_raw: '15', cost_basis_usd: '15' });
+    const journal = await db.query(
+      `SELECT from_block::text, through_block::text, checkpoint_hash
+         FROM robinhood_wallet_position_reorg_preimages
+        WHERE projection_version=$1 AND record_kind='batch'`,
+      [PREFIX_VERSION]
+    );
+    assert.deepEqual(journal.rows, [{ from_block: '100', through_block: '100',
+      checkpoint_hash: range.ancestorHash }]);
+    await db.query(
+      `UPDATE robinhood_wallet_position_reorg_preimages
+          SET previous_row=jsonb_set(previous_row, '{wallet_address}', to_jsonb($2::text))
+        WHERE projection_version=$1 AND record_kind='position'`,
+      [PREFIX_VERSION, WALLET]
+    );
+    await assert.rejects(restoreMarker(db, { projection_version: PREFIX_VERSION }, {
+      from_block: '100', through_block: '100', checkpoint_hash: range.ancestorHash,
+    }, { ancestorBlock: '99' }), {
+      code: 'archive_required', message: /identity is inconsistent/,
+    });
   });
 
   it('hands a completed seed to an independently advancing LIVE cursor', async () => {

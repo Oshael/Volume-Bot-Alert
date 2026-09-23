@@ -6148,17 +6148,19 @@ aborta com `archive_required` antes de alterar projeções ou cursores. A marca�
 `orphaned` também funciona para evidência pendente cujo raw já não existe,
 desde que a faixa não atravesse um dia `dropped`.
 O rollback de posições `unified_transfer_v1` recompõe os pares afetados desde o
-início usando swaps e transfers raw até o ancestral. Se qualquer dia raw até o
-ancestral estiver marcado `dropped`, aborta com `archive_required` antes da
-recomposição: uma reorg recente também pode precisar de transfers antigos.
-Esse bloqueio evita reconstruir posições incompletas, mas a poda permanente
-exige uma base de posições recuperável sem esse histórico raw.
+início quando todo o raw histórico ainda existe. Se algum dia até o ancestral
+estiver marcado `dropped`, exige cobertura contínua de preimagens LIVE para a
+faixa órfã; restaura os lotes em ordem inversa e reaplica apenas o prefixo
+canônico de um lote que cruza o ancestral usando raw recente. Lacuna, hash
+não canônico ou identidade de preimagem inconsistente falha com
+`archive_required` antes de confirmar a recuperação.
 `ROBINHOOD_WALLET_POSITION_PREIMAGE_ENABLED=true` habilita, após a Stage 245,
 a captura transacional opt-in do estado anterior de cada posição LIVE tocada
 por um lote, incluindo marcadores de lotes vazios. O padrão é `false`. Esses
-registros expiram logicamente em três dias, mas ainda não são consumidos pelo
-rollback nem removidos fisicamente; mantenha a flag desligada em produção até
-existirem recuperação, expurgo e orçamento de disco medido.
+registros expiram logicamente em três dias, mas ainda não são removidos
+fisicamente; mantenha a flag desligada em produção até existirem expurgo,
+ensaio de reorg completo e orçamento de disco medido. Lotes anteriores à
+ativação da flag não ganham preimagens retroativamente.
 O comando de reclassificação exige ambas as Stages 243/244. Ele seleciona tanto
 raw `unknown` quanto evidência pendente sem raw; eventos legados sem evidência
 continuam lidos do raw. Marcadores `orphaned`/`reclassified` excluem o candidato.
