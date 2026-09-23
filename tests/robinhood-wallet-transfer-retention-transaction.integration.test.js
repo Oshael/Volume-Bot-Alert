@@ -148,6 +148,40 @@ describe('Robinhood transfer retention transaction SQL', () => {
     assert.equal(state.version, '0');
   });
 
+  it('ignores summaries from another day during pilot reconciliation', async () => {
+    const token = `0x${'9'.repeat(40)}`;
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_daily_summaries (
+        chain, projection_version, summary_day, token_address,
+        transfer_count, total_amount_raw, wallet_transfer_count,
+        wallet_transfer_amount_raw, dex_flow_count, dex_flow_amount_raw,
+        through_block, through_transaction_index, through_log_index, through_block_time
+      ) VALUES ('robinhood', 'rh_transfer_v1', '2026-07-20', $1,
+        1, 7, 1, 7, 0, 0, 100, 0, 0, '2026-07-20T12:00:00Z')`, [token]
+    );
+    try {
+      const gate = createRobinhoodWalletTransferRetentionTransaction({ database: db });
+      await assert.rejects(gate.withVerifiedPartition({
+        day: DAY, expectedWatermarkVersion: '0', now: '2026-09-23T00:00:00Z',
+      }, async () => { throw new Error('reconciliation passed'); }), /reconciliation passed/);
+      await db.query(
+        `UPDATE robinhood_wallet_transfer_daily_summaries
+            SET summary_day=$1::date, through_block_time='2026-07-19T12:00:00Z'
+          WHERE chain='robinhood' AND projection_version='rh_transfer_v1'
+            AND summary_day='2026-07-20' AND token_address=$2`, [DAY, token]
+      );
+      await assert.rejects(gate.withVerifiedPartition({
+        day: DAY, expectedWatermarkVersion: '0', now: '2026-09-23T00:00:00Z',
+      }, async () => { throw new Error('action must not run'); }), /no longer reconcile/);
+    } finally {
+      await db.query(
+        `DELETE FROM robinhood_wallet_transfer_daily_summaries
+          WHERE chain='robinhood' AND projection_version='rh_transfer_v1'
+            AND summary_day IN ('2026-07-19', '2026-07-20') AND token_address=$1`, [token]
+      );
+    }
+  });
+
   it('rejects a raw row added after the verified watermark', async () => {
     await db.query(
       `INSERT INTO public.${PARTITION} (

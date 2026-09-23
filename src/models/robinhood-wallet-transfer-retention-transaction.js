@@ -120,13 +120,15 @@ async function assertReconciled(client, partition, day, watermark) {
         WHERE chain=$1 AND classification_version=$3
           AND transfer_kind=ANY($4::text[])
         GROUP BY token_address
+     ), summarized AS (
+       SELECT token_address, transfer_count, total_amount_raw
+         FROM robinhood_wallet_transfer_daily_summaries
+        WHERE chain=$1 AND projection_version=$3 AND summary_day=$2::date
      ), compared AS (
        SELECT raw.transfer_count AS raw_count, raw.total_amount_raw AS raw_amount,
-              summary.transfer_count, summary.total_amount_raw,
-              summary.token_address AS summary_token
-         FROM raw FULL JOIN robinhood_wallet_transfer_daily_summaries summary
-           ON summary.chain=$1 AND summary.projection_version=$3
-          AND summary.summary_day=$2::date AND summary.token_address=raw.token_address
+              summarized.transfer_count, summarized.total_amount_raw,
+              summarized.token_address AS summary_token
+         FROM raw FULL JOIN summarized USING (token_address)
      ) SELECT totals.*,
               COALESCE(SUM(transfer_count), 0)::text AS summary_total,
               COALESCE(SUM(total_amount_raw), 0)::text AS summary_amount,

@@ -49,6 +49,15 @@ O `df -B1` enviado sem hora de medição mostrou bytes disponíveis: `/`
 do piloto não recuperaria espaço no volume de `chain_events`, que exige uma
 decisão operacional independente.
 
+Em 2026-09-23 às 22:38:15+02, a tentativa aprovada de remover somente 19/07
+parou em `transfer raw, summaries or watermark no longer reconcile`, antes do
+`DROP`; a transação foi revertida. Depois, o operador mediu `70.086.881.280`
+bytes livres em `/` e `20.708.737.024` em `/srv/trendscope-data-2`. O SQL do
+gate tinha um `FULL JOIN` que preservava resumos de outros dias; um teste de
+integração reproduziu o mesmo erro com um resumo alheio ao piloto. A correção
+filtra dia e versão antes do join. Uma auditoria read-only atual ainda precisa
+confirmar se existe também alguma divergência real no dia 19.
+
 ## Exceções aprovadas como critério do piloto
 
 O valor raw armazenado é `wallet_self` em todos os casos abaixo. O hash da
