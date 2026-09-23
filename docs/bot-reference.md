@@ -6016,6 +6016,19 @@ potencial, não prova de dependência do raw. Mesmo com
 necessária revalidação canônica imediatamente antes de qualquer remoção. O
 comando não destaca nem apaga partições e não libera espaço por si só.
 
+Para preservar `unknown` legados de um dia `verified` enquanto a partição raw
+ainda existe, use `npm run robinhood:wallet-transfer-evidence-migrate --
+--day=AAAA-MM-DD` para uma prévia somente de leitura. Cada lote percorre até
+5.000 eventos raw pela chave primária; `--batch-size` aceita 1–10.000 e
+`--max-batches` aceita 1–100 (padrão 1). Para aplicar após conferir espaço
+livre e saúde do LIVE, adicione `--apply
+--confirm-migrate-robinhood-wallet-transfer-evidence`. O relatório por lote
+traz `nextCursor`; passe-o em `--after=CURSOR` para continuar. Repetir o mesmo
+cursor é idempotente; conflito entre raw e evidência existente aborta o lote.
+`scanComplete` só indica o fim da varredura: execute o readiness e os demais
+gates antes de qualquer poda. O comando não altera a retenção de 30 dias,
+não habilita a captura LIVE nem torna `readyForDrop=true`.
+
 O source de classificação de transfers mantém gates distintos para LIVE e
 backfill. O gate histórico falha fechado até o seed de swaps estar `complete`
 e terminalmente válido, ter `origin_block` explícito e contar com uma frontier

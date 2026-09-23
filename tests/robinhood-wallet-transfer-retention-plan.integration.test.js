@@ -7,10 +7,13 @@ const db = require('../src/models/db');
 const { createRobinhoodTokenTransferRepository } = require('../src/models/robinhood-token-transfer-persistence');
 const { createRobinhoodWalletTransferRetentionPlanner } = require('../src/models/robinhood-wallet-transfer-retention-plan');
 const { createRobinhoodWalletTransferRetentionReadiness } = require('../src/models/robinhood-wallet-transfer-retention-readiness');
+const { createRobinhoodWalletTransferEvidenceMigration } = require('../src/models/robinhood-wallet-transfer-evidence-migration');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage132 = require('../src/utils/db-init-stage132');
 const stage243 = require('../src/utils/db-init-stage243');
 const stage244 = require('../src/utils/db-init-stage244');
+const stage191 = require('../src/utils/db-init-stage191');
+const stage205 = require('../src/utils/db-init-stage205');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_retention_plan_v1';
@@ -19,8 +22,12 @@ const MISSING_DAY = '2099-01-04';
 const READY_PARTITION = 'robinhood_token_transfer_events_2099_01_03';
 const HASH = `0x${'a'.repeat(64)}`;
 const UNKNOWN_TX = `0x${'b'.repeat(64)}`;
+const MIGRATION_DAY = '2099-01-05';
+const MIGRATION_PARTITION = 'robinhood_token_transfer_events_2099_01_05';
+const MIGRATION_TXS = ['d', 'e', 'f'].map((digit) => `0x${digit.repeat(64)}`);
+let insertedCaptureCursor = false;
 
-async function insertVerified(day) {
+async function insertVerified(day, version = VERSION) {
   return db.query(
     `INSERT INTO robinhood_wallet_transfer_compaction_watermarks (
        chain, projection_version, partition_day, lifecycle_state,
@@ -32,13 +39,17 @@ async function insertVerified(day) {
      ) VALUES ('robinhood', $1, $2, 'verified', 101, 0, 0,
        ($2::date + INTERVAL '1 day'), 100, $3, 'unified_v1', 101,
        true, true, true, true, true, NOW(), NOW())`,
-    [VERSION, day, HASH]
+    [version, day, HASH]
   );
 }
 async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [UNKNOWN_TX]);
   await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [UNKNOWN_TX]);
   await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [UNKNOWN_TX]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = ANY($1::varchar[])', [MIGRATION_TXS]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = ANY($1::varchar[])', [MIGRATION_TXS]);
+  await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = ANY($1::varchar[])', [MIGRATION_TXS]);
+  await db.query("DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = 'rh_transfer_v1' AND partition_day = $1", [MIGRATION_DAY]);
   await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [VERSION]);
 }
 
@@ -49,11 +60,22 @@ describe('Robinhood wallet transfer retention plan integration', () => {
     await stage132.init({ closePool: false });
     await stage243.init({ closePool: false });
     await stage244.init({ closePool: false });
+    await stage191.init({ closePool: false });
+    await stage205.init({ closePool: false });
     await cleanup();
+    const cursor = await db.query(
+      `INSERT INTO robinhood_chain_capture_cursor(chain, next_block)
+       VALUES ('robinhood', 1) ON CONFLICT (chain) DO NOTHING RETURNING chain`
+    );
+    insertedCaptureCursor = cursor.rowCount === 1;
   });
   after(async () => {
     await cleanup();
+    if (insertedCaptureCursor) {
+      await db.query("DELETE FROM robinhood_chain_capture_cursor WHERE chain = 'robinhood'");
+    }
     await db.query(`DROP TABLE IF EXISTS ${READY_PARTITION}`);
+    await db.query(`DROP TABLE IF EXISTS ${MIGRATION_PARTITION}`);
     await db.pool.end();
   });
 
@@ -124,5 +146,45 @@ describe('Robinhood wallet transfer retention plan integration', () => {
       [UNKNOWN_TX, HASH]
     );
     assert.equal(await coverage(), 'candidate');
+  });
+
+  it('migrates only unknowns in bounded, resumable and idempotent batches', async () => {
+    const raw = createRobinhoodTokenTransferRepository({ database: db,
+      preservePendingEvidence: false });
+    const blockTime = `${MIGRATION_DAY}T12:00:00Z`;
+    await raw.insertTransferEvents(MIGRATION_TXS.map((transactionHash, index) => ({
+      blockNumber: '100', blockHash: HASH, blockTime, transactionHash,
+      transactionIndex: String(index), logIndex: String(index),
+      tokenAddress: `0x${'c'.repeat(40)}`, fromWallet: `0x${'d'.repeat(40)}`,
+      toWallet: `0x${'e'.repeat(40)}`, amountRaw: '75',
+      transferKind: index === 1 ? 'wallet_transfer' : 'unknown',
+      classificationVersion: 'rh_transfer_v1',
+    })));
+    await insertVerified(MIGRATION_DAY, 'rh_transfer_v1');
+    const migration = createRobinhoodWalletTransferEvidenceMigration({ database: db });
+    const input = { day: MIGRATION_DAY, batchSize: 2, maxBatches: 1 };
+    const preview = await migration.run(input);
+    assert.deepEqual([preview.mode, preview.scanned, preview.unknown, preview.inserted],
+      ['read-only', 2, 1, 0]);
+    const count = async () => Number((await db.query(
+      'SELECT COUNT(*) AS total FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = ANY($1::varchar[])',
+      [MIGRATION_TXS]
+    )).rows[0].total);
+    assert.equal(await count(), 0);
+    const first = await migration.run({ ...input, apply: true, confirmed: true });
+    assert.deepEqual([first.scanned, first.unknown, first.inserted, first.scanComplete],
+      [2, 1, 1, false]);
+    assert.equal(await count(), 1);
+    const repeated = await migration.run({ ...input, apply: true, confirmed: true });
+    assert.equal(repeated.inserted, 0);
+    const second = await migration.run({ ...input, after: first.nextCursor,
+      apply: true, confirmed: true });
+    assert.deepEqual([second.scanned, second.unknown, second.inserted, second.scanComplete],
+      [1, 1, 1, true]);
+    assert.equal(await count(), 2);
+    await db.query('UPDATE robinhood_wallet_transfer_pending_evidence SET amount_raw = 76 WHERE transaction_hash = $1', [MIGRATION_TXS[0]]);
+    await assert.rejects(migration.run({ ...input, apply: true, confirmed: true }),
+      /conflicts with raw/);
+    assert.equal(await count(), 2);
   });
 });
