@@ -24,9 +24,32 @@ function probeSql(partition, from, to) {
       AND last_error_message LIKE '%transaction_position_missing%'
   )`;
   return {
-    unknownTransfer: { sql: `SELECT EXISTS (
+    unpreservedUnknown: { sql: `SELECT EXISTS (
       SELECT 1 FROM ${partition} raw
       WHERE raw.chain = $1 AND raw.transfer_kind = 'unknown'
+        AND NOT EXISTS (
+          SELECT 1 FROM robinhood_wallet_transfer_pending_evidence evidence
+          WHERE evidence.chain = raw.chain
+            AND evidence.transaction_hash = raw.transaction_hash
+            AND evidence.log_index = raw.log_index
+            AND evidence.block_time = raw.block_time
+            AND evidence.block_number = raw.block_number
+            AND evidence.block_hash = raw.block_hash
+            AND evidence.transaction_index = raw.transaction_index
+            AND evidence.token_address = raw.token_address
+            AND evidence.from_wallet = raw.from_wallet
+            AND evidence.to_wallet = raw.to_wallet
+            AND evidence.amount_raw = raw.amount_raw
+            AND evidence.classification_version = raw.classification_version
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_wallet_transfer_evidence_dispositions disposition
+              WHERE disposition.chain = evidence.chain
+                AND disposition.transaction_hash = evidence.transaction_hash
+                AND disposition.log_index = evidence.log_index
+                AND disposition.block_time = evidence.block_time
+                AND disposition.disposition IN ('orphaned', 'reclassified')
+            )
+        )
     ) AS present`, params: [CHAIN] },
     endpointRoleGapOnUnknown: { sql: `SELECT EXISTS (
       SELECT 1 FROM ${partition} raw
