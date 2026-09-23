@@ -1173,6 +1173,10 @@ module.exports = {
       process.env.ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED,
       false
     ),
+    positionPreimagePruneEnabled: parseBoolean(
+      process.env.ROBINHOOD_RETENTION_POSITION_PREIMAGE_PRUNE_ENABLED,
+      false
+    ),
     chainEventRetentionMs: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_EVENT_RETENTION_MS,
       3 * 24 * 60 * 60 * 1000,

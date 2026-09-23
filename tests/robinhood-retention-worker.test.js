@@ -41,7 +41,7 @@ function dependencies(database, gate = VALID_WALLET_GATE) {
   };
 }
 
-function createFakeDatabase(rawBatches = [], journalBatches = []) {
+function createFakeDatabase(rawBatches = [], journalBatches = [], positionBatches = []) {
   const calls = [];
   return {
     calls,
@@ -68,6 +68,9 @@ function createFakeDatabase(rawBatches = [], journalBatches = []) {
       }
       if (/DELETE FROM robinhood_wallet_transfer_reorg_journal/.test(sql)) {
         return { rows: [{ deleted: journalBatches.shift() || 0 }] };
+      }
+      if (/DELETE FROM robinhood_wallet_position_reorg_preimages/.test(sql)) {
+        return { rows: [{ deleted: positionBatches.shift() || 0 }] };
       }
       throw new Error('Unexpected retention query');
     },
@@ -116,6 +119,7 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
       chainEventRetentionEnabled: true,
       canonicalRawRetentionEnabled: false,
+      positionPreimagePruneEnabled: false,
       chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
       canonicalMaxLagBlocks: 128,
       capturePruneEnabled: true,
@@ -290,6 +294,7 @@ describe('Robinhood retention worker', () => {
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
       transferReorgJournal: 0,
+      positionPreimages: 0,
       realtimeOutboxRows: 0,
       realtimeOutboxCycles: 0,
       realtimeOutbox: EMPTY_REALTIME_TELEMETRY,
@@ -378,6 +383,7 @@ describe('Robinhood retention worker', () => {
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
       transferReorgJournal: 0,
+      positionPreimages: 0,
       realtimeOutboxRows: 0,
       realtimeOutboxCycles: 0,
       realtimeOutbox: null,
@@ -510,6 +516,31 @@ describe('Robinhood retention worker', () => {
     assert.match(calls[0].sql, /journal\.block_number <= cursor\.finalized_head/);
     assert.match(calls[0].sql, /FOR UPDATE OF journal SKIP LOCKED/);
     assert.deepEqual(calls[0].params, [100]);
+  });
+
+  it('prunes position preimages only when enabled, in bounded finalized batches', async () => {
+    const disabled = createFakeDatabase();
+    await worker.runOnce({ batchLimit: 100 }, {}, dependencies(disabled));
+    assert.equal(disabled.calls.some(({ sql }) => (
+      /DELETE FROM robinhood_wallet_position_reorg_preimages/.test(sql)
+    )), false);
+
+    const database = createFakeDatabase([], [], [100, 25]);
+    const summary = await worker.runOnce({
+      positionPreimagePruneEnabled: true,
+      batchLimit: 100, maxBatches: 5, statementTimeoutMs: 2500,
+    }, {}, dependencies(database));
+    assert.equal(summary.positionPreimages, 125);
+    const calls = database.calls.filter(({ sql }) => (
+      /DELETE FROM robinhood_wallet_position_reorg_preimages/.test(sql)
+    ));
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].sql, /preimage\.expires_at <= NOW\(\)/);
+    assert.match(calls[0].sql, /preimage\.through_block <= cursor\.finalized_head/);
+    assert.match(calls[0].sql, /FOR UPDATE OF preimage SKIP LOCKED/);
+    assert.deepEqual(calls[0].params, [100]);
+    assert.equal(calls[0].timeoutMs, 2500);
+    assert.equal(worker.getStatus().lastDeletedPositionPreimages, 125);
   });
 
   it('reuses expensive realtime outbox telemetry between cleanup cycles', async () => {

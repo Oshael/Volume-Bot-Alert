@@ -6157,10 +6157,13 @@ não canônico ou identidade de preimagem inconsistente falha com
 `ROBINHOOD_WALLET_POSITION_PREIMAGE_ENABLED=true` habilita, após a Stage 245,
 a captura transacional opt-in do estado anterior de cada posição LIVE tocada
 por um lote, incluindo marcadores de lotes vazios. O padrão é `false`. Esses
-registros expiram logicamente em três dias, mas ainda não são removidos
-fisicamente; mantenha a flag desligada em produção até existirem expurgo,
-ensaio de reorg completo e orçamento de disco medido. Lotes anteriores à
-ativação da flag não ganham preimagens retroativamente.
+registros expiram em três dias. Após aplicar a Stage 245,
+`ROBINHOOD_RETENTION_POSITION_PREIMAGE_PRUNE_ENABLED=true` habilita o expurgo
+em lotes no retention worker existente, somente para linhas vencidas cujo lote
+esteja até o `finalized_head`; o padrão é `false`. O expurgo libera espaço
+reutilizável no PostgreSQL, sem garantir queda imediata no `df`. Mantenha a
+captura desligada em produção até ensaio de reorg completo e orçamento de disco
+medido. Lotes anteriores à ativação da flag não ganham preimagens retroativamente.
 O comando de reclassificação exige ambas as Stages 243/244. Ele seleciona tanto
 raw `unknown` quanto evidência pendente sem raw; eventos legados sem evidência
 continuam lidos do raw. Marcadores `orphaned`/`reclassified` excluem o candidato.

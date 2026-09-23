@@ -64,6 +64,7 @@ let status = {
   lastDeletedHourlyBuckets: 0,
   lastProtectedHourlyBuckets: 0,
   lastDeletedTransferReorgJournal: 0,
+  lastDeletedPositionPreimages: 0,
   lastDeletedRealtimeOutboxRows: 0,
   lastDeletedRealtimeOutboxCycles: 0,
   lastDeletedChainEvents: 0,
@@ -85,6 +86,7 @@ let status = {
   totalDeletedObservations: 0,
   totalDeletedHourlyBuckets: 0,
   totalDeletedTransferReorgJournal: 0,
+  totalDeletedPositionPreimages: 0,
   totalErrors: 0,
   lastError: null,
 };
@@ -120,6 +122,7 @@ function normalizeOptions(options = {}) {
     ),
     chainEventRetentionEnabled: options.chainEventRetentionEnabled !== false,
     canonicalRawRetentionEnabled: options.canonicalRawRetentionEnabled === true,
+    positionPreimagePruneEnabled: options.positionPreimagePruneEnabled === true,
     chainEventRetentionMs: boundedInteger(
       options.chainEventRetentionMs,
       DEFAULT_CHAIN_EVENT_RETENTION_MS,
@@ -302,6 +305,30 @@ async function deleteExpiredTransferReorgJournal(database, options) {
   return Number(result.rows[0]?.deleted || 0);
 }
 
+async function deleteExpiredPositionPreimages(database, options) {
+  const result = await queryWithTimeout(
+    database,
+    `WITH expired AS MATERIALIZED (
+       SELECT preimage.ctid
+         FROM robinhood_wallet_position_reorg_preimages preimage
+         INNER JOIN robinhood_chain_capture_cursor cursor
+           ON cursor.chain=preimage.chain
+        WHERE preimage.chain='robinhood' AND preimage.expires_at <= NOW()
+          AND cursor.finalized_head IS NOT NULL
+          AND preimage.through_block <= cursor.finalized_head
+        ORDER BY preimage.expires_at, preimage.through_block
+        LIMIT $1::int
+        FOR UPDATE OF preimage SKIP LOCKED
+     ), deleted AS (
+       DELETE FROM robinhood_wallet_position_reorg_preimages preimage
+        USING expired WHERE preimage.ctid=expired.ctid RETURNING 1
+     ) SELECT COUNT(*)::int AS deleted FROM deleted`,
+    [options.batchLimit],
+    options.statementTimeoutMs
+  );
+  return Number(result.rows[0]?.deleted || 0);
+}
+
 function emptySummary(wallet = {}, admission = {}) {
   return {
     maintenanceAllowed: admission.allowed === true,
@@ -329,6 +356,7 @@ function emptySummary(wallet = {}, admission = {}) {
     hourlyBuckets: 0,
     protectedHourlyBuckets: 0,
     transferReorgJournal: 0,
+    positionPreimages: 0,
     realtimeOutboxRows: 0,
     realtimeOutboxCycles: 0,
     realtimeOutbox: null,
@@ -471,6 +499,13 @@ async function runCleanupBatches(database, options, wallet) {
     summary.transferReorgJournal += deleted;
     if (deleted < options.batchLimit) break;
   }
+  if (options.positionPreimagePruneEnabled) {
+    for (let index = 0; index < options.maxBatches; index += 1) {
+      const deleted = await deleteExpiredPositionPreimages(database, options);
+      summary.positionPreimages += deleted;
+      if (deleted < options.batchLimit) break;
+    }
+  }
   return summary;
 }
 
@@ -581,6 +616,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         status.lastCandidatesProtectedByAggregation = 0;
         status.lastDeletedObservations = 0;
         status.lastDeletedTransferReorgJournal = 0;
+        status.lastDeletedPositionPreimages = 0;
         status.lastDeletedRealtimeOutboxRows = 0;
         status.lastDeletedRealtimeOutboxCycles = 0;
         status.lastDeletedHeadCaptures = 0;
@@ -635,6 +671,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedHourlyBuckets = summary.hourlyBuckets;
       status.lastProtectedHourlyBuckets = summary.protectedHourlyBuckets;
       status.lastDeletedTransferReorgJournal = summary.transferReorgJournal;
+      status.lastDeletedPositionPreimages = summary.positionPreimages;
       status.lastDeletedRealtimeOutboxRows = summary.realtimeOutboxRows;
       status.lastDeletedRealtimeOutboxCycles = summary.realtimeOutboxCycles;
       status.lastDeletedChainEvents = summary.chainEvents.totalDeleted || 0;
@@ -656,6 +693,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.totalDeletedObservations += summary.observations;
       status.totalDeletedHourlyBuckets += summary.hourlyBuckets;
       status.totalDeletedTransferReorgJournal += summary.transferReorgJournal;
+      status.totalDeletedPositionPreimages += summary.positionPreimages;
       completeRun(startedAtMs);
       return summary;
     } catch (error) {
@@ -676,7 +714,8 @@ function schedule(options, delayMs) {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
       if (summary.examinedProcessedLogs || summary.hourlyBuckets
-          || summary.transferReorgJournal || summary.realtimeOutboxRows
+          || summary.transferReorgJournal || summary.positionPreimages
+          || summary.realtimeOutboxRows
           || summary.chainEvents?.totalDeleted || summary.headCaptures?.deleted) {
         console.log(
           '[RobinhoodRetentionWorker]',
@@ -690,6 +729,7 @@ function schedule(options, delayMs) {
           `hourlyBuckets=${summary.hourlyBuckets}`,
           `protectedHourlyBuckets=${summary.protectedHourlyBuckets}`,
           `transferReorgJournal=${summary.transferReorgJournal}`,
+          `positionPreimages=${summary.positionPreimages}`,
           `realtimeOutbox=${summary.realtimeOutboxRows}/${summary.realtimeOutboxCycles}`,
           `chainEvents=${summary.chainEvents.totalDeleted || 0}`,
           `chainTransactions=${summary.chainEvents.totalDeletedTransactions || 0}`,
@@ -741,6 +781,7 @@ module.exports = {
   __private: {
     deleteExpiredProcessedLogs,
     deleteExpiredTransferReorgJournal,
+    deleteExpiredPositionPreimages,
     maintainRealtimeOutbox,
     maintainChainEvents,
     maintainHeadCaptures,
