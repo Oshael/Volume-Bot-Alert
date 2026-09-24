@@ -72,6 +72,16 @@ async function assertCanonicalStorageIndexes(client) {
   }
 }
 
+async function legacyEventStorage(client) {
+  const result = await client.query(`/* chain-event-prune:relation-kind */
+    SELECT relkind FROM pg_class
+    WHERE oid=to_regclass('robinhood_chain_events')`);
+  const kind = result.rows[0]?.relkind;
+  if (kind === 'r') return true;
+  if (kind === 'p') return false;
+  throw new Error('Robinhood event relation is unavailable');
+}
+
 async function resolveRetentionCutoff(database, input) {
   const client = await database.getClient();
   try {
@@ -127,6 +137,10 @@ async function pruneBatch(database, cutoffBlock, batchLimit, retentionMs = DEFAU
     if (lock.rows[0]?.locked !== true) {
       await client.query('COMMIT');
       return Object.freeze({ status: 'blocked', reason: 'concurrent_pruner', deletedEvents: 0 });
+    }
+    if (!await legacyEventStorage(client)) {
+      await client.query('COMMIT');
+      return Object.freeze({ status: 'blocked', reason: 'partitioned_events', deletedEvents: 0 });
     }
     await assertCascadeIndexes(client);
     const deleted = await client.query(
@@ -194,6 +208,11 @@ async function pruneCanonicalStorageBatch(
         status: 'blocked', reason: 'concurrent_pruner',
         deletedTransactions: 0, deletedBlocks: 0,
       });
+    }
+    if (!await legacyEventStorage(client)) {
+      await client.query('COMMIT');
+      return Object.freeze({ status: 'blocked', reason: 'partitioned_events',
+        deletedTransactions: 0, deletedBlocks: 0 });
     }
     await assertCanonicalStorageIndexes(client);
     // A transaction delete would cascade into the shadow and create dead rows per event.

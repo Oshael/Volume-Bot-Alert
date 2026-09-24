@@ -7,6 +7,11 @@ const {
 } = require('../src/services/robinhood-chain-event-pruner');
 const { parseArgs } = require('../src/utils/prune-robinhood-chain-events');
 
+function isLockQuery(sql) {
+  return sql.includes('chain-event-prune:lock')
+    || sql.includes('chain-event-prune:storage-lock');
+}
+
 function harness(input = {}) {
   const calls = [];
   let deletion = 0;
@@ -16,8 +21,12 @@ function harness(input = {}) {
       if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql) || sql.startsWith('SET LOCAL')) {
         return { rows: [] };
       }
-      if (sql.includes('chain-event-prune:lock')) return { rows: [{ locked: true }] };
-      if (sql.includes('chain-event-prune:storage-lock')) return { rows: [{ locked: true }] };
+      if (isLockQuery(sql)) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes('chain-event-prune:relation-kind')) {
+        return { rows: [{ relkind: input.partitioned ? 'p' : 'r' }] };
+      }
       if (sql.includes('chain-event-prune:indexes')) return { rows: [{ ready_indexes: 2 }] };
       if (sql.includes('chain-event-prune:storage-indexes')) {
         return { rows: [{ ready_indexes: 1 }] };
@@ -165,6 +174,18 @@ describe('Robinhood chain event pruner', () => {
     assert.equal(report.status, 'blocked');
     assert.equal(report.totalDeleted, 0);
     assert.equal(context.calls.length, 0);
+  });
+
+  it('blocks row deletes and canonical storage deletes after partition cutover', async () => {
+    const context = harness({ partitioned: true });
+    const report = await runPilot({ pruneCanonicalStorage: true }, {
+      database: context.database, audit: { inspect: async () => safety() },
+    });
+    assert.equal(report.stopReason, 'blocked');
+    assert.equal(report.totalDeleted, 0);
+    assert.equal(report.totalDeletedTransactions, 0);
+    assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:delete')), false);
+    assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:transactions')), false);
   });
 
   it('rolls back when either Stage 201 index is unavailable', async () => {

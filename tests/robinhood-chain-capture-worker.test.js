@@ -5,7 +5,7 @@ const {
   CAPTURE_TOPICS, createRobinhoodChainCaptureWorker, __private,
 } = require('../src/services/robinhood-chain-capture-worker');
 const {
-  main: captureMain, __private: captureProcess,
+  main: captureMain, resolveEventShadowEnabled, __private: captureProcess,
 } = require('../src/utils/run-robinhood-chain-capture-worker');
 
 const hash = (character) => `0x${character.repeat(64)}`;
@@ -258,6 +258,7 @@ test('capture process seeds and injects the V3 snapshotter', async () => {
   let snapshotOptions; let workerDeps;
   const process = await captureMain({
     options: { enabled: true, leaseHeartbeatMs: 1000, leaseTtlMs: 5000 },
+    resolveEventShadowEnabled: async () => false,
     rpcOptions: {},
     rpcClientFactory: () => ({ request: async () => null }),
     catalog: { listActivePools: async () => seedPools },
@@ -277,4 +278,17 @@ test('capture process seeds and injects the V3 snapshotter', async () => {
   assert.equal(typeof workerDeps.v3Snapshotter.captureBlock, 'function');
   assert.equal(typeof workerDeps.recoveryPlanner.plan, 'function');
   await process.shutdown();
+});
+
+test('partitioned active events disable the legacy mirror even if its flag stays on', async () => {
+  const database = { query: async () => ({ rows: [{
+    active_kind: 'p', shadow_present: false,
+  }] }) };
+  assert.equal(await resolveEventShadowEnabled(database, true), false);
+  await assert.rejects(resolveEventShadowEnabled({ query: async () => ({ rows: [{
+    active_kind: 'p', shadow_present: true,
+  }] }) }, true), /still have a shadow relation/);
+  await assert.rejects(resolveEventShadowEnabled({ query: async () => ({ rows: [{
+    active_kind: 'r', shadow_present: false,
+  }] }) }, true), /shadow is unavailable/);
 });

@@ -5390,6 +5390,12 @@ bloco. O canário passa a referenciar o evento exato no espelho, com
 descartada. Após o corte, confira `npm run db:schema-check` e confirme no catálogo
 que nenhuma FK ainda referencia `robinhood_chain_events`. Isso ainda não troca
 o capturador nem os leitores de eventos para a tabela particionada.
+No startup, o capturador detecta o tipo da tabela ativa: enquanto for monolítica,
+respeita `ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED`; quando for particionada, desliga
+o espelhamento legado mesmo que a flag permaneça ligada. O pruner antigo recusa
+deletes linha a linha de eventos e de storage canônico quando a tabela ativa é
+particionada. É necessário reiniciar o capturador após a troca de tabelas; o
+descarte físico de partições terá um procedimento separado.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com

@@ -16,6 +16,20 @@ const {
 
 const LEASE_KEY = 'robinhood-chain-capture-worker';
 
+async function resolveEventShadowEnabled(database, requested) {
+  const result = await database.query(`SELECT active.relkind AS active_kind,
+      to_regclass('public.robinhood_chain_events_shadow') IS NOT NULL AS shadow_present
+    FROM pg_class active WHERE active.oid=to_regclass('public.robinhood_chain_events')`);
+  const row = result.rows[0];
+  if (row?.active_kind === 'p') {
+    if (row.shadow_present) throw new Error('partitioned events still have a shadow relation');
+    return false;
+  }
+  if (row?.active_kind !== 'r') throw new Error('active Robinhood event relation is unavailable');
+  if (requested && !row.shadow_present) throw new Error('event shadow is unavailable');
+  return requested === true;
+}
+
 function captureRpcOptions(options, base = config.robinhoodIngestionWorker) {
   let parsed;
   try { parsed = new URL(String(options.rpcUrl || '')); } catch (_) {
@@ -39,8 +53,12 @@ async function main(deps = {}) {
     deps.rpcOptions || captureRpcOptions(options)
   );
   const database = deps.database || db;
+  const eventShadowEnabled = await (deps.resolveEventShadowEnabled || resolveEventShadowEnabled)(
+    database, options.eventShadowEnabled
+  );
+  const effectiveOptions = { ...options, eventShadowEnabled };
   const journal = deps.journal || createRobinhoodChainCaptureJournal({
-    database, shadowEnabled: options.eventShadowEnabled,
+    database, shadowEnabled: eventShadowEnabled,
   });
   const recoveryPlanner = deps.recoveryPlanner
     || (deps.recoveryPlannerFactory || createRobinhoodChainRecoveryPlanner)(
@@ -57,7 +75,7 @@ async function main(deps = {}) {
     );
   }
   const worker = (deps.workerFactory || createRobinhoodChainCaptureWorker)(
-    { rpcClient, journal, recoveryPlanner, v3Snapshotter }, options
+    { rpcClient, journal, recoveryPlanner, v3Snapshotter }, effectiveOptions
   );
   const leases = (deps.leaseManagerFactory || createWorkerLeaseManager)({
     heartbeatMs: options.leaseHeartbeatMs, ttlMs: options.leaseTtlMs,
@@ -89,4 +107,5 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1; void db.pool.end();
 });
 
-module.exports = { LEASE_KEY, captureRpcOptions, main, __private: { captureRpcOptions } };
+module.exports = { LEASE_KEY, captureRpcOptions, main, resolveEventShadowEnabled,
+  __private: { captureRpcOptions } };
