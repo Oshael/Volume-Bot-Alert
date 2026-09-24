@@ -152,6 +152,7 @@
     "robinhood:chain-event-shadow-copy-batches": "node src/utils/run-robinhood-chain-event-shadow-copy-batches.js",
     "robinhood:chain-event-shadow-audit": "node src/utils/audit-robinhood-chain-event-shadow.js",
     "robinhood:v3-snapshot-shadow-backfill": "node src/utils/backfill-robinhood-v3-snapshot-blocks-from-shadow.js",
+    "robinhood:v3-snapshot-shadow-backfill-batches": "node src/utils/run-robinhood-v3-snapshot-shadow-backfill.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:onboarding-backfill": "node src/utils/backfill-robinhood-onboarding.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",

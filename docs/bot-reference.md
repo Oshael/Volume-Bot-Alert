@@ -5292,6 +5292,14 @@ snapshots associados a eventos da sombra, recusa `block_number` divergente e
 atualiza apenas os nulos. Use a mesma faixa fixa ao retomar com `--cursor=...`;
 `nextCursor: null` e `scanComplete: true` encerram a varredura. Não atualiza
 snapshots antigos fora da sombra.
+Para repetir páginas sem copiar cursores manualmente, use
+`npm run robinhood:v3-snapshot-shadow-backfill-batches -- --from-block=N
+--through-block=M --batch-size=1000 --cursor=CURSOR --max-pages=100 --apply`.
+O runner confere a saúde da captura e o espaço de `/` antes de cada página;
+interrompe a escrita abaixo de 30 GiB livres em `/` ou dos limites do runner
+de cópia da sombra. Cada página tem commit próprio. O resumo traz `nextCursor`
+para retomar após `page_limit`, pausa ou erro; omita `--cursor` só na primeira
+execução. Sem `--apply`, todas as páginas são somente leitura.
 Depois de aplicar a Stage 247 e provisionar partições à frente do cursor LIVE,
 `ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED=true` faz a captura copiar os eventos do
 journal principal para a sombra na mesma transação. A captura preenche
