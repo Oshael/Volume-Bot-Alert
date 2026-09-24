@@ -6,6 +6,7 @@ const db = require('../models/db');
 const { copyPage, parseArgs: parsePageArgs } = require('./copy-robinhood-chain-event-shadow-page');
 
 const MAX_PAGES = 10000;
+const GROW_AFTER_PAGES = 16;
 const MIN_ROOT_FREE_BYTES = 20n * 1024n ** 3n;
 const MIN_SHADOW_FREE_BYTES = 75n * 1024n ** 3n;
 const MAX_CAPTURE_LAG_BLOCKS = 800;
@@ -94,6 +95,20 @@ async function copyAdaptivePage(input, nextBlock, initialBlocks, deps) {
   throw new Error('shadow copy page has no valid block width');
 }
 
+async function blockedHealth(input, guard, database, volumePath) {
+  if (!input.apply) return null;
+  const health = await guard(database, volumePath);
+  return health.ready ? null : health;
+}
+
+function nextPageWidth(page, previousBlocks, stablePages, requestedBlocks) {
+  const stable = page.maxBlocks < previousBlocks ? 0 : stablePages + 1;
+  if (stable >= GROW_AFTER_PAGES && page.maxBlocks < requestedBlocks) {
+    return { blocks: Math.min(requestedBlocks, page.maxBlocks * 2), stable: 0 };
+  }
+  return { blocks: page.maxBlocks, stable };
+}
+
 async function runPages(input, deps = {}) {
   const database = deps.database || db;
   const copy = deps.copy || copyPage;
@@ -107,20 +122,21 @@ async function runPages(input, deps = {}) {
   let pages = 0;
   let inserted = 0;
   let pageBlocks = input.maxBlocks;
+  let stablePages = 0;
   let stopReason = 'page_limit';
   while (pages < maxPages && nextBlock <= input.throughBlock) {
-    if (input.apply) {
-      const health = await guard(database, volumePath);
-      if (!health.ready) {
-        progress({ phase: 'paused', nextBlock, ...health });
-        stopReason = health.reason;
-        break;
-      }
+    const health = await blockedHealth(input, guard, database, volumePath);
+    if (health) {
+      progress({ phase: 'paused', nextBlock, ...health });
+      stopReason = health.reason;
+      break;
     }
     const page = await copyAdaptivePage(input, nextBlock, pageBlocks,
       { copy, database, progress });
     const { result } = page;
-    pageBlocks = page.maxBlocks;
+    const width = nextPageWidth(page, pageBlocks, stablePages, input.maxBlocks);
+    pageBlocks = width.blocks;
+    stablePages = width.stable;
     pages += 1;
     inserted += result.inserted;
     nextBlock = result.nextBlock;

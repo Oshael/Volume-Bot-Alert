@@ -71,3 +71,27 @@ it('reduces only the failing page and retries from the same block', async () => 
   assert.equal(report.nextBlock, 125);
   assert.equal(report.inserted, 10);
 });
+
+it('widens after sixteen successful pages without bypassing the page limit', async () => {
+  const options = parseArgs(['--from-block=100', '--through-block=10000',
+    '--max-blocks=100', '--max-pages=18', '--pause-ms=0', '--apply']);
+  const attempts = [];
+  const report = await runPages(options, {
+    database: {}, volumePath: async () => '/tmp', pause: async () => {},
+    guard: async () => ({ ready: true }),
+    copy: async ({ fromBlock, maxBlocks }) => {
+      attempts.push([fromBlock, maxBlocks]);
+      if (fromBlock === 100 && maxBlocks > 25) {
+        const error = new Error('page too large');
+        error.code = 'shadow_copy_page_too_large';
+        throw error;
+      }
+      return { fromBlock, nextBlock: fromBlock + maxBlocks, inserted: 1 };
+    },
+  });
+  assert.deepEqual(attempts.slice(0, 3), [[100, 100], [100, 50], [100, 25]]);
+  assert.equal(attempts.at(-2)[1], 25);
+  assert.equal(attempts.at(-1)[1], 50);
+  assert.equal(report.pages, 18);
+  assert.equal(report.nextBlock, 575);
+});

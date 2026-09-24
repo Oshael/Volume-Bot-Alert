@@ -5326,6 +5326,9 @@ metade `max-blocks` e tenta novamente no mesmo bloco; nunca conta uma tentativa
 rejeitada como progresso. Erros imprimem um resumo com o último `nextBlock`
 confirmado. Se até um único bloco exceder o limite, pare para tratar esse bloco
 separadamente; não pule eventos.
+Depois de 16 páginas bem-sucedidas na mesma largura, o runner dobra a largura
+até o `--max-blocks` solicitado. Uma faixa densa continua reduzindo a página
+antes de qualquer gravação, sem pular blocos.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
