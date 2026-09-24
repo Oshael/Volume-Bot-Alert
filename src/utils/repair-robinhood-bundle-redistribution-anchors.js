@@ -20,10 +20,11 @@ function bounded(value, fallback, minimum, maximum, label) {
 }
 
 function parseArgs(argv = []) {
-  const values = {}; let apply = false; let confirmed = false;
+  const values = {}; let apply = false; let confirmed = false; let observationOnly = false;
   for (const argument of argv) {
     if (argument === '--apply' && !apply) apply = true;
     else if (argument === CONFIRM_FLAG && !confirmed) confirmed = true;
+    else if (argument === '--observation-only' && !observationOnly) observationOnly = true;
     else {
       const match = /^--(limit|concurrency|timeout-ms)=(.+)$/.exec(argument);
       if (!match || values[match[1]] != null) {
@@ -33,7 +34,7 @@ function parseArgs(argv = []) {
     }
   }
   if (apply !== confirmed) throw new Error(`--apply requires ${CONFIRM_FLAG}`);
-  return Object.freeze({ apply,
+  return Object.freeze({ apply, observationOnly,
     limit: bounded(values.limit, 100, 1, 1000, '--limit'),
     concurrency: bounded(values.concurrency, 2, 1, 8, '--concurrency'),
     timeoutMs: bounded(values['timeout-ms'], 60_000, 1000, 300_000, '--timeout-ms') });
@@ -73,7 +74,7 @@ function blockEvidence(input, expectedNumber, expectedHash, source) {
   return Object.freeze({ blockNumber: number, blockHash: hash, blockTime, source });
 }
 
-async function listCandidates(database, limit) {
+async function listCandidates(database, limit, observationOnly = false) {
   const { rows } = await database.query(`SELECT queue.token_address,
       queue.observation_from_block::text, queue.observation_from_hash,
       queue.observation_from_time, queue.event_through_block::text,
@@ -87,13 +88,14 @@ async function listCandidates(database, limit) {
    WHERE queue.chain=$1 AND queue.rule_version=$2 AND queue.status='pending'
      AND (queue.observation_from_hash IS NULL
        OR queue.source_requested_version IS DISTINCT FROM queue.requested_version)
+     AND (NOT $4::boolean OR queue.observation_from_hash IS NULL)
    ORDER BY CASE
      WHEN queue.source_requested_version = queue.requested_version THEN 0
      WHEN holder.ledger_status = 'live'
        AND holder.live_through_block >= queue.event_through_block THEN 0
      ELSE 1
    END, queue.updated_at, queue.token_address LIMIT $3::int`,
-  [CHAIN, RULE_VERSION, limit]);
+  [CHAIN, RULE_VERSION, limit, observationOnly]);
   return Object.freeze(rows.map((row) => Object.freeze({
     tokenAddress: row.token_address,
     observation: row.observation_from_hash ? Object.freeze({
@@ -127,10 +129,10 @@ function target(candidate) {
   return candidate.holder;
 }
 
-function requiredBlocks(candidates) {
+function requiredBlocks(candidates, observationOnly = false) {
   return [...new Set(candidates.flatMap((candidate) => [
     ...(candidate.observation.blockHash ? [] : [candidate.observation.blockNumber]),
-    ...(candidate.source ? [] : [target(candidate)?.blockNumber]),
+    ...(observationOnly || candidate.source ? [] : [target(candidate)?.blockNumber]),
   ]).filter(Boolean))];
 }
 
@@ -159,19 +161,61 @@ function createArchiveResolver(options, deps = {}) {
   };
 }
 
+async function resolveBlock(value, local, archive) {
+  if (value.blockTime) return value;
+  const localBlock = local.get(value.blockNumber);
+  if (localBlock) return blockEvidence(localBlock, value.blockNumber, value.blockHash, 'postgres');
+  return archive(value.blockNumber, value.blockHash);
+}
+
 async function resolveCandidate(candidate, local, archive) {
   const sourceTarget = target(candidate);
   if (!sourceTarget) throw new Error('holder frontier has not reached the queued event');
-  async function resolve(value) {
-    if (value.blockTime) return value;
-    const localBlock = local.get(value.blockNumber);
-    if (localBlock) return blockEvidence(localBlock, value.blockNumber, value.blockHash, 'postgres');
-    return archive(value.blockNumber, value.blockHash);
-  }
   const [observation, source] = await Promise.all([
-    resolve(candidate.observation), resolve(candidate.source || sourceTarget),
+    resolveBlock(candidate.observation, local, archive),
+    resolveBlock(candidate.source || sourceTarget, local, archive),
   ]);
   return Object.freeze({ observation, source });
+}
+
+async function persistObservation(database, candidate, observation) {
+  if (observation.blockNumber !== candidate.observation.blockNumber) {
+    throw new Error('observation block diverged from queued anchor');
+  }
+  const client = await database.getClient();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(`SELECT 1
+      FROM robinhood_bundle_redistribution_queue
+     WHERE chain=$1 AND token_address=$2 AND rule_version=$3 AND status='pending'
+       AND requested_version=$4::bigint AND observation_from_block=$5::bigint
+       AND observation_from_hash IS NULL FOR UPDATE`,
+    [CHAIN, candidate.tokenAddress, RULE_VERSION, candidate.requestedVersion,
+      observation.blockNumber]);
+    if (!locked.rowCount) { await client.query('ROLLBACK'); return false; }
+    const stored = await client.query(`INSERT INTO robinhood_chain_block_anchors(
+      chain, block_number, block_hash, block_timestamp
+    ) VALUES ($1, $2::bigint, $3, $4::timestamptz)
+    ON CONFLICT (chain, block_number, block_hash) DO UPDATE SET
+      block_timestamp=robinhood_chain_block_anchors.block_timestamp
+    RETURNING block_timestamp`, [CHAIN, observation.blockNumber,
+      observation.blockHash, observation.blockTime]);
+    if (instant(stored.rows[0]?.block_timestamp, 'stored anchor') !== observation.blockTime) {
+      throw new Error('stored anchor timestamp diverged from repaired evidence');
+    }
+    const updated = await client.query(`UPDATE robinhood_bundle_redistribution_queue SET
+      observation_from_hash=$6, observation_from_time=$7::timestamptz,
+      updated_at=NOW()
+     WHERE chain=$1 AND token_address=$2 AND rule_version=$3 AND status='pending'
+       AND requested_version=$4::bigint AND observation_from_block=$5::bigint
+       AND observation_from_hash IS NULL`, [CHAIN, candidate.tokenAddress, RULE_VERSION,
+      candidate.requestedVersion, observation.blockNumber,
+      observation.blockHash, observation.blockTime]);
+    if (updated.rowCount !== 1) throw new Error('observation anchor repair version changed');
+    await client.query('COMMIT'); return true;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {}); throw error;
+  } finally { client.release(); }
 }
 
 async function persistCandidate(database, candidate, anchors) {
@@ -226,19 +270,28 @@ async function mapConcurrent(items, concurrency, operation) {
 
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv); const database = deps.database || db;
-  const candidates = await (deps.listCandidates || listCandidates)(database, options.limit);
-  const local = await (deps.loadLocalBlocks || loadLocalBlocks)(database, requiredBlocks(candidates));
+  const observationOnly = Boolean(options.observationOnly);
+  const candidates = await (deps.listCandidates || listCandidates)(
+    database, options.limit, observationOnly
+  );
+  const local = await (deps.loadLocalBlocks || loadLocalBlocks)(
+    database, requiredBlocks(candidates, observationOnly)
+  );
   const preview = candidates.map((candidate) => ({ tokenAddress: candidate.tokenAddress,
     observationBlock: candidate.observation.blockNumber,
-    sourceBlock: target(candidate)?.blockNumber || null,
-    needsArchive: Boolean(target(candidate))
-      && [candidate.observation, candidate.source || target(candidate)]
+    sourceBlock: observationOnly ? null : target(candidate)?.blockNumber || null,
+    needsArchive: (observationOnly || Boolean(target(candidate)))
+      && (observationOnly ? [candidate.observation]
+        : [candidate.observation, candidate.source || target(candidate)])
         .some((item) => !item.blockTime && !local.has(item.blockNumber)) }));
   if (!options.apply) {
-    const report = { mode: 'read-only', candidates: candidates.length,
-      localReady: preview.filter((item) => item.sourceBlock && !item.needsArchive).length,
+    const report = { mode: 'read-only', scope: observationOnly ? 'observation' : 'full',
+      candidates: candidates.length,
+      localReady: preview.filter((item) => (observationOnly || item.sourceBlock)
+        && !item.needsArchive).length,
       archiveRequired: preview.filter((item) => item.needsArchive).length,
-      blocked: preview.filter((item) => !item.sourceBlock).length, selection: preview };
+      blocked: preview.filter((item) => !observationOnly && !item.sourceBlock).length,
+      selection: preview };
     (deps.logger || console).log(JSON.stringify(report, null, 2)); return report;
   }
   let archiveResolver;
@@ -248,6 +301,14 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   };
   const outcomes = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
     try {
+      if (observationOnly) {
+        const observation = await resolveBlock(candidate.observation, local, archive);
+        const repaired = await (deps.persistObservation || persistObservation)(
+          database, candidate, observation
+        );
+        return { tokenAddress: candidate.tokenAddress,
+          status: repaired ? 'repaired' : 'stale', sources: [observation.source] };
+      }
       const anchors = await resolveCandidate(candidate, local, archive);
       const repaired = await (deps.persistCandidate || persistCandidate)(database, candidate, anchors);
       return { tokenAddress: candidate.tokenAddress, status: repaired ? 'repaired' : 'stale',
@@ -257,7 +318,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
         error: String(error?.message || error).slice(0, 500) };
     }
   });
-  const report = { mode: 'apply', candidates: candidates.length,
+  const report = { mode: 'apply', scope: observationOnly ? 'observation' : 'full',
+    candidates: candidates.length,
     repaired: outcomes.filter(({ status }) => status === 'repaired').length,
     stale: outcomes.filter(({ status }) => status === 'stale').length,
     unresolved: outcomes.filter(({ status }) => status === 'unresolved').length, outcomes };
@@ -270,5 +332,5 @@ if (require.main === module) main().catch((error) => {
 }).finally(() => db.pool.end().catch(() => {}));
 
 module.exports = { CONFIRM_FLAG, createArchiveResolver, listCandidates, main, parseArgs,
-  persistCandidate, resolveCandidate,
+  persistCandidate, persistObservation, resolveCandidate,
   __private: { blockEvidence, loadLocalBlocks, requiredBlocks, target } };

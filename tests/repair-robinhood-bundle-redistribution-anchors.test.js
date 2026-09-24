@@ -24,12 +24,15 @@ function candidate(overrides = {}) {
 describe('Robinhood redistribution anchor repair', () => {
   it('is read-only by default and requires the explicit confirmation pair', () => {
     assert.deepEqual(parseArgs([]), {
-      apply: false, limit: 100, concurrency: 2, timeoutMs: 60000,
+      apply: false, observationOnly: false, limit: 100, concurrency: 2, timeoutMs: 60000,
     });
     assert.deepEqual(parseArgs([
-      '--apply', CONFIRM_FLAG, '--limit=5', '--concurrency=4', '--timeout-ms=5000',
-    ]), { apply: true, limit: 5, concurrency: 4, timeoutMs: 5000 });
+      '--apply', CONFIRM_FLAG, '--observation-only', '--limit=5',
+      '--concurrency=4', '--timeout-ms=5000',
+    ]), { apply: true, observationOnly: true,
+      limit: 5, concurrency: 4, timeoutMs: 5000 });
     assert.throws(() => parseArgs(['--apply']), /requires/);
+    assert.throws(() => parseArgs(['--observation-only', '--observation-only']), /repeated/);
   });
 
   it('selects only pending versions with incomplete durable lineage', async () => {
@@ -50,6 +53,16 @@ describe('Robinhood redistribution anchor repair', () => {
     assert.equal(result[0].tokenAddress, TOKEN_A);
     assert.equal(result[0].holder.blockHash, HASH_B);
   });
+
+  it('limits observation-only selection to pending rows without an observation anchor',
+    async () => {
+      let captured;
+      await listCandidates({ async query(sql, params) {
+        captured = { sql, params }; return { rows: [] };
+      } }, 500, true);
+      assert.match(captured.sql, /NOT \$4::boolean OR queue\.observation_from_hash IS NULL/);
+      assert.deepEqual(captured.params.slice(2), [500, true]);
+    });
 
   it('reports local and archive coverage without requiring RPC in dry-run', async () => {
     const local = new Map([
@@ -97,4 +110,27 @@ describe('Robinhood redistribution anchor repair', () => {
       assert.equal(report.unresolved, 1);
       assert.equal(persisted[0].anchors.observation.source, 'postgres');
     });
+
+  it('repairs observation evidence while the holder frontier is unavailable', async () => {
+    const persisted = [];
+    const blocked = candidate({ holder: null });
+    const local = new Map([['10', { blockNumber: '10', blockHash: HASH_A,
+      blockTime: TIME, source: 'postgres' }]]);
+    const report = await main(['--observation-only', '--apply', CONFIRM_FLAG], {
+      database: {}, logger: { log() {} },
+      listCandidates: async (_database, _limit, observationOnly) => {
+        assert.equal(observationOnly, true); return [blocked];
+      },
+      loadLocalBlocks: async (_database, blocks) => {
+        assert.deepEqual(blocks, ['10']); return local;
+      },
+      async persistObservation(_database, item, observation) {
+        persisted.push({ item, observation }); return true;
+      },
+      createArchiveResolver() { throw new Error('archive must remain lazy'); },
+    });
+    assert.equal(report.scope, 'observation');
+    assert.equal(report.repaired, 1);
+    assert.equal(persisted[0].observation.blockHash, HASH_A);
+  });
 });
