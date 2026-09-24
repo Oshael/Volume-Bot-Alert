@@ -5287,7 +5287,10 @@ Depois de aplicar a Stage 247 e provisionar partições à frente do cursor LIVE
 `ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED=true` faz a captura copiar os eventos do
 journal principal para a sombra na mesma transação e preencher `block_number`
 nos novos snapshots V3. O padrão é `false`. A cópia verifica identidade e payload;
-partição ausente ou divergência aborta também o avanço do cursor. Desligar a flag
+em lotes sem conflitos, a igualdade de contagem entre fonte e linhas inseridas evita
+comparar novamente cada payload; conflitos são comparados integralmente, e linhas
+extras na sombra continuam bloqueando o commit.
+Partição ausente ou divergência aborta também o avanço do cursor. Desligar a flag
 permite retomar a captura antiga sem perder blocos; a faixa sem espelho terá de
 ser copiada no corte de paridade. O status da captura expõe `eventShadowEnabled`,
 `shadowEvents` e a duração de commit. Reorg mantém a ramificação antiga até a

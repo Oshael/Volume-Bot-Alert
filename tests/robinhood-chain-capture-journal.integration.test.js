@@ -795,8 +795,24 @@ describe('Robinhood canonical chain capture journal', () => {
     await createRobinhoodChainCaptureJournal().commitBlock(capture());
     await db.query(`INSERT INTO robinhood_chain_events_shadow
       SELECT * FROM robinhood_chain_events WHERE block_hash=$1`, [HASH]);
-    await db.query(`UPDATE robinhood_chain_events_shadow SET data='0xdead'
-      WHERE block_hash=$1`, [HASH]);
+    const client = await db.getClient();
+    try {
+      assert.deepEqual(await mirrorCapturedEvents(client, [{ block_hash: HASH }]), { inserted: 0 });
+      await client.query(`UPDATE robinhood_chain_events_shadow SET data='0xdead'
+        WHERE block_hash=$1`, [HASH]);
+      await assert.rejects(mirrorCapturedEvents(client, [{ block_hash: HASH }]),
+        (error) => error.code === 'capture_shadow_mismatch');
+    } finally {
+      client.release();
+    }
+  });
+
+  it('checks for extra shadow rows even when every source row is newly inserted', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(`INSERT INTO robinhood_chain_events_shadow
+      SELECT * FROM robinhood_chain_events WHERE block_hash=$1`, [HASH]);
+    await db.query(`UPDATE robinhood_chain_events_shadow
+      SET block_number=block_number+1 WHERE block_hash=$1`, [HASH]);
     const client = await db.getClient();
     try {
       await assert.rejects(mirrorCapturedEvents(client, [{ block_hash: HASH }]),
