@@ -5357,6 +5357,15 @@ para investigação. `verified: true` com
 `stopReason: complete` comprova apenas a faixa fixada, não substitui a nova
 paridade imediatamente antes do cutover nem a migração das FKs e dos leitores.
 
+Antes de migrar as FKs do outbox, a Stage 248 cria
+`robinhood_chain_domain_outbox_shadow` vazia em um tablespace explícito com FK
+exata `(chain, block_number, block_hash, log_index)` para a sombra de eventos.
+Aplique com `node src/utils/db-init-stage248.js --tablespace=trendscope_raw`
+e confira `npm run db:schema-check`. Ela não copia nem troca o outbox ativo;
+essas operações exigem um corte posterior que preserve todas as linhas
+pendentes, arrendadas e bloqueadas. Linhas `complete` históricas não participam
+da fronteira de processamento atual.
+
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
 `node src/utils/db-init-stage205.js` antes de implantar código que use o fence.

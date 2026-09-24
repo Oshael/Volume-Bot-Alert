@@ -6725,6 +6725,32 @@ const SCHEMA_GROUPS = [
       columns: ['block_number'],
     }],
   },
+  {
+    key: 'stage248-robinhood-domain-outbox-shadow',
+    name: 'Stage 248 Robinhood domain outbox shadow',
+    repair: 'node src/utils/db-init-stage248.js --tablespace=NAME',
+    tables: [{
+      table: 'robinhood_chain_domain_outbox_shadow',
+      columns: ['chain', 'domain', 'block_hash', 'block_number', 'transaction_index',
+        'log_index', 'status', 'attempt_count', 'lease_owner', 'lease_until'],
+      constraints: [
+        { name: 'rh_chain_domain_outbox_shadow_pkey', includes: [
+          'PRIMARY KEY', 'chain', 'domain', 'block_hash', 'log_index',
+        ] },
+        { name: 'rh_chain_domain_outbox_shadow_event_fkey', includes: [
+          'FOREIGN KEY', 'block_number', 'robinhood_chain_events_shadow', 'ON DELETE CASCADE',
+        ] },
+      ],
+      indexes: [
+        { name: 'idx_rh_chain_domain_outbox_shadow_claim', includes: ['status', 'next_attempt_at'] },
+        { name: 'idx_rh_chain_domain_outbox_shadow_lease', includes: ['lease_until'] },
+        { name: 'idx_rh_chain_domain_outbox_shadow_frontier', includes: ['block_number', 'status'] },
+        { name: 'idx_rh_chain_domain_outbox_shadow_event_lookup', includes: [
+          'chain', 'block_number', 'block_hash', 'log_index',
+        ] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
