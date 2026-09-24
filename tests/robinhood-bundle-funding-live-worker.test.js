@@ -7,6 +7,9 @@ const {
 const {
   createRobinhoodBundleFundingLiveQueueRepository,
 } = require('../src/models/robinhood-bundle-funding-live-queue');
+const {
+  createRobinhoodBundleFundingLiveSource, __private: sourceSql,
+} = require('../src/models/robinhood-bundle-funding-live-source');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const WALLETS = [`0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`];
@@ -74,6 +77,50 @@ it('routes only funding RPC through its dedicated URL and disables public fallba
   assert.equal(receivedOptions.publicRpcUrl, 'http://127.0.0.1:18547');
   assert.equal(receivedOptions.useAlchemy, false);
   assert.equal(receivedOptions.useDrpc, false);
+});
+
+it('requires holder and first-buy coverage before funding RPC work', async () => {
+  const task = { tokenAddress: TOKEN, sourceThroughBlock: '200' };
+  let query; let readiness = { holder_ready: true, first_buy_ready: false };
+  const source = createRobinhoodBundleFundingLiveSource({ database: {
+    async query(sql, parameters) {
+      query = { sql, parameters };
+      return { rows: [readiness] };
+    },
+  } });
+  await assert.rejects(source.assertReady(task), (error) => (
+    error.code === 'funding_source_not_ready'
+  ));
+  assert.equal(query.sql, sourceSql.READINESS_SQL);
+  assert.deepEqual(query.parameters, ['robinhood', TOKEN, '200']);
+  assert.match(query.sql, /holder\.live_through_block >= \$3::bigint/);
+  assert.match(query.sql, /seed\.status = 'completed'/);
+  readiness = { holder_ready: true, first_buy_ready: true };
+  await source.assertReady(task);
+});
+
+it('retries an unready funding RPC task without publishing an empty snapshot', async () => {
+  let retried; let loaded = false;
+  const task = { tokenAddress: TOKEN, requestedVersion: '6', anchorBlock: '100',
+    sourceThroughBlock: '200', lookbackBlocks: '1000', attemptCount: 1 };
+  const runtime = { sourceMode: RPC_SOURCE, source: {
+    async assertReady() { throw Object.assign(new Error('not ready'), {
+      code: 'funding_source_not_ready',
+    }); },
+    async loadCandidates() { loaded = true; return []; },
+  }, queue: { async claim() { return task; },
+    async retry(input) { retried = input; return true; } } };
+  const worker = require('../src/services/robinhood-bundle-funding-live-worker')
+    .createRobinhoodBundleFundingLiveWorker({ runtime,
+      schedule() { return { unref() {} }; },
+      listenerFactory: () => ({ async start() {}, async stop() {} }),
+    });
+  worker.start({ enabled: true, sourceMode: RPC_SOURCE });
+  assert.equal(await worker.runOnce(), null);
+  assert.equal(loaded, false);
+  assert.equal(retried.tokenAddress, TOKEN);
+  assert.equal(retried.error.code, 'funding_source_not_ready');
+  await worker.stop();
 });
 
 it('selects the canonical reader without constructing an RPC client', async () => {

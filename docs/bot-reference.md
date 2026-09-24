@@ -4219,6 +4219,9 @@ está mais no journal. `ROBINHOOD_BUNDLE_FUNDING_LIVE_RPC_URL` substitui o RPC
 somente desse worker em modo `rpc`; a instância pode apontá-lo ao Archive local
 sem alterar `ROBINHOOD_RPC_URL` dos outros workers. Nesse modo os fallbacks
 públicos ficam desligados e o reader valida chain e checkpoint por tarefa.
+Antes de materializar nesse modo, o worker exige holder `live` cobrindo a fonte
+e cursor first-buy com seed completo além da fronteira da tarefa; se a prova
+ainda não estiver pronta, a tarefa retorna ao retry sem publicar snapshot vazio.
 Tokens com menos de duas candidatas concluem com evidência vazia; erros usam
 backoff e leases expiradas são recuperáveis. Evidência histórica já concluída não
 é apagada se uma tarefa reaberta encontrar lacuna canônica. A Stage 199 deve ser

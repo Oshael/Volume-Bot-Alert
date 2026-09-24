@@ -143,6 +143,9 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
       try {
         task = await getRuntime().queue.claim({ owner, leaseMs: options.leaseMs });
         if (!task) return { status: 'caught-up' };
+        if (getRuntime().sourceMode === RPC_SOURCE) {
+          await getRuntime().source.assertReady(task);
+        }
         const result = await processTask(getRuntime(), { ...task, owner }, options, deps);
         if (result.status === 'materialized') status.totalMaterialized += 1;
         status.lastResult = result; status.lastError = null; return result;

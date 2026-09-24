@@ -22,6 +22,16 @@ const V4_ORIGINS_SQL = `SELECT origin_address AS address,
   FROM robinhood_pool_registry
  WHERE chain = $1 AND protocol = 'uniswap-v4' AND origin_address IS NOT NULL
  GROUP BY origin_address`;
+const READINESS_SQL = `SELECT
+    EXISTS (SELECT 1 FROM robinhood_holder_token_states holder
+      WHERE holder.chain = $1 AND holder.token_address = $2
+        AND holder.ledger_status = 'live'
+        AND holder.live_through_block >= $3::bigint) AS holder_ready,
+    EXISTS (SELECT 1 FROM robinhood_first_buy_live_cursors cursor
+      JOIN robinhood_first_buy_backfill_runs seed
+        ON seed.chain = cursor.chain AND seed.id = cursor.seed_run_id
+      WHERE cursor.chain = $1 AND seed.status = 'completed'
+        AND cursor.source_next_block > $3::bigint) AS first_buy_ready`;
 const CANDIDATES_SQL = `SELECT buy.token_address, buy.wallet_address,
        anchor.launch_block::text, buy.block_number::text AS first_buy_block,
        buy.transaction_index::text AS first_buy_transaction_index
@@ -58,6 +68,15 @@ const CANDIDATES_SQL = `SELECT buy.token_address, buy.wallet_address,
 function createRobinhoodBundleFundingLiveSource(options = {}) {
   const database = options.database || db;
   let v4OriginsPromise;
+  async function assertReady(task) {
+    const { rows } = await database.query(READINESS_SQL, [
+      CHAIN, task.tokenAddress, task.sourceThroughBlock,
+    ]);
+    if (rows[0]?.holder_ready && rows[0]?.first_buy_ready) return;
+    const error = new Error('funding holder or first-buy source has not reached the queued frontier');
+    error.code = 'funding_source_not_ready';
+    throw error;
+  }
   async function loadV4Origins() {
     v4OriginsPromise ||= database.query(V4_ORIGINS_SQL, [CHAIN]).then(({ rows }) => rows);
     return v4OriginsPromise.catch((error) => { v4OriginsPromise = null; throw error; });
@@ -96,10 +115,10 @@ function createRobinhoodBundleFundingLiveSource(options = {}) {
     }
     return Object.freeze([...addresses].sort());
   }
-  return Object.freeze({ loadCandidates, loadBarrierAddresses });
+  return Object.freeze({ assertReady, loadCandidates, loadBarrierAddresses });
 }
 
 module.exports = {
   createRobinhoodBundleFundingLiveSource,
-  __private: { BARRIERS_SQL, CANDIDATES_SQL, V4_ORIGINS_SQL },
+  __private: { BARRIERS_SQL, CANDIDATES_SQL, READINESS_SQL, V4_ORIGINS_SQL },
 };
