@@ -5329,6 +5329,15 @@ separadamente; não pule eventos.
 Depois de 16 páginas bem-sucedidas na mesma largura, o runner dobra a largura
 até o `--max-blocks` solicitado. Uma faixa densa continua reduzindo a página
 antes de qualquer gravação, sem pular blocos.
+Para conferir uma faixa fixa entre a cópia histórica e o espelho LIVE, execute
+`npm run robinhood:chain-event-shadow-audit -- --from-block=N --through-block=M
+--max-blocks=100 --max-pages=1000`. O comando é somente leitura: compara contagem,
+identidade e todas as colunas nas duas direções, em páginas limitadas a 5.000
+eventos por lado. Se uma página for densa, reduz sua largura e volta a ampliá-la
+após 16 páginas válidas; ao encontrar uma divergência, para e informa `nextBlock`
+para investigação. `verified: true` com
+`stopReason: complete` comprova apenas a faixa fixada, não substitui a nova
+paridade imediatamente antes do cutover nem a migração das FKs e dos leitores.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
