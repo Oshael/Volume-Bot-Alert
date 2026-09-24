@@ -4230,6 +4230,16 @@ Somente `--apply --confirm-reconcile-archive-funding` limpa o marcador quando um
 snapshot durável compatível cobre a versão/fronteira da fila ou quando holder e
 first-buy duráveis provam menos de duas candidatas elegíveis. O comando nunca lê RPC
 nem transforma um item ainda dependente do Archive em concluído.
+Para itens `complete/archive_required` que ainda precisam da prova histórica,
+`npm run robinhood:bundle-funding-archive-repair -- --limit=1` mostra os blocos
+e candidatas de um token sem chamar RPC. O modo de escrita exige
+`ROBINHOOD_ARCHIVE_RPC_URL`, `--apply` e
+`--confirm-repair-robinhood-bundle-funding-archive`. O reparo usa o mesmo
+materializador do live, limita blocos por token (`--max-blocks`, padrão 5.000),
+confere chain e checkpoint canônico e substitui evidência e snapshot na mesma
+transação apenas se a versão e o marcador da fila ainda coincidirem. `--after-token`
+avança a página; itens sem cobertura de first-buy, com menos de duas candidatas
+ou acima do limite de blocos permanecem pendentes para investigação.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
 de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no
