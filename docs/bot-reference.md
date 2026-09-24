@@ -5311,6 +5311,14 @@ limite. A cópia reusa a verificação de identidade e payload do espelho LIVE e
 falha se a captura não estiver em execução ou a página passar do head finalizado.
 Provisione as partições da faixa antes do apply e monitore espaço, WAL e lag entre
 páginas. A conclusão da cópia não autoriza cutover nem poda sem paridade e FKs.
+Para avançar várias páginas sem um serviço permanente, use
+`npm run robinhood:chain-event-shadow-copy-batches -- --from-block=N
+--through-block=M --max-blocks=100 --max-pages=100 --apply`. O runner imprime
+`nextBlock` após cada commit e pode ser retomado desse valor, inclusive após
+desconexão. Antes de cada página escrita, exige shadow LIVE ativo, heartbeat
+recente, estado `running`, lag até 250 blocos e pelo menos 20 GiB livres em `/`
+e 75 GiB no tablespace da sombra. Para se o gate falhar. O máximo por execução
+é 500 páginas, com pausa padrão de 100 ms; medir `df` e lag entre execuções.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
