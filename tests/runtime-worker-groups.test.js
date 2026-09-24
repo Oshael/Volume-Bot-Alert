@@ -1591,10 +1591,11 @@ describe('runtime worker groups config', () => {
   it('keeps funding live source-selectable, opt-in and bounded', () => {
     withEnv({ ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED: 'true',
       ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE: 'canonical_journal',
+      ROBINHOOD_BUNDLE_FUNDING_LIVE_RPC_URL: 'http://127.0.0.1:18547',
       ROBINHOOD_BUNDLE_FUNDING_LIVE_BATCH_BLOCKS: '999',
       ROBINHOOD_BUNDLE_FUNDING_LIVE_TIMEOUT_MS: '999999',
     }, (config) => assert.deepEqual(config.robinhoodBundleFundingLiveWorker, {
-      enabled: true, sourceMode: 'canonical_journal',
+      enabled: true, sourceMode: 'canonical_journal', rpcUrl: 'http://127.0.0.1:18547',
       intervalMs: 1000, leaseMs: 900_000, retryMs: 15_000,
       maxRetryMs: 3_600_000, batchBlocks: 100, timeoutMs: 300_000,
     }));

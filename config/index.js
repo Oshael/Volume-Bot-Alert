@@ -2110,6 +2110,7 @@ module.exports = {
   robinhoodBundleFundingLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED, false),
     sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE),
+    rpcUrl: String(process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_RPC_URL || '').trim(),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_INTERVAL_MS, 1000, 100, 60_000
     ),

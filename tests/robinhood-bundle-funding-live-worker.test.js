@@ -60,13 +60,30 @@ it('reuses the standard Robinhood live RPC configuration without an Archive env'
   });
 });
 
+it('routes only funding RPC through its dedicated URL and disables public fallbacks', () => {
+  let receivedOptions;
+  const options = normalizeOptions({ sourceMode: RPC_SOURCE,
+    rpcUrl: 'http://127.0.0.1:18547', rpcOptions: {
+      publicRpcUrl: 'https://rpc.mainnet.chain.robinhood.com', useAlchemy: true,
+      alchemyRpcUrl: 'https://example.invalid', useDrpc: true,
+    } }, {});
+  buildRuntime({
+    rpcClientFactory(input) { receivedOptions = input; return {}; },
+    queueFactory: () => ({}), sourceFactory: () => ({}), database: {},
+  }, options);
+  assert.equal(receivedOptions.publicRpcUrl, 'http://127.0.0.1:18547');
+  assert.equal(receivedOptions.useAlchemy, false);
+  assert.equal(receivedOptions.useDrpc, false);
+});
+
 it('selects the canonical reader without constructing an RPC client', async () => {
   let readerInput; let coverage; let persisted;
   const candidates = WALLETS.map((walletAddress, index) => ({
     tokenAddress: TOKEN, walletAddress, launchBlock: '100',
     firstBuyBlock: String(101 + index), firstBuyTransactionIndex: '0',
   }));
-  const options = normalizeOptions({ sourceMode: CANONICAL_SOURCE });
+  const options = normalizeOptions({ sourceMode: CANONICAL_SOURCE,
+    rpcUrl: 'http://127.0.0.1:18547' });
   const runtime = buildRuntime({
     database: {}, queueFactory: () => ({
       async replaceEvidenceAndComplete(value) { persisted = value; return true; },

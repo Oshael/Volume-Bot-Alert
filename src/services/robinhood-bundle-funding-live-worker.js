@@ -35,6 +35,7 @@ const normalizeOptions = (input = {}, env = process.env) => Object.freeze({
   maxRetryMs: bounded(input.maxRetryMs, 3_600_000, 60_000, 86_400_000),
   batchBlocks: bounded(input.batchBlocks, 50, 1, 100),
   timeoutMs: bounded(input.timeoutMs, 60_000, 1000, 300_000),
+  rpcUrl: String(input.rpcUrl ?? env.ROBINHOOD_BUNDLE_FUNDING_LIVE_RPC_URL ?? '').trim(),
   rpcOptions: input.rpcOptions || {},
 });
 
@@ -58,6 +59,7 @@ function buildRuntime(deps, options) {
   if (options.sourceMode === CANONICAL_SOURCE) return Object.freeze(runtime);
   runtime.rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)({
     ...options.rpcOptions, rpcTimeoutMs: options.timeoutMs,
+    ...(options.rpcUrl ? { publicRpcUrl: options.rpcUrl, useAlchemy: false, useDrpc: false } : {}),
   });
   return Object.freeze(runtime);
 }

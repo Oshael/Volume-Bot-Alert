@@ -4214,7 +4214,11 @@ congela as early wallets do token, valida chain `4663` e substitui evidência + 
 na mesma transação. `ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE` usa
 `canonical_journal` por default; nesse modo, as janelas token-scoped são lidas de
 `robinhood_chain_blocks` e `robinhood_chain_transactions`, sem RPC. `rpc` exige
-configuração explícita e existe somente para rollback.
+configuração explícita e existe para recuperação quando a janela histórica não
+está mais no journal. `ROBINHOOD_BUNDLE_FUNDING_LIVE_RPC_URL` substitui o RPC
+somente desse worker em modo `rpc`; a instância pode apontá-lo ao Archive local
+sem alterar `ROBINHOOD_RPC_URL` dos outros workers. Nesse modo os fallbacks
+públicos ficam desligados e o reader valida chain e checkpoint por tarefa.
 Tokens com menos de duas candidatas concluem com evidência vazia; erros usam
 backoff e leases expiradas são recuperáveis. Evidência histórica já concluída não
 é apagada se uma tarefa reaberta encontrar lacuna canônica. A Stage 199 deve ser
