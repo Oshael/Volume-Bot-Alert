@@ -41,8 +41,10 @@ it('reports the last committed cursor and stops before the next page when health
   assert.deepEqual(copied, [100]);
   assert.deepEqual(report, { mode: 'apply', pages: 1, inserted: 7,
     nextBlock: 110, stopReason: 'capture_health' });
+  assert.equal(parseArgs(['--from-block=1', '--through-block=2',
+    '--max-pages=10000']).maxPages, 10000);
   assert.throws(() => parseArgs(['--from-block=1', '--through-block=2',
-    '--max-pages=501']), /max-pages/);
+    '--max-pages=10001']), /max-pages/);
 });
 
 it('reduces only the failing page and retries from the same block', async () => {

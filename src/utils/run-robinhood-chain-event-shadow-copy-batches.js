@@ -5,7 +5,7 @@ const { statfs } = require('node:fs/promises');
 const db = require('../models/db');
 const { copyPage, parseArgs: parsePageArgs } = require('./copy-robinhood-chain-event-shadow-page');
 
-const MAX_PAGES = 500;
+const MAX_PAGES = 10000;
 const MIN_ROOT_FREE_BYTES = 20n * 1024n ** 3n;
 const MIN_SHADOW_FREE_BYTES = 75n * 1024n ** 3n;
 const MAX_CAPTURE_LAG_BLOCKS = 250;

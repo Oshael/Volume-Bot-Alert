@@ -5318,7 +5318,9 @@ Para avançar várias páginas sem um serviço permanente, use
 desconexão. Antes de cada página escrita, exige shadow LIVE ativo, heartbeat
 recente, estado `running`, lag até 250 blocos e pelo menos 20 GiB livres em `/`
 e 75 GiB no tablespace da sombra. Para se o gate falhar. O máximo por execução
-é 500 páginas, com pausa padrão de 100 ms; medir `df` e lag entre execuções.
+é 10.000 páginas, com pausa padrão de 100 ms; medir `df` e lag entre execuções.
+Para execuções longas, use uma sessão que sobreviva à desconexão SSH e guarde
+o log de progresso, que permite retomar do último `nextBlock` confirmado.
 Se uma página exceder 5.000 eventos ou 16 MiB de origem, o runner reduz pela
 metade `max-blocks` e tenta novamente no mesmo bloco; nunca conta uma tentativa
 rejeitada como progresso. Erros imprimem um resumo com o último `nextBlock`
