@@ -44,7 +44,8 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
         attempt_count = attempt_count + 1, updated_at = NOW()
       WHERE queue.chain = $1 AND queue.token_address = $2
         AND queue.requested_version = $3::bigint AND queue.status = 'pending'
-        AND queue.next_attempt_at <= NOW()
+        AND ((NOT $5::boolean AND queue.next_attempt_at <= NOW())
+          OR ($5::boolean AND queue.last_error_code = 'funding_live_failed'))
         AND EXISTS (
           SELECT 1 FROM robinhood_holder_token_states holder
            WHERE holder.chain = queue.chain AND holder.token_address = queue.token_address
@@ -63,7 +64,8 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
            WHERE raw.chain = queue.chain AND raw.canonical
              AND raw.block_number = GREATEST(queue.anchor_block - queue.lookback_blocks, 0)
              AND raw.block_timestamp > NOW() - INTERVAL '72 hours'
-        )`, [CHAIN, token(input.tokenAddress), input.requestedVersion, owner]);
+        )`, [CHAIN, token(input.tokenAddress), input.requestedVersion, owner,
+      input.retryFailedNow === true]);
     return result.rowCount === 1;
   }
 

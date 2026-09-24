@@ -112,3 +112,63 @@ it('keeps completed funding stable across late frontier updates and fences early
       WHERE token_address=$1 AND wallet_address=$2`, [TOKEN, `0x${'7'.repeat(40)}`]);
     assert.equal((await queueState()).requested_version, '6');
   });
+
+it('claims a failed Archive risk during backoff only with the explicit override', async () => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL search_path TO pg_temp, public');
+    await client.query(`CREATE TEMP TABLE robinhood_bundle_funding_live_queue (
+      chain text, token_address text, requested_version bigint, status text,
+      next_attempt_at timestamptz, last_error_code text, anchor_block bigint,
+      source_through_block bigint, lookback_blocks bigint, lease_owner text,
+      lease_until timestamptz, attempt_count bigint, updated_at timestamptz
+    ) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE robinhood_holder_token_states (
+      chain text, token_address text, ledger_status text, live_through_block bigint
+    ) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE robinhood_first_buy_backfill_runs (
+      chain text, id bigint, status text
+    ) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE robinhood_first_buy_live_cursors (
+      chain text, seed_run_id bigint, source_next_block bigint
+    ) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
+      chain text, canonical boolean, block_number bigint, block_timestamp timestamptz
+    ) ON COMMIT DROP`);
+    await client.query(`INSERT INTO robinhood_bundle_funding_live_queue (
+      chain, token_address, requested_version, status, next_attempt_at,
+      last_error_code, anchor_block, source_through_block, lookback_blocks,
+      attempt_count, updated_at
+    ) VALUES ('robinhood', $1, 3, 'pending', NOW() + INTERVAL '1 hour',
+      'funding_live_failed', 100, 200, 1000, 7, NOW())`, [TOKEN]);
+    await client.query(`INSERT INTO robinhood_holder_token_states
+      VALUES ('robinhood', $1, 'live', 200)`, [TOKEN]);
+    await client.query(`INSERT INTO robinhood_first_buy_backfill_runs
+      VALUES ('robinhood', 1, 'completed')`);
+    await client.query(`INSERT INTO robinhood_first_buy_live_cursors
+      VALUES ('robinhood', 1, 201)`);
+
+    const queue = createRobinhoodBundleFundingLiveQueueRepository({
+      database: { query: (...args) => client.query(...args) },
+    });
+    const task = { tokenAddress: TOKEN, requestedVersion: '3', owner: 'archive-test' };
+    assert.equal(await queue.claimArchiveRisk(task), false);
+    assert.equal(await queue.claimArchiveRisk({ ...task, requestedVersion: '2',
+      retryFailedNow: true }), false);
+    await client.query(`UPDATE robinhood_bundle_funding_live_queue
+      SET last_error_code='different_failure' WHERE token_address=$1`, [TOKEN]);
+    assert.equal(await queue.claimArchiveRisk({ ...task, retryFailedNow: true }), false);
+    await client.query(`UPDATE robinhood_bundle_funding_live_queue
+      SET last_error_code='funding_live_failed' WHERE token_address=$1`, [TOKEN]);
+    assert.equal(await queue.claimArchiveRisk({ ...task, retryFailedNow: true }), true);
+    const { rows } = await client.query(`SELECT status, lease_owner, attempt_count
+      FROM robinhood_bundle_funding_live_queue WHERE token_address=$1`, [TOKEN]);
+    assert.deepEqual(rows[0], { status: 'leased', lease_owner: 'archive-test',
+      attempt_count: '8' });
+    assert.equal(await queue.claimArchiveRisk({ ...task, retryFailedNow: true }), false);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});

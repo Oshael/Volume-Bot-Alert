@@ -27,8 +27,11 @@ it('requires explicit confirmation and bounds the Archive work', () => {
   assert.match(CANDIDATES_SQL, /queue\.completed_version=queue\.requested_version/);
   assert.match(CANDIDATES_SQL, /seed\.status='completed'/);
   assert.equal(parseArgs(['--pending-risk']).maxBlocks, 2000);
+  assert.equal(parseArgs(['--pending-risk', '--retry-failed-now']).retryFailedNow, true);
+  assert.throws(() => parseArgs(['--retry-failed-now']), /requires --pending-risk/);
   assert.throws(() => parseArgs(['--pending-risk', '--max-blocks=5001']), /between 1 and 5000/);
   assert.match(PENDING_RISK_SQL, /queue\.status='pending'/);
+  assert.match(PENDING_RISK_SQL, /\$3::boolean AND queue\.last_error_code='funding_live_failed'/);
   assert.match(PENDING_RISK_SQL, /holder\.ledger_status='live'/);
   assert.match(PENDING_RISK_SQL, /raw\.block_timestamp>NOW\(\)-INTERVAL '72 hours'/);
 });
@@ -92,6 +95,25 @@ it('claims a pending risk and reloads candidates after the claim', async () => {
   assert.equal(processed.complete, queue.completeArchiveRisk);
 });
 
+it('can claim only failed pending risks during backoff when explicitly requested', async () => {
+  let claim;
+  const report = await main(['--pending-risk', '--retry-failed-now', '--apply',
+    '--confirm-repair-robinhood-bundle-funding-archive'], {
+    database: { async query(sql, values) {
+      assert.equal(sql, PENDING_RISK_SQL);
+      assert.deepEqual(values, ['', 1, true]);
+      return { rows: [row] };
+    } },
+    source: { async loadCandidates() { return candidates; } },
+    queue: { async claimArchiveRisk(input) { claim = input; return true; },
+      completeArchiveRisk() {} },
+    rpcClient: {}, logger: { log() {} },
+    async processTask() { return { status: 'materialized' }; },
+  });
+  assert.equal(report.repaired, 1);
+  assert.equal(claim.retryFailedNow, true);
+});
+
 it('does not process a pending task lost to the worker', async () => {
   const report = await main(['--pending-risk', '--apply',
     '--confirm-repair-robinhood-bundle-funding-archive'], {
@@ -115,10 +137,11 @@ it('fences the pending risk claim by version, readiness and source age', async (
     requestedVersion: '3', owner: 'archive-test' }), true);
   assert.match(sql, /requested_version = \$3::bigint AND queue\.status = 'pending'/);
   assert.match(sql, /queue\.next_attempt_at <= NOW\(\)/);
+  assert.match(sql, /\$5::boolean AND queue\.last_error_code = 'funding_live_failed'/);
   assert.match(sql, /holder\.live_through_block >= queue\.source_through_block/);
   assert.match(sql, /cursor\.source_next_block > queue\.source_through_block/);
   assert.match(sql, /raw\.block_timestamp > NOW\(\) - INTERVAL '72 hours'/);
-  assert.deepEqual(parameters, ['robinhood', TOKEN, '3', 'archive-test']);
+  assert.deepEqual(parameters, ['robinhood', TOKEN, '3', 'archive-test', false]);
 });
 
 it('fences the completed queue version and commits evidence with the snapshot', async () => {

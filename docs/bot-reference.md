@@ -4261,6 +4261,12 @@ o claim. Nesse modo o limite padrão é 2.000 blocos por token e o máximo é 5.
 falhas retornam a tarefa à fila com retry. A evidência Archive e o snapshot só
 são concluídos juntos quando o snapshot foi publicado. Esse reparo não depende
 do replay restante de holders para tokens que já estão `live` na fonte exigida.
+Para um `funding_live_failed` preso em backoff, a combinação `--pending-risk`
+e `--retry-failed-now` permite a prévia e o claim Archive antes de `next_attempt_at`.
+O override não seleciona outros erros e preserva os fences de status, versão,
+holder live, first-buy completo e janela antiga. A escrita continua exigindo
+`--apply` e `--confirm-repair-robinhood-bundle-funding-archive`; o worker live
+mantém o backoff normal.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
 de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no

@@ -13,6 +13,7 @@ const { processTask, RPC_SOURCE } = require('../services/robinhood-bundle-fundin
 
 const CONFIRM_FLAG = '--confirm-repair-robinhood-bundle-funding-archive';
 const ADDRESS = /^0x[0-9a-f]{40}$/;
+const FLAGS = new Set(['--apply', CONFIRM_FLAG, '--pending-risk', '--retry-failed-now']);
 const CANDIDATES_SQL = `SELECT queue.token_address, queue.requested_version::text,
        queue.anchor_block::text, queue.source_through_block::text,
        queue.lookback_blocks::text,
@@ -34,7 +35,9 @@ const PENDING_RISK_SQL = `SELECT queue.token_address, queue.requested_version::t
   JOIN robinhood_holder_token_states holder
     ON holder.chain=queue.chain AND holder.token_address=queue.token_address
  WHERE queue.chain='robinhood' AND queue.status='pending'
-   AND queue.next_attempt_at<=NOW() AND queue.token_address>$1
+   AND ((NOT $3::boolean AND queue.next_attempt_at<=NOW())
+     OR ($3::boolean AND queue.last_error_code='funding_live_failed'))
+   AND queue.token_address>$1
    AND holder.ledger_status='live'
    AND holder.live_through_block>=queue.source_through_block
    AND EXISTS (SELECT 1 FROM robinhood_first_buy_live_cursors cursor
@@ -56,24 +59,35 @@ function integer(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 
-function parseArgs(argv = []) {
-  const values = {}; let apply = false; let confirmed = false; let pendingRisk = false;
+function splitArgs(argv) {
+  const values = {}; const flags = new Set();
   for (const argument of argv) {
-    if (argument === '--apply' && !apply) apply = true;
-    else if (argument === CONFIRM_FLAG && !confirmed) confirmed = true;
-    else if (argument === '--pending-risk' && !pendingRisk) pendingRisk = true;
-    else {
-      const match = /^--(limit|batch-blocks|max-blocks|after-token)=(.+)$/.exec(argument);
-      if (!match || values[match[1]] != null) throw new Error(`unknown argument: ${argument}`);
-      values[match[1]] = match[2];
+    if (FLAGS.has(argument)) {
+      if (flags.has(argument)) throw new Error(`repeated argument: ${argument}`);
+      flags.add(argument); continue;
     }
+    const match = /^--(limit|batch-blocks|max-blocks|after-token)=(.+)$/.exec(argument);
+    if (!match || values[match[1]] != null) throw new Error(`unknown argument: ${argument}`);
+    values[match[1]] = match[2];
   }
+  return { values, flags };
+}
+
+function parseArgs(argv = []) {
+  const { values, flags } = splitArgs(argv);
+  const apply = flags.has('--apply');
+  const confirmed = flags.has(CONFIRM_FLAG);
+  const pendingRisk = flags.has('--pending-risk');
+  const retryFailedNow = flags.has('--retry-failed-now');
   if (apply !== confirmed) throw new Error(`--apply requires ${CONFIRM_FLAG}`);
+  if (retryFailedNow && !pendingRisk) {
+    throw new Error('--retry-failed-now requires --pending-risk');
+  }
   const afterToken = String(values['after-token'] || '');
   if (afterToken && !ADDRESS.test(afterToken)) throw new Error('--after-token is invalid');
   const maxBlocks = integer(values['max-blocks'], pendingRisk ? 2_000 : 5_000,
     1, pendingRisk ? 5_000 : 100_000, '--max-blocks');
-  return Object.freeze({ apply, pendingRisk, afterToken,
+  return Object.freeze({ apply, pendingRisk, retryFailedNow, afterToken,
     limit: integer(values.limit, 1, 1, 500, '--limit'),
     batchBlocks: integer(values['batch-blocks'], 25, 1, 100, '--batch-blocks'),
     maxBlocks });
@@ -81,7 +95,8 @@ function parseArgs(argv = []) {
 
 async function select(database, source, options) {
   const { rows } = await database.query(options.pendingRisk ? PENDING_RISK_SQL : CANDIDATES_SQL,
-    [options.afterToken, options.limit]);
+    options.pendingRisk ? [options.afterToken, options.limit, options.retryFailedNow]
+      : [options.afterToken, options.limit]);
   const selected = [];
   for (const row of rows) {
     const task = { tokenAddress: row.token_address, requestedVersion: row.requested_version,
@@ -133,7 +148,8 @@ async function applySelected(selected, options, deps, database, source) {
     let claimed = false;
     try {
       if (options.pendingRisk) {
-        claimed = await queue.claimArchiveRisk({ ...item.task, owner });
+        claimed = await queue.claimArchiveRisk({ ...item.task, owner,
+          retryFailedNow: options.retryFailedNow });
         if (!claimed) {
           outcomes.push({ tokenAddress: item.task.tokenAddress, status: 'stale' });
           continue;
