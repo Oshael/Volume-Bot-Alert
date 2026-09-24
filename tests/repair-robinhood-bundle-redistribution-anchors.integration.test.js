@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const {
-  persistCandidate, persistObservation,
+  listCandidates, persistCandidate, persistObservation,
 } = require('../src/utils/repair-robinhood-bundle-redistribution-anchors');
 const { EVIDENCE_VERSION, RULE_VERSION } = require('../src/utils/db-init-stage188');
 const stage187 = require('../src/utils/db-init-stage187');
@@ -16,6 +16,7 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'7'.repeat(40)}`;
 const OBSERVATION_TOKEN = `0x${'8'.repeat(40)}`;
+const LEASED_TOKEN = `0x${'9'.repeat(40)}`;
 const OBSERVATION_BLOCK = 99_124_700;
 const SOURCE_BLOCK = 99_124_701;
 const OBSERVATION_HASH = `0x${'6'.repeat(64)}`;
@@ -25,7 +26,8 @@ const SOURCE_TIME = '2026-09-20T12:10:00.000Z';
 
 async function cleanup() {
   await db.query(`DELETE FROM robinhood_bundle_redistribution_queue
-    WHERE chain='robinhood' AND token_address IN ($1, $2)`, [TOKEN, OBSERVATION_TOKEN]);
+    WHERE chain='robinhood' AND token_address IN ($1, $2, $3)`,
+  [TOKEN, OBSERVATION_TOKEN, LEASED_TOKEN]);
   await db.query(`DELETE FROM robinhood_chain_block_anchors
     WHERE chain='robinhood' AND block_number IN ($1, $2)`,
   [OBSERVATION_BLOCK, SOURCE_BLOCK]);
@@ -102,6 +104,38 @@ describe('Robinhood redistribution anchor repair persistence', () => {
       observation_from_hash: OBSERVATION_HASH,
       observation_from_time: new Date(OBSERVATION_TIME),
       source_through_block: null, source_requested_version: null,
+      last_error_code: 'redistribution_anchor_missing',
+    });
+  });
+
+  it('anchors an active leased observation without taking over the lease', async () => {
+    await db.query(`INSERT INTO robinhood_bundle_redistribution_queue(
+      chain, token_address, rule_version, evidence_version,
+      observation_from_block, event_through_block,
+      status, lease_owner, lease_until, last_error_code, last_error_message
+    ) VALUES ('robinhood', $1, $2, $3, $4, $5,
+      'leased', 'active-worker', NOW() + INTERVAL '20 minutes',
+      'redistribution_anchor_missing', 'observation missing')`,
+    [LEASED_TOKEN, RULE_VERSION, EVIDENCE_VERSION,
+      OBSERVATION_BLOCK, SOURCE_BLOCK]);
+    const candidate = { tokenAddress: LEASED_TOKEN, requestedVersion: '1',
+      observation: { blockNumber: String(OBSERVATION_BLOCK), blockHash: null } };
+    const observation = { blockNumber: String(OBSERVATION_BLOCK),
+      blockHash: OBSERVATION_HASH, blockTime: OBSERVATION_TIME, source: 'archive' };
+    assert.equal((await listCandidates(db, 1000, true))
+      .some((item) => item.tokenAddress === LEASED_TOKEN), true);
+    assert.equal((await listCandidates(db, 1000, false))
+      .some((item) => item.tokenAddress === LEASED_TOKEN), false);
+    assert.equal(await persistObservation(db, { ...candidate, requestedVersion: '2' },
+      observation), false);
+    assert.equal(await persistObservation(db, candidate, observation), true);
+    assert.equal(await persistObservation(db, candidate, observation), false);
+    assert.deepEqual((await db.query(`SELECT status, lease_owner,
+        lease_until > NOW() AS lease_active, observation_from_hash,
+        last_error_code FROM robinhood_bundle_redistribution_queue
+       WHERE token_address=$1`, [LEASED_TOKEN])).rows[0], {
+      status: 'leased', lease_owner: 'active-worker', lease_active: true,
+      observation_from_hash: OBSERVATION_HASH,
       last_error_code: 'redistribution_anchor_missing',
     });
   });

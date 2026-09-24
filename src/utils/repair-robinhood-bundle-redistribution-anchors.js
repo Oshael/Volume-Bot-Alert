@@ -85,7 +85,8 @@ async function listCandidates(database, limit, observationOnly = false) {
     FROM robinhood_bundle_redistribution_queue queue
     LEFT JOIN robinhood_holder_token_states holder
       ON holder.chain=queue.chain AND holder.token_address=queue.token_address
-   WHERE queue.chain=$1 AND queue.rule_version=$2 AND queue.status='pending'
+   WHERE queue.chain=$1 AND queue.rule_version=$2
+     AND (queue.status='pending' OR ($4::boolean AND queue.status='leased'))
      AND (queue.observation_from_hash IS NULL
        OR queue.source_requested_version IS DISTINCT FROM queue.requested_version)
      AND (NOT $4::boolean OR queue.observation_from_hash IS NULL)
@@ -187,7 +188,8 @@ async function persistObservation(database, candidate, observation) {
     await client.query('BEGIN');
     const locked = await client.query(`SELECT 1
       FROM robinhood_bundle_redistribution_queue
-     WHERE chain=$1 AND token_address=$2 AND rule_version=$3 AND status='pending'
+     WHERE chain=$1 AND token_address=$2 AND rule_version=$3
+       AND status IN ('pending', 'leased')
        AND requested_version=$4::bigint AND observation_from_block=$5::bigint
        AND observation_from_hash IS NULL FOR UPDATE`,
     [CHAIN, candidate.tokenAddress, RULE_VERSION, candidate.requestedVersion,
@@ -206,7 +208,8 @@ async function persistObservation(database, candidate, observation) {
     const updated = await client.query(`UPDATE robinhood_bundle_redistribution_queue SET
       observation_from_hash=$6, observation_from_time=$7::timestamptz,
       updated_at=NOW()
-     WHERE chain=$1 AND token_address=$2 AND rule_version=$3 AND status='pending'
+     WHERE chain=$1 AND token_address=$2 AND rule_version=$3
+       AND status IN ('pending', 'leased')
        AND requested_version=$4::bigint AND observation_from_block=$5::bigint
        AND observation_from_hash IS NULL`, [CHAIN, candidate.tokenAddress, RULE_VERSION,
       candidate.requestedVersion, observation.blockNumber,

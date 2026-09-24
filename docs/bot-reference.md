@@ -6030,11 +6030,13 @@ estiver ausente; nesse caso valida chain ID 4663, número, hash e timestamp. `--
 `--concurrency` e `--timeout-ms` são limitados. Apenas a versão pendente exata com
 observação e source integralmente ancorados é reaberta; tarefas bloqueadas,
 incompletas ou alteradas concorrentemente permanecem visíveis para nova execução.
-Com `--observation-only`, o mesmo comando seleciona apenas tarefas pendentes sem
-âncora de observação e grava esse bloco canônico, mesmo quando o holder ainda não
+Com `--observation-only`, o mesmo comando seleciona tarefas pendentes ou com lease
+ativa sem âncora de observação e grava esse bloco canônico, mesmo quando o holder ainda não
 chegou ao tail. Mantém source, erro e agendamento da fila intactos; exige a mesma
-confirmação de apply e protege bloco, versão e status da tarefa. A prova de source
-continua dependente do holder `live` e da conclusão posterior da classificação.
+confirmação de apply e protege bloco e versão da tarefa. Uma lease ativa conserva
+seu owner, prazo e status; o worker pode tentar novamente com a âncora reparada.
+A prova de source continua dependente do holder `live` e da conclusão posterior
+da classificação.
 Esse modo reduz o risco de retenção do journal sem declarar a tarefa concluída.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --

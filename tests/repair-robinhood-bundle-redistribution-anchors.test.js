@@ -54,12 +54,14 @@ describe('Robinhood redistribution anchor repair', () => {
     assert.equal(result[0].holder.blockHash, HASH_B);
   });
 
-  it('limits observation-only selection to pending rows without an observation anchor',
+  it('includes leased rows only for observation-only repair',
     async () => {
       let captured;
       await listCandidates({ async query(sql, params) {
         captured = { sql, params }; return { rows: [] };
       } }, 500, true);
+      assert.match(captured.sql,
+        /queue\.status='pending' OR \(\$4::boolean AND queue\.status='leased'\)/);
       assert.match(captured.sql, /NOT \$4::boolean OR queue\.observation_from_hash IS NULL/);
       assert.deepEqual(captured.params.slice(2), [500, true]);
     });
