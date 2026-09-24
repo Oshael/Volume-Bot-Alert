@@ -16,7 +16,9 @@ it('enforces both disk floors and capture health before a write', () => {
   assert.equal(evaluateHealth(healthyCapture, 21n * GIB, 76n * GIB).ready, true);
   assert.equal(evaluateHealth(healthyCapture, 19n * GIB, 76n * GIB).reason, 'disk_floor');
   assert.equal(evaluateHealth(healthyCapture, 21n * GIB, 74n * GIB).reason, 'disk_floor');
-  assert.equal(evaluateHealth({ ...healthyCapture, lag: '251' },
+  assert.equal(evaluateHealth({ ...healthyCapture, lag: '800' },
+    21n * GIB, 76n * GIB).ready, true);
+  assert.equal(evaluateHealth({ ...healthyCapture, lag: '801' },
     21n * GIB, 76n * GIB).reason, 'capture_health');
   assert.equal(evaluateHealth({ ...healthyCapture, enabled: 'false' },
     21n * GIB, 76n * GIB).reason, 'capture_health');

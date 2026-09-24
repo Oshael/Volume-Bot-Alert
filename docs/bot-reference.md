@@ -5316,7 +5316,7 @@ Para avançar várias páginas sem um serviço permanente, use
 --through-block=M --max-blocks=100 --max-pages=100 --apply`. O runner imprime
 `nextBlock` após cada commit e pode ser retomado desse valor, inclusive após
 desconexão. Antes de cada página escrita, exige shadow LIVE ativo, heartbeat
-recente, estado `running`, lag até 250 blocos e pelo menos 20 GiB livres em `/`
+recente, estado `running`, lag até 800 blocos e pelo menos 20 GiB livres em `/`
 e 75 GiB no tablespace da sombra. Para se o gate falhar. O máximo por execução
 é 10.000 páginas, com pausa padrão de 100 ms; medir `df` e lag entre execuções.
 Para execuções longas, use uma sessão que sobreviva à desconexão SSH e guarde

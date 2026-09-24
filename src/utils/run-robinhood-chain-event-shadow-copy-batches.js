@@ -8,7 +8,7 @@ const { copyPage, parseArgs: parsePageArgs } = require('./copy-robinhood-chain-e
 const MAX_PAGES = 10000;
 const MIN_ROOT_FREE_BYTES = 20n * 1024n ** 3n;
 const MIN_SHADOW_FREE_BYTES = 75n * 1024n ** 3n;
-const MAX_CAPTURE_LAG_BLOCKS = 250;
+const MAX_CAPTURE_LAG_BLOCKS = 800;
 
 function parseArgs(args = []) {
   const pageArgs = [];
