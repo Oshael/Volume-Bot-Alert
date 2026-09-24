@@ -148,6 +148,7 @@
     "robinhood:retention-safety-audit": "node src/utils/audit-robinhood-retention-safety.js",
     "robinhood:deployment-live-window-audit": "node src/utils/audit-robinhood-deployment-live-window.js",
     "robinhood:chain-events-prune": "node src/utils/prune-robinhood-chain-events.js",
+    "robinhood:chain-event-shadow-copy": "node src/utils/copy-robinhood-chain-event-shadow-page.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:onboarding-backfill": "node src/utils/backfill-robinhood-onboarding.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",

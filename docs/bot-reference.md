@@ -5302,6 +5302,15 @@ essa limpeza em `DELETE` linha a linha nas partições. O padrão de
 `ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED` é `false`. A retenção física da sombra
 deve descartar partições elegíveis após resolver os filhos; acompanhar por partição
 os deltas de `n_tup_upd`/`n_tup_del` e `n_dead_tup`, além de bytes de heap e índices.
+Para copiar uma faixa histórica já finalizada, use
+`npm run robinhood:chain-event-shadow-copy -- --from-block=N --through-block=M
+--max-blocks=100`. O padrão é somente leitura; `--apply` confirma apenas uma
+página e retorna `nextBlock` para a seguinte. Cada página limita a 1.000 alturas,
+5.000 eventos e 16 MiB de linhas de origem; reduza `--max-blocks` se exceder o
+limite. A cópia reusa a verificação de identidade e payload do espelho LIVE e
+falha se a captura não estiver em execução ou a página passar do head finalizado.
+Provisione as partições da faixa antes do apply e monitore espaço, WAL e lag entre
+páginas. A conclusão da cópia não autoriza cutover nem poda sem paridade e FKs.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
