@@ -5619,7 +5619,7 @@ const SCHEMA_GROUPS = [
       },
       constraints: [
         { name: 'rh_chain_v3_balance_snapshots_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash', 'log_index'] },
-        { name: 'rh_chain_v3_balance_snapshots_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'rh_chain_v3_balance_snapshots_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash'] },
         { name: 'rh_chain_v3_balance_snapshots_values_check', includes: ['token_balance_raw', 'quote_balance_raw', '>= 0'] },
       ],
     }],
@@ -6042,7 +6042,7 @@ const SCHEMA_GROUPS = [
       ],
       constraints: [
         { name: 'token_launchpad_lifecycle_events_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash', 'log_index'] },
-        { name: 'token_launchpad_lifecycle_events_event_fkey', includes: ['FOREIGN KEY', 'robinhood_chain_events', 'ON DELETE CASCADE'] },
+        { name: 'token_launchpad_lifecycle_events_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash', 'ON DELETE CASCADE'] },
         { name: 'token_launchpad_lifecycle_events_values_check', includes: ['launched', 'curve_progress', 'swept', 'migrated', 'rescued'] },
       ],
       indexes: [
@@ -6751,6 +6751,28 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage250-robinhood-chain-event-children',
+    name: 'Stage 250 Robinhood event child FK migration',
+    repair: 'node src/utils/migrate-robinhood-chain-event-fks.js --prepare',
+    tables: [{
+      table: 'robinhood_chain_v3_balance_snapshots',
+      constraints: [{ name: 'rh_chain_v3_balance_snapshots_event_fkey',
+        includes: ['FOREIGN KEY (chain, block_hash)', 'robinhood_chain_blocks', 'ON DELETE CASCADE'],
+        excludes: ['NOT VALID'] }],
+    }, {
+      table: 'token_launchpad_lifecycle_events',
+      constraints: [{ name: 'token_launchpad_lifecycle_events_event_fkey',
+        includes: ['FOREIGN KEY (chain, block_hash)', 'robinhood_chain_blocks', 'ON DELETE CASCADE'],
+        excludes: ['NOT VALID'] }],
+    }, {
+      table: 'robinhood_canonical_head_candidates',
+      constraints: [{ name: 'rh_canonical_head_candidates_event_fkey',
+        includes: ['FOREIGN KEY (chain, block_number, block_hash, log_index)',
+          'robinhood_chain_events_shadow', 'ON DELETE CASCADE'],
+        excludes: ['NOT VALID'] }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -6868,7 +6890,10 @@ function collectMissingConstraints(requirement, tableConstraints) {
         actualDefinition.includes(String(part))
       )))
       .map((alternatives) => `one of (${alternatives.join('|')})`);
-    const missing = [...missingParts, ...missingAlternatives];
+    const forbiddenParts = (constraint.excludes || [])
+      .filter((part) => actualDefinition.includes(String(part)))
+      .map((part) => `unexpected ${part}`);
+    const missing = [...missingParts, ...missingAlternatives, ...forbiddenParts];
     if (missing.length > 0) {
       missingConstraints.push(`${requirement.table}.${constraintName} missing ${missing.join('/')}`);
     }

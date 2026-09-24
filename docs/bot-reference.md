@@ -5377,6 +5377,20 @@ transação. O `--apply` repetido retorna `alreadyMigrated: true`. Depois,
 remove a FK do outbox antigo para o monólito; outras dependências do monólito
 ainda precisam de tratamento antes de descartá-lo.
 
+As três FKs restantes do monólito são migradas por
+`node src/utils/migrate-robinhood-chain-event-fks.js`: sem argumento, o comando
+inspeciona o estado. Execute `--prepare`, depois `--validate`, depois
+`--cutover`, conferindo o JSON de cada fase. A preparação adiciona FKs novas
+sem varrer as tabelas; a validação percorre os filhos sem bloquear inserts; o
+corte somente remove as FKs antigas quando todas as novas estão validadas.
+Snapshots V3 e eventos de lifecycle passam a referenciar o bloco canônico por
+`(chain, block_hash)`, preservando todas as linhas históricas e o cascade no
+bloco. O canário passa a referenciar o evento exato no espelho, com
+`block_number`. Se a validação falhar, a FK antiga permanece e nenhuma linha é
+descartada. Após o corte, confira `npm run db:schema-check` e confirme no catálogo
+que nenhuma FK ainda referencia `robinhood_chain_events`. Isso ainda não troca
+o capturador nem os leitores de eventos para a tabela particionada.
+
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
 `node src/utils/db-init-stage205.js` antes de implantar código que use o fence.
