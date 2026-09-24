@@ -5361,10 +5361,21 @@ Antes de migrar as FKs do outbox, a Stage 248 cria
 `robinhood_chain_domain_outbox_shadow` vazia em um tablespace explícito com FK
 exata `(chain, block_number, block_hash, log_index)` para a sombra de eventos.
 Aplique com `node src/utils/db-init-stage248.js --tablespace=trendscope_raw`
-e confira `npm run db:schema-check`. Ela não copia nem troca o outbox ativo;
+antes do corte. Ela não copia nem troca o outbox ativo;
 essas operações exigem um corte posterior que preserve todas as linhas
 pendentes, arrendadas e bloqueadas. Linhas `complete` históricas não participam
-da fronteira de processamento atual.
+da fronteira de processamento atual. Após conferir a paridade da faixa de
+eventos no espelho, execute `node src/utils/cutover-robinhood-chain-domain-outbox.js`
+para leitura prévia: o relatório exige o candidato vazio, FK correta, colunas
+iguais, no máximo 100.000 itens abertos e cada evento aberto presente no espelho.
+Somente após revisar esse relatório, execute o mesmo comando com `--apply`.
+O corte bloqueia brevemente a escrita do journal, copia todos os itens abertos,
+descarta o outbox antigo com seus itens `complete` acumulados e renomeia o
+candidato para o nome ativo em uma transação. Erro ou timeout reverte toda a
+transação. O `--apply` repetido retorna `alreadyMigrated: true`. Depois,
+`npm run db:schema-check` deve confirmar a FK ativa para o espelho. Esse corte
+remove a FK do outbox antigo para o monólito; outras dependências do monólito
+ainda precisam de tratamento antes de descartá-lo.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
