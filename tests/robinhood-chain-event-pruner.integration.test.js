@@ -38,6 +38,14 @@ before(async () => {
   ) ON COMMIT PRESERVE ROWS`);
   await client.query(`CREATE INDEX idx_rh_chain_events_order
     ON robinhood_chain_events(chain, block_number, transaction_index, log_index)`);
+  await client.query(`CREATE TEMP TABLE robinhood_chain_events_shadow (
+    chain text NOT NULL, block_hash text NOT NULL, block_number bigint NOT NULL,
+    transaction_hash text NOT NULL, log_index int NOT NULL,
+    PRIMARY KEY (chain, block_number, block_hash, log_index),
+    FOREIGN KEY (chain, block_hash, transaction_hash)
+      REFERENCES robinhood_chain_transactions(chain, block_hash, transaction_hash)
+      ON DELETE CASCADE
+  ) ON COMMIT PRESERVE ROWS`);
   await client.query(`CREATE TEMP TABLE robinhood_chain_domain_outbox (
     chain text NOT NULL, domain text NOT NULL, block_hash text NOT NULL, log_index int NOT NULL,
     PRIMARY KEY (chain, domain, block_hash, log_index),
@@ -68,6 +76,7 @@ after(async () => {
     await client.query('DROP TABLE IF EXISTS robinhood_canonical_head_candidates');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_domain_outbox');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_events');
+    await client.query('DROP TABLE IF EXISTS robinhood_chain_events_shadow');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_transactions');
     await client.query('DROP TABLE IF EXISTS robinhood_chain_blocks');
     client.release();
@@ -160,6 +169,33 @@ describe('Robinhood chain event pruner integration', () => {
     });
 
     assert.equal(cutoff, '105');
+  });
+
+  it('keeps transaction parents until their shadow events are removed', async () => {
+    await client.query(`INSERT INTO robinhood_chain_blocks
+      VALUES ('robinhood',26,'shadowed',NOW() - INTERVAL '4 days',true)`);
+    await client.query(`INSERT INTO robinhood_chain_transactions
+      VALUES ('robinhood','shadowed','tx-shadowed',0)`);
+    await client.query(`INSERT INTO robinhood_chain_events
+      VALUES ('robinhood','shadowed',26,'tx-shadowed',0,0)`);
+    await client.query(`INSERT INTO robinhood_chain_events_shadow
+      VALUES ('robinhood','shadowed',26,'tx-shadowed',0)`);
+    const database = { getClient: async () => ({
+      query: client.query.bind(client), release() {},
+    }) };
+
+    assert.equal((await pruneBatch(database, '30', 10)).deletedEvents, 1);
+    const protectedStorage = await pruneCanonicalStorageBatch(database, '30', 10);
+    assert.equal(protectedStorage.deletedTransactions, 0);
+    assert.equal(protectedStorage.deletedBlocks, 0);
+    assert.equal((await client.query(`SELECT count(*)::int AS rows
+      FROM robinhood_chain_events_shadow WHERE block_hash='shadowed'`)).rows[0].rows, 1);
+
+    await client.query(`DELETE FROM robinhood_chain_events_shadow
+      WHERE block_hash='shadowed'`);
+    const releasedStorage = await pruneCanonicalStorageBatch(database, '30', 10);
+    assert.equal(releasedStorage.deletedTransactions, 1);
+    assert.equal(releasedStorage.deletedBlocks, 1);
   });
 
   it('keeps every transaction while its block still has an event', async () => {

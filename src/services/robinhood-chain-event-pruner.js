@@ -196,6 +196,16 @@ async function pruneCanonicalStorageBatch(
       });
     }
     await assertCanonicalStorageIndexes(client);
+    // A transaction delete would cascade into the shadow and create dead rows per event.
+    const shadow = await client.query(
+      "SELECT to_regclass('robinhood_chain_events_shadow') AS relation"
+    );
+    const shadowGuard = shadow.rows[0]?.relation ? `WHERE NOT EXISTS (
+             SELECT 1 FROM robinhood_chain_events_shadow shadow
+              WHERE shadow.chain=transaction.chain
+                AND shadow.block_hash=transaction.block_hash
+                AND shadow.transaction_hash=transaction.transaction_hash
+           )` : '';
     const transactions = await client.query(
       `/* chain-event-prune:transactions */ WITH event_free_blocks AS MATERIALIZED (
          SELECT block.chain, block.block_hash, block.block_number
@@ -213,6 +223,7 @@ async function pruneCanonicalStorageBatch(
            FROM event_free_blocks block
            JOIN robinhood_chain_transactions transaction
              ON transaction.chain=block.chain AND transaction.block_hash=block.block_hash
+          ${shadowGuard}
           ORDER BY block.block_number, transaction.transaction_index
           LIMIT $3::int
           FOR UPDATE OF transaction SKIP LOCKED

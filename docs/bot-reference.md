@@ -5296,6 +5296,12 @@ ser copiada no corte de paridade. O status da captura expõe `eventShadowEnabled
 `shadowEvents` e a duração de commit. Reorg mantém a ramificação antiga até a
 retenção, e a FK das duas tabelas de eventos para transações preserva o mesmo
 cascade na remoção posterior.
+Enquanto a sombra existir, a limpeza opcional de transações canônicas não remove
+uma transação ainda referenciada por ela: a FK `ON DELETE CASCADE` transformaria
+essa limpeza em `DELETE` linha a linha nas partições. O padrão de
+`ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED` é `false`. A retenção física da sombra
+deve descartar partições elegíveis após resolver os filhos; acompanhar por partição
+os deltas de `n_tup_upd`/`n_tup_del` e `n_dead_tup`, além de bytes de heap e índices.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com

@@ -22,6 +22,9 @@ function harness(input = {}) {
       if (sql.includes('chain-event-prune:storage-indexes')) {
         return { rows: [{ ready_indexes: 1 }] };
       }
+      if (sql.includes("to_regclass('robinhood_chain_events_shadow')")) {
+        return { rows: [{ relation: input.shadowExists ? 'robinhood_chain_events_shadow' : null }] };
+      }
       if (sql.includes('chain-event-prune:retention-cutoff')) {
         return { rows: [{ cutoff_block: '56397387' }] };
       }

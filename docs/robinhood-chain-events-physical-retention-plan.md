@@ -20,6 +20,15 @@ Usar uma tabela sombra particionada por intervalos de `block_number`, com parti�
 
 O tamanho do intervalo de blocos e o número máximo de partições são parâmetros de projeto a definir com a taxa de blocos medida. Uma partição grande demais retém muitos bytes além de três dias; uma pequena demais aumenta custo de planejamento, FKs e manutenção. Pré-criar a próxima faixa antes de a captura alcançá-la e falhar fechado se ela faltar. Não criar partições de forma oportunista em cada evento LIVE.
 
+Evitar `UPDATE` e `DELETE` em massa na sombra. A FK da sombra para transações usa
+`ON DELETE CASCADE`: remover primeiro transações ainda referenciadas por eventos
+espelhados geraria tuplas mortas nessas partições. A limpeza de transações deve
+ignorar essas referências até a partição elegível ser descartada. Reorgs podem
+exigir remoções pontuais; medir separadamente seus efeitos. Antes e depois de
+cada piloto, comparar por partição deltas de `n_tup_upd`, `n_tup_del`, estimativa
+de `n_dead_tup` e bytes de heap/índices. Contadores acumulados isolados não provam
+taxa de geração de tuplas mortas.
+
 `pg_repack` integral e reescrita simples não são o primeiro corte: a relação atual é maior do que o espaço livre dos volumes, e um repack integral precisa de espaço temporário da ordem da tabela e de seus índices. Depois de pagar a dívida histórica, um repack poderia recuperar espaço uma vez, mas manteria a tabela monolítica e a próxima dívida voltaria a crescer. A migração para partições resolve a retenção física recorrente.
 
 ## Fronteiras de implementação
