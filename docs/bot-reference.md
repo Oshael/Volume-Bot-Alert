@@ -5274,6 +5274,16 @@ Bloco, contexto de transação, logs e avanço do cursor serão commitados
 atomicamente; gaps e divergência de `parentHash` falham antes do avanço. Aplique
 com `node src/utils/db-init-stage191.js` antes de habilitar o capturador.
 
+A Stage 247 prepara `robinhood_chain_events_shadow`, particionada em faixas de
+250.000 blocos, e adiciona `block_number` nullable aos snapshots V3. Ela exige
+`--tablespace`, `--from-block` e `--through-block` explícitos; medir o espaço do
+volume e escolher a faixa em torno do LIVE antes de executá-la. Não copia eventos,
+não altera o writer nem habilita poda. O preenchimento dos snapshots usa
+`backfill-robinhood-v3-snapshot-block-numbers.js` em páginas de até 5.000 linhas,
+com cursor retornado a cada execução; o modo padrão é somente leitura e `--apply`
+confirma cada página. Conferir a igualdade dos blocos com o evento pai antes de
+trocar as FKs. A coluna continua nullable até o writer passar a preenchê-la.
+
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
 `node src/utils/db-init-stage205.js` antes de implantar código que use o fence.

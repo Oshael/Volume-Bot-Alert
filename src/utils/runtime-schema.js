@@ -6692,6 +6692,39 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage247-robinhood-chain-events-shadow',
+    name: 'Stage 247 Robinhood partitioned chain event shadow',
+    repair: 'node src/utils/db-init-stage247.js --tablespace=NAME --from-block=N --through-block=N',
+    tables: [{
+      table: 'robinhood_chain_events_shadow',
+      columns: [
+        'chain', 'block_hash', 'block_number', 'transaction_hash', 'transaction_index',
+        'log_index', 'address', 'topic0', 'topics', 'data', 'captured_at',
+      ],
+      constraints: [
+        { name: 'rh_chain_events_shadow_pkey', includes: [
+          'PRIMARY KEY', 'chain', 'block_number', 'block_hash', 'log_index',
+        ] },
+        { name: 'rh_chain_events_shadow_transaction_fkey', includes: [
+          'FOREIGN KEY', 'transaction_hash', 'ON DELETE CASCADE',
+        ] },
+        { name: 'rh_chain_events_shadow_values_check', includes: [
+          'jsonb_typeof', 'topics', 'topic0',
+        ] },
+      ],
+      indexes: [
+        { name: 'idx_rh_chain_events_shadow_hash', includes: ['chain', 'block_hash', 'log_index'] },
+        { name: 'idx_rh_chain_events_shadow_order', includes: [
+          'chain', 'block_number', 'transaction_index', 'log_index',
+        ] },
+        { name: 'idx_rh_chain_events_shadow_topic', includes: ['chain', 'topic0', 'block_number'] },
+      ],
+    }, {
+      table: 'robinhood_chain_v3_balance_snapshots',
+      columns: ['block_number'],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
