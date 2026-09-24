@@ -5282,11 +5282,13 @@ não altera o writer nem habilita poda. O preenchimento dos snapshots usa
 `backfill-robinhood-v3-snapshot-block-numbers.js` em páginas de até 5.000 linhas,
 com cursor retornado a cada execução; o modo padrão é somente leitura e `--apply`
 confirma cada página. Conferir a igualdade dos blocos com o evento pai antes de
-trocar as FKs. A coluna continua nullable até o writer passar a preenchê-la.
+trocar as FKs. A coluna continua nullable para os snapshots históricos até o
+backfill limitado resolver os registros que precisarão da nova FK.
 Depois de aplicar a Stage 247 e provisionar partições à frente do cursor LIVE,
 `ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED=true` faz a captura copiar os eventos do
-journal principal para a sombra na mesma transação e preencher `block_number`
-nos novos snapshots V3. O padrão é `false`. A cópia verifica identidade e payload;
+journal principal para a sombra na mesma transação. A captura preenche
+`block_number` nos novos snapshots V3 mesmo com o espelho desligado. O padrão da
+flag é `false`. A cópia verifica identidade e payload;
 em lotes sem conflitos, a igualdade de contagem entre fonte e linhas inseridas evita
 comparar novamente cada payload; conflitos são comparados integralmente, e linhas
 extras na sombra continuam bloqueando o commit.

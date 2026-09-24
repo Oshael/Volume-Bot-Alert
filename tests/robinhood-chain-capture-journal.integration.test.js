@@ -712,11 +712,12 @@ describe('Robinhood canonical chain capture journal', () => {
       blocks: 1, transactions: 1, events: 1, work_items: 1, snapshots: 1,
     });
     const snapshot = await db.query(
-      `SELECT token_balance_raw::text, quote_balance_raw::text
+      `SELECT token_balance_raw::text, quote_balance_raw::text,
+              block_number::text
          FROM robinhood_chain_v3_balance_snapshots`
     );
     assert.deepEqual(snapshot.rows[0], {
-      token_balance_raw: MAX_UINT256, quote_balance_raw: '2500000',
+      token_balance_raw: MAX_UINT256, quote_balance_raw: '2500000', block_number: '100',
     });
     assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
       .rows[0].n, 0);
