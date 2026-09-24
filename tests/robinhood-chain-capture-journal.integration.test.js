@@ -16,6 +16,9 @@ const {
   createRobinhoodChainCaptureJournal,
 } = require('../src/models/robinhood-chain-capture-journal');
 const {
+  run: backfillV3FromShadow,
+} = require('../src/utils/backfill-robinhood-v3-snapshot-blocks-from-shadow');
+const {
   lockRobinhoodCanonicalProjection,
   lockRobinhoodCanonicalRecoveryExclusive,
 } = require('../src/models/robinhood-canonical-projection-fence');
@@ -773,6 +776,36 @@ describe('Robinhood canonical chain capture journal', () => {
       await db.query('DELETE FROM robinhood_chain_blocks WHERE block_hash=$1', [HASH]);
       assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
         .rows[0].n, 0);
+    });
+
+  it('backfills only a V3 snapshot present in the shadow and rejects a wrong block',
+    async () => {
+      const input = capture();
+      input.v3Snapshots = [{
+        logIndex: 0, poolAddress: LIQUIDITY_POOL, tokenAddress: TOKEN,
+        quoteAddress: RECIPIENT, tokenBalanceRaw: '12', quoteBalanceRaw: '34',
+      }];
+      await createRobinhoodChainCaptureJournal({ shadowEnabled: true }).commitBlock(input);
+      await db.query('UPDATE robinhood_chain_v3_balance_snapshots SET block_number=NULL');
+      const scope = { database: db, closePool: false,
+        fromBlock: 100, throughBlock: 100, batchSize: 10 };
+      const preview = await backfillV3FromShadow(scope);
+      assert.equal(preview.mode, 'read-only');
+      assert.equal(preview.missing, 1);
+      const applied = await backfillV3FromShadow({ ...scope, apply: true });
+      assert.equal(applied.filled, 1);
+      assert.equal(applied.scanComplete, true);
+      const block = await db.query(`SELECT block_number::text AS block
+        FROM robinhood_chain_v3_balance_snapshots`);
+      assert.equal(block.rows[0].block, '100');
+      const page = await backfillV3FromShadow({ ...scope, batchSize: 1 });
+      assert.equal(page.scanComplete, false);
+      const resumed = await backfillV3FromShadow({ ...scope, batchSize: 1,
+        cursor: page.nextCursor });
+      assert.equal(resumed.scanned, 0);
+      assert.equal(resumed.scanComplete, true);
+      await db.query('UPDATE robinhood_chain_v3_balance_snapshots SET block_number=101');
+      await assert.rejects(backfillV3FromShadow(scope), /snapshot\/shadow mismatch/);
     });
 
   it('rolls back the canonical capture when the enabled shadow lacks a partition', async () => {

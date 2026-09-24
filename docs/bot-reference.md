@@ -5284,6 +5284,14 @@ com cursor retornado a cada execução; o modo padrão é somente leitura e `--a
 confirma cada página. Conferir a igualdade dos blocos com o evento pai antes de
 trocar as FKs. A coluna continua nullable para os snapshots históricos até o
 backfill limitado resolver os registros que precisarão da nova FK.
+Para limitar esse preenchimento à faixa já copiada e validada na sombra, use
+`npm run robinhood:v3-snapshot-shadow-backfill -- --from-block=N --through-block=M
+--batch-size=1000`. O padrão é somente leitura; `--apply` confirma uma página e
+retorna `nextCursor` para a próxima execução. Cada página examina no máximo 5.000
+snapshots associados a eventos da sombra, recusa `block_number` divergente e
+atualiza apenas os nulos. Use a mesma faixa fixa ao retomar com `--cursor=...`;
+`nextCursor: null` e `scanComplete: true` encerram a varredura. Não atualiza
+snapshots antigos fora da sombra.
 Depois de aplicar a Stage 247 e provisionar partições à frente do cursor LIVE,
 `ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED=true` faz a captura copiar os eventos do
 journal principal para a sombra na mesma transação. A captura preenche
