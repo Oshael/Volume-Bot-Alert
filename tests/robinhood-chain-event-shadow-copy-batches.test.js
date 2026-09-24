@@ -44,3 +44,26 @@ it('reports the last committed cursor and stops before the next page when health
   assert.throws(() => parseArgs(['--from-block=1', '--through-block=2',
     '--max-pages=501']), /max-pages/);
 });
+
+it('reduces only the failing page and retries from the same block', async () => {
+  const options = parseArgs(['--from-block=100', '--through-block=199',
+    '--max-blocks=100', '--max-pages=1', '--pause-ms=0', '--apply']);
+  const attempts = [];
+  const report = await runPages(options, {
+    database: {}, volumePath: async () => '/tmp',
+    guard: async () => ({ ready: true }),
+    copy: async ({ fromBlock, maxBlocks }) => {
+      attempts.push([fromBlock, maxBlocks]);
+      if (maxBlocks > 25) {
+        const error = new Error('page too large');
+        error.code = 'shadow_copy_page_too_large';
+        throw error;
+      }
+      return { fromBlock, nextBlock: fromBlock + maxBlocks, inserted: 10 };
+    },
+  });
+  assert.deepEqual(attempts, [[100, 100], [100, 50], [100, 25]]);
+  assert.equal(report.pages, 1);
+  assert.equal(report.nextBlock, 125);
+  assert.equal(report.inserted, 10);
+});

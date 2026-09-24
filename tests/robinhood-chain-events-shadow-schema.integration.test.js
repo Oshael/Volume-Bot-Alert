@@ -138,7 +138,7 @@ it('copies one finalized page without advancing capture and rejects changed payl
       '--from-block=1', '--through-block=2', '--max-blocks=1001',
     ]), /maxBlocks/);
     assert.throws(() => shadowCopy.assertBoundedSource({ events: '5001',
-      source_bytes: '0' }), /exceeds/);
+      source_bytes: '0' }), (error) => error.code === 'shadow_copy_page_too_large');
     assert.throws(() => shadowCopy.assertBoundedSource({ events: '1',
       source_bytes: String(shadowCopy.MAX_SOURCE_BYTES + 1) }), /exceeds/);
   } finally {

@@ -26,7 +26,7 @@ function normalizeOptions(input = {}) {
     throw new Error(`maxBlocks must be between 1 and ${MAX_BLOCKS}`);
   }
   const pageEnd = Math.min(throughBlock, fromBlock + maxBlocks - 1);
-  return { fromBlock, throughBlock, pageEnd, apply: input.apply === true };
+  return { fromBlock, throughBlock, pageEnd, maxBlocks, apply: input.apply === true };
 }
 
 function parseArgs(args = []) {
@@ -57,7 +57,11 @@ async function assertFinalizedPage(client, pageEnd) {
 
 function assertBoundedSource({ events, source_bytes: sourceBytes }) {
   if (BigInt(events) > BigInt(MAX_EVENTS) || BigInt(sourceBytes) > BigInt(MAX_SOURCE_BYTES)) {
-    throw new Error(`page exceeds ${MAX_EVENTS} events or ${MAX_SOURCE_BYTES} source bytes; reduce --max-blocks`);
+    const error = new Error(`page exceeds ${MAX_EVENTS} events or ${MAX_SOURCE_BYTES} source bytes; reduce --max-blocks`);
+    error.code = 'shadow_copy_page_too_large';
+    error.events = events;
+    error.sourceBytes = sourceBytes;
+    throw error;
   }
 }
 

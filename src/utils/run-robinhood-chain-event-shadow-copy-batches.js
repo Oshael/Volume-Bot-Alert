@@ -77,6 +77,23 @@ function evaluateHealth(capture, rootFree, shadowFree) {
     shadowFree: shadowFree.toString() };
 }
 
+async function copyAdaptivePage(input, nextBlock, initialBlocks, deps) {
+  let maxBlocks = initialBlocks;
+  while (maxBlocks >= 1) {
+    try {
+      const result = await deps.copy({ ...input, fromBlock: nextBlock,
+        maxBlocks }, { database: deps.database });
+      return { result, maxBlocks };
+    } catch (error) {
+      if (error.code !== 'shadow_copy_page_too_large' || maxBlocks === 1) throw error;
+      maxBlocks = Math.max(1, Math.floor(maxBlocks / 2));
+      deps.progress({ phase: 'page_reduced', nextBlock, maxBlocks,
+        events: error.events ?? null, sourceBytes: error.sourceBytes ?? null });
+    }
+  }
+  throw new Error('shadow copy page has no valid block width');
+}
+
 async function runPages(input, deps = {}) {
   const database = deps.database || db;
   const copy = deps.copy || copyPage;
@@ -89,6 +106,7 @@ async function runPages(input, deps = {}) {
   let nextBlock = input.fromBlock;
   let pages = 0;
   let inserted = 0;
+  let pageBlocks = input.maxBlocks;
   let stopReason = 'page_limit';
   while (pages < maxPages && nextBlock <= input.throughBlock) {
     if (input.apply) {
@@ -99,7 +117,10 @@ async function runPages(input, deps = {}) {
         break;
       }
     }
-    const result = await copy({ ...input, fromBlock: nextBlock }, { database });
+    const page = await copyAdaptivePage(input, nextBlock, pageBlocks,
+      { copy, database, progress });
+    const { result } = page;
+    pageBlocks = page.maxBlocks;
     pages += 1;
     inserted += result.inserted;
     nextBlock = result.nextBlock;
@@ -112,14 +133,30 @@ async function runPages(input, deps = {}) {
 }
 
 async function main(args = process.argv.slice(2)) {
+  const options = parseArgs(args);
+  let lastNextBlock = options.fromBlock;
+  let completedPages = 0;
+  let inserted = 0;
   try {
-    const report = await runPages(parseArgs(args), {
-      progress: (entry) => console.log(JSON.stringify(entry)),
+    const report = await runPages(options, {
+      progress: (entry) => {
+        if (entry.phase === 'page') {
+          lastNextBlock = entry.nextBlock;
+          completedPages += 1;
+          inserted += entry.inserted;
+        }
+        console.log(JSON.stringify(entry));
+      },
     });
     console.log(JSON.stringify({ phase: 'summary', ...report }));
     if (report.stopReason === 'disk_floor' || report.stopReason === 'capture_health') {
       process.exitCode = 2;
     }
+  } catch (error) {
+    console.error(JSON.stringify({ phase: 'summary', mode: options.apply ? 'apply' : 'read-only',
+      pages: completedPages, inserted, nextBlock: lastNextBlock,
+      stopReason: 'error', errorCode: error.code || null, error: error.message }));
+    process.exitCode = 1;
   } finally {
     await db.pool.end();
   }
