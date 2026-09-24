@@ -1,6 +1,7 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const db = require('./db');
+const { mirrorCapturedEvents } = require('./robinhood-chain-event-shadow');
 const {
   createRobinhoodChainRecoveryJournal,
 } = require('./robinhood-chain-recovery-journal');
@@ -233,7 +234,7 @@ function batchPayload(entries) {
       }
     }
     v3Snapshots.push(...entry.v3Snapshots.map((snapshot) => ({
-      block_hash: block.hash, ...snapshot,
+      block_hash: block.hash, block_number: block.number.toString(), ...snapshot,
     })));
     const eventsByLogIndex = new Map(entry.events.map((event) => [event.log_index, event]));
     workItems.push(...routeCanonicalEvents(entry.events).map((item) => ({
@@ -262,6 +263,9 @@ function validateSequence(entries, current) {
 }
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
+  const shadowEnabled = options.shadowEnabled === true;
+  const snapshotBlockColumn = shadowEnabled ? ', block_number' : '';
+  const snapshotBlockValue = shadowEnabled ? ', item.block_number' : '';
   const recoveryJournal = options.recoveryJournal
     || createRobinhoodChainRecoveryJournal({ database });
   async function getCursor(client = database) {
@@ -427,6 +431,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                topic0 TEXT, topics JSONB, data TEXT
              )`, [CHAIN, JSON.stringify(payload.events)]
       );
+      if (shadowEnabled) await mirrorCapturedEvents(client, payload.blocks);
       await appendStockUsdReferenceEvents(client, payload.events);
       await advanceStockUsdReferenceCoverage(client, {
         fromBlock: entries[0].block.number,
@@ -436,12 +441,14 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(
            chain, block_hash, log_index, pool_address, token_address, quote_address,
-           token_balance_raw, quote_balance_raw
+           token_balance_raw, quote_balance_raw${snapshotBlockColumn}
          ) SELECT $1, item.block_hash, item.log_index, item.pool_address, item.token_address,
                   item.quote_address, item.token_balance_raw, item.quote_balance_raw
+                  ${snapshotBlockValue}
              FROM jsonb_to_recordset($2::jsonb) AS item(
                block_hash TEXT, log_index INTEGER, pool_address TEXT, token_address TEXT,
-               quote_address TEXT, token_balance_raw NUMERIC, quote_balance_raw NUMERIC
+               quote_address TEXT, token_balance_raw NUMERIC, quote_balance_raw NUMERIC,
+               block_number BIGINT
              )`, [CHAIN, JSON.stringify(payload.v3Snapshots)]
       );
       await client.query(
@@ -516,6 +523,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         status: 'committed', transactions: entry.transactions.length,
         events: entry.events.length, v3Snapshots: entry.v3Snapshots.length,
         workItems: routeCanonicalEvents(entry.events).length,
+        ...(shadowEnabled ? { shadowEvents: entry.events.length } : {}),
       }));
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

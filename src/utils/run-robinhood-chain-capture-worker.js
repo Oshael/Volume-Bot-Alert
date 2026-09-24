@@ -39,7 +39,9 @@ async function main(deps = {}) {
     deps.rpcOptions || captureRpcOptions(options)
   );
   const database = deps.database || db;
-  const journal = deps.journal || createRobinhoodChainCaptureJournal({ database });
+  const journal = deps.journal || createRobinhoodChainCaptureJournal({
+    database, shadowEnabled: options.eventShadowEnabled,
+  });
   const recoveryPlanner = deps.recoveryPlanner
     || (deps.recoveryPlannerFactory || createRobinhoodChainRecoveryPlanner)(
       { rpcClient, journal }, { maxDepth: options.reorgMaxDepth }

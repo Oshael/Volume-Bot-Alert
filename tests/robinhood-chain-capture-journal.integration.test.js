@@ -104,6 +104,8 @@ const stage216 = require('../src/utils/db-init-stage216');
 const stage222 = require('../src/utils/db-init-stage222');
 const stage239 = require('../src/utils/db-init-stage239');
 const stage240 = require('../src/utils/db-init-stage240');
+const stage247 = require('../src/utils/db-init-stage247');
+const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -382,6 +384,8 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage193.init({ closePool: false });
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
+    await stage247.init({ closePool: false, tablespace: 'pg_default',
+      fromBlock: 0, throughBlock: 499999 });
     await stage216.init({ closePool: false });
     await stage222.init({ closePool: false });
     await stage239.init({ closePool: false });
@@ -714,6 +718,8 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.deepEqual(snapshot.rows[0], {
       token_balance_raw: MAX_UINT256, quote_balance_raw: '2500000',
     });
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
+      .rows[0].n, 0);
     const [claimed] = await createRobinhoodChainDomainOutboxRepository().claimNextBlock({
       owner: 'snapshot-contract', leaseMs: 60_000, maxBlocks: 1,
     });
@@ -736,6 +742,68 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(cursor.next_block, '101');
     assert.equal(cursor.checkpoint_block, '100');
     assert.equal(cursor.checkpoint_hash, HASH);
+  });
+
+  it('mirrors the committed event and V3 block number while preserving reorg semantics',
+    async () => {
+      const input = capture();
+      input.v3Snapshots = [{
+        logIndex: 0, poolAddress: LIQUIDITY_POOL, tokenAddress: TOKEN,
+        quoteAddress: RECIPIENT, tokenBalanceRaw: '12', quoteBalanceRaw: '34',
+      }];
+      const journal = createRobinhoodChainCaptureJournal({ shadowEnabled: true });
+      assert.equal((await journal.commitBlock(input)).shadowEvents, 1);
+      const parity = await db.query(`SELECT
+          to_jsonb(event) = to_jsonb(shadow) AS equal,
+          snapshot.block_number::text AS snapshot_block
+        FROM robinhood_chain_events event
+        JOIN robinhood_chain_events_shadow shadow
+          USING (chain, block_number, block_hash, log_index)
+        JOIN robinhood_chain_v3_balance_snapshots snapshot
+          USING (chain, block_hash, log_index)`);
+      assert.deepEqual(parity.rows, [{ equal: true, snapshot_block: '100' }]);
+      assert.equal((await journal.commitBlock(input)).status, 'replayed');
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
+        .rows[0].n, 1);
+      await db.query(`UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1`,
+        [HASH]);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
+        .rows[0].n, 1);
+      await db.query('DELETE FROM robinhood_chain_blocks WHERE block_hash=$1', [HASH]);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
+        .rows[0].n, 0);
+    });
+
+  it('rolls back the canonical capture when the enabled shadow lacks a partition', async () => {
+    const first = capture(499999);
+    const second = capture(500000, NEXT_HASH, HASH);
+    second.transactions[0].hash = NEXT_TX;
+    second.events[0].transactionHash = NEXT_TX;
+    await assert.rejects(
+      createRobinhoodChainCaptureJournal({ shadowEnabled: true }).commitBlocks([first, second]),
+      (error) => error.code === 'capture_shadow_unavailable'
+    );
+    const counts = await db.query(`SELECT
+      (SELECT count(*)::int FROM robinhood_chain_blocks) AS blocks,
+      (SELECT count(*)::int FROM robinhood_chain_events) AS events,
+      (SELECT count(*)::int FROM robinhood_chain_events_shadow) AS shadow_events,
+      (SELECT count(*)::int FROM robinhood_chain_capture_cursor) AS cursors`);
+    assert.deepEqual(counts.rows[0], { blocks: 0, events: 0, shadow_events: 0, cursors: 0 });
+  });
+
+  it('rejects a conflicting shadow row instead of accepting ON CONFLICT silently', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(`INSERT INTO robinhood_chain_events_shadow
+      SELECT * FROM robinhood_chain_events WHERE block_hash=$1`, [HASH]);
+    await db.query(`UPDATE robinhood_chain_events_shadow SET data='0xdead'
+      WHERE block_hash=$1`, [HASH]);
+    const client = await db.getClient();
+    try {
+      await assert.rejects(mirrorCapturedEvents(client, [{ block_hash: HASH }]),
+        (error) => error.code === 'capture_shadow_mismatch');
+    } finally {
+      client.release();
+    }
   });
 
   it('projects Pons V2 lifecycle state and excludes orphaned transitions', async () => {

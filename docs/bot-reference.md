@@ -5283,6 +5283,16 @@ não altera o writer nem habilita poda. O preenchimento dos snapshots usa
 com cursor retornado a cada execução; o modo padrão é somente leitura e `--apply`
 confirma cada página. Conferir a igualdade dos blocos com o evento pai antes de
 trocar as FKs. A coluna continua nullable até o writer passar a preenchê-la.
+Depois de aplicar a Stage 247 e provisionar partições à frente do cursor LIVE,
+`ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED=true` faz a captura copiar os eventos do
+journal principal para a sombra na mesma transação e preencher `block_number`
+nos novos snapshots V3. O padrão é `false`. A cópia verifica identidade e payload;
+partição ausente ou divergência aborta também o avanço do cursor. Desligar a flag
+permite retomar a captura antiga sem perder blocos; a faixa sem espelho terá de
+ser copiada no corte de paridade. O status da captura expõe `eventShadowEnabled`,
+`shadowEvents` e a duração de commit. Reorg mantém a ramificação antiga até a
+retenção, e a FK das duas tabelas de eventos para transações preserva o mesmo
+cascade na remoção posterior.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com

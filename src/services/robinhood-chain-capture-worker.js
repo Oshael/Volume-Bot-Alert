@@ -195,6 +195,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const fetchConcurrency = Math.max(1, Math.min(32, Number(options.fetchConcurrency) || 8));
   const v3SnapshotWindowBlocks = BigInt(options.v3SnapshotWindowBlocks ?? 32);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
+    eventShadowEnabled: options.eventShadowEnabled === true, shadowEvents: 0,
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
     nodeHeadObservedAt: null, lastRunAt: null, lastProgressAt: null,
     lastCompletedAt: null, inFlight: false, totalErrors: 0, consecutiveErrors: 0,
@@ -303,6 +304,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       const result = results[index];
       status.blocks += 1; status.transactions += result.transactions;
       status.events += result.events; status.v3Snapshots += result.v3Snapshots || 0;
+      status.shadowEvents += result.shadowEvents || 0;
       status.v3MissedPools += v3State.missedPools;
       status.v3SkippedPools += v3State.skippedPools || 0;
       status.lastResult = { block: blockNumber.toString(), ...result };
