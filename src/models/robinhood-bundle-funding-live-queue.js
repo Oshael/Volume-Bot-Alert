@@ -36,6 +36,37 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
     }) : null;
   }
 
+  async function claimArchiveRisk(input = {}) {
+    const owner = String(input.owner || '').trim();
+    if (!owner || owner.length > 128) throw new Error('funding Archive owner is invalid');
+    const result = await database.query(`UPDATE robinhood_bundle_funding_live_queue queue SET
+        status = 'leased', lease_owner = $4, lease_until = NOW() + INTERVAL '20 minutes',
+        attempt_count = attempt_count + 1, updated_at = NOW()
+      WHERE queue.chain = $1 AND queue.token_address = $2
+        AND queue.requested_version = $3::bigint AND queue.status = 'pending'
+        AND queue.next_attempt_at <= NOW()
+        AND EXISTS (
+          SELECT 1 FROM robinhood_holder_token_states holder
+           WHERE holder.chain = queue.chain AND holder.token_address = queue.token_address
+             AND holder.ledger_status = 'live'
+             AND holder.live_through_block >= queue.source_through_block
+        )
+        AND EXISTS (
+          SELECT 1 FROM robinhood_first_buy_live_cursors cursor
+          JOIN robinhood_first_buy_backfill_runs seed
+            ON seed.chain = cursor.chain AND seed.id = cursor.seed_run_id
+          WHERE cursor.chain = queue.chain AND seed.status = 'completed'
+            AND cursor.source_next_block > queue.source_through_block
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM robinhood_chain_blocks raw
+           WHERE raw.chain = queue.chain AND raw.canonical
+             AND raw.block_number = GREATEST(queue.anchor_block - queue.lookback_blocks, 0)
+             AND raw.block_timestamp > NOW() - INTERVAL '72 hours'
+        )`, [CHAIN, token(input.tokenAddress), input.requestedVersion, owner]);
+    return result.rowCount === 1;
+  }
+
   async function complete(input = {}) {
     const result = await database.query(`UPDATE robinhood_bundle_funding_live_queue SET
       status = 'complete', completed_version = $4::bigint,
@@ -76,7 +107,7 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  async function replaceEvidence(input, archiveRepair) {
+  async function replaceEvidence(input, archiveRepair, requirePublished = false) {
     if (!Array.isArray(input.evidence)) throw new Error('live funding evidence is required');
     if (!input.snapshot) throw new Error('live possible bundle snapshot is required');
     const client = await database.getClient();
@@ -122,7 +153,7 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
       const snapshotResult = await replaceSnapshotWithClient(
         client, input.snapshot, locked.rows[0], new Date().toISOString(), { projectionFence }
       );
-      if (archiveRepair && snapshotResult.status !== 'published') {
+      if ((archiveRepair || requirePublished) && snapshotResult.status !== 'published') {
         throw new Error('Archive funding snapshot was not published');
       }
       const updated = await client.query(`UPDATE robinhood_bundle_funding_live_queue SET
@@ -141,11 +172,12 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
   }
 
   const replaceEvidenceAndComplete = (input = {}) => replaceEvidence(input, false);
+  const completeArchiveRisk = (input = {}) => replaceEvidence(input, false, true);
   const repairArchivedEvidence = (input = {}) => replaceEvidence(input, true);
 
   return Object.freeze({
-    claim, complete, preserveEvidenceAndComplete, retry,
-    replaceEvidenceAndComplete, repairArchivedEvidence,
+    claim, claimArchiveRisk, complete, preserveEvidenceAndComplete, retry,
+    replaceEvidenceAndComplete, completeArchiveRisk, repairArchivedEvidence,
   });
 }
 

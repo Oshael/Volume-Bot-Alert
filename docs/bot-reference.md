@@ -4240,6 +4240,15 @@ confere chain e checkpoint canônico e substitui evidência e snapshot na mesma
 transação apenas se a versão e o marcador da fila ainda coincidirem. `--after-token`
 avança a página; itens sem cobertura de first-buy, com menos de duas candidatas
 ou acima do limite de blocos permanecem pendentes para investigação.
+Para tarefas `pending` cujo início da janela já não está no journal canônico ou
+tem mais de 72 horas, o mesmo comando aceita `--pending-risk`. Exige holder `live`
+cobrindo a fonte, seed e cursor first-buy completos, e tarefa pronta para nova
+tentativa. A prévia é somente leitura; `--apply` disputa a tarefa com o worker por
+lease de 20 minutos, confere a versão antes de gravar e relê as candidatas após
+o claim. Nesse modo o limite padrão é 2.000 blocos por token e o máximo é 5.000;
+falhas retornam a tarefa à fila com retry. A evidência Archive e o snapshot só
+são concluídos juntos quando o snapshot foi publicado. Esse reparo não depende
+do replay restante de holders para tokens que já estão `live` na fonte exigida.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
 de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no

@@ -1,6 +1,7 @@
 'use strict';
 
 require('dotenv').config();
+const { randomUUID } = require('crypto');
 const db = require('../models/db');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
 const { createRobinhoodBundleFundingLiveQueueRepository } = require(
@@ -26,6 +27,26 @@ const CANDIDATES_SQL = `SELECT queue.token_address, queue.requested_version::tex
    AND queue.completed_version=queue.requested_version
    AND queue.token_address>$1
  ORDER BY queue.token_address LIMIT $2::int`;
+const PENDING_RISK_SQL = `SELECT queue.token_address, queue.requested_version::text,
+       queue.anchor_block::text, queue.source_through_block::text,
+       queue.lookback_blocks::text, TRUE AS first_buy_complete
+  FROM robinhood_bundle_funding_live_queue queue
+  JOIN robinhood_holder_token_states holder
+    ON holder.chain=queue.chain AND holder.token_address=queue.token_address
+ WHERE queue.chain='robinhood' AND queue.status='pending'
+   AND queue.next_attempt_at<=NOW() AND queue.token_address>$1
+   AND holder.ledger_status='live'
+   AND holder.live_through_block>=queue.source_through_block
+   AND EXISTS (SELECT 1 FROM robinhood_first_buy_live_cursors cursor
+     JOIN robinhood_first_buy_backfill_runs seed
+       ON seed.chain=cursor.chain AND seed.id=cursor.seed_run_id
+    WHERE cursor.chain=queue.chain AND seed.status='completed'
+      AND cursor.source_next_block>queue.source_through_block)
+   AND NOT EXISTS (SELECT 1 FROM robinhood_chain_blocks raw
+     WHERE raw.chain=queue.chain AND raw.canonical
+       AND raw.block_number=GREATEST(queue.anchor_block-queue.lookback_blocks, 0)
+       AND raw.block_timestamp>NOW()-INTERVAL '72 hours')
+ ORDER BY queue.token_address LIMIT $2::int`;
 
 function integer(value, fallback, minimum, maximum, label) {
   const parsed = Number(value ?? fallback);
@@ -36,10 +57,11 @@ function integer(value, fallback, minimum, maximum, label) {
 }
 
 function parseArgs(argv = []) {
-  const values = {}; let apply = false; let confirmed = false;
+  const values = {}; let apply = false; let confirmed = false; let pendingRisk = false;
   for (const argument of argv) {
     if (argument === '--apply' && !apply) apply = true;
     else if (argument === CONFIRM_FLAG && !confirmed) confirmed = true;
+    else if (argument === '--pending-risk' && !pendingRisk) pendingRisk = true;
     else {
       const match = /^--(limit|batch-blocks|max-blocks|after-token)=(.+)$/.exec(argument);
       if (!match || values[match[1]] != null) throw new Error(`unknown argument: ${argument}`);
@@ -49,14 +71,17 @@ function parseArgs(argv = []) {
   if (apply !== confirmed) throw new Error(`--apply requires ${CONFIRM_FLAG}`);
   const afterToken = String(values['after-token'] || '');
   if (afterToken && !ADDRESS.test(afterToken)) throw new Error('--after-token is invalid');
-  return Object.freeze({ apply, afterToken,
+  const maxBlocks = integer(values['max-blocks'], pendingRisk ? 2_000 : 5_000,
+    1, pendingRisk ? 5_000 : 100_000, '--max-blocks');
+  return Object.freeze({ apply, pendingRisk, afterToken,
     limit: integer(values.limit, 1, 1, 500, '--limit'),
     batchBlocks: integer(values['batch-blocks'], 25, 1, 100, '--batch-blocks'),
-    maxBlocks: integer(values['max-blocks'], 5_000, 1, 100_000, '--max-blocks') });
+    maxBlocks });
 }
 
 async function select(database, source, options) {
-  const { rows } = await database.query(CANDIDATES_SQL, [options.afterToken, options.limit]);
+  const { rows } = await database.query(options.pendingRisk ? PENDING_RISK_SQL : CANDIDATES_SQL,
+    [options.afterToken, options.limit]);
   const selected = [];
   for (const row of rows) {
     const task = { tokenAddress: row.token_address, requestedVersion: row.requested_version,
@@ -71,7 +96,7 @@ async function select(database, source, options) {
       sourceThroughBlock: task.sourceThroughBlock, lookbackBlocks: task.lookbackBlocks,
       candidates });
     const blocksToScan = Number(plan.blocksToScan);
-    const reason = plan.candidateWallets < 2 ? 'candidate_proof_missing'
+    const reason = !options.pendingRisk && plan.candidateWallets < 2 ? 'candidate_proof_missing'
       : blocksToScan > options.maxBlocks ? 'scan_exceeds_max_blocks' : null;
     selected.push({ task, status: reason ? 'deferred' : 'ready', reason,
       candidateWallets: plan.candidateWallets, blocksToScan,
@@ -97,6 +122,7 @@ async function applySelected(selected, options, deps, database, source) {
   const rpcClient = deps.rpcClient || archiveClient(deps.env || process.env,
     deps.rpcClientFactory);
   const queue = deps.queue || createRobinhoodBundleFundingLiveQueueRepository({ database });
+  const owner = `funding-archive-${process.pid}-${randomUUID()}`;
   const outcomes = [];
   for (const item of selected) {
     if (item.status !== 'ready') {
@@ -104,15 +130,37 @@ async function applySelected(selected, options, deps, database, source) {
         reason: item.reason });
       continue;
     }
+    let claimed = false;
     try {
-      const runtime = { database, source: { ...source,
-        loadCandidates: async () => item.candidates }, sourceMode: RPC_SOURCE, rpcClient,
-      queue: { replaceEvidenceAndComplete: queue.repairArchivedEvidence } };
-      const result = await (deps.processTask || processTask)(runtime, item.task,
+      if (options.pendingRisk) {
+        claimed = await queue.claimArchiveRisk({ ...item.task, owner });
+        if (!claimed) {
+          outcomes.push({ tokenAddress: item.task.tokenAddress, status: 'stale' });
+          continue;
+        }
+      }
+      const runtimeSource = { ...source, loadCandidates: async () => {
+        if (!options.pendingRisk) return item.candidates;
+        const current = await source.loadCandidates(item.task);
+        const plan = planBundleFundingScan({ sourceFromBlock: '0',
+          sourceThroughBlock: item.task.sourceThroughBlock,
+          lookbackBlocks: item.task.lookbackBlocks, candidates: current });
+        if (BigInt(plan.blocksToScan) > BigInt(options.maxBlocks)) {
+          throw new Error('funding Archive scan exceeds max blocks after claim');
+        }
+        return current;
+      } };
+      const runtime = { database, source: runtimeSource, sourceMode: RPC_SOURCE, rpcClient,
+      queue: options.pendingRisk ? { replaceEvidenceAndComplete: queue.completeArchiveRisk }
+        : { replaceEvidenceAndComplete: queue.repairArchivedEvidence } };
+      const result = await (deps.processTask || processTask)(runtime,
+        { ...item.task, ...(options.pendingRisk ? { owner } : {}) },
         { batchBlocks: options.batchBlocks });
       outcomes.push({ tokenAddress: item.task.tokenAddress,
         status: result.status, plannedBlocks: item.blocksToScan });
     } catch (error) {
+      if (claimed) await queue.retry({ ...item.task, owner, retryMs: 60_000,
+        error }).catch(() => {});
       outcomes.push({ tokenAddress: item.task.tokenAddress, status: 'unresolved',
         error: String(error.message || error).slice(0, 500) });
     }
@@ -127,7 +175,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const selected = await select(database, source, options);
   const outcomes = options.apply
     ? await applySelected(selected, options, deps, database, source) : preview(selected);
-  const report = { mode: options.apply ? 'apply' : 'read-only', candidates: selected.length,
+  const report = { mode: options.apply ? 'apply' : 'read-only',
+    scope: options.pendingRisk ? 'pending_risk' : 'complete_archive',
+    candidates: selected.length,
     repaired: outcomes.filter((item) => item.status === 'materialized').length,
     unresolved: outcomes.filter((item) => item.status === 'unresolved').length,
     nextCursor: selected.at(-1)?.task.tokenAddress || null, outcomes };
@@ -140,4 +190,5 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { CANDIDATES_SQL, CONFIRM_FLAG, archiveClient, main, parseArgs, select };
+module.exports = { CANDIDATES_SQL, PENDING_RISK_SQL, CONFIRM_FLAG,
+  archiveClient, main, parseArgs, select };
