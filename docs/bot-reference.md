@@ -4200,11 +4200,16 @@ O cursor first-buy persiste também avanços exclusivos de bloco quando a fronti
 temporal já está caught-up; a telemetria nunca pode anunciar uma frontier de
 bloco que ainda não foi gravada no handoff durável.
 A Stage 172 encadeia anchors commitados à fila token-scoped
-`robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
-lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa
-mesma versão, evitando que first-buys tardios sejam perdidos. A fila vive no
-PostgreSQL da VPS e não chama RPC. Seu consumidor também deve rodar na VPS,
-mas reutiliza a lane pública do roteador RPC live padrão de Robinhood
+`robinhood_bundle_funding_live_queue`. A Stage 246 evita reabrir tarefas quando
+o anchor recebe apenas avanço da frontier após os quatro blocos iniciais.
+Mudança do launch, da cobertura desses blocos ou de uma first-buy dentro deles
+invalida a lease antiga e incrementa `requested_version`; a conclusão só é
+aceita para essa versão. Inserção, atualização e remoção de first-buy relevante
+invalidam a fila na mesma transação que altera a first-buy. A fila vive no
+PostgreSQL da VPS e não chama RPC. Aplique `node src/utils/db-init-stage246.js`
+antes de retomar o reparo das tarefas antigas e a auditoria de retenção. Seu
+consumidor roda na VPS e reutiliza a lane pública do roteador RPC live padrão
+de Robinhood
 (`ROBINHOOD_RPC_URL`); não exige `RH_NODE_RPC_URL` nem um node Archive e não envia
 full-blocks para fallbacks de estado histórico. A migration não enfileira o
 histórico: aplique-a antes da última campanha incremental usada como seed do live.

@@ -6673,6 +6673,25 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage246-robinhood-bundle-funding-invalidation',
+    name: 'Stage 246 Robinhood bundle-funding input invalidation',
+    repair: 'node src/utils/db-init-stage246.js',
+    tables: [{
+      table: 'robinhood_token_launch_anchors',
+      triggers: [{
+        name: 'rh_launch_anchor_bundle_funding_live',
+        includes: ['AFTER INSERT OR UPDATE', 'enqueue_robinhood_bundle_funding_live'],
+      }],
+    }, {
+      table: 'robinhood_wallet_token_first_buys',
+      triggers: [{
+        name: 'rh_first_buy_bundle_funding_live',
+        includes: ['AFTER INSERT', 'DELETE', 'UPDATE',
+          'enqueue_robinhood_bundle_funding_first_buy'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

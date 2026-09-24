@@ -4,6 +4,17 @@ const db = require('../models/db');
 const ENQUEUE_FUNCTION_STATEMENT = `CREATE OR REPLACE FUNCTION enqueue_robinhood_bundle_funding_live()
  RETURNS TRIGGER LANGUAGE plpgsql AS $trigger$
  BEGIN
+   IF TG_OP = 'UPDATE' THEN
+     IF NEW.first_pool_block IS NOT DISTINCT FROM OLD.first_pool_block
+        AND NEW.launch_block IS NOT DISTINCT FROM OLD.launch_block
+        AND NEW.evidence_version IS NOT DISTINCT FROM OLD.evidence_version
+        AND NEW.source_through_block >= OLD.source_through_block
+        AND LEAST(NEW.source_through_block, NEW.launch_block + 3)
+            IS NOT DISTINCT FROM LEAST(OLD.source_through_block, OLD.launch_block + 3)
+     THEN
+       RETURN NEW;
+     END IF;
+   END IF;
    INSERT INTO robinhood_bundle_funding_live_queue(
      token_address, anchor_block, source_through_block
    ) VALUES (NEW.token_address, NEW.launch_block, NEW.source_through_block)
