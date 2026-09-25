@@ -438,6 +438,21 @@ it('moves expired pending work to the Archive lane in a bounded batch', async ()
   assert.deepEqual(query.params, [16]);
 });
 
+it('completes an archived mint only while its pinned identity is unchanged', async () => {
+  let query;
+  const repository = createRobinhoodTokenDeploymentOutboxRepository({
+    database: { async query(sql, params) { query = { sql, params }; return { rowCount: 1 }; } },
+  });
+  assert.equal(await repository.completePinnedRecovered({
+    tokenAddress: TOKEN, blockNumber: '100',
+    blockHash: BLOCK_HASH, transactionHash: TRANSACTION_HASH,
+  }), true);
+  assert.match(query.sql, /status = 'archive_required'/);
+  assert.match(query.sql, /mint_block_number = \$2::bigint/);
+  assert.match(query.sql, /mint_block_hash = \$3 AND mint_transaction_hash = \$4/);
+  assert.deepEqual(query.params, [TOKEN, '100', BLOCK_HASH, TRANSACTION_HASH]);
+});
+
 it('registers the durable mint anchor migration in runtime schema', async () => {
   const calls = [];
   await stage215.init({

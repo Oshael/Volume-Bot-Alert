@@ -47,14 +47,42 @@ describe('Robinhood holder archive deployment recovery', () => {
     assert.match(query, /catalog\.address = outbox\.token_address/);
   });
 
+  it('selects only pinned historical state errors without scanning the holder journal', async () => {
+    let query;
+    const rows = await listCandidates({
+      async query(sql, params) {
+        query = { sql, params };
+        return { rows: [{
+          token_address: TOKEN_A, upper_block: '68782273',
+          mint_block_hash: `0x${'c'.repeat(64)}`,
+          mint_transaction_hash: `0x${'d'.repeat(64)}`,
+        }] };
+      },
+    }, 200, { pinnedLiveRpcError: true });
+    assert.match(query.sql, /outbox\.status = 'archive_required'/);
+    assert.match(query.sql, /outbox\.mint_block_number IS NOT NULL/);
+    assert.match(query.sql, /eth_getCode RPC error -32000/);
+    assert.match(query.sql, /queued\.mint_block_number AS upper_block/);
+    assert.match(query.sql, /mint ON queued\.exact = FALSE AND FALSE/);
+    assert.deepEqual(query.params, [200]);
+    assert.deepEqual(rows[0].pinnedHint, {
+      tokenAddress: TOKEN_A, blockNumber: '68782273',
+      blockHash: `0x${'c'.repeat(64)}`,
+      transactionHash: `0x${'d'.repeat(64)}`,
+    });
+  });
+
   it('is read-only by default and validates bounded options', async () => {
     assert.deepEqual(parseArgs([]), {
-      confirm: false, catalogOnly: false, limit: 100, concurrency: 2, timeoutMs: 30000,
+      confirm: false, catalogOnly: false, pinnedLiveRpcError: false,
+      limit: 100, concurrency: 2, timeoutMs: 30000,
     });
     assert.deepEqual(parseArgs([
-      CONFIRM_FLAG, '--catalog-only', '--limit=10', '--concurrency=4', '--timeout-ms=5000',
+      CONFIRM_FLAG, '--catalog-only', '--pinned-live-rpc-error',
+      '--limit=10', '--concurrency=4', '--timeout-ms=5000',
     ]), {
-      confirm: true, catalogOnly: true, limit: 10, concurrency: 4, timeoutMs: 5000,
+      confirm: true, catalogOnly: true, pinnedLiveRpcError: true,
+      limit: 10, concurrency: 4, timeoutMs: 5000,
     });
     assert.throws(() => parseArgs(['--concurrency=9']), /between 1 and 8/);
     const report = await main([], {
@@ -119,6 +147,74 @@ describe('Robinhood holder archive deployment recovery', () => {
     assert.equal(first.status, 'recovered');
     assert.equal(second.status, 'recovered');
     assert.equal(headRequests, 1);
+  });
+
+  it('validates a pinned mint receipt before recording its code transition', async () => {
+    const calls = [];
+    const pinnedHint = {
+      tokenAddress: TOKEN_A, blockNumber: '40',
+      blockHash: `0x${'c'.repeat(64)}`, transactionHash: `0x${'d'.repeat(64)}`,
+    };
+    const result = await recoverCandidate({
+      localResolver: { async inspect(hint) {
+        assert.deepEqual(hint, pinnedHint);
+        calls.push('inspect');
+        return { status: 'transition', transition: { ...hint } };
+      } },
+      attributions: { async recordCodeTransitions() {
+        calls.push('attribute');
+        return { attributed: 1 };
+      } },
+      outbox: { async completePinnedRecovered() {
+        calls.push('complete');
+        return true;
+      } },
+      discovery: { async discover() { throw new Error('no historical search needed'); } },
+    }, { ...candidate(TOKEN_A, '40'), pinnedHint });
+    assert.deepEqual(calls, ['inspect', 'attribute', 'complete']);
+    assert.equal(result.deploymentBlock, '40');
+  });
+
+  it('searches earlier code for a preexisting contract and keeps uncertain tasks', async () => {
+    const completed = [];
+    const pinnedHint = {
+      tokenAddress: TOKEN_B, blockNumber: '50',
+      blockHash: `0x${'c'.repeat(64)}`, transactionHash: `0x${'d'.repeat(64)}`,
+    };
+    const runtime = {
+      localResolver: { async inspect() { return { status: 'preexisting-code' }; } },
+      discovery: { async discover(input) {
+        assert.equal(input.upperBlock, '50');
+        assert.equal(input.exactBlockHint, true);
+        return { tokenAddress: TOKEN_B, blockNumber: '20', source: 'rpc_code_transition' };
+      } },
+      attributions: { async recordCodeTransitions() { return { attributed: 1 }; } },
+      outbox: { async completePinnedRecovered(hint) {
+        completed.push(hint.tokenAddress);
+        return true;
+      } },
+    };
+    const result = await recoverCandidate(runtime, {
+      ...candidate(TOKEN_B, '50'), pinnedHint,
+    });
+    assert.equal(result.deploymentBlock, '20');
+    assert.deepEqual(completed, [TOKEN_B]);
+    runtime.attributions.recordCodeTransitions = async () => ({ attributed: 0 });
+    await assert.rejects(recoverCandidate(runtime, {
+      ...candidate(TOKEN_B, '50'), pinnedHint,
+    }), /historical attribution was not persisted/);
+    assert.deepEqual(completed, [TOKEN_B]);
+    runtime.attributions.recordCodeTransitions = async () => ({ attributed: 1 });
+    runtime.outbox.completePinnedRecovered = async () => false;
+    await assert.rejects(recoverCandidate(runtime, {
+      ...candidate(TOKEN_B, '50'), pinnedHint,
+    }), /task changed during recovery/);
+    assert.deepEqual(completed, [TOKEN_B]);
+    runtime.localResolver.inspect = async () => ({ status: 'missing-current-code' });
+    await assert.rejects(recoverCandidate(runtime, {
+      ...candidate(TOKEN_B, '50'), pinnedHint,
+    }), /inspection is inconclusive/);
+    assert.deepEqual(completed, [TOKEN_B]);
   });
 
   it('removes an Archive-lane task that already has exact durable attribution', async () => {

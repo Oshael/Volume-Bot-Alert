@@ -12,6 +12,9 @@ const {
 const {
   createRobinhoodHolderDeploymentVerifier,
 } = require('../services/robinhood-holder-deployment-verifier');
+const {
+  createLocalCodeTransitionResolver,
+} = require('../services/robinhood-token-deployment-worker');
 
 const CONFIRM_FLAG = '--confirm-recover-robinhood-holder-deployments';
 
@@ -44,6 +47,11 @@ function parseArgs(argv = []) {
       values.catalogOnly = true;
       continue;
     }
+    if (argument === '--pinned-live-rpc-error') {
+      if (values.pinnedLiveRpcError) throw new Error('repeated --pinned-live-rpc-error');
+      values.pinnedLiveRpcError = true;
+      continue;
+    }
     const match = argument.match(/^--(limit|concurrency|timeout-ms)=(.+)$/);
     if (!match) throw new Error(`unknown argument: ${argument}`);
     if (values[match[1]] !== undefined) throw new Error(`--${match[1]} cannot be repeated`);
@@ -52,6 +60,7 @@ function parseArgs(argv = []) {
   return Object.freeze({
     confirm: values.confirm === true,
     catalogOnly: values.catalogOnly === true,
+    pinnedLiveRpcError: values.pinnedLiveRpcError === true,
     limit: bounded(values.limit, 100, 1, 1000, '--limit'),
     concurrency: bounded(values.concurrency, 2, 1, 8, '--concurrency'),
     timeoutMs: bounded(values['timeout-ms'], 30_000, 1000, 60_000, '--timeout-ms'),
@@ -59,13 +68,20 @@ function parseArgs(argv = []) {
 }
 
 async function listCandidates(database, limit, input = {}) {
+  const pinnedOnly = input.pinnedLiveRpcError === true;
   const catalogJoin = input.catalogOnly === true
     ? `INNER JOIN token_catalog catalog
            ON catalog.chain = outbox.chain AND catalog.address = outbox.token_address`
     : '';
+  const pinnedFilter = pinnedOnly ? `AND outbox.status = 'archive_required'
+          AND outbox.mint_block_number IS NOT NULL
+          AND outbox.last_error LIKE
+            'rpc_code_transition:rpc_error:eth_getCode RPC error -32000%'` : '';
   const { rows } = await database.query(
     `WITH queued AS MATERIALIZED (
        SELECT outbox.token_address, outbox.created_at, outbox.attempt_count,
+              outbox.mint_block_number, outbox.mint_block_hash,
+              outbox.mint_transaction_hash,
               attribution.attribution_block,
               attribution.source AS attribution_source,
               attribution.attribution_block IS NOT NULL AS exact
@@ -81,6 +97,7 @@ async function listCandidates(database, limit, input = {}) {
           ]::varchar[])
         WHERE outbox.chain = 'robinhood'
           AND (attribution.attribution_block IS NULL OR outbox.status = 'archive_required')
+          ${pinnedFilter}
         ORDER BY
           CASE WHEN attribution.attribution_block IS NOT NULL THEN 0
                WHEN outbox.created_at >= NOW() - INTERVAL '10 minutes' THEN 1 ELSE 2 END,
@@ -89,7 +106,8 @@ async function listCandidates(database, limit, input = {}) {
      )
      SELECT queued.token_address, queued.created_at, queued.attempt_count,
             queued.attribution_block, queued.attribution_source, queued.exact,
-            mint.block_number AS upper_block
+            ${pinnedOnly ? 'queued.mint_block_number' : 'mint.block_number'} AS upper_block,
+            queued.mint_block_hash, queued.mint_transaction_hash
        FROM queued
        LEFT JOIN LATERAL (
          SELECT mint.block_number
@@ -110,7 +128,7 @@ async function listCandidates(database, limit, input = {}) {
            ) mint
           ORDER BY mint.block_number, mint.transaction_index, mint.log_index
           LIMIT 1
-       ) mint ON queued.exact = FALSE
+       ) mint ON queued.exact = FALSE ${pinnedOnly ? 'AND FALSE' : ''}
       ORDER BY queued.created_at DESC, queued.token_address`,
     [limit]
   );
@@ -122,6 +140,10 @@ async function listCandidates(database, limit, input = {}) {
     attributionSource: row.attribution_source || null,
     createdAt: row.created_at,
     attemptCount: Number(row.attempt_count) || 0,
+    pinnedHint: pinnedOnly ? Object.freeze({
+      tokenAddress: row.token_address, blockNumber: String(row.upper_block),
+      blockHash: row.mint_block_hash, transactionHash: row.mint_transaction_hash,
+    }) : null,
   })));
 }
 
@@ -168,17 +190,43 @@ function buildRuntime(options, deps = {}) {
       rpcClient,
       internalCreationLookup: async () => null,
     }),
+    localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
     getArchiveHead,
   });
 }
 
 async function recoverCandidate(runtime, candidate) {
+  async function complete() {
+    if (candidate.pinnedHint) {
+      const cleared = await runtime.outbox.completePinnedRecovered(candidate.pinnedHint);
+      if (!cleared) throw new Error('pinned deployment task changed during recovery');
+    } else {
+      await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
+    }
+  }
   if (candidate.exact) {
-    await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
+    await complete();
     return Object.freeze({
       status: 'unchanged', tokenAddress: candidate.tokenAddress,
       source: candidate.attributionSource, deploymentBlock: candidate.attributionBlock,
     });
+  }
+  if (candidate.pinnedHint) {
+    const inspected = await runtime.localResolver.inspect(candidate.pinnedHint);
+    if (inspected?.status === 'transition') {
+      const result = await runtime.attributions.recordCodeTransitions([inspected.transition]);
+      if (result.attributed !== 1) {
+        throw new Error('pinned mint attribution was not persisted');
+      }
+      await complete();
+      return Object.freeze({
+        status: 'recovered', tokenAddress: candidate.tokenAddress,
+        source: 'rpc_code_transition', deploymentBlock: inspected.transition.blockNumber,
+      });
+    }
+    if (inspected?.status !== 'preexisting-code') {
+      throw new Error('pinned mint archive inspection is inconclusive');
+    }
   }
   const upperBlock = candidate.upperBlock ?? await runtime.getArchiveHead();
   const discovered = await runtime.discovery.discover({
@@ -189,7 +237,10 @@ async function recoverCandidate(runtime, candidate) {
   });
   if (discovered.source === 'rpc_code_transition') {
     const result = await runtime.attributions.recordCodeTransitions([discovered]);
-    await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
+    if (candidate.pinnedHint && result.attributed !== 1) {
+      throw new Error('historical attribution was not persisted');
+    }
+    await complete();
     return Object.freeze({
       status: result.attributed === 1 ? 'recovered' : 'unchanged',
       tokenAddress: candidate.tokenAddress,
@@ -200,7 +251,7 @@ async function recoverCandidate(runtime, candidate) {
   const deployment = discovered.source === 'launchpad_event'
     ? discovered : await runtime.verifier.verifyDirectDeployment(discovered);
   await runtime.attributions.recordVerifiedDirectDeployments([deployment]);
-  await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
+  await complete();
   return Object.freeze({
     status: 'recovered', tokenAddress: candidate.tokenAddress,
     source: deployment.source, deploymentBlock: deployment.blockNumber,
@@ -218,7 +269,10 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv);
   const database = deps.database || db;
   const candidates = await (deps.listCandidates || listCandidates)(
-    database, options.limit, { catalogOnly: options.catalogOnly }
+    database, options.limit, {
+      catalogOnly: options.catalogOnly,
+      pinnedLiveRpcError: options.pinnedLiveRpcError,
+    }
   );
   if (!options.confirm) {
     const report = {

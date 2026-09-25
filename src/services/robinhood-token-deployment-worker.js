@@ -451,7 +451,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
 
 const worker = createRobinhoodTokenDeploymentWorker();
 module.exports = {
-  NOTIFY_CHANNEL, createRobinhoodTokenDeploymentWorker,
+  NOTIFY_CHANNEL, createLocalCodeTransitionResolver, createRobinhoodTokenDeploymentWorker,
   getStatus: worker.getStatus, runOnce: worker.runOnce, start: worker.start, stop: worker.stop,
   __private: {
     buildRuntime, createLocalCodeTransitionResolver, normalizeOptions,

@@ -3570,6 +3570,17 @@ e também fora do limite incremental ainda devem entrar em uma coorte delta do
 backfill global abaixo; essa seleção aceita `rpc_code_transition` como deployment
 exato mesmo sem provenance de creator.
 
+Para o estoque `archive_required` com mint fixado cujo RPC live devolveu
+`eth_getCode RPC error -32000`, use `--pinned-live-rpc-error` no mesmo recovery.
+Esse modo seleciona apenas essas tarefas e usa o bloco/hash/transação persistidos
+no outbox, sem varrer o journal de holders. A prévia lista candidatos sem consultar
+o Archive. No apply, a transição no bloco fixado exige código vazio no bloco anterior,
+código presente no bloco, hash canônico e receipt válido; se o código já existia,
+o recovery procura sua primeira aparição antes do mint fixado. Falha de prova deixa
+a tarefa na outbox. A conclusão compara novamente status e identidade do mint para
+não excluir uma tarefa reaberta por outro evento. Use `--limit` e `--concurrency`
+para limitar a carga no Archive.
+
 Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
 que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72
 horas e move tarefas vencidas para `archive_required`; elas permanecem recuperáveis
