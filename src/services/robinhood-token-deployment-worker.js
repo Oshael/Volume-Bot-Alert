@@ -282,6 +282,10 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       total, idle, busy: Math.max(0, total - idle), waiting,
       max: Number(databasePool?.options?.max) || null,
     };
+    if (databasePool === db.pool) {
+      snapshot.holders = db.getPoolHoldersSnapshot();
+      snapshot.unattributedBusy = Math.max(0, snapshot.busy - snapshot.holders.length);
+    }
     status.databasePool = snapshot;
     status.databasePoolPeakBusy = Math.max(status.databasePoolPeakBusy, snapshot.busy);
     if (waiting > status.databasePoolPeakWaiting) {

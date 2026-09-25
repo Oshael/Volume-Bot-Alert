@@ -91,6 +91,25 @@ describe('Robinhood deployment delay diagnostic', () => {
     assert.equal(report.activity.maxIdleInTransaction, 1);
   });
 
+  it('summarizes the connections occupying the pool at a recorded queue peak', () => {
+    const at = '2026-09-25T09:24:05.781Z';
+    const holders = [{ pid: 101, heldMs: 48000, origin: 'query redistribution',
+      activeSql: 'SELECT buy.wallet_address AS source_wallet' },
+    { pid: 102, heldMs: 3000, origin: 'getClient models/other.js:12', activeSql: null }];
+    const report = summarize([sample('2026-09-25T09:24:05.000Z'),
+      sample('2026-09-25T09:24:06.000Z', {
+        deployment: lease(at, at, 18, {
+          databasePoolPeakWaitingSample: { sampledAt: at, waiting: 18, busy: 10,
+            unattributedBusy: 8, holders },
+        }),
+      })], { durationMs: 1000, intervalMs: 2000 });
+    assert.equal(report.pool.holderSnapshots, 1);
+    assert.equal(report.pool.maxUnattributedBusy, 8);
+    assert.equal(report.pool.peakHolders.holders.length, 2);
+    assert.equal(report.pool.holderOperations['SELECT buy.wallet_address AS source_wallet']
+      .maxHeldMs, 48000);
+  });
+
   it('does not compute deltas when the worker lease changes during the window', () => {
     const firstAt = '2026-09-25T09:00:02.000Z';
     const samples = [

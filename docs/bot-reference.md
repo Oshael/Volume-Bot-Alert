@@ -3629,6 +3629,16 @@ desde o início do processo; `databasePoolRunPeakBusy` e
 `databasePoolRunPeakWaiting` guardam os máximos do lote mais recente. Se um lote
 atingir novo pico de espera, `databasePoolPeakWaitingSample` e
 `databasePoolRunPeakWaitingSample` guardam horário, fase e ocupação do pool.
+Esses snapshots também incluem `holders`: PID PostgreSQL, duração do empréstimo,
+origem da aquisição, quando identificável, e SQL ativo abreviado de cada conexão
+emprestada pelo pool do processo. Parâmetros não são registrados e strings SQL
+entre aspas simples são ocultadas. `pool query or direct use` indica aquisição
+sem origem marcada; nesses casos, o SQL ativo identifica a operação em execução.
+`unattributedBusy` conta conexões ocupadas ainda sem aquisição registrada (por
+exemplo, conexão em abertura). A consulta ao SQL ativo usa o estado local do
+cliente `pg` instalado (`_getActiveQuery`), sem executar consultas adicionais;
+verifique essa API ao atualizar `pg`. A ausência de SQL ativo não significa
+conexão livre: a origem identifica o empréstimo ainda em andamento.
 Se o lote falhar, `lastRunFailure` registra a fase (`archive_expired`, `claim`
 ou `process`), o erro, o estado do pool e os picos;
 o mesmo resumo é escrito no log antes de o erro se propagar, mesmo quando não há
@@ -3658,6 +3668,10 @@ PostgreSQL; `pg_stat_activity` não vê pedidos esperando no pool do Node, que v
 da telemetria da lease. O head do cursor é aproximação do head RPC, e os contadores
 de primeira tentativa são deltas somente quando a lease não mudou. Coincidência
 de consultas de redistribution com espera no pool não estabelece causa sozinha.
+Com `holders` presente, o resumo agrupa ocupações observadas e mostra cada conexão
+do maior pico de fila amostrado, incluindo SQL e tempo de retenção. O log
+`Robinhood deployment run failed` também inclui os holders do instante da falha;
+isso preserva a evidência quando o processo sai antes do próximo heartbeat.
 
 Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
 que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72

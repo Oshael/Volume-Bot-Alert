@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const config = require('../../config');
+const { createPoolHolderTelemetry, sqlLabel, callerLabel } = require('./postgres-pool-holder-telemetry');
 
 const poolConfig = {
   max: config.db.poolMax,
@@ -22,6 +23,7 @@ if (config.db.ssl) {
 }
 
 const pool = new Pool(poolConfig);
+const holderTelemetry = createPoolHolderTelemetry(pool);
 
 pool.on('error', (err) => {
   console.error('Unexpected database pool error:', err.message);
@@ -49,6 +51,7 @@ async function queryWithStatementTimeout(text, params, timeoutMs = 0) {
   }
 
   const client = await pool.connect();
+  holderTelemetry.tag(client, `timed query ${sqlLabel(text)}`);
   const start = Date.now();
   try {
     await client.query('BEGIN');
@@ -69,7 +72,14 @@ async function queryWithStatementTimeout(text, params, timeoutMs = 0) {
 
 // Convenience: get a client for transactions
 async function getClient() {
-  return pool.connect();
+  const origin = callerLabel();
+  const client = await pool.connect();
+  holderTelemetry.tag(client, origin);
+  return client;
 }
 
-module.exports = { pool, query, queryWithStatementTimeout, getClient };
+function getPoolHoldersSnapshot() {
+  return holderTelemetry.snapshot();
+}
+
+module.exports = { pool, query, queryWithStatementTimeout, getClient, getPoolHoldersSnapshot };

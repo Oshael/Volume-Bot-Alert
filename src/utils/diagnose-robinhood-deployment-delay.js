@@ -153,6 +153,27 @@ function recordMints(summary, sample) {
     numeric(sample.max_queue_age_s) || 0);
 }
 
+function recordHolders(summary, seen, snapshot) {
+  if (!Array.isArray(snapshot?.holders) || !snapshot.sampledAt
+      || seen.has(snapshot.sampledAt)) return;
+  seen.add(snapshot.sampledAt);
+  summary.holderSnapshots += 1;
+  summary.maxUnattributedBusy = Math.max(summary.maxUnattributedBusy,
+    numeric(snapshot.unattributedBusy) || 0);
+  const waiting = numeric(snapshot.waiting) || 0;
+  if (!summary.peakHolders || waiting > summary.peakHolders.waiting) {
+    summary.peakHolders = { at: snapshot.sampledAt, waiting,
+      busy: snapshot.busy, unattributedBusy: snapshot.unattributedBusy,
+      holders: snapshot.holders };
+  }
+  for (const holder of snapshot.holders) {
+    const label = holder.activeSql || holder.origin || 'unknown';
+    const entry = summary.holderOperations[label] ||= { occupiedSamples: 0, maxHeldMs: 0 };
+    entry.occupiedSamples += 1;
+    entry.maxHeldMs = Math.max(entry.maxHeldMs, numeric(holder.heldMs) || 0);
+  }
+}
+
 function recordPool(summary, seen, sample, intervalMs) {
   const snapshot = sample.deployment?.telemetry?.databasePool;
   const ageMs = Date.parse(sample.at) - Date.parse(snapshot?.sampledAt);
@@ -173,7 +194,7 @@ function recordPool(summary, seen, sample, intervalMs) {
   }
 }
 
-function recordPoolPeaks(summary, seen, sample, startedAt) {
+function recordPoolPeaks(summary, seen, sample, startedAt, holderSeen) {
   for (const field of ['databasePoolPeakWaitingSample', 'databasePoolRunPeakWaitingSample']) {
     const peak = sample.deployment?.telemetry?.[field];
     const at = Date.parse(peak?.sampledAt);
@@ -182,6 +203,7 @@ function recordPoolPeaks(summary, seen, sample, startedAt) {
     seen.add(peak.sampledAt);
     summary.recordedPeakEvents += 1;
     summary.maxWaiting = Math.max(summary.maxWaiting, numeric(peak.waiting) || 0);
+    recordHolders(summary, holderSeen, peak);
   }
 }
 
@@ -226,9 +248,11 @@ function summarize(samples, options) {
   const completedAt = samples.at(-1)?.at || null;
   const poolSeen = new Set();
   const peakSeen = new Set();
+  const holderSeen = new Set();
   const pool = { freshSamples: 0, withWaiting: 0, maxWaiting: 0,
     waitingWithRedistribution: 0, waitingWithoutRedistribution: 0,
-    waitingWithFirstBuyAmbiguous: 0, recordedPeakEvents: 0, phasesWithWaiting: {} };
+    waitingWithFirstBuyAmbiguous: 0, recordedPeakEvents: 0, phasesWithWaiting: {},
+    holderSnapshots: 0, maxUnattributedBusy: 0, holderOperations: {}, peakHolders: null };
   const activity = { familySessionSamples: {}, waitSessionSamples: {}, maxAgeS: {},
     topQueries: [], truncatedSamples: 0, maxIdleInTransaction: 0 };
   const mint = { samples: 0, maxUnattempted: 0, maxDue: 0, maxBeyond96: 0,
@@ -243,7 +267,9 @@ function summarize(samples, options) {
     recordActivity(activity, sample.activity);
     recordMints(mint, sample.mints);
     recordPool(pool, poolSeen, sample, options.intervalMs);
-    recordPoolPeaks(pool, peakSeen, sample, startedAt);
+    const fresh = sample.deployment?.telemetry?.databasePool;
+    if (poolSeen.has(fresh?.sampledAt)) recordHolders(pool, holderSeen, fresh);
+    recordPoolPeaks(pool, peakSeen, sample, startedAt, holderSeen);
   }
   activity.topQueries.sort((a, b) => b.ageS - a.ageS);
   const querySeen = new Set();
@@ -270,6 +296,15 @@ function format(report) {
     `Worker: lease estável=${worker.sameLease}; novas primeiras tentativas=${worker.firstAttempts ?? 'indisponível'}; espera média=${worker.meanFirstAttemptQueueWaitMs ?? 'indisponível'} ms; novas além de 96=${worker.firstAttemptsBeyond96 ?? 'indisponível'}`,
     `Redistribution: lease presente=${redistribution.found}; mesmo processo=${redistribution.sameProcessAsDeployment ?? 'indisponível'}; claims=${redistribution.claimed ?? 'indisponível'}; adiamentos=${redistribution.deferred ?? 'indisponível'}`,
     `Pool: ${pool.freshSamples} amostras frescas; ${pool.withWaiting} com fila; ${pool.recordedPeakEvents} picos registrados; máximo ${pool.maxWaiting} esperando; fases=${JSON.stringify(pool.phasesWithWaiting)}`,
+    `Ocupação do pool: ${pool.holderSnapshots} amostras atribuídas; máximo ${pool.maxUnattributedBusy} conexões ocupadas sem aquisição registrada`,
+    ...Object.entries(pool.holderOperations).sort((a, b) =>
+      b[1].occupiedSamples - a[1].occupiedSamples).slice(0, 8).map(([label, value]) =>
+      `  ${value.occupiedSamples} conexão-amostras; maior retenção ${(value.maxHeldMs / 1000).toFixed(1)}s; ${label}`),
+    pool.peakHolders
+      ? `Maior fila com conexões identificadas: ${pool.peakHolders.at}; ${pool.peakHolders.waiting} esperando; ${pool.peakHolders.busy} ocupadas; ${pool.peakHolders.unattributedBusy} sem identificação`
+      : 'Maior fila com conexões identificadas: indisponível',
+    ...(pool.peakHolders?.holders || []).map((holder) =>
+      `  pid=${holder.pid ?? '-'} ${(holder.heldMs / 1000).toFixed(1)}s ${holder.activeSql || '-'} [${holder.origin}]`),
     `Coincidência pool com fila: evidência redistribution ativa=${pool.waitingWithRedistribution}; sem evidência redistribution ativa=${pool.waitingWithoutRedistribution}; leitura first-buy ambígua=${pool.waitingWithFirstBuyAmbiguous}`,
     `Sessões ativas por família (soma das amostras): ${JSON.stringify(activity.familySessionSamples)}`,
     `Waits PostgreSQL (soma das amostras): ${JSON.stringify(activity.waitSessionSamples)}`,
