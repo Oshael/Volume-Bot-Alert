@@ -269,8 +269,18 @@ describe('robinhood processing runner', () => {
     assert.equal(result.continuationPools, 1);
     assert.equal(result.timing.persistence.attempts, 2);
     assert.equal(result.timing.persistence.commits, 2);
+    assert.equal(result.timing.claimBreakdown.initialRows, 1);
+    assert.equal(result.timing.claimBreakdown.continuationCalls, 2);
+    assert.equal(result.timing.claimBreakdown.continuationRows, 1);
+    assert.equal(result.timing.claimBreakdown.continuationEmptyCalls, 1);
+    assert.ok(result.timing.claimBreakdown.initialMs >= 0);
+    assert.ok(result.timing.claimBreakdown.continuationMaxMs <=
+      result.timing.claimBreakdown.continuationMs);
+    assert.equal(result.timing.claimBreakdown.initialConnectionMs, null);
     const idle = await theRunner.runOnce();
     assert.equal(idle.timing.persistence.attempts, 0);
+    assert.equal(idle.timing.claimBreakdown.initialRows, 0);
+    assert.equal(idle.timing.claimBreakdown.continuationCalls, 0);
     assert.equal(result.timing.persistence.attempts, 2);
   });
 

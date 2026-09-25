@@ -9,6 +9,7 @@
  * claim and never revert head capture (evidence contract §7, plan §5.2).
  */
 const db = require('./db');
+const { runClaimQuery } = require('./robinhood-head-claim-query');
 
 const CHAIN = 'robinhood';
 const STREAMS = new Set(['discovery', 'market']);
@@ -376,7 +377,7 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     if (stream === 'market') {
       const params = [owner, limit, leaseMs];
       await ensureMarketClaimPlan(params);
-      result = await database.query(MARKET_CLAIM_SQL, params);
+      result = await runClaimQuery(database, MARKET_CLAIM_SQL, params, input.dbTiming);
     } else {
       result = await database.query(
         `WITH first_v4_by_pool AS MATERIALIZED (
@@ -441,8 +442,9 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
       .map((value) => String(value || '').trim().toLowerCase())
       .filter(Boolean))];
     if (!marketKeys.length) return [];
-    const result = await database.query(
-      V4_CONTINUATION_CLAIM_SQL, [owner, limit, leaseMs, marketKeys, perPoolLimit]
+    const result = await runClaimQuery(
+      database, V4_CONTINUATION_CLAIM_SQL,
+      [owner, limit, leaseMs, marketKeys, perPoolLimit], input.dbTiming
     );
     return result.rows.sort(compareCaptureOrder);
   }

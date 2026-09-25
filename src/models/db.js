@@ -82,4 +82,6 @@ function getPoolHoldersSnapshot() {
   return holderTelemetry.snapshot();
 }
 
-module.exports = { pool, query, queryWithStatementTimeout, getClient, getPoolHoldersSnapshot };
+module.exports = {
+  pool, query, queryWithStatementTimeout, getClient, getPoolHoldersSnapshot, logSlowQuery,
+};

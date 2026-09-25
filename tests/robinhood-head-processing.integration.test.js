@@ -149,11 +149,15 @@ describe('Robinhood head processing repository integration', () => {
     await seedPending({ block: 100 });
     await seedPending({ block: 101 });
 
+    const dbTiming = {};
     const claimed = await repository.claimCaptures({
       owner: 'worker-a', limit: 2, leaseMs: LEASE_MS, stream: 'market',
+      dbTiming,
     });
 
     assert.deepEqual(claimed.map((row) => Number(row.block_number)), [100, 101]);
+    assert.ok(dbTiming.connectionMs >= 0);
+    assert.ok(dbTiming.queryMs >= 0);
     const first = await statusOf({ transactionHash: claimed[0].transaction_hash, logIndex: 0 });
     assert.equal(first.processing_status, 'leased');
     assert.equal(first.attempt_count, 1);
@@ -163,11 +167,15 @@ describe('Robinhood head processing repository integration', () => {
 
   it('prepares a state-only claim without mutating the immutable payload lifecycle', async () => {
     const identity = await seedPending({ block: 100, evidence: { marker: 'kept' } });
+    const dbTiming = {};
     const claimed = await stateRepository.claimCaptures({
       owner: 'state-worker', limit: 1, leaseMs: LEASE_MS, stream: 'market',
+      dbTiming,
     });
 
     assert.equal(claimed.length, 1);
+    assert.ok(dbTiming.connectionMs >= 0);
+    assert.ok(dbTiming.queryMs >= 0);
     assert.equal(claimed[0].evidence.marker, 'kept');
     assert.equal(claimed[0].processing_status, 'leased');
     assert.equal(claimed[0].attempt_count, 1);
@@ -215,11 +223,14 @@ describe('Robinhood head processing repository integration', () => {
         WHERE transaction_hash=$1 AND log_index=$2`,
       [first.transactionHash, first.logIndex]
     );
+    const dbTiming = {};
     const continuation = await stateRepository.claimV4Continuations({
       owner: 'state-a', marketKeys: [pool], limit: 10,
-      perPoolLimit: 2, leaseMs: LEASE_MS,
+      perPoolLimit: 2, leaseMs: LEASE_MS, dbTiming,
     });
     assert.deepEqual(continuation.map((row) => Number(row.block_number)), [301, 302]);
+    assert.ok(dbTiming.connectionMs >= 0);
+    assert.ok(dbTiming.queryMs >= 0);
   });
 
   it('reclaims only expired state leases without mutating payload lifecycle', async () => {
@@ -493,14 +504,17 @@ describe('Robinhood head processing repository integration', () => {
     await repository.settleClaims({
       owner: 'worker-a', retentionMs: RETENTION_MS, processed: [firstA, firstB],
     });
+    const dbTiming = {};
     const continuation = await repository.claimV4Continuations({
       owner: 'worker-a', marketKeys: [poolA], limit: 10,
-      perPoolLimit: 10, leaseMs: LEASE_MS,
+      perPoolLimit: 10, leaseMs: LEASE_MS, dbTiming,
     });
     assert.deepEqual(
       continuation.map((row) => Number(row.block_number)),
       [101, 102, 103, 104, 105, 107]
     );
+    assert.ok(dbTiming.connectionMs >= 0);
+    assert.ok(dbTiming.queryMs >= 0);
   });
 
   ['swap', 'delta'].forEach((kind) => it(`bounds each V4 ${kind} prefix and never crosses an earlier retry barrier`, async () => {

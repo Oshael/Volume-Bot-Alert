@@ -2,6 +2,7 @@
 
 /** Inactive state-only claim/reclaim repository prepared for Corte 3B.3. */
 const db = require('./db');
+const { runClaimQuery } = require('./robinhood-head-claim-query');
 
 const CHAIN = 'robinhood';
 const STREAMS = new Set(['discovery', 'market']);
@@ -247,7 +248,9 @@ function createRobinhoodHeadProcessingStateRepository(options = {}) {
     const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
     const stream = streamOf(input.stream);
     const sql = stream === 'market' ? MARKET_CLAIM_SQL : DISCOVERY_CLAIM_SQL;
-    const result = await database.query(sql, [owner, limit, leaseMs]);
+    const result = stream === 'market'
+      ? await runClaimQuery(database, sql, [owner, limit, leaseMs], input.dbTiming)
+      : await database.query(sql, [owner, limit, leaseMs]);
     return result.rows;
   }
 
@@ -258,8 +261,9 @@ function createRobinhoodHeadProcessingStateRepository(options = {}) {
     const perPoolLimit = positiveInt(input.perPoolLimit ?? limit, 'perPoolLimit');
     const marketKeys = marketKeysOf(input.marketKeys);
     if (!marketKeys.length) return [];
-    const result = await database.query(
-      V4_CONTINUATION_CLAIM_SQL, [owner, limit, leaseMs, marketKeys, perPoolLimit]
+    const result = await runClaimQuery(
+      database, V4_CONTINUATION_CLAIM_SQL,
+      [owner, limit, leaseMs, marketKeys, perPoolLimit], input.dbTiming
     );
     return result.rows;
   }

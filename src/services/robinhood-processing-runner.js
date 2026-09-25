@@ -12,6 +12,7 @@
  *  - head-level rejections and unknown evidence settle as auditable terminals.
  */
 const defaultDecoder = require('./robinhood-head-processing-decoder');
+const { performance } = require('node:perf_hooks');
 const config = require('../../config');
 const { evaluateFdvBand } = require('./robinhood-price-spike-guard');
 const { mergeRangeDeltas } = require('./uniswap-v4-liquidity');
@@ -73,6 +74,40 @@ function normalizeV4SwapPrefixLimit(value) {
   return Number.isSafeInteger(parsed)
     ? Math.max(1, Math.min(parsed, 2000))
     : DEFAULT_V4_SWAP_PREFIX_LIMIT;
+}
+
+function createClaimBreakdown() {
+  return {
+    initialMs: 0, initialRows: 0, initialConnectionMs: null, initialQueryMs: null,
+    continuationMs: 0, continuationCalls: 0, continuationRows: 0,
+    continuationEmptyCalls: 0, continuationMaxMs: 0,
+    continuationConnectionMs: null, continuationQueryMs: null,
+  };
+}
+
+function recordInitialClaim(breakdown, rows, elapsedMs, dbTiming) {
+  breakdown.initialMs = elapsedMs;
+  breakdown.initialRows = rows.length;
+  breakdown.initialConnectionMs = dbTiming.connectionMs ?? null;
+  breakdown.initialQueryMs = dbTiming.queryMs ?? null;
+}
+
+function addMeasuredMs(current, elapsed) {
+  return elapsed == null ? current : (current || 0) + elapsed;
+}
+
+function recordContinuationClaim(breakdown, rows, elapsedMs, dbTiming) {
+  breakdown.continuationMs += elapsedMs;
+  breakdown.continuationCalls += 1;
+  breakdown.continuationRows += rows.length;
+  breakdown.continuationEmptyCalls += Number(rows.length === 0);
+  breakdown.continuationMaxMs = Math.max(breakdown.continuationMaxMs, elapsedMs);
+  breakdown.continuationConnectionMs = addMeasuredMs(
+    breakdown.continuationConnectionMs, dbTiming.connectionMs
+  );
+  breakdown.continuationQueryMs = addMeasuredMs(
+    breakdown.continuationQueryMs, dbTiming.queryMs
+  );
 }
 
 // Dead-pool guard applier: reject an accepted observation whose fdv is a per-token
@@ -455,10 +490,18 @@ function createRobinhoodProcessingRunner(deps = {}) {
       reclaimMs: Date.now() - phaseStartedAt,
       claimMs: 0, prepareMs: 0, shadowMs: 0, frontierMs: 0, persistMs: 0,
       settleMs: 0, fdvCacheHits: 0, fdvCacheMisses: 0,
+      claimBreakdown: createClaimBreakdown(),
     };
     phaseStartedAt = Date.now();
-    let rows = await repository.claimCaptures({ owner, limit: batchSize, leaseMs, stream: 'market' });
+    const initialStartedAt = performance.now();
+    const initialDbTiming = {};
+    let rows = await repository.claimCaptures({
+      owner, limit: batchSize, leaseMs, stream: 'market', dbTiming: initialDbTiming,
+    });
     timing.claimMs += Date.now() - phaseStartedAt;
+    recordInitialClaim(
+      timing.claimBreakdown, rows, performance.now() - initialStartedAt, initialDbTiming
+    );
     const totals = {
       claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
       continuationRounds: 0, continuationClaimed: 0, continuationPools: 0,
@@ -490,11 +533,18 @@ function createRobinhoodProcessingRunner(deps = {}) {
           || !targetedMarketKeys.length
           || typeof repository.claimV4Continuations !== 'function') break;
       phaseStartedAt = Date.now();
+      const continuationStartedAt = performance.now();
+      const continuationDbTiming = {};
       rows = await repository.claimV4Continuations({
         owner, marketKeys: targetedMarketKeys,
         limit: batchSize, perPoolLimit: v4SwapPrefixLimit, leaseMs,
+        dbTiming: continuationDbTiming,
       });
       timing.claimMs += Date.now() - phaseStartedAt;
+      recordContinuationClaim(
+        timing.claimBreakdown, rows, performance.now() - continuationStartedAt,
+        continuationDbTiming
+      );
       if (!rows.length) break;
       totals.continuationRounds += 1;
       totals.continuationClaimed += rows.length;

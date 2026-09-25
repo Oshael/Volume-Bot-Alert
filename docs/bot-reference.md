@@ -947,6 +947,17 @@ passando pelo dead-pool guard. Defaults: 50 amostras, TTL 60s e 5000 entradas, c
 `ROBINHOOD_DEAD_POOL_GUARD_CACHE_MAX_ENTRIES`. `lastTiming` expõe hits, misses e tamanho do cache,
 as durações de claim, preparo, frontier, persistência e settlement e `claimedPerSecond`; use esses
 campos para distinguir custo de leitura do custo da transação.
+`lastTiming.claimBreakdown` separa `initialMs`/`initialRows` do total de
+`continuationMs`/`continuationCalls`/`continuationRows`; inclui chamadas V4 que
+retornaram vazias em `continuationEmptyCalls` e o maior tempo individual em
+`continuationMaxMs`. `initialConnectionMs` e `continuationConnectionMs` medem a
+aquisição de cliente do pool; `initialQueryMs` e `continuationQueryMs` medem o
+round-trip SQL observado pelo cliente. Os totais de continuação somam todas as
+chamadas do tick. Campos de conexão/query ficam `null` se o repositório injetado
+não oferece essa medição; no caminho PostgreSQL normal eles são preenchidos.
+`claimMs` continua sendo o tempo total da fase e pode incluir a checagem de plano
+do claim legado além desses componentes. Compare os campos no mesmo tick e o lag
+da fila antes de atribuir uma causa a I/O, consulta ou espera no pool.
 `lastTiming.persistence` detalha a persistência com `connectionMs` (espera por conexão),
 `beginMs`, `logsMs`, `v4DeltasMs`, `observationsMs` (observations e buckets de minuto),
 `hourlyMs`, `outboxMs` (inclui NOTIFY), `commitMs` e `rollbackMs`. São tempos locais
