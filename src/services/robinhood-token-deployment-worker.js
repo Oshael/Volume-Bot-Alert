@@ -222,6 +222,8 @@ async function verifyLocalHint(localResolver, mintHint, localHint) {
 function createRobinhoodTokenDeploymentWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancel = deps.cancelSchedule || clearTimeout;
+  const databasePool = deps.pool || deps.database?.pool || db.pool;
+  const reportFailure = deps.reportFailure || console.error;
   const owner = deps.owner || `token-deployment-${process.pid}-${randomUUID()}`;
   const now = deps.now || Date.now;
   let options = normalizeOptions(deps.options);
@@ -259,8 +261,32 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     lastFirstAttemptHead: null, lastFirstAttemptCode32000: null,
     lastRunDurationMs: null, lastClaimDurationMs: null,
     lastProcessDurationMs: null, lastRunClaimed: null,
+    runPhase: 'idle', databasePool: null,
+    databasePoolPeakBusy: 0, databasePoolPeakWaiting: 0,
+    databasePoolRunPeakBusy: 0, databasePoolRunPeakWaiting: 0,
+    lastRunFailure: null,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
+
+  function sampleDatabasePool() {
+    const total = Number(databasePool?.totalCount);
+    const idle = Number(databasePool?.idleCount);
+    const waiting = Number(databasePool?.waitingCount);
+    if (![total, idle, waiting].every(Number.isFinite)) return null;
+    const snapshot = {
+      sampledAt: new Date(now()).toISOString(),
+      total, idle, busy: Math.max(0, total - idle), waiting,
+      max: Number(databasePool?.options?.max) || null,
+    };
+    status.databasePool = snapshot;
+    status.databasePoolPeakBusy = Math.max(status.databasePoolPeakBusy, snapshot.busy);
+    status.databasePoolPeakWaiting = Math.max(status.databasePoolPeakWaiting, waiting);
+    if (status.inFlight) {
+      status.databasePoolRunPeakBusy = Math.max(status.databasePoolRunPeakBusy, snapshot.busy);
+      status.databasePoolRunPeakWaiting = Math.max(status.databasePoolRunPeakWaiting, waiting);
+    }
+    return snapshot;
+  }
 
   const runtime = () => (runtimePromise ||= Promise.resolve(
     deps.runtime || buildRuntime(deps, options)
@@ -556,6 +582,12 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   async function execute() {
     const runStartedAt = now();
     status.inFlight = true; status.totalRuns += 1;
+    status.runPhase = 'archive_expired';
+    status.databasePoolRunPeakBusy = 0;
+    status.databasePoolRunPeakWaiting = 0;
+    sampleDatabasePool();
+    const poolSampler = setInterval(sampleDatabasePool, 500);
+    poolSampler.unref?.();
     status.lastClaimDurationMs = null;
     status.lastProcessDurationMs = null;
     status.lastRunClaimed = null;
@@ -564,6 +596,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       const archiveRequired = typeof current.outbox.archiveExpiredBatch === 'function'
         ? await current.outbox.archiveExpiredBatch({ limit: options.batchSize }) : 0;
       status.totalArchiveRequired += archiveRequired;
+      status.runPhase = 'claim';
+      sampleDatabasePool();
       const claimStartedAt = now();
       const claimInput = { owner, leaseMs: options.leaseMs, limit: options.batchSize };
       const claimed = typeof current.outbox.claimBatchWithStats === 'function'
@@ -576,6 +610,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       const claimedAt = now();
       status.lastClaimDurationMs = Math.max(0, claimedAt - claimStartedAt);
       status.lastRunClaimed = tasks.length;
+      status.runPhase = 'process';
+      sampleDatabasePool();
       if (!tasks.length) {
         status.lastProcessDurationMs = 0;
         return { status: claimed.removedExact ? 'cleaned' : 'caught-up', claimed: 0,
@@ -612,7 +648,19 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         ignoredMints: results.filter((item) => item?.status === 'non-deployment-mint').length,
         errors: results.filter((item) => item?.status === 'error').length,
       };
+    } catch (error) {
+      const failure = {
+        phase: status.runPhase, code: error.code || null, message: error.message,
+        pool: sampleDatabasePool(),
+        runPeakBusy: status.databasePoolRunPeakBusy,
+        runPeakWaiting: status.databasePoolRunPeakWaiting,
+      };
+      status.lastRunFailure = failure;
+      reportFailure(`Robinhood deployment run failed: ${JSON.stringify(failure)}`);
+      throw error;
     } finally {
+      clearInterval(poolSampler);
+      status.runPhase = 'idle';
       status.inFlight = false;
       status.lastRunDurationMs = Math.max(0, now() - runStartedAt);
       status.lastCompletedAt = new Date(now()).toISOString();
@@ -664,7 +712,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     if (activeRun) await activeRun.catch(() => {});
   }
 
-  return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });
+  return Object.freeze({ getStatus: () => ({ ...status, databasePool: sampleDatabasePool() }),
+    runOnce, start, stop });
 }
 
 const worker = createRobinhoodTokenDeploymentWorker();

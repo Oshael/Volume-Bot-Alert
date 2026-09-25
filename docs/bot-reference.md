@@ -3619,6 +3619,16 @@ tentativa) e `claimWaitMs` (claim até esse começo). A lease soma
 `lastProcessDurationMs` e `lastRunClaimed` mostram o lote mais recente. Essas
 medidas são do worker, reiniciam com ele e não incluem tempo entre o bloco do
 mint e a criação da tarefa.
+`databasePool` registra `total`, `idle`, `busy`, `waiting` e `max` do pool
+PostgreSQL compartilhado pelo processo, com `sampledAt`; não mede as conexões
+globais do servidor. Durante cada lote, o worker amostra o pool a cada 500 ms.
+`databasePoolPeakBusy` e `databasePoolPeakWaiting` guardam os máximos amostrados
+desde o início do processo; `databasePoolRunPeakBusy` e
+`databasePoolRunPeakWaiting` guardam os máximos do lote mais recente. Se um lote
+falhar, `lastRunFailure` registra a fase (`archive_expired`, `claim` ou `process`),
+o erro, o estado do pool e os picos;
+o mesmo resumo é escrito no log antes de o erro se propagar, mesmo quando não há
+tempo para outro heartbeat. As amostras podem não captar picos menores que 500 ms.
 Para atribuir o resultado das primeiras tentativas com mint fixado, compare
 `firstAttemptPinnedStarted` e `firstAttemptPinnedFinished` com
 `firstAttemptLiveResolved`, `firstAttemptArchiveResolved`,

@@ -415,6 +415,30 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
   assert.equal(status.lastRunDurationMs, 41);
 });
 
+it('records local pool pressure and the failing phase before a database timeout escapes', async () => {
+  const pool = { totalCount: 20, idleCount: 0, waitingCount: 3, options: { max: 20 } };
+  const logs = [];
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', pool, reportFailure: (line) => logs.push(line),
+    runtime: { outbox: { archiveExpiredBatch: async () => {
+      throw new Error('timeout exceeded when trying to connect');
+    } } },
+  });
+
+  await assert.rejects(worker.runOnce(), /timeout exceeded/);
+  const status = worker.getStatus();
+  assert.equal(status.runPhase, 'idle');
+  assert.deepEqual(status.databasePool, {
+    sampledAt: status.databasePool.sampledAt,
+    total: 20, idle: 0, busy: 20, waiting: 3, max: 20,
+  });
+  assert.equal(status.databasePoolPeakWaiting, 3);
+  assert.equal(status.databasePoolRunPeakWaiting, 3);
+  assert.equal(status.lastRunFailure.phase, 'archive_expired');
+  assert.equal(status.lastRunFailure.pool.waiting, 3);
+  assert.match(logs[0], /"phase":"archive_expired".*"runPeakWaiting":3/);
+});
+
 it('continues deployment resolution when the first-attempt head probe fails', async () => {
   let headCalls = 0;
   const worker = createRobinhoodTokenDeploymentWorker({
