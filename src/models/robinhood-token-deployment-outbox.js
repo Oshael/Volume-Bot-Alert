@@ -37,16 +37,16 @@ function claimedTask(row) {
 function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
   const database = options.database || db;
 
-  async function claimBatch(input = {}) {
+  async function claimBatchWithStats(input = {}) {
     const owner = ownerOf(input.owner);
     const leaseMs = Math.max(10_000, Math.min(Number(input.leaseMs) || 300_000, 900_000));
     const limit = batchLimit(input.limit);
     const { rows } = await database.query(
-      `WITH candidate AS (
-         SELECT token_address FROM robinhood_token_deployment_outbox
-          WHERE chain = '${CHAIN}' AND next_attempt_at <= NOW()
-            AND live_deadline_at > NOW()
-            AND (status = 'pending' OR lease_until <= NOW())
+      `WITH candidate AS MATERIALIZED (
+         SELECT outbox.token_address FROM robinhood_token_deployment_outbox outbox
+          WHERE outbox.chain = '${CHAIN}' AND outbox.next_attempt_at <= NOW()
+            AND outbox.live_deadline_at > NOW()
+            AND (outbox.status = 'pending' OR outbox.lease_until <= NOW())
           ORDER BY CASE WHEN mint_block_number IS NOT NULL
                               AND created_at >= NOW() - INTERVAL '30 seconds'
                          THEN 0 ELSE 1 END,
@@ -54,20 +54,48 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
                               AND created_at >= NOW() - INTERVAL '30 seconds'
                          THEN created_at END DESC,
                    live_deadline_at, next_attempt_at, created_at
-          LIMIT $3 FOR UPDATE SKIP LOCKED
-       )
-       UPDATE robinhood_token_deployment_outbox outbox
+          LIMIT $3 FOR UPDATE OF outbox SKIP LOCKED
+       ), classified AS MATERIALIZED (
+         SELECT candidate.token_address, attribution.token_address IS NOT NULL AS exact
+           FROM candidate LEFT JOIN robinhood_token_attributions attribution
+             ON attribution.chain = '${CHAIN}'
+            AND attribution.token_address = candidate.token_address
+            AND attribution.source = ANY($4::varchar[])
+            AND attribution.attribution_block IS NOT NULL
+       ), removed AS (
+         DELETE FROM robinhood_token_deployment_outbox outbox
+          USING classified
+          WHERE outbox.chain = '${CHAIN}'
+            AND outbox.token_address = classified.token_address
+            AND classified.exact
+          RETURNING outbox.token_address
+       ), claimed AS (
+         UPDATE robinhood_token_deployment_outbox outbox
           SET status = 'leased', lease_owner = $1,
               lease_until = NOW() + ($2::bigint * INTERVAL '1 millisecond'),
               attempt_count = attempt_count + 1, updated_at = NOW()
-         FROM candidate WHERE outbox.chain = '${CHAIN}'
-          AND outbox.token_address = candidate.token_address
+         FROM classified WHERE outbox.chain = '${CHAIN}'
+          AND outbox.token_address = classified.token_address
+          AND NOT classified.exact
        RETURNING outbox.token_address, outbox.attempt_count, outbox.created_at,
                  outbox.mint_block_number, outbox.mint_block_hash,
-                 outbox.mint_transaction_hash`,
-      [owner, leaseMs, limit]
+                 outbox.mint_transaction_hash
+       )
+       SELECT TRUE AS claimed, token_address, attempt_count, created_at,
+              mint_block_number, mint_block_hash, mint_transaction_hash FROM claimed
+       UNION ALL
+       SELECT FALSE, token_address, NULL::integer, NULL::timestamptz,
+              NULL::bigint, NULL::varchar(66), NULL::varchar(66) FROM removed`,
+      [owner, leaseMs, limit, EXACT_SOURCES]
     );
-    return Object.freeze(rows.map(claimedTask));
+    return Object.freeze({
+      tasks: Object.freeze(rows.filter((row) => row.claimed).map(claimedTask)),
+      removedExact: rows.filter((row) => !row.claimed).length,
+    });
+  }
+
+  async function claimBatch(input = {}) {
+    return (await claimBatchWithStats(input)).tasks;
   }
 
   async function claim(input = {}) {
@@ -202,7 +230,7 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
   }
 
   return Object.freeze({
-    archiveExpiredBatch, claim, claimBatch, complete, completeRecovered,
+    archiveExpiredBatch, claim, claimBatch, claimBatchWithStats, complete, completeRecovered,
     completePinnedRecovered,
     findDiscoveryHint, findMintHint, isExact, retry,
   });

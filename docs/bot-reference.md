@@ -3582,7 +3582,12 @@ não excluir uma tarefa reaberta por outro evento. Use `--limit` e `--concurrenc
 para limitar a carga no Archive.
 
 A fila live agora tenta primeiro mints fixados criados nos últimos 30 segundos; o
-restante conserva a ordem por prazo. Se `eth_getCode` devolver `-32000` para um mint
+restante conserva a ordem por prazo. O claim verifica somente os candidatos do lote
+contra atribuições exatas. Remove da outbox os já atribuídos sem consumir lease ou
+RPC e reivindica os demais.
+`totalPreclaimExactRemoved` mede as remoções desde o início do processo; a checagem
+após o claim continua protegendo contra atribuições gravadas durante a corrida.
+Se `eth_getCode` devolver `-32000` para um mint
 fixado, o worker tenta uma prova canônica pelo Archive quando
 `ROBINHOOD_ARCHIVE_RPC_URL` estiver configurada. O fallback é limitado a quatro
 tarefas por batch por padrão, ajustável por

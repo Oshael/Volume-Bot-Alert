@@ -234,6 +234,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalResolved: 0, totalLocalResolved: 0, totalDeferred: 0, totalSkipped: 0,
     totalArchiveRequired: 0,
+    totalPreclaimExactRemoved: 0,
     totalTraceAttempts: 0, totalTraceResolved: 0, totalTraceFailed: 0,
     totalTraceBudgetSkipped: 0, lastTraceError: null,
     totalArchiveFallbackAttempts: 0, totalArchiveFallbackResolved: 0,
@@ -539,17 +540,21 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         ? await current.outbox.archiveExpiredBatch({ limit: options.batchSize }) : 0;
       status.totalArchiveRequired += archiveRequired;
       const claimStartedAt = now();
-      const tasks = typeof current.outbox.claimBatch === 'function'
-        ? await current.outbox.claimBatch({
-          owner, leaseMs: options.leaseMs, limit: options.batchSize,
-        })
-        : [await current.outbox.claim({ owner, leaseMs: options.leaseMs })].filter(Boolean);
+      const claimInput = { owner, leaseMs: options.leaseMs, limit: options.batchSize };
+      const claimed = typeof current.outbox.claimBatchWithStats === 'function'
+        ? await current.outbox.claimBatchWithStats(claimInput)
+        : { tasks: typeof current.outbox.claimBatch === 'function'
+          ? await current.outbox.claimBatch(claimInput)
+          : [await current.outbox.claim(claimInput)].filter(Boolean), removedExact: 0 };
+      const tasks = claimed.tasks;
+      status.totalPreclaimExactRemoved += claimed.removedExact;
       const claimedAt = now();
       status.lastClaimDurationMs = Math.max(0, claimedAt - claimStartedAt);
       status.lastRunClaimed = tasks.length;
       if (!tasks.length) {
         status.lastProcessDurationMs = 0;
-        return { status: 'caught-up', claimed: 0, archiveRequired, errors: 0 };
+        return { status: claimed.removedExact ? 'cleaned' : 'caught-up', claimed: 0,
+          removedExact: claimed.removedExact, archiveRequired, errors: 0 };
       }
       const traceBudget = {
         remaining: options.traceBatchSize,

@@ -636,7 +636,8 @@ it('claims only the live lane with fresh pinned mints first and loads a canonica
     database: { query: async (sql, params) => {
       calls.push({ sql, params });
       if (sql.includes('WITH candidate')) return { rows: [{
-        token_address: TOKEN, attempt_count: 1, created_at: '2026-08-30T20:00:00Z',
+        claimed: true, token_address: TOKEN, attempt_count: 1,
+        created_at: '2026-08-30T20:00:00Z',
         mint_block_number: '100', mint_block_hash: BLOCK_HASH,
         mint_transaction_hash: TRANSACTION_HASH,
       }] };
@@ -677,6 +678,19 @@ it('moves expired pending work to the Archive lane in a bounded batch', async ()
   assert.match(query.sql, /live_deadline_at <= NOW\(\)/);
   assert.match(query.sql, /LIMIT \$1 FOR UPDATE SKIP LOCKED/);
   assert.deepEqual(query.params, [16]);
+});
+
+it('reports exact tasks removed before the live claim', async () => {
+  const fixture = runtime({
+    outbox: {
+      claimBatchWithStats: async () => ({ tasks: [], removedExact: 2 }),
+      claimBatch: async () => { throw new Error('legacy claim must not run'); },
+    },
+  });
+  const worker = createRobinhoodTokenDeploymentWorker({ runtime: fixture.value, owner: 'test' });
+  assert.equal((await worker.runOnce()).status, 'cleaned');
+  assert.equal(worker.getStatus().totalPreclaimExactRemoved, 2);
+  assert.equal(worker.getStatus().lastRunClaimed, 0);
 });
 
 it('completes an archived mint only while its pinned identity is unchanged', async () => {
