@@ -239,6 +239,11 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     totalTraceBudgetSkipped: 0, lastTraceError: null,
     totalArchiveFallbackAttempts: 0, totalArchiveFallbackResolved: 0,
     totalArchiveFallbackFailed: 0, lastArchiveFallbackError: null,
+    totalArchiveFallbackResolvedTaskUnder10m: 0,
+    totalArchiveFallbackResolvedTask10mTo1h: 0,
+    totalArchiveFallbackResolvedTaskOver1h: 0,
+    totalArchiveFallbackResolvedTaskAgeUnknown: 0,
+    lastArchiveFallbackResolvedTask: null,
     firstAttemptHeadSamples: 0, firstAttemptHeadWithinLookback: 0,
     firstAttemptHeadBeyondLookback: 0, firstAttemptHeadNodeBehind: 0,
     firstAttemptHeadErrors: 0, lastFirstAttemptHeadError: null,
@@ -428,6 +433,25 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     };
   }
 
+  function recordArchiveFallbackResolvedTask(task) {
+    const createdAtMs = task.createdAt == null ? NaN : new Date(task.createdAt).getTime();
+    const resolvedAtMs = now();
+    const ageMs = Number.isFinite(createdAtMs)
+      ? Math.max(0, resolvedAtMs - createdAtMs) : null;
+    const bucket = ageMs === null ? 'AgeUnknown'
+      : ageMs < 600_000 ? 'Under10m'
+        : ageMs < 3_600_000 ? '10mTo1h' : 'Over1h';
+    status[`totalArchiveFallbackResolvedTask${bucket}`] += 1;
+    status.lastArchiveFallbackResolvedTask = {
+      sampledAt: new Date(resolvedAtMs).toISOString(),
+      taskCreatedAt: task.createdAt ?? null,
+      taskAgeMs: ageMs,
+      attemptCount: task.attemptCount,
+      mintBlock: task.mintHint.blockNumber,
+      bucket,
+    };
+  }
+
   async function recoverPinnedWithArchive(current, task, error, budget) {
     if (!eligibleForArchiveFallback(current, task, error) || !budget.take()) return null;
     status.totalArchiveFallbackAttempts += 1;
@@ -450,6 +474,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       }
       status.totalResolved += 1;
       status.totalArchiveFallbackResolved += 1;
+      recordArchiveFallbackResolvedTask(task);
       status.lastArchiveFallbackError = null;
       return { status: 'resolved', tokenAddress: task.tokenAddress, source: 'rpc_code_transition' };
     } catch (archiveError) {

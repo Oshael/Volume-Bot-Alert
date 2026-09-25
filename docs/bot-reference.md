@@ -3597,6 +3597,14 @@ primeira transição de código. `totalArchiveFallbackAttempts`,
 `totalArchiveFallbackResolved`, `totalArchiveFallbackFailed` e
 `lastArchiveFallbackError` expõem o uso e as falhas. Um fallback frequente indica
 que a janela do RPC live ainda está sendo perdida e exige diagnóstico próprio.
+Sucessos do fallback são separados pela idade da tarefa na outbox em
+`totalArchiveFallbackResolvedTaskUnder10m`,
+`totalArchiveFallbackResolvedTask10mTo1h`,
+`totalArchiveFallbackResolvedTaskOver1h` e
+`totalArchiveFallbackResolvedTaskAgeUnknown`. A soma equivale a
+`totalArchiveFallbackResolved`. `lastArchiveFallbackResolvedTask` registra a idade,
+o horário de criação, o número da tentativa e o bloco do mint do último sucesso.
+Esses campos medem tempo na fila, não idade do mint, e reiniciam com o processo.
 Na primeira tentativa de cada mint fixado, o worker lê `eth_blockNumber` do mesmo
 RPC live imediatamente antes da prova de código. A telemetria da lease registra
 `firstAttemptHeadSamples`, `firstAttemptHeadWithinLookback`,

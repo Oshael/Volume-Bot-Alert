@@ -226,6 +226,47 @@ it('uses bounded Archive fallback for a pinned live eth_getCode -32000 failure',
   assert.equal(worker.getStatus().firstAttemptError, 1);
 });
 
+it('separates Archive fallback successes by time spent in the live queue', async () => {
+  const sampledAt = Date.parse('2026-09-25T06:00:00.000Z');
+  const tokens = [TOKEN, TOKEN_B, `0x${'e'.repeat(40)}`];
+  const queuedAt = [sampledAt - 599_999, sampledAt - 600_000,
+    sampledAt - 3_600_000];
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', now: () => sampledAt,
+    options: { archiveFallbackBatchSize: 3 },
+    runtime: {
+      outbox: {
+        claimBatch: async () => tokens.map((tokenAddress, index) => ({
+          tokenAddress, attemptCount: 2,
+          createdAt: new Date(queuedAt[index]).toISOString(),
+          mintHint: { tokenAddress, blockNumber: '100', blockHash: BLOCK_HASH,
+            transactionHash: TRANSACTION_HASH },
+        })),
+        isExact: async () => false,
+        complete: async () => true,
+        retry: async () => { throw new Error('must not retry'); },
+      },
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+      archiveResolver: { inspect: async (hint) => ({ status: 'transition',
+        transition: hint }) },
+      attributions: { recordCodeTransitions: async () => ({ attributed: 1 }) },
+    },
+  });
+  const result = await worker.runOnce();
+  assert.equal(result.resolved, 3);
+  const status = worker.getStatus();
+  assert.equal(status.totalArchiveFallbackResolved, 3);
+  assert.equal(status.totalArchiveFallbackResolvedTaskUnder10m, 1);
+  assert.equal(status.totalArchiveFallbackResolvedTask10mTo1h, 1);
+  assert.equal(status.totalArchiveFallbackResolvedTaskOver1h, 1);
+  assert.equal(status.totalArchiveFallbackResolvedTaskAgeUnknown, 0);
+  assert.equal(status.lastArchiveFallbackResolvedTask.attemptCount, 2);
+});
+
 it('finds earlier code before completing a pinned mint that is not a deployment', async () => {
   let discovered;
   let recorded;
