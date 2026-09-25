@@ -3,6 +3,45 @@
 /** Stage 241 - durable block anchors for wallet-classification frontiers. */
 const db = require('../models/db');
 
+const CAPTURE_ANCHOR_SQL = `CREATE OR REPLACE FUNCTION capture_robinhood_chain_block_anchor(
+     requested_chain TEXT, requested_block BIGINT, expected_hash TEXT DEFAULT NULL
+   ) RETURNS VARCHAR(66) LANGUAGE plpgsql AS $function$
+   DECLARE canonical_hash VARCHAR(66); canonical_time TIMESTAMPTZ;
+           stored_time TIMESTAMPTZ; anchor_count BIGINT;
+   BEGIN
+     SELECT block_hash, block_timestamp INTO canonical_hash, canonical_time
+       FROM robinhood_chain_blocks
+      WHERE chain = requested_chain AND block_number = requested_block AND canonical
+      LIMIT 1;
+     IF canonical_hash IS NULL THEN
+       SELECT COUNT(*), MIN(block_hash), MIN(block_timestamp)
+         INTO anchor_count, canonical_hash, canonical_time
+         FROM robinhood_chain_block_anchors
+        WHERE chain = requested_chain AND block_number = requested_block;
+       IF anchor_count > 1 THEN
+         RAISE EXCEPTION 'Robinhood block anchor ambiguous at %', requested_block;
+       END IF;
+       IF anchor_count = 0 THEN RETURN NULL; END IF;
+     END IF;
+     IF expected_hash IS NOT NULL AND canonical_hash IS DISTINCT FROM expected_hash THEN
+       RAISE EXCEPTION 'Robinhood block anchor hash mismatch at %: expected %, canonical %',
+         requested_block, expected_hash, canonical_hash;
+     END IF;
+     INSERT INTO robinhood_chain_block_anchors(
+       chain, block_number, block_hash, block_timestamp
+     ) VALUES (requested_chain, requested_block, canonical_hash, canonical_time)
+     ON CONFLICT (chain, block_number, block_hash) DO NOTHING;
+     SELECT block_timestamp INTO stored_time
+       FROM robinhood_chain_block_anchors
+      WHERE chain = requested_chain AND block_number = requested_block
+        AND block_hash = canonical_hash;
+     IF stored_time IS DISTINCT FROM canonical_time THEN
+       RAISE EXCEPTION 'Robinhood block anchor timestamp mismatch at %', requested_block;
+     END IF;
+     RETURN canonical_hash;
+   END
+   $function$`;
+
 const STATEMENTS = Object.freeze([
   `CREATE TABLE IF NOT EXISTS robinhood_chain_block_anchors (
      chain VARCHAR(16) NOT NULL DEFAULT 'robinhood',
@@ -71,35 +110,7 @@ const STATEMENTS = Object.freeze([
      ADD CONSTRAINT rh_bundle_redistribution_queue_source_anchor_fkey FOREIGN KEY (
        chain, source_through_block, source_through_hash
      ) REFERENCES robinhood_chain_block_anchors(chain, block_number, block_hash)`,
-  `CREATE OR REPLACE FUNCTION capture_robinhood_chain_block_anchor(
-     requested_chain TEXT, requested_block BIGINT, expected_hash TEXT DEFAULT NULL
-   ) RETURNS VARCHAR(66) LANGUAGE plpgsql AS $function$
-   DECLARE canonical_hash VARCHAR(66); canonical_time TIMESTAMPTZ;
-           stored_time TIMESTAMPTZ;
-   BEGIN
-     SELECT block_hash, block_timestamp INTO canonical_hash, canonical_time
-       FROM robinhood_chain_blocks
-      WHERE chain = requested_chain AND block_number = requested_block AND canonical
-      LIMIT 1;
-     IF canonical_hash IS NULL THEN RETURN NULL; END IF;
-     IF expected_hash IS NOT NULL AND canonical_hash IS DISTINCT FROM expected_hash THEN
-       RAISE EXCEPTION 'Robinhood block anchor hash mismatch at %: expected %, canonical %',
-         requested_block, expected_hash, canonical_hash;
-     END IF;
-     INSERT INTO robinhood_chain_block_anchors(
-       chain, block_number, block_hash, block_timestamp
-     ) VALUES (requested_chain, requested_block, canonical_hash, canonical_time)
-     ON CONFLICT (chain, block_number, block_hash) DO NOTHING;
-     SELECT block_timestamp INTO stored_time
-       FROM robinhood_chain_block_anchors
-      WHERE chain = requested_chain AND block_number = requested_block
-        AND block_hash = canonical_hash;
-     IF stored_time IS DISTINCT FROM canonical_time THEN
-       RAISE EXCEPTION 'Robinhood block anchor timestamp mismatch at %', requested_block;
-     END IF;
-     RETURN canonical_hash;
-   END
-   $function$`,
+  CAPTURE_ANCHOR_SQL,
   `CREATE OR REPLACE FUNCTION hydrate_robinhood_redistribution_activation_anchor()
    RETURNS TRIGGER LANGUAGE plpgsql AS $trigger$
    DECLARE captured_hash VARCHAR(66); captured_time TIMESTAMPTZ;
@@ -216,4 +227,4 @@ if (require.main === module) init().then(() => {
   process.exitCode = 1;
 });
 
-module.exports = { STATEMENTS, init };
+module.exports = { CAPTURE_ANCHOR_SQL, STATEMENTS, init };

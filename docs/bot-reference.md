@@ -6166,8 +6166,13 @@ duráveis, aplique `node src/utils/db-init-stage241.js`. A Stage 241 cria
 explicitamente referenciados por ativação, fila ou frontier de holder; transações,
 receipts e logs continuam sujeitos à retenção raw. A migration adiciona campos nullable
 de observação e source frontier à fila, constraints all-or-none e captura event-driven.
-Hash divergente de um bloco canônico aborta o write; raw já ausente deixa a âncora nula
-para reparo explícito. Linhas legadas não são inferidas. O source de redistribution resolve
+Hash divergente de um bloco canônico aborta o write. Se o raw do bloco já saiu do
+journal, a captura reutiliza a âncora durável somente quando existe exatamente um
+hash para aquele número; nenhuma âncora mantém o campo nulo e múltiplos hashes
+abortam o write. Depois da Stage 241, aplique
+`node src/utils/db-init-stage251.js` para atualizar essa função e preencher ativações
+e filas antigas que já têm uma âncora única, preservando status e leases. A migration
+não consulta Archive nem recria evidência ausente. O source de redistribution resolve
 os bounds temporais somente em `robinhood_chain_block_anchors`; ausência e divergência
 falham fechadas como `redistribution_anchor_missing` e
 `redistribution_anchor_mismatch`, sem consultar `robinhood_chain_blocks`. O claim da fila
