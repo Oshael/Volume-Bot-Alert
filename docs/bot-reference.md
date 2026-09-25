@@ -395,6 +395,11 @@ no máximo uma partição de 250.000 blocos por ciclo; o bloco superior precisa 
 além do cutoff auditado e todos os blocos da partição devem ter mais de 3 dias.
 Referências no outbox ou canário bloqueiam o descarte. A partição que cruza o
 limite permanece inteira, de modo que a janela física pode exceder 3 dias.
+Para o descarte somente de eventos particionados, o risco global
+`wallet_classification_archive_required` é reportado como `deferredBlockers`:
+deployment e redistribution são rechecados na faixa da partição candidata.
+Outros bloqueios do audit continuam impedindo a poda. Essa exceção não libera
+a retenção das tabelas canônicas de blocos e transações.
 O journal compacto `robinhood_stock_usd_reference_events` não
 participa dessa poda e mantém a referência histórica necessária após o raw expirar.
 Depois de aplicar `node src/utils/db-init-stage240.js`, a retenção do journal canônico

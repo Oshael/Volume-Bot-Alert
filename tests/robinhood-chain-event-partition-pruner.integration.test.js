@@ -15,8 +15,9 @@ it('keeps young or referenced partitions and drops only an expired unreferenced 
     }) };
     const deps = { database,
       audit: { inspect: async () => ({ chain_events: {
-        ready_for_pilot: true, journal_start_block: '1',
-        candidate_cutoff_block: '250000', blockers: [],
+        ready_for_pilot: false, journal_start_block: '1',
+        candidate_cutoff_block: '250000',
+        blockers: [{ code: 'wallet_classification_archive_required' }],
       } }) },
       resolveRetentionCutoff: async () => '250000',
     };
@@ -42,6 +43,11 @@ it('keeps young or referenced partitions and drops only an expired unreferenced 
         chain text, block_number bigint, block_hash text, log_index integer,
         FOREIGN KEY (chain, block_number, block_hash, log_index)
           REFERENCES robinhood_chain_events ON DELETE CASCADE)`);
+      await client.query(`CREATE TEMP TABLE robinhood_token_deployment_outbox (
+        chain text, mint_block_number bigint)`);
+      await client.query(`CREATE TEMP TABLE robinhood_bundle_redistribution_queue (
+        chain text, status text, observation_from_hash text,
+        observation_from_block bigint)`);
       await client.query(`INSERT INTO robinhood_chain_events VALUES
         ('robinhood', 100, 'old', 1), ('robinhood', 250100, 'new', 1)`);
       await client.query(`INSERT INTO robinhood_chain_blocks VALUES
@@ -52,6 +58,15 @@ it('keeps young or referenced partitions and drops only an expired unreferenced 
         ('robinhood', 100, 'old', 1)`);
 
       const options = { partitionDropEnabled: true };
+      const otherBlocker = await runPilot(options, { ...deps,
+        audit: { inspect: async () => ({ chain_events: {
+          ready_for_pilot: false, blockers: [
+            { code: 'wallet_classification_archive_required' },
+            { code: 'consumer_checkpoint_invalid' },
+          ],
+        } }) },
+      });
+      assert.equal(otherBlocker.reason, 'retention_safety_audit');
       let result = await runPilot(options, deps);
       assert.equal(result.stopReason, 'blocked');
       await client.query(`UPDATE robinhood_chain_blocks
@@ -59,12 +74,26 @@ it('keeps young or referenced partitions and drops only an expired unreferenced 
       result = await runPilot(options, deps);
       assert.equal(result.stopReason, 'blocked');
       await client.query('DELETE FROM robinhood_chain_domain_outbox');
+      await client.query(`INSERT INTO robinhood_token_deployment_outbox
+        VALUES ('robinhood', 100)`);
+      assert.equal((await runPilot(options, deps)).stopReason, 'blocked');
+      await client.query('DELETE FROM robinhood_token_deployment_outbox');
+      await client.query(`INSERT INTO robinhood_bundle_redistribution_queue
+        VALUES ('robinhood', 'pending', NULL, 100)`);
+      assert.equal((await runPilot(options, deps)).stopReason, 'blocked');
+      await client.query('DELETE FROM robinhood_bundle_redistribution_queue');
+      await client.query(`INSERT INTO robinhood_token_deployment_outbox
+        VALUES ('robinhood', 300000)`);
+      await client.query(`INSERT INTO robinhood_bundle_redistribution_queue
+        VALUES ('robinhood', 'pending', NULL, 300000)`);
       const boundary = await runPilot({ partitionPreview: true }, {
         ...deps, resolveRetentionCutoff: async () => '249999',
       });
       assert.equal(boundary.stopReason, 'prefix_drained');
       const preview = await runPilot({ partitionPreview: true }, deps);
       assert.equal(preview.stopReason, 'eligible');
+      assert.deepEqual(preview.deferredBlockers,
+        [{ code: 'wallet_classification_archive_required' }]);
       assert.equal(preview.droppedPartitions, 0);
       assert.equal((await client.query(`SELECT count(*)::int AS n
         FROM robinhood_chain_events`)).rows[0].n, 2);
@@ -82,7 +111,8 @@ it('keeps young or referenced partitions and drops only an expired unreferenced 
       assert.equal(fks.rows[0].n, 2);
     } finally {
       for (const name of ['robinhood_chain_domain_outbox',
-        'robinhood_canonical_head_candidates', 'robinhood_chain_events',
+        'robinhood_canonical_head_candidates', 'robinhood_token_deployment_outbox',
+        'robinhood_bundle_redistribution_queue', 'robinhood_chain_events',
         'robinhood_chain_blocks', 'robinhood_chain_capture_cursor']) {
         await client.query(`DROP TABLE IF EXISTS pg_temp.${name} CASCADE`);
       }

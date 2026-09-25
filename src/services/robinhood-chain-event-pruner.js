@@ -105,8 +105,21 @@ async function partitionReferences(client, start, end) {
       AS outbox,
     EXISTS (SELECT 1 FROM robinhood_canonical_head_candidates
       WHERE chain=$1 AND block_number >= $2::bigint AND block_number < $3::bigint)
-      AS candidates`, [CHAIN, String(start), String(end)]);
+      AS candidates,
+    EXISTS (SELECT 1 FROM robinhood_token_deployment_outbox
+      WHERE chain=$1 AND mint_block_number >= $2::bigint
+        AND mint_block_number < $3::bigint) AS deployment,
+    EXISTS (SELECT 1 FROM robinhood_bundle_redistribution_queue
+      WHERE chain=$1 AND status <> 'complete' AND observation_from_hash IS NULL
+        AND observation_from_block >= $2::bigint
+        AND observation_from_block < $3::bigint) AS redistribution`,
+  [CHAIN, String(start), String(end)]);
   return result.rows[0];
+}
+
+function hasPartitionReferences(references) {
+  return ['outbox', 'candidates', 'deployment', 'redistribution']
+    .some((name) => references?.[name] !== false);
 }
 
 async function prunePartition(client, cutoffBlock, retentionMs, preview) {
@@ -145,7 +158,7 @@ async function prunePartition(client, cutoffBlock, retentionMs, preview) {
       partitioned: true, deletedEvents: 0 };
   }
   const references = await partitionReferences(client, oldest.start, oldest.end);
-  if (references?.outbox !== false || references?.candidates !== false) {
+  if (hasPartitionReferences(references)) {
     return { status: 'blocked', reason: 'partition_referenced', partitioned: true,
       deletedEvents: 0 };
   }
@@ -153,8 +166,10 @@ async function prunePartition(client, cutoffBlock, retentionMs, preview) {
     candidatePartition: oldest.name, candidateBytes: oldest.bytes };
   await client.query("SET LOCAL statement_timeout = '5s'");
   await client.query('LOCK TABLE robinhood_chain_events IN ACCESS EXCLUSIVE MODE');
+  await client.query(`LOCK TABLE robinhood_token_deployment_outbox,
+    robinhood_bundle_redistribution_queue IN SHARE MODE`);
   const lockedReferences = await partitionReferences(client, oldest.start, oldest.end);
-  if (lockedReferences?.outbox !== false || lockedReferences?.candidates !== false) {
+  if (hasPartitionReferences(lockedReferences)) {
     return { status: 'blocked', reason: 'partition_referenced', partitioned: true,
       deletedEvents: 0 };
   }
@@ -443,6 +458,22 @@ async function drainPrunableBatches(options, deps, database, cutoffBlock) {
   });
 }
 
+async function effectiveChainBlockers(safety, options, database) {
+  const blockers = safety.chain_events?.blockers || [];
+  if (!(options.partitionDropEnabled || options.partitionPreview)
+      || blockers.length === 0
+      || blockers.some((item) => item.code !== 'wallet_classification_archive_required')) {
+    return { blockers, deferredBlockers: [] };
+  }
+  const client = await database.getClient();
+  try {
+    if (await legacyEventStorage(client)) return { blockers, deferredBlockers: [] };
+  } finally {
+    client.release();
+  }
+  return { blockers: [], deferredBlockers: blockers };
+}
+
 async function runPilot(input = {}, deps = {}) {
   const options = normalizeOptions(input);
   const database = deps.database || db;
@@ -451,10 +482,13 @@ async function runPilot(input = {}, deps = {}) {
     includeHolderProof: false,
   });
   const safety = await audit.inspect();
-  if (safety.chain_events?.ready_for_pilot !== true) {
+  const { blockers, deferredBlockers } = await effectiveChainBlockers(
+    safety, options, database
+  );
+  if (safety.chain_events?.ready_for_pilot !== true && deferredBlockers.length === 0) {
     return Object.freeze({
       status: 'blocked', reason: 'retention_safety_audit', batches: 0,
-      totalDeleted: 0, blockers: safety.chain_events?.blockers || [],
+      totalDeleted: 0, blockers,
     });
   }
   const safetyCutoffBlock = String(safety.chain_events.candidate_cutoff_block || '');
@@ -466,7 +500,8 @@ async function runPilot(input = {}, deps = {}) {
   const cutoffBlock = await resolveCutoff(database, {
     journalStartBlock, safetyCutoffBlock, retentionMs: options.retentionMs,
   });
-  return drainPrunableBatches(options, deps, database, cutoffBlock);
+  const report = await drainPrunableBatches(options, deps, database, cutoffBlock);
+  return deferredBlockers.length ? Object.freeze({ ...report, deferredBlockers }) : report;
 }
 
 module.exports = {
