@@ -5400,6 +5400,27 @@ O schema check reconhece os dois layouts: antes da troca exige o monólito e a
 sombra; depois exige a tabela ativa particionada com os índices da antiga sombra
 e verifica as FKs do outbox e do canário contra o novo nome ativo. Ele falha se
 o nome da sombra ainda existir junto com a tabela ativa particionada.
+Para trocar o journal, pare o pruner linha a linha e o serviço de chain capture;
+aguarde a lease
+`robinhood-chain-capture-worker` expirar ou ser liberada. Execute
+`node src/utils/cutover-robinhood-chain-events.js` para ler os OIDs, a fronteira
+e as dependências; então execute `--apply --expected-next-block=N` com o
+`next_block` medido depois da parada. O comando exige as FKs migradas, lease
+inativa, partição para o próximo bloco e paridade da cauda de 64 blocos, e
+troca os nomes em uma transação.
+A monolítica passa a `robinhood_chain_events_retired`; ela permanece intacta
+para a comparação. Confira `npm run db:schema-check`, reinicie a captura e
+confirme que ela avança com `eventShadowEnabled=false`.
+Compare a faixa completa ainda presente na tabela ativa com a aposentada usando
+`audit-robinhood-chain-event-shadow.js --from-block=N --through-block=M
+--source=public.robinhood_chain_events_retired
+--shadow=public.robinhood_chain_events --max-pages=100000`; grave a saída JSONL
+em arquivo. `N` é o menor bloco da ativa e `M` o maior bloco da aposentada.
+Somente com `verified:true`, `stopReason:complete` e o bloco `M` finalizado,
+execute `cutover-robinhood-chain-events.js --drop-retired --audit-report=ARQUIVO`.
+O descarte usa `RESTRICT` e confere as duas fronteiras novamente; se houver
+divergência, mantenha a aposentada e investigue antes de repetir a auditoria.
+Esse corte não liga a poda física das partições; ela tem um gate separado.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com

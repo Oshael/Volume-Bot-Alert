@@ -6,7 +6,7 @@ const db = require('../models/db');
 
 const MAX_BLOCKS = 1000;
 const MAX_EVENTS = 5000;
-const MAX_PAGES = 10000;
+const MAX_PAGES = 100000;
 const RELATION = /^(?:public|pg_temp)\.[a-z][a-z0-9_]*$/;
 
 function block(value, name) {
@@ -28,7 +28,7 @@ function option(value, name, fallback, maximum) {
 function parseArgs(args = []) {
   const values = {};
   for (const arg of args) {
-    const match = /^--(from-block|through-block|max-blocks|max-pages)=(\d+)$/.exec(arg);
+    const match = /^--(from-block|through-block|max-blocks|max-pages|source|shadow)=(.+)$/.exec(arg);
     if (!match || values[match[1]] != null) throw new Error(`unknown or repeated argument: ${arg}`);
     values[match[1]] = match[2];
   }
@@ -42,6 +42,8 @@ function parseArgs(args = []) {
     fromBlock, throughBlock,
     maxBlocks: option(values['max-blocks'], 'max-blocks', 100, MAX_BLOCKS),
     maxPages: option(values['max-pages'], 'max-pages', 1000, MAX_PAGES),
+    ...relations(values.source || 'public.robinhood_chain_events',
+      values.shadow || 'public.robinhood_chain_events_shadow'),
   };
 }
 
@@ -129,7 +131,7 @@ async function auditRange(input, deps = {}) {
     const pageEnd = Math.min(input.throughBlock, nextBlock + width - 1);
     let result;
     try {
-      result = await inspect(database, nextBlock, pageEnd);
+      result = await inspect(database, nextBlock, pageEnd, input);
     } catch (error) {
       if (error.code !== 'shadow_audit_page_too_large' || width === 1) throw error;
       width = Math.max(1, Math.floor(width / 2));
@@ -139,6 +141,8 @@ async function auditRange(input, deps = {}) {
     }
     if (result.mismatch) {
       return { mode: 'read-only', verified: false, pages, events,
+        fromBlock: input.fromBlock, throughBlock: input.throughBlock,
+        source: input.source, shadow: input.shadow,
         nextBlock, mismatch: result.mismatch,
         sourceEvents: result.sourceEvents, shadowEvents: result.shadowEvents };
     }
@@ -154,6 +158,8 @@ async function auditRange(input, deps = {}) {
   }
   const complete = nextBlock > input.throughBlock;
   return { mode: 'read-only', verified: complete, pages, events,
+    fromBlock: input.fromBlock, throughBlock: input.throughBlock,
+    source: input.source, shadow: input.shadow,
     nextBlock: complete ? null : nextBlock,
     stopReason: complete ? 'complete' : 'page_limit' };
 }

@@ -76,6 +76,26 @@ it('marks a page-limited run incomplete even when every checked page matches', a
   assert.equal(result.nextBlock, 120);
 });
 
+it('records fixed relation names and bounds for the retired-table drop proof', async () => {
+  const input = parseArgs(['--from-block=100', '--through-block=101',
+    '--source=public.robinhood_chain_events_retired',
+    '--shadow=public.robinhood_chain_events']);
+  const result = await auditRange(input, {
+    database: {},
+    inspect: async (_database, _from, _through, options) => {
+      assert.equal(options.source, input.source);
+      assert.equal(options.shadow, input.shadow);
+      return { sourceEvents: 2, shadowEvents: 2, mismatch: null };
+    },
+  });
+  assert.equal(result.verified, true);
+  assert.equal(result.fromBlock, 100);
+  assert.equal(result.throughBlock, 101);
+  assert.equal(result.source, input.source);
+  assert.throws(() => parseArgs(['--from-block=100', '--through-block=101',
+    '--source=public.x;DROP TABLE y']), /qualified identifiers/);
+});
+
 it('reduces a dense page and grows again after stable pages', async () => {
   const input = parseArgs(['--from-block=100', '--through-block=1000',
     '--max-blocks=100', '--max-pages=19']);
