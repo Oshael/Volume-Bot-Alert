@@ -250,7 +250,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     firstAttemptHeadBeyondLookback: 0, firstAttemptHeadNodeBehind: 0,
     firstAttemptHeadErrors: 0, lastFirstAttemptHeadError: null,
     firstAttemptQueueWaitSamples: 0, firstAttemptQueueWaitTotalMs: 0,
-    firstAttemptQueueWaitMaxMs: 0, firstAttemptClaimWaitMaxMs: 0,
+    firstAttemptQueueWaitMaxMs: 0, firstAttemptQueueWaitMaxSample: null,
+    firstAttemptClaimWaitMaxMs: 0,
     firstAttemptPinnedStarted: 0, firstAttemptPinnedFinished: 0,
     firstAttemptLiveResolved: 0, firstAttemptArchiveResolved: 0,
     firstAttemptDeferred: 0, firstAttemptError: 0, firstAttemptSkipped: 0,
@@ -263,7 +264,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     lastProcessDurationMs: null, lastRunClaimed: null,
     runPhase: 'idle', databasePool: null,
     databasePoolPeakBusy: 0, databasePoolPeakWaiting: 0,
+    databasePoolPeakWaitingSample: null,
     databasePoolRunPeakBusy: 0, databasePoolRunPeakWaiting: 0,
+    databasePoolRunPeakWaitingSample: null,
     lastRunFailure: null,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
@@ -275,15 +278,22 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     if (![total, idle, waiting].every(Number.isFinite)) return null;
     const snapshot = {
       sampledAt: new Date(now()).toISOString(),
+      phase: status.runPhase,
       total, idle, busy: Math.max(0, total - idle), waiting,
       max: Number(databasePool?.options?.max) || null,
     };
     status.databasePool = snapshot;
     status.databasePoolPeakBusy = Math.max(status.databasePoolPeakBusy, snapshot.busy);
-    status.databasePoolPeakWaiting = Math.max(status.databasePoolPeakWaiting, waiting);
+    if (waiting > status.databasePoolPeakWaiting) {
+      status.databasePoolPeakWaiting = waiting;
+      status.databasePoolPeakWaitingSample = snapshot;
+    }
     if (status.inFlight) {
       status.databasePoolRunPeakBusy = Math.max(status.databasePoolRunPeakBusy, snapshot.busy);
-      status.databasePoolRunPeakWaiting = Math.max(status.databasePoolRunPeakWaiting, waiting);
+      if (waiting > status.databasePoolRunPeakWaiting) {
+        status.databasePoolRunPeakWaiting = waiting;
+        status.databasePoolRunPeakWaitingSample = snapshot;
+      }
     }
     return snapshot;
   }
@@ -413,9 +423,15 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     if (queueWaitMs !== null) {
       status.firstAttemptQueueWaitSamples += 1;
       status.firstAttemptQueueWaitTotalMs += queueWaitMs;
-      status.firstAttemptQueueWaitMaxMs = Math.max(
-        status.firstAttemptQueueWaitMaxMs, queueWaitMs
-      );
+      if (queueWaitMs > status.firstAttemptQueueWaitMaxMs) {
+        status.firstAttemptQueueWaitMaxMs = queueWaitMs;
+        status.firstAttemptQueueWaitMaxSample = {
+          sampledAt: new Date(startedAt).toISOString(),
+          taskCreatedAt: new Date(createdAt).toISOString(),
+          mintBlock: task.mintHint.blockNumber,
+          queueWaitMs,
+        };
+      }
     }
     return { queueWaitMs, claimWaitMs };
   }
@@ -585,6 +601,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     status.runPhase = 'archive_expired';
     status.databasePoolRunPeakBusy = 0;
     status.databasePoolRunPeakWaiting = 0;
+    status.databasePoolRunPeakWaitingSample = null;
     sampleDatabasePool();
     const poolSampler = setInterval(sampleDatabasePool, 500);
     poolSampler.unref?.();
@@ -654,6 +671,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         pool: sampleDatabasePool(),
         runPeakBusy: status.databasePoolRunPeakBusy,
         runPeakWaiting: status.databasePoolRunPeakWaiting,
+        runPeakWaitingSample: status.databasePoolRunPeakWaitingSample,
       };
       status.lastRunFailure = failure;
       reportFailure(`Robinhood deployment run failed: ${JSON.stringify(failure)}`);

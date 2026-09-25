@@ -3615,7 +3615,9 @@ Ambos também incluem `queueWaitMs` (criação da tarefa até o começo da prime
 tentativa) e `claimWaitMs` (claim até esse começo). A lease soma
 `firstAttemptQueueWaitSamples`, `firstAttemptQueueWaitTotalMs` e registra
 `firstAttemptQueueWaitMaxMs` e `firstAttemptClaimWaitMaxMs`; a média da espera
-é total dividido por amostras. `lastRunDurationMs`, `lastClaimDurationMs`,
+é total dividido por amostras. `firstAttemptQueueWaitMaxSample` guarda horários
+de entrada e início, além do bloco do mint, para situar o máximo no tempo.
+`lastRunDurationMs`, `lastClaimDurationMs`,
 `lastProcessDurationMs` e `lastRunClaimed` mostram o lote mais recente. Essas
 medidas são do worker, reiniciam com ele e não incluem tempo entre o bloco do
 mint e a criação da tarefa.
@@ -3625,8 +3627,10 @@ globais do servidor. Durante cada lote, o worker amostra o pool a cada 500 ms.
 `databasePoolPeakBusy` e `databasePoolPeakWaiting` guardam os máximos amostrados
 desde o início do processo; `databasePoolRunPeakBusy` e
 `databasePoolRunPeakWaiting` guardam os máximos do lote mais recente. Se um lote
-falhar, `lastRunFailure` registra a fase (`archive_expired`, `claim` ou `process`),
-o erro, o estado do pool e os picos;
+atingir novo pico de espera, `databasePoolPeakWaitingSample` e
+`databasePoolRunPeakWaitingSample` guardam horário, fase e ocupação do pool.
+Se o lote falhar, `lastRunFailure` registra a fase (`archive_expired`, `claim`
+ou `process`), o erro, o estado do pool e os picos;
 o mesmo resumo é escrito no log antes de o erro se propagar, mesmo quando não há
 tempo para outro heartbeat. As amostras podem não captar picos menores que 500 ms.
 Para atribuir o resultado das primeiras tentativas com mint fixado, compare

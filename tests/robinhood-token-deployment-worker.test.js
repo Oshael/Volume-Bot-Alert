@@ -406,6 +406,11 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
   assert.equal(status.firstAttemptQueueWaitSamples, 1);
   assert.equal(status.firstAttemptQueueWaitTotalMs, 10_010);
   assert.equal(status.firstAttemptQueueWaitMaxMs, 10_010);
+  assert.deepEqual(status.firstAttemptQueueWaitMaxSample, {
+    sampledAt: new Date(100_010).toISOString(),
+    taskCreatedAt: new Date(90_000).toISOString(),
+    mintBlock: '100', queueWaitMs: 10_010,
+  });
   assert.equal(status.firstAttemptClaimWaitMaxMs, 5);
   assert.equal(status.lastFirstAttemptCode32000.queueWaitMs, 10_010);
   assert.equal(status.lastFirstAttemptCode32000.claimWaitMs, 5);
@@ -430,13 +435,17 @@ it('records local pool pressure and the failing phase before a database timeout 
   assert.equal(status.runPhase, 'idle');
   assert.deepEqual(status.databasePool, {
     sampledAt: status.databasePool.sampledAt,
-    total: 20, idle: 0, busy: 20, waiting: 3, max: 20,
+    phase: 'idle', total: 20, idle: 0, busy: 20, waiting: 3, max: 20,
   });
   assert.equal(status.databasePoolPeakWaiting, 3);
   assert.equal(status.databasePoolRunPeakWaiting, 3);
+  assert.equal(status.databasePoolRunPeakWaitingSample.phase, 'archive_expired');
   assert.equal(status.lastRunFailure.phase, 'archive_expired');
   assert.equal(status.lastRunFailure.pool.waiting, 3);
   assert.match(logs[0], /"phase":"archive_expired".*"runPeakWaiting":3/);
+  pool.waitingCount = 0;
+  worker.getStatus();
+  assert.equal(worker.getStatus().databasePoolPeakWaitingSample.waiting, 3);
 });
 
 it('continues deployment resolution when the first-attempt head probe fails', async () => {
