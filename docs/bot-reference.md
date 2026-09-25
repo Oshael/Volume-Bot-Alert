@@ -384,12 +384,18 @@ concluída, cobertura no bucket de 1 minuto e nenhuma tarefa de agregação
 `pending`, `leased` ou `blocked`. A tarefa de agregação `completed` é removida por
 cascade junto da observação. Buckets permanentes, agregados, projeções de wallet e
 holders não participam dessa retenção. O mesmo worker também poda
-`robinhood_chain_events` em lotes, mas nunca antes de 3 dias pelo timestamp canônico
+`robinhood_chain_events`, mas nunca antes de 3 dias pelo timestamp canônico
 do bloco. O limite pode ser ampliado com `ROBINHOOD_CHAIN_EVENT_RETENTION_MS`, nunca
 reduzido abaixo de 3 dias, e a poda pode ser isoladamente desativada com
 `ROBINHOOD_CHAIN_EVENT_RETENTION_ENABLED=false`. Antes de cada ciclo, o audit exige
 captura saudável, checkpoints canônicos e nenhuma frontier de outbox ou liquidity
-anterior ao cutoff. O journal compacto `robinhood_stock_usd_reference_events` não
+anterior ao cutoff. No layout particionado, a poda física exige também
+`ROBINHOOD_CHAIN_EVENT_PARTITION_RETENTION_ENABLED=true` (padrão `false`) e descarta
+no máximo uma partição de 250.000 blocos por ciclo; o bloco superior precisa estar
+além do cutoff auditado e todos os blocos da partição devem ter mais de 3 dias.
+Referências no outbox ou canário bloqueiam o descarte. A partição que cruza o
+limite permanece inteira, de modo que a janela física pode exceder 3 dias.
+O journal compacto `robinhood_stock_usd_reference_events` não
 participa dessa poda e mantém a referência histórica necessária após o raw expirar.
 Depois de aplicar `node src/utils/db-init-stage240.js`, a retenção do journal canônico
 completo pode ser habilitada separadamente com
@@ -5430,7 +5436,19 @@ nas duas direções antes do commit e reverte se restar divergência. O runner e
 captura fresca, espelhamento antigo desligado, lag até 800 blocos, 20 GiB livres
 em `/` e 75 GiB no tablespace ativo; seu `nextBlock` permite retomar. Repita a
 auditoria integral desde o primeiro bloco ativo depois de qualquer reparo.
-Esse corte não liga a poda física das partições; ela tem um gate separado.
+Depois do corte, a poda física das partições requer um piloto manual antes de
+ligar a flag do worker. Confira `npm run robinhood:retention-safety-audit` e
+`npm run robinhood:chain-events-prune -- --partition-preview`; execute
+`npm run robinhood:chain-events-prune -- --write --partition-drop` para remover
+no máximo uma partição elegível. A operação mantém o audit de consumidores,
+confere idade de todos os blocos da partição e ausência de referências, faz
+`DETACH PARTITION` e `DROP TABLE ... RESTRICT` numa transação curta, sem deletes
+por evento. Se houver timeout, referência ou pendência de detach, não há descarte;
+inspecione o motivo antes de repetir. Compare `df` e os cursores depois do piloto.
+Somente então ligue `ROBINHOOD_CHAIN_EVENT_PARTITION_RETENTION_ENABLED=true` no
+worker de manutenção e reinicie a instância; o worker repete o gate a cada ciclo.
+`ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED` continua separado e a poda antiga de
+transações e blocos segue bloqueada enquanto os eventos estiverem particionados.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com

@@ -67,19 +67,22 @@ describe('Robinhood chain event pruner', () => {
     assert.deepEqual(parseArgs(['--write']), {
       batchLimit: 1000, maxBatches: 1, pauseMs: 1000,
       retentionMs: DEFAULT_RETENTION_MS, untilDrained: false,
-      pruneCanonicalStorage: false,
+      pruneCanonicalStorage: false, partitionDropEnabled: false, partitionPreview: false,
     });
     assert.deepEqual(parseArgs([
       '--write', '--batch-limit=5000', '--max-batches=2', '--pause-ms=500',
       `--retention-ms=${DEFAULT_RETENTION_MS}`,
     ]), { batchLimit: 5000, maxBatches: 2, pauseMs: 500,
       retentionMs: DEFAULT_RETENTION_MS, untilDrained: false,
-      pruneCanonicalStorage: false });
+      pruneCanonicalStorage: false, partitionDropEnabled: false, partitionPreview: false });
     assert.deepEqual(parseArgs(['--write', '--until-drained', '--pause-ms=100']), {
       batchLimit: 1000, maxBatches: 1, pauseMs: 100,
       retentionMs: DEFAULT_RETENTION_MS, untilDrained: true,
-      pruneCanonicalStorage: false,
+      pruneCanonicalStorage: false, partitionDropEnabled: false, partitionPreview: false,
     });
+    assert.equal(parseArgs(['--write', '--partition-drop']).partitionDropEnabled, true);
+    assert.equal(parseArgs(['--partition-preview']).partitionPreview, true);
+    assert.throws(() => parseArgs(['--write', '--partition-preview']), /cannot be combined/);
     assert.throws(() => parseArgs([]), /--write is required/);
     assert.throws(() => parseArgs(['--write', '--batch-limit=5001']), /between 1 and 5000/);
     assert.throws(() => parseArgs(['--write', '--retention-ms=1']), /between/);
@@ -102,6 +105,7 @@ describe('Robinhood chain event pruner', () => {
       status: 'finished', stopReason: 'prefix_drained', cutoffBlock: '56397387',
       retentionMs: DEFAULT_RETENTION_MS, batches: 3, totalDeleted: 2012,
       totalDeletedTransactions: 0, totalDeletedBlocks: 0,
+      droppedPartitions: 0, freedBytes: '0',
     });
   });
 
@@ -117,6 +121,7 @@ describe('Robinhood chain event pruner', () => {
       status: 'finished', stopReason: 'batch_limit', cutoffBlock: '56397387',
       retentionMs: DEFAULT_RETENTION_MS, batches: 1, totalDeleted: 1000,
       totalDeletedTransactions: 0, totalDeletedBlocks: 0,
+      droppedPartitions: 0, freedBytes: '0',
     });
     const deletion = context.calls.find(({ sql }) => sql.includes('chain-event-prune:delete'));
     assert.deepEqual(deletion.params, [
@@ -186,6 +191,19 @@ describe('Robinhood chain event pruner', () => {
     assert.equal(report.totalDeletedTransactions, 0);
     assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:delete')), false);
     assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:transactions')), false);
+  });
+
+  it('never runs legacy row deletes when partition mode was explicitly requested', async () => {
+    const context = harness();
+    const report = await runPilot({ partitionDropEnabled: true,
+      pruneCanonicalStorage: true }, {
+      database: context.database, audit: { inspect: async () => safety() },
+    });
+    assert.equal(report.stopReason, 'blocked');
+    assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:delete')),
+    false);
+    assert.equal(context.calls.some(({ sql }) => sql.includes('chain-event-prune:transactions')),
+    false);
   });
 
   it('rolls back when either Stage 201 index is unavailable', async () => {

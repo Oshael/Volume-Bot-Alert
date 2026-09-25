@@ -118,6 +118,7 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxRetentionMs: 3 * 24 * 60 * 60 * 1000,
       realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
       chainEventRetentionEnabled: true,
+      chainEventPartitionRetentionEnabled: false,
       canonicalRawRetentionEnabled: false,
       positionPreimagePruneEnabled: false,
       chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
@@ -237,6 +238,7 @@ describe('Robinhood retention worker', () => {
       batchLimit: 10_000,
       maxBatches: 2,
       chainEventRetentionMs: 1,
+      chainEventPartitionRetentionEnabled: true,
       canonicalRawRetentionEnabled: true,
     }, {}, deps);
 
@@ -246,6 +248,7 @@ describe('Robinhood retention worker', () => {
         maxBatches: 2,
         retentionMs: 3 * 24 * 60 * 60 * 1000,
         pruneCanonicalStorage: true,
+        partitionDropEnabled: true,
       },
       database,
     });
