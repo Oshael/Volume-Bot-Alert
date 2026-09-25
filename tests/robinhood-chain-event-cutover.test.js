@@ -53,8 +53,10 @@ function cutoverClient(input = {}) {
 test('cutover requires a stopped capture, migrated FKs and equal event tail', async () => {
   const ready = cutoverClient();
   const result = await swap(ready.client, 123);
+  assert.equal(result.phase, 'swapped');
   assert.equal(result.retiredOid, '101');
   assert.equal(result.activeOid, '202');
+  assert.equal(result.shadowOid, null);
   assert.equal(result.checkedFromBlock, '100');
   assert.equal(ready.commands.filter((sql) => sql.startsWith('ALTER TABLE')).length, 2);
   for (const scenario of [

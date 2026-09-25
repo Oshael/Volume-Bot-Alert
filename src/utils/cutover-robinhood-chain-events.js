@@ -190,8 +190,8 @@ async function swap(client, expectedNextBlock) {
       || after.retired_oid !== state.active_oid) {
     throw new Error('event relation identities changed during cutover');
   }
-  return { phase: 'swapped', ...preflight, checkedFromBlock,
-    retiredOid: after.retired_oid, activeOid: after.active_oid };
+  return { ...preflight, phase: 'swapped', checkedFromBlock,
+    retiredOid: after.retired_oid, activeOid: after.active_oid, shadowOid: null };
 }
 
 async function dropRetired(client, report) {

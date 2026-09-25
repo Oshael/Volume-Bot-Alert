@@ -22,6 +22,8 @@ it('enforces both disk floors and capture health before a write', () => {
     21n * GIB, 76n * GIB).reason, 'capture_health');
   assert.equal(evaluateHealth({ ...healthyCapture, enabled: 'false' },
     21n * GIB, 76n * GIB).reason, 'capture_health');
+  assert.equal(evaluateHealth({ ...healthyCapture, enabled: 'false' },
+    21n * GIB, 76n * GIB, 'false').ready, true);
 });
 
 it('reports the last committed cursor and stops before the next page when health fails', async () => {

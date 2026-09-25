@@ -123,4 +123,4 @@ if (require.main === module) main().catch((error) => {
 });
 
 module.exports = { MAX_BLOCKS, MAX_EVENTS, MAX_SOURCE_BYTES,
-  assertBoundedSource, copyPage, normalizeOptions, parseArgs };
+  assertBoundedSource, assertFinalizedPage, copyPage, normalizeOptions, parseArgs };

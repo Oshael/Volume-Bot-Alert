@@ -38,12 +38,12 @@ async function availableBytes(path) {
   return BigInt(stats.bavail) * BigInt(stats.bsize);
 }
 
-async function shadowVolumePath(database) {
+async function shadowVolumePath(database, relation = 'public.robinhood_chain_events_shadow') {
   const { rows } = await database.query(`SELECT pg_tablespace_location(
       COALESCE(NULLIF(relation.reltablespace, 0), catalog.dattablespace)) AS path
     FROM pg_class relation
     JOIN pg_database catalog ON catalog.datname=current_database()
-    WHERE relation.oid='public.robinhood_chain_events_shadow'::regclass`);
+    WHERE relation.oid=$1::regclass`, [relation]);
   const path = rows[0]?.path;
   if (typeof path !== 'string' || !path.startsWith('/')) {
     throw new Error('shadow must use an explicit filesystem tablespace');
@@ -51,7 +51,7 @@ async function shadowVolumePath(database) {
   return path;
 }
 
-async function checkHealth(database, volumePath) {
+async function checkHealth(database, volumePath, expectedShadowEnabled = 'true') {
   const [rootFree, shadowFree, lease] = await Promise.all([
     availableBytes('/'), availableBytes(volumePath),
     database.query(`SELECT lease_until>NOW() AND heartbeat_at>NOW()-INTERVAL '2 minutes'
@@ -60,12 +60,12 @@ async function checkHealth(database, volumePath) {
         metadata->>'recoveryState' AS recovery_state
       FROM worker_leases WHERE lease_key='robinhood-chain-capture-worker'`),
   ]);
-  return evaluateHealth(lease.rows[0], rootFree, shadowFree);
+  return evaluateHealth(lease.rows[0], rootFree, shadowFree, expectedShadowEnabled);
 }
 
-function evaluateHealth(capture, rootFree, shadowFree) {
+function evaluateHealth(capture, rootFree, shadowFree, expectedShadowEnabled = 'true') {
   const lag = Number(capture?.lag);
-  const healthy = capture?.fresh === true && capture.enabled === 'true'
+  const healthy = capture?.fresh === true && capture.enabled === expectedShadowEnabled
     && capture.recovery_state === 'running' && capture.last_error == null
     && capture.lag != null && Number.isFinite(lag)
     && lag >= 0 && lag <= MAX_CAPTURE_LAG_BLOCKS;

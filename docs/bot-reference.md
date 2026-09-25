@@ -5420,6 +5420,16 @@ Somente com `verified:true`, `stopReason:complete` e o bloco `M` finalizado,
 execute `cutover-robinhood-chain-events.js --drop-retired --audit-report=ARQUIVO`.
 O descarte usa `RESTRICT` e confere as duas fronteiras novamente; se houver
 divergência, mantenha a aposentada e investigue antes de repetir a auditoria.
+Se a auditoria encontrar eventos ausentes na ativa, mantenha a aposentada e
+diagnostique separadamente ausentes, extras e payload divergente. Para uma faixa
+com apenas eventos ausentes, `repair-robinhood-chain-event-cutover.js` copia da
+aposentada para a ativa em páginas finalizadas de até 5.000 eventos e 16 MiB:
+`--from-block=N --through-block=M --max-blocks=100 --max-pages=10000 --apply`.
+Sem `--apply`, o comando somente lê. Cada página escrita compara todos os campos
+nas duas direções antes do commit e reverte se restar divergência. O runner exige
+captura fresca, espelhamento antigo desligado, lag até 800 blocos, 20 GiB livres
+em `/` e 75 GiB no tablespace ativo; seu `nextBlock` permite retomar. Repita a
+auditoria integral desde o primeiro bloco ativo depois de qualquer reparo.
 Esse corte não liga a poda física das partições; ela tem um gate separado.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
