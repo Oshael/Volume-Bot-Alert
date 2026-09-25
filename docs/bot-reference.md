@@ -3606,6 +3606,16 @@ tentativa) e `claimWaitMs` (claim até esse começo). A lease soma
 `lastProcessDurationMs` e `lastRunClaimed` mostram o lote mais recente. Essas
 medidas são do worker, reiniciam com ele e não incluem tempo entre o bloco do
 mint e a criação da tarefa.
+Para atribuir o resultado das primeiras tentativas com mint fixado, compare
+`firstAttemptPinnedStarted` e `firstAttemptPinnedFinished` com
+`firstAttemptLiveResolved`, `firstAttemptArchiveResolved`,
+`firstAttemptDeferred`, `firstAttemptError` e `firstAttemptSkipped`. Os cinco
+resultados somam `firstAttemptPinnedFinished`; a diferença entre iniciadas e
+finalizadas representa tentativas em andamento. `LiveResolved` usa o RPC live
+primário configurado; `ArchiveResolved` usa o fallback Archive. `Deferred` é
+evidência local ainda pendente; `Error` inclui falhas que voltam para retry;
+`Skipped` já tinha atribuição exata ou não era um deployment. Retries não entram
+nesses contadores. Compare deltas entre leituras da mesma lease, sem reinício.
 O limiar é `stateLookbackBlocks` (96 blocos por padrão); é uma faixa diagnóstica,
 não uma garantia de disponibilidade de estado. Falha na leitura do head incrementa
 `firstAttemptHeadErrors` e não impede o processamento do mint.

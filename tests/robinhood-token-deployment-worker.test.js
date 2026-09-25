@@ -81,11 +81,12 @@ it('uses a durable mint anchor without searching the moving journal window', asy
       recordCodeTransitions: async () => { fixture.calls.push('transition'); },
     },
   });
-  const result = await createRobinhoodTokenDeploymentWorker({
-    runtime: fixture.value, owner: 'test',
-  }).runOnce();
+  const worker = createRobinhoodTokenDeploymentWorker({ runtime: fixture.value, owner: 'test' });
+  const result = await worker.runOnce();
   assert.equal(result.source, 'rpc_code_transition');
   assert.deepEqual(fixture.calls, ['transition', 'complete']);
+  assert.equal(worker.getStatus().firstAttemptPinnedFinished, 1);
+  assert.equal(worker.getStatus().firstAttemptLiveResolved, 1);
 });
 
 it('persists bounded live trace enrichment after the code transition', async () => {
@@ -219,6 +220,10 @@ it('uses bounded Archive fallback for a pinned live eth_getCode -32000 failure',
   assert.deepEqual(completed, [TOKEN]);
   assert.equal(worker.getStatus().totalArchiveFallbackAttempts, 1);
   assert.equal(worker.getStatus().totalArchiveFallbackResolved, 1);
+  assert.equal(worker.getStatus().firstAttemptPinnedStarted, 2);
+  assert.equal(worker.getStatus().firstAttemptPinnedFinished, 2);
+  assert.equal(worker.getStatus().firstAttemptArchiveResolved, 1);
+  assert.equal(worker.getStatus().firstAttemptError, 1);
 });
 
 it('finds earlier code before completing a pinned mint that is not a deployment', async () => {
@@ -416,6 +421,8 @@ it('does not add a head RPC to retries of old pinned mints', async () => {
   await worker.runOnce();
   assert.equal(worker.getStatus().firstAttemptHeadSamples, 0);
   assert.equal(worker.getStatus().firstAttemptHeadErrors, 0);
+  assert.equal(worker.getStatus().firstAttemptPinnedStarted, 0);
+  assert.equal(worker.getStatus().firstAttemptPinnedFinished, 0);
 });
 
 it('drains a bounded deployment batch concurrently', async () => {
@@ -737,6 +744,8 @@ it('defers a token when canonical creator evidence is not materialized yet', asy
     outbox: {
       claim: async () => ({
         tokenAddress: TOKEN, attemptCount: 1, createdAt: '2026-08-30T19:00:00.000Z',
+        mintHint: { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH },
       }),
       isExact: async () => false,
       findMintHint: async () => ({
@@ -756,14 +765,22 @@ it('defers a token when canonical creator evidence is not materialized yet', asy
   assert.equal(deferred.calls[0][0], 'retry');
   assert.match(deferred.calls[0][1].error, /^canonical_creator_evidence:/);
   assert.equal(deferredWorker.getStatus().lastError, null);
+  assert.equal(deferredWorker.getStatus().firstAttemptDeferred, 1);
+  assert.equal(deferredWorker.getStatus().firstAttemptPinnedFinished, 1);
 });
 
 it('skips tokens whose exact local attribution was already captured', async () => {
   const exact = runtime();
+  exact.value.outbox.claim = async () => ({ tokenAddress: TOKEN, attemptCount: 1,
+    mintHint: { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+      transactionHash: TRANSACTION_HASH } });
   exact.value.outbox.isExact = async () => true;
-  const result = await createRobinhoodTokenDeploymentWorker({ runtime: exact.value, owner: 'test' }).runOnce();
+  const worker = createRobinhoodTokenDeploymentWorker({ runtime: exact.value, owner: 'test' });
+  const result = await worker.runOnce();
   assert.equal(result.status, 'already-attributed');
   assert.deepEqual(exact.calls, ['complete']);
+  assert.equal(worker.getStatus().firstAttemptSkipped, 1);
+  assert.equal(worker.getStatus().firstAttemptPinnedFinished, 1);
 });
 
 it('builds the live deployment runtime without an external creation lookup', async () => {

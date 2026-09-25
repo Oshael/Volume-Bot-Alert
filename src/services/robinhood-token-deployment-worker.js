@@ -243,6 +243,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     firstAttemptHeadErrors: 0, lastFirstAttemptHeadError: null,
     firstAttemptQueueWaitSamples: 0, firstAttemptQueueWaitTotalMs: 0,
     firstAttemptQueueWaitMaxMs: 0, firstAttemptClaimWaitMaxMs: 0,
+    firstAttemptPinnedStarted: 0, firstAttemptPinnedFinished: 0,
+    firstAttemptLiveResolved: 0, firstAttemptArchiveResolved: 0,
+    firstAttemptDeferred: 0, firstAttemptError: 0, firstAttemptSkipped: 0,
     firstAttemptCode32000WithinLookback: 0,
     firstAttemptCode32000BeyondLookback: 0,
     firstAttemptCode32000NodeBehind: 0, firstAttemptCode32000Unmeasured: 0,
@@ -457,12 +460,27 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   }
 
   async function processTask(current, task, traceBudget, archiveBudget, claimedAt) {
+    const firstPinned = task?.attemptCount === 1 && Boolean(task.mintHint);
+    if (firstPinned) status.firstAttemptPinnedStarted += 1;
+    const outcome = { value: 'Error' };
+    try {
+      return await processTaskInner(current, task, traceBudget, archiveBudget, claimedAt, outcome);
+    } finally {
+      if (firstPinned) {
+        status.firstAttemptPinnedFinished += 1;
+        status[`firstAttempt${outcome.value}`] += 1;
+      }
+    }
+  }
+
+  async function processTaskInner(current, task, traceBudget, archiveBudget, claimedAt, outcome) {
     let firstAttemptHead = null;
     let firstAttemptWait = null;
     try {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
+        outcome.value = 'Skipped';
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
       firstAttemptWait = measureFirstAttemptWait(task, claimedAt);
@@ -471,6 +489,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       if (transition?.ignoredMint) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
+        outcome.value = 'Skipped';
         return { status: 'non-deployment-mint', tokenAddress: task.tokenAddress };
       }
       if (transition) {
@@ -478,6 +497,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         const deployment = await materializeCreator(current, task, transition, traceBudget);
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalResolved += 1; status.totalLocalResolved += 1;
+        outcome.value = 'LiveResolved';
         return {
           status: 'resolved', tokenAddress: task.tokenAddress,
           source: deployment?.source || 'rpc_code_transition',
@@ -491,9 +511,13 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     } catch (error) {
       recordFirstAttemptCodeError(task, firstAttemptHead, firstAttemptWait, error);
       const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
-      if (recovered) return recovered;
+      if (recovered) {
+        outcome.value = 'ArchiveResolved';
+        return recovered;
+      }
       if (task) await deferTask(task, error);
       if (['local_deployment_evidence_pending', 'local_mint_pending'].includes(error.code)) {
+        outcome.value = 'Deferred';
         return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
       }
       status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
