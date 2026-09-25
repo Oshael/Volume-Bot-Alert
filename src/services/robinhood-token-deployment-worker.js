@@ -9,6 +9,9 @@ const {
 } = require('../models/robinhood-canonical-direct-creator-source');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const {
+  createRobinhoodArchiveDeploymentDiscovery,
+} = require('./robinhood-archive-deployment-discovery');
+const {
   createRobinhoodHolderDeploymentVerifier,
 } = require('./robinhood-holder-deployment-verifier');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
@@ -124,7 +127,25 @@ function normalizeOptions(input = {}) {
     traceBatchSize: bounded(input.traceBatchSize, 2, 1, 8),
     traceTimeoutMs: bounded(input.traceTimeoutMs, 2000, 500, 5000),
     traceMaxAgeMs: bounded(input.traceMaxAgeMs, 600_000, 60_000, 259_200_000),
+    archiveFallbackBatchSize: bounded(input.archiveFallbackBatchSize, 4, 1, 8),
   });
+}
+
+function buildArchiveFallback(deps, options, env) {
+  const archiveUrl = String(env.ROBINHOOD_ARCHIVE_RPC_URL || '').trim();
+  if (!archiveUrl) return { archiveResolver: null, archiveDiscovery: null };
+  const archiveClient = (deps.rpcClientFactory || createEvmJsonRpcClient)({
+    providers: [{ name: 'robinhood-deployment-archive-fallback', url: archiveUrl }],
+    timeoutMs: options.timeoutMs, maxRetries: 1,
+  });
+  return {
+    archiveResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(
+      archiveClient
+    ),
+    archiveDiscovery: (deps.archiveDiscoveryFactory || createRobinhoodArchiveDeploymentDiscovery)({
+      rpcClient: archiveClient, blockCreationLookup: async () => null,
+    }),
+  };
 }
 
 function buildRuntime(deps, options) {
@@ -150,6 +171,7 @@ function buildRuntime(deps, options) {
       database,
     }),
     localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
+    ...buildArchiveFallback(deps, options, env),
     traceVerifier: traceClient
       ? (deps.traceVerifierFactory || createRobinhoodHolderDeploymentVerifier)({
         rpcClient: traceClient, internalCreationLookup: async () => null,
@@ -213,6 +235,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     totalArchiveRequired: 0,
     totalTraceAttempts: 0, totalTraceResolved: 0, totalTraceFailed: 0,
     totalTraceBudgetSkipped: 0, lastTraceError: null,
+    totalArchiveFallbackAttempts: 0, totalArchiveFallbackResolved: 0,
+    totalArchiveFallbackFailed: 0, lastArchiveFallbackError: null,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
 
@@ -322,7 +346,46 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     status.totalDeferred += 1;
   }
 
-  async function processTask(current, task, traceBudget) {
+  function eligibleForArchiveFallback(current, task, error) {
+    return Boolean(task?.mintHint && error.stage === 'rpc_code_transition'
+      && error.method === 'eth_getCode' && error.rpcCode === -32000
+      && current.archiveResolver);
+  }
+
+  async function recoverPinnedWithArchive(current, task, error, budget) {
+    if (!eligibleForArchiveFallback(current, task, error) || !budget.take()) return null;
+    status.totalArchiveFallbackAttempts += 1;
+    try {
+      const inspected = await current.archiveResolver.inspect(task.mintHint);
+      let transition = inspected?.status === 'transition' ? inspected.transition : null;
+      if (inspected?.status === 'preexisting-code' && current.archiveDiscovery) {
+        transition = await current.archiveDiscovery.discover({
+          tokenAddress: task.tokenAddress, upperBlock: task.mintHint.blockNumber,
+          exactBlockHint: true, blockEvidenceOnly: true,
+        });
+      }
+      if (!transition) throw new Error('Archive code transition is inconclusive');
+      const recorded = await current.attributions.recordCodeTransitions([transition]);
+      if (recorded.attributed !== 1 && !await current.outbox.isExact(task.tokenAddress)) {
+        throw new Error('Archive code transition was not persisted');
+      }
+      if (!await current.outbox.complete({ owner, tokenAddress: task.tokenAddress })) {
+        throw new Error('deployment task changed during Archive fallback');
+      }
+      status.totalResolved += 1;
+      status.totalArchiveFallbackResolved += 1;
+      status.lastArchiveFallbackError = null;
+      return { status: 'resolved', tokenAddress: task.tokenAddress, source: 'rpc_code_transition' };
+    } catch (archiveError) {
+      status.totalArchiveFallbackFailed += 1;
+      status.lastArchiveFallbackError = {
+        code: archiveError.code || 'archive_fallback_failed', message: archiveError.message,
+      };
+      return null;
+    }
+  }
+
+  async function processTask(current, task, traceBudget, archiveBudget) {
     try {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -351,6 +414,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         code: 'local_deployment_evidence_pending', stage: 'canonical_creator_evidence',
       });
     } catch (error) {
+      const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
+      if (recovered) return recovered;
       if (task) await deferTask(task, error);
       if (['local_deployment_evidence_pending', 'local_mint_pending'].includes(error.code)) {
         return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
@@ -383,8 +448,17 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
           return true;
         },
       };
+      const archiveBudget = {
+        remaining: options.archiveFallbackBatchSize,
+        take() {
+          if (this.remaining <= 0) return false;
+          this.remaining -= 1;
+          return true;
+        },
+      };
       const results = await concurrentMap(
-        tasks, options.concurrency, (task) => processTask(current, task, traceBudget)
+        tasks, options.concurrency,
+        (task) => processTask(current, task, traceBudget, archiveBudget)
       );
       if (results.length === 1) return results[0];
       return {

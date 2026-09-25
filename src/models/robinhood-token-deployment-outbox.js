@@ -47,7 +47,13 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
           WHERE chain = '${CHAIN}' AND next_attempt_at <= NOW()
             AND live_deadline_at > NOW()
             AND (status = 'pending' OR lease_until <= NOW())
-          ORDER BY live_deadline_at, next_attempt_at, created_at
+          ORDER BY CASE WHEN mint_block_number IS NOT NULL
+                              AND created_at >= NOW() - INTERVAL '30 seconds'
+                         THEN 0 ELSE 1 END,
+                   CASE WHEN mint_block_number IS NOT NULL
+                              AND created_at >= NOW() - INTERVAL '30 seconds'
+                         THEN created_at END DESC,
+                   live_deadline_at, next_attempt_at, created_at
           LIMIT $3 FOR UPDATE SKIP LOCKED
        )
        UPDATE robinhood_token_deployment_outbox outbox

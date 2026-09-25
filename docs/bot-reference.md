@@ -3581,6 +3581,18 @@ a tarefa na outbox. A conclusão compara novamente status e identidade do mint p
 não excluir uma tarefa reaberta por outro evento. Use `--limit` e `--concurrency`
 para limitar a carga no Archive.
 
+A fila live agora tenta primeiro mints fixados criados nos últimos 30 segundos; o
+restante conserva a ordem por prazo. Se `eth_getCode` devolver `-32000` para um mint
+fixado, o worker tenta uma prova canônica pelo Archive quando
+`ROBINHOOD_ARCHIVE_RPC_URL` estiver configurada. O fallback é limitado a quatro
+tarefas por batch por padrão, ajustável por
+`ROBINHOOD_TOKEN_DEPLOYMENT_ARCHIVE_FALLBACK_BATCH_SIZE` (1–8). Uma prova
+inconclusiva mantém a tarefa na fila; bytecode anterior ao mint exige localizar a
+primeira transição de código. `totalArchiveFallbackAttempts`,
+`totalArchiveFallbackResolved`, `totalArchiveFallbackFailed` e
+`lastArchiveFallbackError` expõem o uso e as falhas. Um fallback frequente indica
+que a janela do RPC live ainda está sendo perdida e exige diagnóstico próprio.
+
 Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
 que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72
 horas e move tarefas vencidas para `archive_required`; elas permanecem recuperáveis

@@ -2265,6 +2265,9 @@ module.exports = {
       process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TRACE_MAX_AGE_MS,
       600_000, 60_000, 259_200_000
     ),
+    archiveFallbackBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_ARCHIVE_FALLBACK_BATCH_SIZE, 4, 1, 8
+    ),
   },
 
   robinhoodInsiderShadowWorker: {

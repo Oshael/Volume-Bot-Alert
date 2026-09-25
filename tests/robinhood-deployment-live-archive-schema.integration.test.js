@@ -15,6 +15,7 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const EXPIRED = `0x${'7'.repeat(40)}`;
 const LIVE = `0x${'8'.repeat(40)}`;
+const FRESH = `0x${'9'.repeat(40)}`;
 
 describe('Stage 242 deployment live/Archive lanes', () => {
   before(async () => {
@@ -34,17 +35,24 @@ describe('Stage 242 deployment live/Archive lanes', () => {
         chain, token_address, created_at, live_deadline_at
       ) VALUES
         ('robinhood', $1, NOW()-INTERVAL '80 hours', NOW()-INTERVAL '8 hours'),
-        ('robinhood', $2, NOW(), NOW()+INTERVAL '72 hours')
+        ('robinhood', $2, NOW()-INTERVAL '1 hour', NOW()+INTERVAL '1 hour'),
+        ('robinhood', $3, NOW(), NOW()+INTERVAL '72 hours')
       ON CONFLICT (chain, token_address) DO UPDATE SET
         status='pending', attempt_count=0, next_attempt_at=NOW(),
         lease_owner=NULL, lease_until=NULL, last_error=NULL,
         created_at=EXCLUDED.created_at, live_deadline_at=EXCLUDED.live_deadline_at,
-        archive_required_at=NULL`, [EXPIRED, LIVE]);
+        archive_required_at=NULL`, [EXPIRED, LIVE, FRESH]);
+      await client.query(`UPDATE robinhood_token_deployment_outbox
+        SET mint_block_number=100, mint_block_hash=$2, mint_transaction_hash=$3
+        WHERE chain='robinhood' AND token_address=$1`,
+      [FRESH, `0x${'a'.repeat(64)}`, `0x${'b'.repeat(64)}`]);
 
       const repository = createRobinhoodTokenDeploymentOutboxRepository({ database: client });
       assert.equal(await repository.archiveExpiredBatch({ limit: 10 }), 1);
-      const claimed = await repository.claimBatch({ owner: 'stage242-test', limit: 10 });
-      assert.deepEqual(claimed.map(({ tokenAddress }) => tokenAddress), [LIVE]);
+      const claimed = await repository.claimBatch({ owner: 'stage242-test', limit: 1 });
+      assert.deepEqual(claimed.map(({ tokenAddress }) => tokenAddress), [FRESH]);
+      assert.deepEqual((await repository.claimBatch({ owner: 'stage242-test', limit: 1 }))
+        .map(({ tokenAddress }) => tokenAddress), [LIVE]);
 
       const expired = (await client.query(`SELECT status,
           archive_required_at IS NOT NULL AS archived

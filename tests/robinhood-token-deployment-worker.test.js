@@ -186,6 +186,111 @@ it('retries a durable mint anchor rapidly without hiding the RPC failure', async
   );
 });
 
+it('uses bounded Archive fallback for a pinned live eth_getCode -32000 failure', async () => {
+  const completed = [];
+  const mintHint = {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  };
+  const transition = { ...mintHint };
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', options: { archiveFallbackBatchSize: 1 },
+    runtime: {
+      outbox: {
+        claimBatch: async () => [TOKEN, TOKEN_B].map((tokenAddress) => ({
+          tokenAddress, attemptCount: 1, mintHint: { ...mintHint, tokenAddress },
+        })),
+        isExact: async () => false,
+        complete: async ({ tokenAddress }) => { completed.push(tokenAddress); return true; },
+        retry: async () => true,
+      },
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+      archiveResolver: { inspect: async () => ({ status: 'transition', transition }) },
+      attributions: { recordCodeTransitions: async () => ({ attributed: 1 }) },
+    },
+  });
+  const result = await worker.runOnce();
+  assert.equal(result.resolved, 1);
+  assert.equal(result.errors, 1);
+  assert.deepEqual(completed, [TOKEN]);
+  assert.equal(worker.getStatus().totalArchiveFallbackAttempts, 1);
+  assert.equal(worker.getStatus().totalArchiveFallbackResolved, 1);
+});
+
+it('finds earlier code before completing a pinned mint that is not a deployment', async () => {
+  let discovered;
+  let recorded;
+  const mintHint = {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  };
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test',
+    runtime: {
+      outbox: {
+        claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, mintHint }),
+        isExact: async () => false,
+        complete: async () => true,
+        retry: async () => { throw new Error('must not retry'); },
+      },
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+      archiveResolver: { inspect: async () => ({ status: 'preexisting-code' }) },
+      archiveDiscovery: { discover: async (input) => {
+        discovered = input;
+        return { tokenAddress: TOKEN, blockNumber: '50', source: 'rpc_code_transition' };
+      } },
+      attributions: { recordCodeTransitions: async (items) => {
+        recorded = items;
+        return { attributed: 1 };
+      } },
+    },
+  });
+  assert.equal((await worker.runOnce()).status, 'resolved');
+  assert.equal(discovered.upperBlock, '100');
+  assert.equal(discovered.blockEvidenceOnly, true);
+  assert.equal(recorded[0].blockNumber, '50');
+});
+
+it('leaves the live task retryable when Archive proof is inconclusive', async () => {
+  let retry;
+  let completed = false;
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test',
+    runtime: {
+      outbox: {
+        claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, mintHint: {
+          tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH,
+        } }),
+        isExact: async () => false,
+        complete: async () => { completed = true; },
+        retry: async (input) => { retry = input; },
+      },
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+      archiveResolver: { inspect: async () => ({ status: 'missing-current-code' }) },
+      attributions: { recordCodeTransitions: async () => {
+        throw new Error('must not attribute');
+      } },
+    },
+  });
+  assert.equal((await worker.runOnce()).status, 'error');
+  assert.equal(completed, false);
+  assert.match(retry.error, /eth_getCode RPC error -32000/);
+  assert.equal(worker.getStatus().totalArchiveFallbackFailed, 1);
+});
+
 it('drains a bounded deployment batch concurrently', async () => {
   const completed = [];
   const worker = createRobinhoodTokenDeploymentWorker({
@@ -391,7 +496,7 @@ it('defers a fresh task briefly while its mint reaches the journal', async () =>
   assert.equal(retries[0].retryMs, 1000);
 });
 
-it('claims only the live lane by earliest deadline and loads a canonical mint', async () => {
+it('claims only the live lane with fresh pinned mints first and loads a canonical mint', async () => {
   const calls = [];
   const repository = createRobinhoodTokenDeploymentOutboxRepository({
     database: { query: async (sql, params) => {
@@ -411,7 +516,9 @@ it('claims only the live lane by earliest deadline and loads a canonical mint', 
     transactionHash: TRANSACTION_HASH,
   });
   assert.match(calls[0].sql, /live_deadline_at > NOW\(\)/);
-  assert.match(calls[0].sql, /ORDER BY live_deadline_at, next_attempt_at, created_at/);
+  assert.match(calls[0].sql, /mint_block_number IS NOT NULL/);
+  assert.match(calls[0].sql, /created_at >= NOW\(\) - INTERVAL '30 seconds'/);
+  assert.match(calls[0].sql, /live_deadline_at, next_attempt_at, created_at/);
   assert.deepEqual(await repository.findMintHint(TOKEN), {
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
