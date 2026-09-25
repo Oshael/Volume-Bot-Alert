@@ -151,7 +151,7 @@ function createRobinhoodBundleRedistributionLiveWorker(deps = {}) {
     if (!options.enabled) return false; getRuntime(); running = true; status.running = true;
     listener = (deps.listenerFactory || createPostgresRealtimeListener)({ channel: NOTIFY_CHANNEL,
       label: 'RobinhoodBundleRedistributionLiveWorker', pool: deps.pool || db.pool,
-      onNotification: wake });
+      shared: true, onNotification: wake });
     Promise.resolve(listener.start()).catch((error) => {
       status.lastError = { code: 'redistribution_listener_error', message: error.message };
     });

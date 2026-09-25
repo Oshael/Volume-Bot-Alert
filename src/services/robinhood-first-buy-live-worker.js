@@ -146,6 +146,7 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
       channel: LIVE_NOTIFY_CHANNEL,
       label: 'RobinhoodFirstBuyLiveWorker',
       pool: deps.pool || db.pool,
+      shared: true,
       onNotification: wake,
       onConnected: () => { status.listenerError = null; },
     });

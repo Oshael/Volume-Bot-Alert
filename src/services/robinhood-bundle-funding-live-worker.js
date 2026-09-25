@@ -183,7 +183,8 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
     status.sourceMode = options.sourceMode;
     if (!options.enabled) return false; getRuntime(); running = true; status.running = true;
     listener = (deps.listenerFactory || createPostgresRealtimeListener)({ channel: NOTIFY_CHANNEL,
-      label: 'RobinhoodBundleFundingLiveWorker', pool: deps.pool || db.pool, onNotification: wake });
+      label: 'RobinhoodBundleFundingLiveWorker', pool: deps.pool || db.pool,
+      shared: true, onNotification: wake });
     Promise.resolve(listener.start()).catch((error) => { status.lastError = { message: error.message }; });
     queue(0); return true;
   }

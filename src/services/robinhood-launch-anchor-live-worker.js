@@ -97,7 +97,7 @@ function createRobinhoodLaunchAnchorLiveWorker(deps = {}) {
     running = true; status.running = true;
     listener = (deps.listenerFactory || createPostgresRealtimeListener)({
       channel: NOTIFY_CHANNEL, label: 'RobinhoodLaunchAnchorLiveWorker',
-      pool: deps.pool || db.pool, onNotification: wake,
+      pool: deps.pool || db.pool, shared: true, onNotification: wake,
     });
     Promise.resolve(listener.start()).catch((error) => { status.lastError = { message: error.message }; });
     queue(0); return true;

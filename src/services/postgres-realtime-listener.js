@@ -1,10 +1,12 @@
 const DEFAULT_RECONNECT_DELAY_MS = 5 * 1000;
+const { createSharedPostgresRealtimeListener } = require('./postgres-shared-realtime-listener');
 
 function formatError(error, fallback) {
   return error?.message || String(error || fallback);
 }
 
 function createPostgresRealtimeListener(deps = {}) {
+  if (deps.shared) return createSharedPostgresRealtimeListener(deps);
   const channel = String(deps.channel || '').trim();
   if (!channel) throw new Error('PostgreSQL listener channel is required');
 

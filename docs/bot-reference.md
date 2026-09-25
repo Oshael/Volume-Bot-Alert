@@ -3639,6 +3639,11 @@ exemplo, conexão em abertura). A consulta ao SQL ativo usa o estado local do
 cliente `pg` instalado (`_getActiveQuery`), sem executar consultas adicionais;
 verifique essa API ao atualizar `pg`. A ausência de SQL ativo não significa
 conexão livre: a origem identifica o empréstimo ainda em andamento.
+Os listeners do grupo `robinhood-wallet-classification` compartilham uma única
+conexão do pool por processo para seus canais `LISTEN`. Ao perder a conexão,
+reinscrevem todos os canais; cada worker mantém seu polling de reconciliação até
+a reconexão. Parar um worker remove apenas seu canal, e a última inscrição libera
+a conexão. Os demais grupos mantêm o comportamento de listener independente.
 Se o lote falhar, `lastRunFailure` registra a fase (`archive_expired`, `claim`
 ou `process`), o erro, o estado do pool e os picos;
 o mesmo resumo é escrito no log antes de o erro se propagar, mesmo quando não há
