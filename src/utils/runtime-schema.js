@@ -6828,6 +6828,36 @@ function getGroupsForProfile(profile = 'runtime') {
   return SCHEMA_GROUPS.filter((group) => selected.has(group.key));
 }
 
+function groupsForPartitionedChainEvents(groups) {
+  const shadow = SCHEMA_GROUPS.find((group) => (
+    group.key === 'stage247-robinhood-chain-events-shadow'
+  )).tables[0];
+  return groups.map((group) => {
+    if (group.key === 'stage191-robinhood-canonical-chain-journal') {
+      return { ...group, tables: group.tables.map((entry) => (
+        entry.table === 'robinhood_chain_events'
+          ? { ...shadow, table: 'robinhood_chain_events' } : entry
+      )) };
+    }
+    if (group.key === 'stage247-robinhood-chain-events-shadow') {
+      return { ...group, tables: group.tables.filter((entry) => (
+        entry.table !== 'robinhood_chain_events_shadow'
+      )) };
+    }
+    if (!['stage249-robinhood-domain-outbox-cutover',
+      'stage250-robinhood-chain-event-children'].includes(group.key)) return group;
+    return { ...group, tables: group.tables.map((entry) => ({
+      ...entry,
+      constraints: entry.constraints?.map((constraint) => ({
+        ...constraint,
+        includes: constraint.includes?.map((part) => (
+          part.replace('robinhood_chain_events_shadow', 'robinhood_chain_events')
+        )),
+      })),
+    })) };
+  });
+}
+
 function summarizeList(items, limit = 12) {
   if (items.length <= limit) {
     return items;
@@ -7145,7 +7175,15 @@ function createRuntimeSchemaError(report, profile = 'runtime') {
 
 async function inspectRuntimeSchema(options = {}) {
   const profile = String(options.profile || 'runtime').trim().toLowerCase() || 'runtime';
-  const groups = getGroupsForProfile(profile);
+  const layout = await query(`SELECT active.relkind AS active_kind,
+      to_regclass('public.robinhood_chain_events_shadow') IS NOT NULL AS shadow_present
+    FROM pg_class active WHERE active.oid=to_regclass('public.robinhood_chain_events')`);
+  const partitioned = layout.rows[0]?.active_kind === 'p';
+  if (partitioned && layout.rows[0].shadow_present) {
+    throw new Error('partitioned active events still have a shadow relation');
+  }
+  const selected = getGroupsForProfile(profile);
+  const groups = partitioned ? groupsForPartitionedChainEvents(selected) : selected;
   const tableNames = groups.flatMap((group) => group.tables.map((entry) => entry.table));
   const snapshot = await loadSchemaSnapshot(tableNames);
   const report = buildSchemaReport(groups, snapshot);
@@ -7163,6 +7201,7 @@ async function assertRuntimeSchema(options = {}) {
 module.exports = {
   SCHEMA_GROUPS,
   getGroupsForProfile,
+  groupsForPartitionedChainEvents,
   inspectRuntimeSchema,
   assertRuntimeSchema,
   createRuntimeSchemaError,

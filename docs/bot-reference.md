@@ -5396,6 +5396,10 @@ o espelhamento legado mesmo que a flag permaneça ligada. O pruner antigo recusa
 deletes linha a linha de eventos e de storage canônico quando a tabela ativa é
 particionada. É necessário reiniciar o capturador após a troca de tabelas; o
 descarte físico de partições terá um procedimento separado.
+O schema check reconhece os dois layouts: antes da troca exige o monólito e a
+sombra; depois exige a tabela ativa particionada com os índices da antiga sombra
+e verifica as FKs do outbox e do canário contra o novo nome ativo. Ele falha se
+o nome da sombra ainda existir junto com a tabela ativa particionada.
 
 A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
