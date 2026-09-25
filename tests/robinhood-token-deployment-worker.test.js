@@ -291,6 +291,91 @@ it('leaves the live task retryable when Archive proof is inconclusive', async ()
   assert.equal(worker.getStatus().totalArchiveFallbackFailed, 1);
 });
 
+it('measures first mint attempts against the live head and locates -32000 errors', async () => {
+  for (const { head, bucket } of [
+    { head: '0x78', bucket: 'WithinLookback' },
+    { head: '0xfa', bucket: 'BeyondLookback' },
+    { head: '0x5a', bucket: 'NodeBehind' },
+  ]) {
+    let headCalls = 0;
+    const worker = createRobinhoodTokenDeploymentWorker({
+      owner: 'test',
+      runtime: {
+        outbox: {
+          claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, mintHint: {
+            tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+            transactionHash: TRANSACTION_HASH,
+          } }),
+          isExact: async () => false,
+          retry: async () => true,
+        },
+        liveHead: async () => { headCalls += 1; return head; },
+        localResolver: { verify: async () => null, inspect: async () => {
+          throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+            code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+          });
+        } },
+      },
+    });
+    await worker.runOnce();
+    const status = worker.getStatus();
+    assert.equal(headCalls, 1);
+    assert.equal(status.firstAttemptHeadSamples, 1);
+    assert.equal(status[`firstAttemptHead${bucket}`], 1);
+    assert.equal(status[`firstAttemptCode32000${bucket}`], 1);
+    assert.equal(status.lastFirstAttemptCode32000.bucket, bucket);
+  }
+});
+
+it('continues deployment resolution when the first-attempt head probe fails', async () => {
+  let headCalls = 0;
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test',
+    runtime: {
+      outbox: {
+        claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, mintHint: {
+          tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH,
+        } }),
+        isExact: async () => false,
+        complete: async () => true,
+      },
+      liveHead: async () => { headCalls += 1; throw new Error('probe unavailable'); },
+      localResolver: { verify: async (input) => input },
+      creatorSource: { readRange: async () => new Map() },
+      attributions: { recordCodeTransitions: async () => ({ attributed: 1 }) },
+    },
+  });
+  assert.equal((await worker.runOnce()).status, 'resolved');
+  assert.equal(headCalls, 1);
+  assert.equal(worker.getStatus().firstAttemptHeadErrors, 1);
+});
+
+it('does not add a head RPC to retries of old pinned mints', async () => {
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test',
+    runtime: {
+      outbox: {
+        claim: async () => ({ tokenAddress: TOKEN, attemptCount: 2, mintHint: {
+          tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH,
+        } }),
+        isExact: async () => false,
+        retry: async () => true,
+      },
+      liveHead: async () => { throw new Error('must not probe retries'); },
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+    },
+  });
+  await worker.runOnce();
+  assert.equal(worker.getStatus().firstAttemptHeadSamples, 0);
+  assert.equal(worker.getStatus().firstAttemptHeadErrors, 0);
+});
+
 it('drains a bounded deployment batch concurrently', async () => {
   const completed = [];
   const worker = createRobinhoodTokenDeploymentWorker({
@@ -639,7 +724,7 @@ it('skips tokens whose exact local attribution was already captured', async () =
   assert.deepEqual(exact.calls, ['complete']);
 });
 
-it('builds the live deployment runtime without an external creation lookup', () => {
+it('builds the live deployment runtime without an external creation lookup', async () => {
   let blockscoutFactoryCalls = 0;
   const built = buildRuntime({
     env: {
@@ -647,7 +732,9 @@ it('builds the live deployment runtime without an external creation lookup', () 
       ROBINHOOD_BLOCKSCOUT_API_KEY: 'proapi_test',
     },
     database: {},
-    rpcClientFactory: () => ({ request: async () => '0x1237' }),
+    rpcClientFactory: () => ({ request: async (method) => (
+      method === 'eth_blockNumber' ? '0x64' : '0x1237'
+    ) }),
     blockscoutFactory: () => { blockscoutFactoryCalls += 1; return {}; },
     outboxFactory: () => ({}),
     attributionFactory: () => ({}),
@@ -655,6 +742,7 @@ it('builds the live deployment runtime without an external creation lookup', () 
   }, { timeoutMs: 30_000 });
 
   assert.ok(built);
+  assert.equal(await built.liveHead(), '0x64');
   assert.equal(blockscoutFactoryCalls, 0);
 });
 

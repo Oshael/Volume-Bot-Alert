@@ -3592,6 +3592,15 @@ primeira transição de código. `totalArchiveFallbackAttempts`,
 `totalArchiveFallbackResolved`, `totalArchiveFallbackFailed` e
 `lastArchiveFallbackError` expõem o uso e as falhas. Um fallback frequente indica
 que a janela do RPC live ainda está sendo perdida e exige diagnóstico próprio.
+Na primeira tentativa de cada mint fixado, o worker lê `eth_blockNumber` do mesmo
+RPC live imediatamente antes da prova de código. A telemetria da lease registra
+`firstAttemptHeadSamples`, `firstAttemptHeadWithinLookback`,
+`firstAttemptHeadBeyondLookback`, `firstAttemptHeadNodeBehind` e os erros
+`firstAttemptCode32000*` por faixa. `lastFirstAttemptHead` e
+`lastFirstAttemptCode32000` incluem head, bloco do mint, distância e horário.
+O limiar é `stateLookbackBlocks` (96 blocos por padrão); é uma faixa diagnóstica,
+não uma garantia de disponibilidade de estado. Falha na leitura do head incrementa
+`firstAttemptHeadErrors` e não impede o processamento do mint.
 
 Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
 que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72

@@ -171,6 +171,7 @@ function buildRuntime(deps, options) {
       database,
     }),
     localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
+    liveHead: () => rpcClient.request('eth_blockNumber'),
     ...buildArchiveFallback(deps, options, env),
     traceVerifier: traceClient
       ? (deps.traceVerifierFactory || createRobinhoodHolderDeploymentVerifier)({
@@ -237,6 +238,13 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     totalTraceBudgetSkipped: 0, lastTraceError: null,
     totalArchiveFallbackAttempts: 0, totalArchiveFallbackResolved: 0,
     totalArchiveFallbackFailed: 0, lastArchiveFallbackError: null,
+    firstAttemptHeadSamples: 0, firstAttemptHeadWithinLookback: 0,
+    firstAttemptHeadBeyondLookback: 0, firstAttemptHeadNodeBehind: 0,
+    firstAttemptHeadErrors: 0, lastFirstAttemptHeadError: null,
+    firstAttemptCode32000WithinLookback: 0,
+    firstAttemptCode32000BeyondLookback: 0,
+    firstAttemptCode32000NodeBehind: 0, firstAttemptCode32000Unmeasured: 0,
+    lastFirstAttemptHead: null, lastFirstAttemptCode32000: null,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
 
@@ -352,6 +360,45 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       && current.archiveResolver);
   }
 
+  async function sampleFirstAttemptHead(current, task) {
+    if (task?.attemptCount !== 1 || !task.mintHint
+        || typeof current.liveHead !== 'function') return null;
+    try {
+      const head = quantity(await current.liveHead(), 'live node head');
+      const mint = quantity(task.mintHint.blockNumber, 'mint block');
+      const distance = head - mint;
+      const bucket = distance < 0n ? 'NodeBehind'
+        : distance <= BigInt(options.stateLookbackBlocks)
+          ? 'WithinLookback' : 'BeyondLookback';
+      const sample = Object.freeze({
+        sampledAt: new Date(now()).toISOString(), headBlock: head.toString(),
+        mintBlock: mint.toString(), distanceBlocks: distance.toString(),
+        lookbackBlocks: options.stateLookbackBlocks, bucket,
+      });
+      status.firstAttemptHeadSamples += 1;
+      status[`firstAttemptHead${bucket}`] += 1;
+      status.lastFirstAttemptHead = sample;
+      return sample;
+    } catch (error) {
+      status.firstAttemptHeadErrors += 1;
+      status.lastFirstAttemptHeadError = {
+        code: error.code || 'head_sample_failed', message: error.message,
+      };
+      return null;
+    }
+  }
+
+  function recordFirstAttemptCodeError(task, sample, error) {
+    if (task?.attemptCount !== 1 || !task.mintHint
+        || error.stage !== 'rpc_code_transition'
+        || error.method !== 'eth_getCode' || error.rpcCode !== -32000) return;
+    const bucket = sample?.bucket || 'Unmeasured';
+    status[`firstAttemptCode32000${bucket}`] += 1;
+    status.lastFirstAttemptCode32000 = sample || {
+      sampledAt: new Date(now()).toISOString(), bucket,
+    };
+  }
+
   async function recoverPinnedWithArchive(current, task, error, budget) {
     if (!eligibleForArchiveFallback(current, task, error) || !budget.take()) return null;
     status.totalArchiveFallbackAttempts += 1;
@@ -386,12 +433,14 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   }
 
   async function processTask(current, task, traceBudget, archiveBudget) {
+    let firstAttemptHead = null;
     try {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
+      firstAttemptHead = await sampleFirstAttemptHead(current, task);
       const transition = await resolveLocally(current, task);
       if (transition?.ignoredMint) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -414,6 +463,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         code: 'local_deployment_evidence_pending', stage: 'canonical_creator_evidence',
       });
     } catch (error) {
+      recordFirstAttemptCodeError(task, firstAttemptHead, error);
       const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
       if (recovered) return recovered;
       if (task) await deferTask(task, error);
