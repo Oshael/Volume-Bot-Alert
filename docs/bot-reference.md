@@ -3649,6 +3649,16 @@ O limiar é `stateLookbackBlocks` (96 blocos por padrão); é uma faixa diagnós
 não uma garantia de disponibilidade de estado. Falha na leitura do head incrementa
 `firstAttemptHeadErrors` e não impede o processamento do mint.
 
+Para medir atraso antes da primeira tentativa e concorrência no banco numa janela,
+rode `npm run robinhood:diagnose-deployment-delay -- --duration=5m --interval=2s`
+no host com acesso ao PostgreSQL da VPS. O comando é read-only, usa uma conexão
+própria, consulta a fila de mints a cada 10 segundos e imprime um resumo ao fim
+ou após `Ctrl+C`. Ele cruza snapshots da lease de deployment com sessões ativas do
+PostgreSQL; `pg_stat_activity` não vê pedidos esperando no pool do Node, que vêm
+da telemetria da lease. O head do cursor é aproximação do head RPC, e os contadores
+de primeira tentativa são deltas somente quando a lease não mudou. Coincidência
+de consultas de redistribution com espera no pool não estabelece causa sozinha.
+
 Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
 que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72
 horas e move tarefas vencidas para `archive_required`; elas permanecem recuperáveis

@@ -132,6 +132,7 @@
     "robinhood:wallet-swap-state-backfill": "node src/utils/backfill-robinhood-wallet-swap-realtime-states.js",
     "diagnose:postgres-lag": "node src/utils/collect-postgres-lag-diagnostics.js",
     "diagnose:postgres-lag:summary": "node src/utils/summarize-postgres-lag-diagnostics.js",
+    "robinhood:diagnose-deployment-delay": "node src/utils/diagnose-robinhood-deployment-delay.js",
     "robinhood:canonical-holder-canary": "node src/utils/audit-robinhood-canonical-holder-canary.js",
     "robinhood:canonical-wallet-swap-audit": "node src/utils/audit-robinhood-canonical-wallet-swap.js",
     "robinhood:canonical-wallet-swap-canary": "node src/utils/audit-robinhood-canonical-wallet-swap-canary.js",
