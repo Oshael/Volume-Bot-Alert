@@ -241,10 +241,14 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     firstAttemptHeadSamples: 0, firstAttemptHeadWithinLookback: 0,
     firstAttemptHeadBeyondLookback: 0, firstAttemptHeadNodeBehind: 0,
     firstAttemptHeadErrors: 0, lastFirstAttemptHeadError: null,
+    firstAttemptQueueWaitSamples: 0, firstAttemptQueueWaitTotalMs: 0,
+    firstAttemptQueueWaitMaxMs: 0, firstAttemptClaimWaitMaxMs: 0,
     firstAttemptCode32000WithinLookback: 0,
     firstAttemptCode32000BeyondLookback: 0,
     firstAttemptCode32000NodeBehind: 0, firstAttemptCode32000Unmeasured: 0,
     lastFirstAttemptHead: null, lastFirstAttemptCode32000: null,
+    lastRunDurationMs: null, lastClaimDurationMs: null,
+    lastProcessDurationMs: null, lastRunClaimed: null,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
 
@@ -360,7 +364,27 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       && current.archiveResolver);
   }
 
-  async function sampleFirstAttemptHead(current, task) {
+  function measureFirstAttemptWait(task, claimedAt) {
+    if (task?.attemptCount !== 1 || !task.mintHint) return null;
+    const startedAt = now();
+    const createdAt = task.createdAt == null ? NaN : new Date(task.createdAt).getTime();
+    const queueWaitMs = Number.isFinite(createdAt)
+      ? Math.max(0, startedAt - createdAt) : null;
+    const claimWaitMs = Math.max(0, startedAt - claimedAt);
+    status.firstAttemptClaimWaitMaxMs = Math.max(
+      status.firstAttemptClaimWaitMaxMs, claimWaitMs
+    );
+    if (queueWaitMs !== null) {
+      status.firstAttemptQueueWaitSamples += 1;
+      status.firstAttemptQueueWaitTotalMs += queueWaitMs;
+      status.firstAttemptQueueWaitMaxMs = Math.max(
+        status.firstAttemptQueueWaitMaxMs, queueWaitMs
+      );
+    }
+    return { queueWaitMs, claimWaitMs };
+  }
+
+  async function sampleFirstAttemptHead(current, task, wait) {
     if (task?.attemptCount !== 1 || !task.mintHint
         || typeof current.liveHead !== 'function') return null;
     try {
@@ -373,7 +397,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       const sample = Object.freeze({
         sampledAt: new Date(now()).toISOString(), headBlock: head.toString(),
         mintBlock: mint.toString(), distanceBlocks: distance.toString(),
-        lookbackBlocks: options.stateLookbackBlocks, bucket,
+        lookbackBlocks: options.stateLookbackBlocks, bucket, ...wait,
       });
       status.firstAttemptHeadSamples += 1;
       status[`firstAttemptHead${bucket}`] += 1;
@@ -388,14 +412,14 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }
   }
 
-  function recordFirstAttemptCodeError(task, sample, error) {
+  function recordFirstAttemptCodeError(task, sample, wait, error) {
     if (task?.attemptCount !== 1 || !task.mintHint
         || error.stage !== 'rpc_code_transition'
         || error.method !== 'eth_getCode' || error.rpcCode !== -32000) return;
     const bucket = sample?.bucket || 'Unmeasured';
     status[`firstAttemptCode32000${bucket}`] += 1;
     status.lastFirstAttemptCode32000 = sample || {
-      sampledAt: new Date(now()).toISOString(), bucket,
+      sampledAt: new Date(now()).toISOString(), bucket, ...wait,
     };
   }
 
@@ -432,15 +456,17 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }
   }
 
-  async function processTask(current, task, traceBudget, archiveBudget) {
+  async function processTask(current, task, traceBudget, archiveBudget, claimedAt) {
     let firstAttemptHead = null;
+    let firstAttemptWait = null;
     try {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
-      firstAttemptHead = await sampleFirstAttemptHead(current, task);
+      firstAttemptWait = measureFirstAttemptWait(task, claimedAt);
+      firstAttemptHead = await sampleFirstAttemptHead(current, task, firstAttemptWait);
       const transition = await resolveLocally(current, task);
       if (transition?.ignoredMint) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -463,7 +489,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         code: 'local_deployment_evidence_pending', stage: 'canonical_creator_evidence',
       });
     } catch (error) {
-      recordFirstAttemptCodeError(task, firstAttemptHead, error);
+      recordFirstAttemptCodeError(task, firstAttemptHead, firstAttemptWait, error);
       const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
       if (recovered) return recovered;
       if (task) await deferTask(task, error);
@@ -476,18 +502,27 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   }
 
   async function execute() {
+    const runStartedAt = now();
     status.inFlight = true; status.totalRuns += 1;
+    status.lastClaimDurationMs = null;
+    status.lastProcessDurationMs = null;
+    status.lastRunClaimed = null;
     try {
       const current = await runtime();
       const archiveRequired = typeof current.outbox.archiveExpiredBatch === 'function'
         ? await current.outbox.archiveExpiredBatch({ limit: options.batchSize }) : 0;
       status.totalArchiveRequired += archiveRequired;
+      const claimStartedAt = now();
       const tasks = typeof current.outbox.claimBatch === 'function'
         ? await current.outbox.claimBatch({
           owner, leaseMs: options.leaseMs, limit: options.batchSize,
         })
         : [await current.outbox.claim({ owner, leaseMs: options.leaseMs })].filter(Boolean);
+      const claimedAt = now();
+      status.lastClaimDurationMs = Math.max(0, claimedAt - claimStartedAt);
+      status.lastRunClaimed = tasks.length;
       if (!tasks.length) {
+        status.lastProcessDurationMs = 0;
         return { status: 'caught-up', claimed: 0, archiveRequired, errors: 0 };
       }
       const traceBudget = {
@@ -508,8 +543,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       };
       const results = await concurrentMap(
         tasks, options.concurrency,
-        (task) => processTask(current, task, traceBudget, archiveBudget)
+        (task) => processTask(current, task, traceBudget, archiveBudget, claimedAt)
       );
+      status.lastProcessDurationMs = Math.max(0, now() - claimedAt);
       if (results.length === 1) return results[0];
       return {
         status: 'completed', claimed: tasks.length,
@@ -521,7 +557,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         errors: results.filter((item) => item?.status === 'error').length,
       };
     } finally {
-      status.inFlight = false; status.lastCompletedAt = new Date().toISOString();
+      status.inFlight = false;
+      status.lastRunDurationMs = Math.max(0, now() - runStartedAt);
+      status.lastCompletedAt = new Date(now()).toISOString();
     }
   }
 

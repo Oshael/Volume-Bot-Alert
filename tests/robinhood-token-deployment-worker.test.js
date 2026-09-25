@@ -327,6 +327,48 @@ it('measures first mint attempts against the live head and locates -32000 errors
   }
 });
 
+it('measures first-attempt queue wait, claim wait and batch duration', async () => {
+  let clock = 100_000;
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', now: () => clock,
+    runtime: {
+      outbox: {
+        archiveExpiredBatch: async () => { clock += 2; return 0; },
+        claimBatch: async () => {
+          clock += 3;
+          return [{ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date(90_000),
+            mintHint: { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+              transactionHash: TRANSACTION_HASH } }];
+        },
+        isExact: async () => { clock += 5; return false; },
+        retry: async () => { clock += 13; return true; },
+      },
+      liveHead: async () => { clock += 7; return '0xfa'; },
+      localResolver: {
+        verify: async () => null,
+        inspect: async () => {
+          clock += 11;
+          throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+            code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+          });
+        },
+      },
+    },
+  });
+  await worker.runOnce();
+  const status = worker.getStatus();
+  assert.equal(status.firstAttemptQueueWaitSamples, 1);
+  assert.equal(status.firstAttemptQueueWaitTotalMs, 10_010);
+  assert.equal(status.firstAttemptQueueWaitMaxMs, 10_010);
+  assert.equal(status.firstAttemptClaimWaitMaxMs, 5);
+  assert.equal(status.lastFirstAttemptCode32000.queueWaitMs, 10_010);
+  assert.equal(status.lastFirstAttemptCode32000.claimWaitMs, 5);
+  assert.equal(status.lastRunClaimed, 1);
+  assert.equal(status.lastClaimDurationMs, 3);
+  assert.equal(status.lastProcessDurationMs, 36);
+  assert.equal(status.lastRunDurationMs, 41);
+});
+
 it('continues deployment resolution when the first-attempt head probe fails', async () => {
   let headCalls = 0;
   const worker = createRobinhoodTokenDeploymentWorker({

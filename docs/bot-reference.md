@@ -3598,6 +3598,14 @@ RPC live imediatamente antes da prova de código. A telemetria da lease registra
 `firstAttemptHeadBeyondLookback`, `firstAttemptHeadNodeBehind` e os erros
 `firstAttemptCode32000*` por faixa. `lastFirstAttemptHead` e
 `lastFirstAttemptCode32000` incluem head, bloco do mint, distância e horário.
+Ambos também incluem `queueWaitMs` (criação da tarefa até o começo da primeira
+tentativa) e `claimWaitMs` (claim até esse começo). A lease soma
+`firstAttemptQueueWaitSamples`, `firstAttemptQueueWaitTotalMs` e registra
+`firstAttemptQueueWaitMaxMs` e `firstAttemptClaimWaitMaxMs`; a média da espera
+é total dividido por amostras. `lastRunDurationMs`, `lastClaimDurationMs`,
+`lastProcessDurationMs` e `lastRunClaimed` mostram o lote mais recente. Essas
+medidas são do worker, reiniciam com ele e não incluem tempo entre o bloco do
+mint e a criação da tarefa.
 O limiar é `stateLookbackBlocks` (96 blocos por padrão); é uma faixa diagnóstica,
 não uma garantia de disponibilidade de estado. Falha na leitura do head incrementa
 `firstAttemptHeadErrors` e não impede o processamento do mint.
