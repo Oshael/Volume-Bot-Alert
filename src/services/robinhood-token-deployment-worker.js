@@ -246,6 +246,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     firstAttemptPinnedStarted: 0, firstAttemptPinnedFinished: 0,
     firstAttemptLiveResolved: 0, firstAttemptArchiveResolved: 0,
     firstAttemptDeferred: 0, firstAttemptError: 0, firstAttemptSkipped: 0,
+    firstAttemptSkippedAlreadyAttributed: 0, firstAttemptSkippedNonDeploymentMint: 0,
     firstAttemptCode32000WithinLookback: 0,
     firstAttemptCode32000BeyondLookback: 0,
     firstAttemptCode32000NodeBehind: 0, firstAttemptCode32000Unmeasured: 0,
@@ -469,6 +470,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       if (firstPinned) {
         status.firstAttemptPinnedFinished += 1;
         status[`firstAttempt${outcome.value}`] += 1;
+        if (outcome.value.startsWith('Skipped')) status.firstAttemptSkipped += 1;
       }
     }
   }
@@ -480,7 +482,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
-        outcome.value = 'Skipped';
+        outcome.value = 'SkippedAlreadyAttributed';
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
       firstAttemptWait = measureFirstAttemptWait(task, claimedAt);
@@ -489,7 +491,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       if (transition?.ignoredMint) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
-        outcome.value = 'Skipped';
+        outcome.value = 'SkippedNonDeploymentMint';
         return { status: 'non-deployment-mint', tokenAddress: task.tokenAddress };
       }
       if (transition) {

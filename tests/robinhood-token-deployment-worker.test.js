@@ -588,12 +588,10 @@ it('discards a later mint when bytecode already existed in the previous block', 
   });
   const fixture = runtime({
     outbox: {
-      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date(),
+        mintHint: { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH } }),
       isExact: async () => false,
-      findMintHint: async () => ({
-        tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
-        transactionHash: TRANSACTION_HASH,
-      }),
       complete: async () => { calls.push('complete'); },
       retry: async () => { throw new Error('must not retry'); },
     },
@@ -602,10 +600,12 @@ it('discards a later mint when bytecode already existed in the previous block', 
       recordCodeTransitions: async () => { throw new Error('must not attribute'); },
     },
   });
-  assert.deepEqual(await createRobinhoodTokenDeploymentWorker({
-    runtime: fixture.value, owner: 'test',
-  }).runOnce(), { status: 'non-deployment-mint', tokenAddress: TOKEN });
+  const worker = createRobinhoodTokenDeploymentWorker({ runtime: fixture.value, owner: 'test' });
+  assert.deepEqual(await worker.runOnce(), { status: 'non-deployment-mint', tokenAddress: TOKEN });
   assert.deepEqual(calls, ['complete']);
+  assert.equal(worker.getStatus().firstAttemptSkipped, 1);
+  assert.equal(worker.getStatus().firstAttemptSkippedAlreadyAttributed, 0);
+  assert.equal(worker.getStatus().firstAttemptSkippedNonDeploymentMint, 1);
 });
 
 it('defers a fresh task briefly while its mint reaches the journal', async () => {
@@ -780,6 +780,8 @@ it('skips tokens whose exact local attribution was already captured', async () =
   assert.equal(result.status, 'already-attributed');
   assert.deepEqual(exact.calls, ['complete']);
   assert.equal(worker.getStatus().firstAttemptSkipped, 1);
+  assert.equal(worker.getStatus().firstAttemptSkippedAlreadyAttributed, 1);
+  assert.equal(worker.getStatus().firstAttemptSkippedNonDeploymentMint, 0);
   assert.equal(worker.getStatus().firstAttemptPinnedFinished, 1);
 });
 

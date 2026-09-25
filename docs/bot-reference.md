@@ -3615,7 +3615,9 @@ finalizadas representa tentativas em andamento. `LiveResolved` usa o RPC live
 primário configurado; `ArchiveResolved` usa o fallback Archive. `Deferred` é
 evidência local ainda pendente; `Error` inclui falhas que voltam para retry;
 `Skipped` já tinha atribuição exata ou não era um deployment. Retries não entram
-nesses contadores. Compare deltas entre leituras da mesma lease, sem reinício.
+nesses contadores. `firstAttemptSkippedAlreadyAttributed` e
+`firstAttemptSkippedNonDeploymentMint` separam os dois motivos e somam
+`firstAttemptSkipped`. Compare deltas entre leituras da mesma lease, sem reinício.
 O limiar é `stateLookbackBlocks` (96 blocos por padrão); é uma faixa diagnóstica,
 não uma garantia de disponibilidade de estado. Falha na leitura do head incrementa
 `firstAttemptHeadErrors` e não impede o processamento do mint.
