@@ -169,10 +169,9 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
         limit: REALTIME_BATCH_SIZE,
       }) : null;
       const publication = runtime.publisher ? await runtime.publisher.runOnce() : null;
-      const backlog = runtime.realtimeOutbox ? await runtime.realtimeOutbox.readBacklog() : null;
       const applied = await runtime.runner.applyOnce(options);
-      const result = lifecycle || publication || backlog
-        ? { ...applied, realtime: { lifecycle, publication, backlog } } : applied;
+      const result = lifecycle || publication
+        ? { ...applied, realtime: { lifecycle, publication } } : applied;
       status.lastResult = result; status.lastError = null; status.consecutiveErrors = 0;
       status.totalAppliedEvents += finiteNumber(applied.appliedEvents);
       status.totalDriftedTokens += finiteNumber(applied.driftedTokens);

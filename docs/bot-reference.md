@@ -3223,6 +3223,12 @@ captura e recuperação do apply é selecionada por `ROBINHOOD_HOLDER_LIVE_SOURC
 captura canônica, sem `eth_getLogs` nem receipts. O modo canônico falha fechado se a
 faixa pedida não estiver coberta e só deve ser ativado depois dos gates de cobertura
 e handoff do holder. `rpc` permanece disponível apenas como rollback explícito.
+
+O ciclo promove eventos finalizados, publica a outbox e aplica o journal sem ler a
+contagem integral da `robinhood_holder_realtime_outbox`. `lastResult.realtime` expõe
+`lifecycle` e `publication`, sem `backlog`. A consulta `readBacklog()` permanece no
+repositório para diagnóstico sob demanda, fora do caminho ao vivo.
+
 `npm run robinhood:canonical-holder-audit` executa o gate preflight em uma transação
 PostgreSQL `REPEATABLE READ READ ONLY`. O relatório separa lag reaproveitável dentro
 do journal canônico de uma lacuna anterior à retenção, valida o checkpoint holder

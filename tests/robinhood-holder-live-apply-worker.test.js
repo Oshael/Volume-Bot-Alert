@@ -164,10 +164,7 @@ describe('Robinhood holder live apply worker', () => {
 
   it('drains lifecycle and publication durably without requiring a notification', async () => {
     let publications = 0;
-    const backlog = {
-      pending: 0, due: 0, leased: 0, expiredLeases: 0,
-      blocked: 0, maxAttempts: 1, oldestAgeSeconds: null,
-    };
+    let backlogReads = 0;
     const worker = createRobinhoodHolderLiveApplyWorker({
       runtimeFactory: async () => ({
         providerName: 'robinhood-holder-live-apply',
@@ -177,7 +174,7 @@ describe('Robinhood holder live apply worker', () => {
         }) },
         realtimeOutbox: {
           promoteFinalized: async () => ({ finalized: 1, invalidated: 1 }),
-          readBacklog: async () => backlog,
+          readBacklog: async () => { backlogReads += 1; },
         },
         publisher: { runOnce: async () => {
           publications += 1;
@@ -193,9 +190,9 @@ describe('Robinhood holder live apply worker', () => {
     assert.deepEqual(first.realtime, {
       lifecycle: { finalized: 1, invalidated: 1 },
       publication: { reclaimed: 0, claimed: 2, delivered: 2, retried: 0, blocked: 0 },
-      backlog,
     });
-    assert.equal(second.realtime.backlog.pending, 0);
+    assert.equal(second.realtime.publication.delivered, 2);
+    assert.equal(backlogReads, 0);
     assert.equal(worker.getStatus().totalHolderCountPublished, 4);
     assert.equal(worker.getStatus().totalFinalized, 2);
     assert.equal(worker.getStatus().totalInvalidated, 2);
