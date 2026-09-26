@@ -39,12 +39,16 @@ const LOAD_CANDIDATE_SQL = `WITH target AS MATERIALIZED (
     LEFT JOIN LATERAL (
       SELECT buy.block_number, buy.block_time
         FROM robinhood_wallet_token_first_buys buy
-        INNER JOIN robinhood_pool_registry registry
-          ON registry.chain = buy.chain AND registry.protocol = buy.protocol
-         AND registry.market_key = buy.market_key
-         AND registry.token_address = buy.token_address AND registry.active
-         AND registry.discovery_block <= buy.block_number
+        INNER JOIN LATERAL (
+          SELECT 1 FROM robinhood_pool_registry registry
+           WHERE registry.chain = buy.chain AND registry.protocol = buy.protocol
+             AND registry.market_key = buy.market_key
+             AND registry.token_address = buy.token_address AND registry.active
+             AND registry.discovery_block <= buy.block_number
+           LIMIT 1
+        ) eligible ON TRUE
        WHERE buy.chain = state.chain AND buy.token_address = state.token_address
+         AND buy.block_number >= origin.discovery_block
          AND buy.block_number <= state.live_through_block
        ORDER BY buy.block_number, buy.transaction_index, buy.action_index,
                 buy.transaction_hash

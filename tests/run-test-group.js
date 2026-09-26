@@ -28,6 +28,7 @@ const INTEGRATION_TESTS = [
   'robinhood-holder-global-backfill-commit.integration.test.js',
   'robinhood-holder-global-backfill.integration.test.js',
   'robinhood-token-holder-summary.integration.test.js',
+  'robinhood-launch-anchor-candidate.integration.test.js',
   'robinhood-wallet-swap-read.integration.test.js',
   'robinhood-wallet-position.integration.test.js',
   'robinhood-token-transfer-persistence.integration.test.js',
