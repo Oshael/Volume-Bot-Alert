@@ -702,10 +702,13 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(context.calls.at(-1), ['promote-shadows', { limit: 250 }]);
   });
 
-  it('stops exactly at the apply budget without starting another capture', async () => {
+  it('keeps bounded shadow promotion after the apply event budget is exhausted', async () => {
     const context = harness({
       status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
-    }, [{ status: 'applied' }, { status: 'applied' }, { status: 'applied' }]);
+    }, [{ status: 'applied' }, { status: 'applied' }, { status: 'applied' }],
+    { status: 'idle' }, async () => 0, {
+      shadowPromotion: { status: 'promoted', promotedTokens: 1, publications: [] },
+    });
 
     const result = await context.runner.runOnce({ maxApplyEvents: 2 });
 
@@ -713,12 +716,15 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.appliedEvents, 2);
     assert.equal(result.applyBudgetExhausted, true);
     assert.equal(context.calls.filter(([name]) => name === 'capture').length, 1);
-    assert.equal(context.calls.some(([name]) => name === 'promote-shadows'), false);
+    assert.deepEqual(context.calls.filter(([name]) => name === 'promote-shadows'), [
+      ['promote-shadows', { limit: 25 }],
+    ]);
+    assert.equal(result.shadowPromotions, 1);
     assert.equal(result.timing.residualShadowPromotionDeferred, true);
-    assert.equal(result.timing.residualShadowPromotionCalls, 0);
+    assert.equal(result.timing.residualShadowPromotionCalls, 1);
   });
 
-  it('preserves targeted promotion when backlog defers the residual sweep', async () => {
+  it('preserves targeted promotion alongside the bounded residual sweep', async () => {
     const tokenAddress = `0x${'c'.repeat(40)}`;
     const context = harness({ status: 'idle' }, [{
       status: 'applied', tokenAddress, appliedEvents: 2, attemptedEvents: 2,
@@ -735,9 +741,10 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.applyBudgetExhausted, true);
     assert.deepEqual(context.calls.filter(([name]) => name === 'promote-shadows'), [
       ['promote-shadows', { limit: 1, tokenAddress }],
+      ['promote-shadows', { limit: 25 }],
     ]);
     assert.equal(result.timing.targetedShadowPromotionCalls, 1);
-    assert.equal(result.timing.residualShadowPromotionCalls, 0);
+    assert.equal(result.timing.residualShadowPromotionCalls, 1);
   });
 
   it('allows capture to advance while an independent apply tick is in flight', async () => {

@@ -11,6 +11,7 @@ const HOT_SELECTION_BATCH_LIMITS = Object.freeze({
   'stale-live': 32,
   'stale-shadow': 32,
 });
+const SATURATED_SHADOW_PROMOTION_LIMIT = 25;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -747,11 +748,12 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     drained.timing.residualShadowPromotionCalls = 0;
     const applyBudgetExhausted = !drained.reachedIdle
       && (drained.eventBudgetExhausted || drained.durationBudgetExhausted);
-    const promoted = applyBudgetExhausted
-      ? { promotedTokens: 0, publications: [] }
-      : await promoteReadyShadows({
-        limit: Math.min(maxApplyEvents, shadowPromotionBatchSize),
-      }, drained.timing);
+    const promoted = await promoteReadyShadows({
+      limit: Math.min(
+        shadowPromotionBatchSize,
+        applyBudgetExhausted ? SATURATED_SHADOW_PROMOTION_LIMIT : maxApplyEvents
+      ),
+    }, drained.timing);
     const promotedUpdates = new Map();
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });

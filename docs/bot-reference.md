@@ -3266,12 +3266,14 @@ promoção residual é limitada separadamente por
 `ROBINHOOD_HOLDER_LIVE_SHADOW_PROMOTION_BATCH_SIZE` (default 250, máximo 1.000),
 evitando que um budget alto de apply transforme milhares de promoções em uma única
 transação e esgote a tabela compartilhada de locks do PostgreSQL. Essa promoção
-residual só roda quando o drain não esgota seu budget de eventos ou duração; sob
-backlog, aplicar o journal tem precedência e shadows drenados ainda são promovidos
-individualmente no próprio caminho de apply.
+residual usa o limite configurado quando o drain não esgota seu budget de eventos
+ou duração. Sob backlog contínuo, ainda promove até 25 shadows prontos por tick,
+depois do drain; o restante do lote é adiado para preservar a prioridade do
+journal. Shadows drenados também são promovidos individualmente no apply.
 `lastResult.timing` separa `targetedShadowPromotionDurationMs` e
 `residualShadowPromotionDurationMs`, com contagem de chamadas e
-`residualShadowPromotionDeferred`, para identificar qual caminho consome o tick.
+`residualShadowPromotionDeferred` (lote completo adiado), para identificar qual
+caminho consome o tick.
 O diagnóstico read-only `node src/utils/audit-robinhood-holder-rollback.js`
 verifica se a âncora tracked, o checkpoint holder e o floor raw ainda permitem
 iniciar uma reconstrução do trecho desde o cutover. Ele não prova todos os
