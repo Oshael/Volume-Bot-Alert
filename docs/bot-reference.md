@@ -3725,6 +3725,20 @@ Com `holders` presente, o resumo agrupa ocupações observadas e mostra cada con
 do maior pico de fila amostrado, incluindo SQL e tempo de retenção. O log
 `Robinhood deployment run failed` também inclui os holders do instante da falha;
 isso preserva a evidência quando o processo sai antes do próximo heartbeat.
+O worker registra automaticamente `[RobinhoodDeploymentLag]` no journal da unidade
+`trendscope-worker@robinhood-wallet-classification.service`: `run_stall` quando um
+run ainda está ativo após 5 s (e a cada 30 s enquanto continuar), `run_completed`
+se durou ao menos 5 s e `late_mint` quando a âncora esperou ao menos 5 s pelo
+claim ou o head ultrapassou a janela. Cada tipo é limitado a um registro a cada
+30 s. O evento `snapshot` contém fase, tarefas e etapas em andamento, perfis
+dos últimos três runs e pressão recente do pool; uma leitura PostgreSQL separada,
+com timeout curto, gera `postgres_activity` com waits e SQL abreviado, ou
+`postgres_activity_error`. O snapshot é registrado antes dessa leitura, para
+preservar a evidência mesmo se o banco não responder. Consulte depois com
+`journalctl -u trendscope-worker@robinhood-wallet-classification.service --no-pager | rg RobinhoodDeploymentLag`.
+Esses registros sobrevivem ao reinício do processo conforme a retenção do
+journal da VPS; não identificam automaticamente a causa e não substituem
+comparar tempos de claim, pool, waits e SQL da mesma janela.
 
 Aplique `node src/utils/db-init-stage242.js` antes de implantar o worker de deployment
 que conhece as lanes live/Archive. A migration dá a cada tarefa uma janela live de 72

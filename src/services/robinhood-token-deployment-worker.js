@@ -15,6 +15,9 @@ const {
   createRobinhoodHolderDeploymentVerifier,
 } = require('./robinhood-holder-deployment-verifier');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const {
+  createRobinhoodDeploymentLagRecorder,
+} = require('./robinhood-deployment-lag-recorder');
 
 const NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
 const ROBINHOOD_CHAIN_ID = 4663n;
@@ -24,6 +27,7 @@ const PINNED_EVIDENCE_FAST_RETRIES = 8;
 const PHASE_HISTORY_LIMIT = 4096;
 const POOL_HISTORY_LIMIT = 360;
 const PROCESS_HISTORY_LIMIT = 256;
+const LAG_WARNING_MS = 5000;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -233,6 +237,11 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   const reportFailure = deps.reportFailure || console.error;
   const owner = deps.owner || `token-deployment-${process.pid}-${randomUUID()}`;
   const now = deps.now || Date.now;
+  const lagSchedule = deps.lagSchedule || setTimeout;
+  const lagCancel = deps.lagCancel || clearTimeout;
+  const lagRecorder = deps.lagRecorder || createRobinhoodDeploymentLagRecorder({
+    now, pool: databasePool, logger: deps.reportIncident,
+  });
   let options = normalizeOptions(deps.options);
   let runtimePromise;
   let timer;
@@ -244,6 +253,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   const phaseHistory = [];
   const poolHistory = [];
   const processHistory = [];
+  const activeTasks = new Map();
   const status = {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalResolved: 0, totalLocalResolved: 0, totalDeferred: 0, totalSkipped: 0,
@@ -332,14 +342,20 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     phaseStartedAt = at;
   }
 
-  function createTaskTimer() {
+  function createTaskTimer(taskState) {
     const stageMs = {};
     return {
       stageMs,
       async measure(stage, operation) {
         const startedAt = now();
+        taskState.stage = stage;
+        taskState.stageStartedAt = startedAt;
         try { return await operation(); }
-        finally { stageMs[stage] = (stageMs[stage] || 0) + Math.max(0, now() - startedAt); }
+        finally {
+          stageMs[stage] = (stageMs[stage] || 0) + Math.max(0, now() - startedAt);
+          taskState.stage = null;
+          taskState.stageStartedAt = null;
+        }
       },
     };
   }
@@ -384,6 +400,51 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       ...summary,
     })).filter(({ overlapMs }) => overlapMs > 0)
       .sort((left, right) => right.overlapMs - left.overlapMs).slice(0, 2);
+  }
+
+  function incidentSnapshot(detail) {
+    const at = now();
+    const pool = sampleDatabasePool();
+    const samples = poolHistory.filter((item) => item.at >= at - 60_000);
+    const peak = samples.reduce((best, item) =>
+      !best || item.waiting > best.waiting ? item : best, null);
+    return {
+      owner, run: status.totalRuns, phase: status.runPhase,
+      phaseAgeMs: phaseStartedAt == null ? null : Math.max(0, at - phaseStartedAt),
+      claimed: status.lastRunClaimed,
+      pool: {
+        current: pool && { busy: pool.busy, waiting: pool.waiting, max: pool.max,
+          holders: pool.holders?.slice(0, 10) || [] },
+        samples: samples.length,
+        samplesWithWaiting: samples.filter((item) => item.waiting > 0).length,
+        peak: peak && { sampledAt: peak.sampledAt, busy: peak.busy,
+          waiting: peak.waiting, holders: peak.holders?.slice(0, 10) || [] },
+      },
+      activeTasks: [...activeTasks.values()].map((task) => ({
+        tokenAddress: task.tokenAddress, elapsedMs: Math.max(0, at - task.startedAt),
+        stage: task.stage,
+        stageAgeMs: task.stageStartedAt == null ? null : Math.max(0, at - task.stageStartedAt),
+      })).sort((left, right) => right.elapsedMs - left.elapsedMs).slice(0, 16),
+      previousRuns: processHistory.slice(-3).map(({ summary }) => summary),
+      ...detail,
+    };
+  }
+
+  function recordLag(kind, detail) {
+    lagRecorder.record(kind, () => incidentSnapshot(detail));
+  }
+
+  function watchRunLag(startedAt, run) {
+    let handle;
+    function tick() {
+      if (!status.inFlight || status.totalRuns !== run) return;
+      recordLag('run_stall', { runAgeMs: Math.max(0, now() - startedAt) });
+      handle = lagSchedule(tick, 30_000);
+      handle?.unref?.();
+    }
+    handle = lagSchedule(tick, LAG_WARNING_MS);
+    handle?.unref?.();
+    return () => lagCancel(handle);
   }
 
   function summarizePreClaimWindow(anchorAt, claimedAt) {
@@ -712,7 +773,10 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
 
   async function processTask(current, task, traceBudget, archiveBudget, claimedAt, profile) {
     const taskStartedAt = now();
-    const timer = createTaskTimer();
+    const taskState = { tokenAddress: task.tokenAddress, startedAt: taskStartedAt,
+      stage: null, stageStartedAt: null };
+    activeTasks.set(task.tokenAddress, taskState);
+    const timer = createTaskTimer(taskState);
     let result;
     const firstPinned = task?.attemptCount === 1 && Boolean(task.mintHint);
     if (firstPinned) status.firstAttemptPinnedStarted += 1;
@@ -734,12 +798,17 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
             outcome: outcome.value, liveError: outcome.liveError,
           };
           status.lastFirstAttemptTrace = trace;
+          if (trace.anchorToClaimMs >= LAG_WARNING_MS
+              || trace.head?.bucket === 'BeyondLookback') {
+            recordLag('late_mint', { trace });
+          }
           if (trace.head?.bucket === 'BeyondLookback'
               || trace.liveError?.rpcCode === -32000) {
             status.recentFirstAttemptMisses = [...status.recentFirstAttemptMisses, trace].slice(-12);
           }
         }
       }
+      activeTasks.delete(task.tokenAddress);
     }
   }
 
@@ -811,6 +880,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   async function execute() {
     const runStartedAt = now();
     status.inFlight = true; status.totalRuns += 1;
+    const cancelLagWatch = watchRunLag(runStartedAt, status.totalRuns);
     transitionPhase('archive_expired', runStartedAt);
     status.databasePoolRunPeakBusy = 0;
     status.databasePoolRunPeakWaiting = 0;
@@ -896,11 +966,16 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       reportFailure(`Robinhood deployment run failed: ${JSON.stringify(failure)}`);
       throw error;
     } finally {
+      cancelLagWatch();
       if (runSampler) clearSampleInterval(runSampler);
       transitionPhase('idle');
       status.inFlight = false;
       status.lastRunDurationMs = Math.max(0, now() - runStartedAt);
       status.lastCompletedAt = new Date(now()).toISOString();
+      if (status.lastRunDurationMs >= LAG_WARNING_MS) {
+        recordLag('run_completed', { runDurationMs: status.lastRunDurationMs,
+          process: status.lastProcessDurationMs == null ? null : status.lastProcessProfile });
+      }
     }
   }
 

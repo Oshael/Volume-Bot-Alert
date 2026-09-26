@@ -359,7 +359,7 @@ it('measures first mint attempts against the live head and locates -32000 errors
   ]) {
     let headCalls = 0;
     const worker = createRobinhoodTokenDeploymentWorker({
-      owner: 'test',
+      owner: 'test', lagRecorder: { record: () => {} },
       runtime: {
         outbox: {
           claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, mintHint: {
@@ -389,8 +389,10 @@ it('measures first mint attempts against the live head and locates -32000 errors
 
 it('measures first-attempt queue wait, claim wait and batch duration', async () => {
   let clock = 100_000;
+  const incidents = [];
   const worker = createRobinhoodTokenDeploymentWorker({
     owner: 'test', now: () => clock,
+    lagRecorder: { record: (kind, snapshot) => incidents.push({ kind, ...snapshot() }) },
     runtime: {
       outbox: {
         archiveExpiredBatch: async () => { clock += 2; return 0; },
@@ -459,6 +461,9 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
     outboxDb: 18, headRpc: 7, liveRpc: 11,
   });
   assert.equal(status.lastProcessProfile.slowestTasks[0].tokenAddress, TOKEN);
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].kind, 'late_mint');
+  assert.equal(incidents[0].trace.anchorToClaimMs, 5_005);
 });
 
 it('attributes a mint wait to a previous process run and its simultaneous pool holders', async () => {
@@ -470,6 +475,7 @@ it('attributes a mint wait to a previous process run and its simultaneous pool h
   let worker;
   worker = createRobinhoodTokenDeploymentWorker({
     owner: 'test', now: () => clock, pool,
+    lagRecorder: { record: () => {} },
     poolHoldersSnapshot: () => pool.waitingCount ? [holder] : [],
     runtime: {
       outbox: {
@@ -524,6 +530,41 @@ it('attributes a mint wait to a previous process run and its simultaneous pool h
   assert.equal(trace.preClaimWindow.blockingRuns[0].slowestTasks[0].tokenAddress, TOKEN_B);
 });
 
+it('records the active task stage before a slow run finishes', async () => {
+  let clock = 100_000;
+  let fire;
+  let release;
+  let entered;
+  const waiting = new Promise((resolve) => { entered = resolve; });
+  const incidents = [];
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', now: () => clock,
+    lagSchedule: (callback) => { fire = callback; return { unref() {} }; },
+    lagCancel: () => {},
+    lagRecorder: { record: (kind, snapshot) => incidents.push({ kind, ...snapshot() }) },
+    runtime: { outbox: {
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 2 }),
+      isExact: async () => {
+        entered();
+        return new Promise((resolve) => { release = () => resolve(false); });
+      },
+      retry: async () => true,
+    } },
+  });
+  const running = worker.runOnce();
+  await waiting;
+  clock += 6000;
+  fire();
+  assert.equal(incidents[0].kind, 'run_stall');
+  assert.equal(incidents[0].phase, 'process');
+  assert.equal(incidents[0].activeTasks[0].stage, 'outboxDb');
+  assert.equal(incidents[0].activeTasks[0].stageAgeMs, 6000);
+  release();
+  await running;
+  assert.equal(incidents[1].kind, 'run_completed');
+  assert.equal(incidents[1].process.wallMs, 6000);
+});
+
 it('samples shared pool pressure while the deployment worker is idle', async () => {
   let clock = 100_000;
   let tick;
@@ -534,6 +575,7 @@ it('samples shared pool pressure while the deployment worker is idle', async () 
     transactionHash: TRANSACTION_HASH };
   const worker = createRobinhoodTokenDeploymentWorker({
     owner: 'test', now: () => clock, pool,
+    lagRecorder: { record: () => {} },
     poolSampleIntervalFactory: (callback) => { tick = callback; return interval; },
     clearPoolSampleInterval: (handle) => { assert.equal(handle, interval); cleared = true; },
     schedule: () => ({ unref() {} }), cancelSchedule: () => {},
