@@ -16,7 +16,7 @@ it('defines a policy-gated central coverage fence', () => {
     /NEW\.tail_capture_from_block < live_next_block/,
     /OLD\.ledger_status NOT IN \('backfilling', 'shadow', 'live'\)/,
   ]) assert.match(sql, pattern);
-  assert.ok(sql.indexOf('SELECT next_block INTO live_next_block')
+  assert.ok(sql.indexOf('SELECT next_block, journal_floor_block')
     < sql.indexOf('SELECT capture_mode INTO effective_mode'));
   assert.match(sql, new RegExp(`CREATE TRIGGER ${stage234.TRIGGER_NAME}`));
   assert.ok(stage234.TRIGGER_NAME > 'trg_rh_holder_legacy_coverage_invalidation');

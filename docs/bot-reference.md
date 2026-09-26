@@ -3496,6 +3496,13 @@ durável; apenas
 status fora desse conjunto ou troca do tail trava o cursor live e exige
 `tail_capture_from_block >= cursor.next_block`. A ordem para flip/rollback é
 sempre cursor live antes da policy, permitindo que o trigger serialize admissões.
+Há uma exceção para o INSERT de um token `backfilling` ainda ativo numa campanha
+global `attached/materializing`: o tail pode começar na barreira já anexada,
+mesmo depois de o cursor live avançar, se o baseline corresponder ao checkpoint
+da campanha e a barreira continuar coberta por `journal_floor_block`. Aplique
+novamente `node src/utils/db-init-stage234.js` após atualizar o código; sem isso,
+o trigger antigo bloqueia a materialização com `holder tail is behind the locked
+live cursor`. Não altere o cursor ou a barreira para contornar esse erro.
 Os recoveries automáticos do ledger seguem essa mesma ordem. Rollback de token
 `drifted` sempre cria uma nova âncora no `cursor.next_block`; rollback de
 `shadow/live` preserva tail já contínuo e ancora no cursor apenas um baseline

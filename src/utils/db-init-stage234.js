@@ -11,6 +11,7 @@ const STATEMENTS = Object.freeze([
    DECLARE
      effective_mode VARCHAR(16);
      live_next_block BIGINT;
+     live_journal_floor_block BIGINT;
      needs_cursor_fence BOOLEAN := FALSE;
    BEGIN
      IF NEW.chain <> 'robinhood'
@@ -34,7 +35,8 @@ const STATEMENTS = Object.freeze([
      END IF;
 
      IF needs_cursor_fence THEN
-       SELECT next_block INTO live_next_block
+       SELECT next_block, journal_floor_block
+         INTO live_next_block, live_journal_floor_block
          FROM robinhood_holder_cursors
         WHERE chain = NEW.chain AND stream = 'live' FOR SHARE;
        IF live_next_block IS NULL THEN
@@ -69,8 +71,30 @@ const STATEMENTS = Object.freeze([
 
      IF needs_cursor_fence THEN
        IF NEW.tail_capture_from_block < live_next_block THEN
-         RAISE EXCEPTION 'Robinhood holder tail is behind the locked live cursor'
-           USING ERRCODE = '23514', CONSTRAINT = 'rh_holder_coverage_contract_guard';
+         IF TG_OP <> 'INSERT' OR NEW.ledger_status <> 'backfilling'
+            OR live_journal_floor_block IS NULL
+            OR NOT EXISTS (
+              SELECT 1
+                FROM robinhood_holder_global_backfill_tokens token
+                JOIN robinhood_holder_global_backfill_runs run
+                  ON run.id = token.run_id AND run.chain = token.chain
+               WHERE token.chain = NEW.chain
+                 AND token.token_address = NEW.token_address
+                 AND token.status = 'active'
+                 AND run.status IN ('attached', 'materializing')
+                 AND run.barrier_block = NEW.tail_capture_from_block
+                 AND run.next_block = run.barrier_block
+                 AND run.checkpoint_block = run.barrier_checkpoint_block
+                 AND run.checkpoint_hash = run.barrier_checkpoint_hash
+                 AND NEW.backfill_next_block = run.barrier_block
+                 AND NEW.live_through_block = run.barrier_checkpoint_block
+                 AND NEW.live_through_hash = run.barrier_checkpoint_hash
+                 AND NEW.holder_count = token.holder_count
+                 AND run.barrier_block >= live_journal_floor_block
+            ) THEN
+           RAISE EXCEPTION 'Robinhood holder tail is behind the locked live cursor'
+             USING ERRCODE = '23514', CONSTRAINT = 'rh_holder_coverage_contract_guard';
+         END IF;
        END IF;
      END IF;
      RETURN NEW;
