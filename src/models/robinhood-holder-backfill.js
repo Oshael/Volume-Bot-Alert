@@ -269,6 +269,16 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
           )
           AND NOT (state.token_address = ANY($2::varchar[]))
           AND NOT EXISTS (
+            SELECT 1 FROM robinhood_holder_global_backfill_runs run
+            WHERE run.chain = state.chain AND run.status <> 'completed'
+              AND EXISTS (
+                SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
+                WHERE cohort.run_id = run.id AND cohort.chain = state.chain
+                  AND cohort.token_address = state.token_address
+                  AND cohort.status IN ('active', 'materialized')
+              )
+          )
+          AND NOT EXISTS (
             SELECT 1
               FROM robinhood_holder_cursors cursor
              WHERE cursor.chain = state.chain AND cursor.stream = 'live'

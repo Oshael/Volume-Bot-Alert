@@ -232,6 +232,12 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
       `UPDATE robinhood_holder_global_backfill_runs
           SET status = 'scanning', version = version + 1, updated_at = NOW()
         WHERE id = $1 AND chain = $2 AND status = 'frozen' AND version = $3
+          AND NOT EXISTS (
+            SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
+            JOIN robinhood_holder_token_states state
+              ON state.chain = cohort.chain AND state.token_address = cohort.token_address
+            WHERE cohort.run_id = $1 AND cohort.chain = $2 AND cohort.status = 'active'
+          )
         RETURNING *`, [runId, CHAIN, version]
     );
     if (!result.rowCount) {

@@ -25,6 +25,9 @@ function harness(active, completedCutoff = '2026-08-13T00:00:00Z') {
         createdInputs.push(input);
         return { runId: '2', status: 'frozen' };
       },
+      preparationStatus: async () => ({ runId: '2', status: 'frozen', remainingStates: 2 }),
+      prepareBatch: async () => ({ runId: '2', preparedTokens: 0,
+        deletedBalances: 0, deletedJournalEvents: 0 }),
     },
     creates: () => creates,
     previews,
@@ -62,7 +65,9 @@ describe('Robinhood holder global delta command', () => {
     assert.deepEqual(fixture.previews, [{
       catalogCutoff: '2026-08-14T00:00:00Z', includeUnseeded: false,
     }]);
-    assert.deepEqual(fixture.createdInputs, fixture.previews);
+    assert.deepEqual(fixture.createdInputs, [{
+      ...fixture.previews[0], batchedAdoption: false,
+    }]);
   });
 
   it('can freeze only unseeded tokens without adopting backfilling state', async () => {
@@ -102,4 +107,24 @@ describe('Robinhood holder global delta command', () => {
     assert.equal(result.created.runId, '2');
     assert.equal(fixture.creates(), 1);
   });
+
+  it('prepares a frozen run in repeatable batches without requiring incremental shutdown',
+    async () => {
+      const fixture = harness(true);
+      const batches = [
+        { preparedTokens: 2, deletedBalances: 3, deletedJournalEvents: 4 },
+        { preparedTokens: 0, deletedBalances: 0, deletedJournalEvents: 0 },
+      ];
+      fixture.repository.prepareBatch = async () => batches.shift();
+      const dryRun = await runGlobalHolderDelta({ ...fixture, prepareRunId: '2' });
+      assert.equal(dryRun.mode, 'dry-run');
+      const prepared = await runGlobalHolderDelta({
+        ...fixture, prepareRunId: '2', prepareBatchSize: 100, confirm: true,
+      });
+      assert.equal(prepared.mode, 'prepared');
+      assert.deepEqual(prepared.totals, {
+        preparedTokens: 2, deletedBalances: 3, deletedJournalEvents: 4,
+      });
+      assert.equal(fixture.creates(), 0);
+    });
 });

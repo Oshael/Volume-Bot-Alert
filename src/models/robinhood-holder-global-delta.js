@@ -5,6 +5,7 @@ const EXACT_SOURCES = Object.freeze([
   'blockscout_internal', 'rpc_code_transition', 'rpc_direct', 'rpc_trace', 'launchpad_event',
 ]);
 const MAX_ADOPTED_TOKENS_PER_RUN = 1000;
+const MAX_PREPARE_BATCH = 1000;
 function candidatesSql(options) {
   const scopes = [];
   if (options.includeUnseeded) scopes.push('state.token_address IS NULL');
@@ -146,7 +147,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         throw error;
       }
       const cursor = await client.query(
-        `SELECT safe_head FROM robinhood_holder_cursors
+        `SELECT safe_head, next_block FROM robinhood_holder_cursors
           WHERE chain = $1 AND stream = 'live' FOR UPDATE`, [CHAIN]
       );
       if (!cursor.rowCount) {
@@ -169,7 +170,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         .filter((row) => row.adopted)
         .map((row) => row.token_address);
       const adopted = adoptedAddresses.length;
-      if (adopted > MAX_ADOPTED_TOKENS_PER_RUN) {
+      if (adopted > MAX_ADOPTED_TOKENS_PER_RUN && input.batchedAdoption !== true) {
         const error = new Error(
           `Robinhood holder global delta adoption exceeds ${MAX_ADOPTED_TOKENS_PER_RUN} tokens`
         );
@@ -180,7 +181,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         minimum === null || BigInt(row.deployment_block) < minimum
           ? BigInt(row.deployment_block) : minimum
       ), null).toString();
-      if (adopted) {
+      if (adopted && input.batchedAdoption !== true) {
         await client.query("SET LOCAL lock_timeout = '2s'");
         await client.query("SET LOCAL statement_timeout = '30s'");
         await client.query(
@@ -192,9 +193,13 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
       const inserted = await client.query(
          `INSERT INTO robinhood_holder_global_backfill_runs (
            chain, catalog_cutoff, next_block, telemetry
-         ) VALUES ($1, $2, $3::bigint,
-                   jsonb_build_object('startBlock', ($3::bigint)::text))
-         RETURNING id`, [CHAIN, normalized.cutoff, startBlock]
+         ) VALUES ($1, $2, $3::bigint, jsonb_build_object(
+           'startBlock', ($3::bigint)::text,
+           'adoptionJournalCutoverBlock', ($4::bigint)::text,
+           'adoptionJournalCutoverAt', CASE WHEN $5::boolean THEN clock_timestamp() END))
+         RETURNING id`, [CHAIN, normalized.cutoff, startBlock,
+          input.batchedAdoption === true ? cursor.rows[0].next_block : null,
+          input.batchedAdoption === true]
       );
       const runId = inserted.rows[0].id;
       await client.query(
@@ -205,7 +210,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
       let appliedJournal = { rowCount: 0 };
       let balances = { rowCount: 0 };
       let states = { rowCount: 0 };
-      if (adopted) {
+      if (adopted && input.batchedAdoption !== true) {
         pendingJournal = await client.query(
           `DELETE FROM robinhood_holder_transfer_journal
             WHERE chain = $1 AND token_address = ANY($2::varchar[])
@@ -227,7 +232,9 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
           [CHAIN, adoptedAddresses]
         );
       }
-      if (states.rowCount !== adopted) throw new Error('Delta holder state adoption changed while locked');
+      if (input.batchedAdoption !== true && states.rowCount !== adopted) {
+        throw new Error('Delta holder state adoption changed while locked');
+      }
       await client.query(
         `UPDATE robinhood_holder_global_backfill_runs
             SET cohort_token_count = $2, updated_at = NOW()
@@ -247,6 +254,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         safeHead: cursor.rows[0].safe_head == null ? null : String(cursor.rows[0].safe_head),
         deletedBalances: balances.rowCount,
         deletedJournalEvents: pendingJournal.rowCount + appliedJournal.rowCount,
+        preparationPending: input.batchedAdoption === true ? adopted : 0,
       });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -256,7 +264,115 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ createRun, previewRun });
+  async function prepareBatch(input = {}) {
+    const runId = Number(input.runId);
+    const limit = Number(input.limit ?? 100);
+    if (!Number.isSafeInteger(runId) || runId < 1
+        || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PREPARE_BATCH) {
+      throw new Error('Delta preparation runId or limit is invalid');
+    }
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout = '2s'");
+      await client.query("SET LOCAL statement_timeout = '30s'");
+      const run = await client.query(
+        `SELECT id, telemetry->>'adoptionJournalCutoverAt' AS journal_cutover_at
+           FROM robinhood_holder_global_backfill_runs
+          WHERE id = $1 AND chain = $2 AND status = 'frozen' FOR UPDATE`,
+        [runId, CHAIN]
+      );
+      if (!run.rowCount) {
+        const error = new Error('Delta preparation requires a frozen run');
+        error.code = 'holder_global_delta_not_frozen';
+        throw error;
+      }
+      const selected = await client.query(
+        `SELECT state.token_address, state.ledger_status
+           FROM robinhood_holder_global_backfill_tokens cohort
+           JOIN robinhood_holder_token_states state
+             ON state.chain = cohort.chain AND state.token_address = cohort.token_address
+          WHERE cohort.run_id = $1 AND cohort.chain = $2 AND cohort.status = 'active'
+          ORDER BY state.token_address LIMIT $3 FOR UPDATE OF state`,
+        [runId, CHAIN, limit]
+      );
+      if (selected.rows.some((row) => row.ledger_status !== 'backfilling')) {
+        const error = new Error('Delta cohort contains a state that is no longer backfilling');
+        error.code = 'holder_global_delta_state_changed';
+        throw error;
+      }
+      const addresses = selected.rows.map((row) => row.token_address);
+      const journalCutoverAt = run.rows[0].journal_cutover_at;
+      if (addresses.length && !journalCutoverAt) {
+        throw new Error('Delta preparation journal cutover is unavailable');
+      }
+      let deletedJournalEvents = 0;
+      let deletedBalances = 0;
+      if (addresses.length) {
+        for (const applied of [false, true]) {
+          const journal = await client.query(
+            `DELETE FROM robinhood_holder_transfer_journal
+              WHERE chain = $1 AND token_address = ANY($2::varchar[])
+                AND applied = $3 AND captured_at < $4::timestamptz`,
+            [CHAIN, addresses, applied, journalCutoverAt]
+          );
+          deletedJournalEvents += journal.rowCount;
+        }
+        const balances = await client.query(
+          `DELETE FROM robinhood_holder_balances
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])`,
+          [CHAIN, addresses]
+        );
+        deletedBalances = balances.rowCount;
+        const states = await client.query(
+          `DELETE FROM robinhood_holder_token_states
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])
+              AND ledger_status = 'backfilling'`, [CHAIN, addresses]
+        );
+        if (states.rowCount !== addresses.length) {
+          throw new Error('Delta holder state preparation changed while locked');
+        }
+        await client.query(
+          `UPDATE robinhood_holder_cursors
+              SET version = version + 1, updated_at = NOW()
+            WHERE chain = $1 AND stream = 'live'`, [CHAIN]
+        );
+      }
+      await client.query('COMMIT');
+      return Object.freeze({ runId: String(runId), preparedTokens: addresses.length,
+        deletedBalances, deletedJournalEvents });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function preparationStatus(input = {}) {
+    const runId = Number(input.runId);
+    if (!Number.isSafeInteger(runId) || runId < 1) {
+      throw new Error('Delta preparation runId is invalid');
+    }
+    const result = await database.query(
+      `SELECT run.status, run.cohort_token_count,
+              COUNT(state.token_address)::int AS remaining_states
+         FROM robinhood_holder_global_backfill_runs run
+         LEFT JOIN robinhood_holder_global_backfill_tokens cohort
+           ON cohort.run_id = run.id AND cohort.chain = run.chain
+             AND cohort.status = 'active'
+         LEFT JOIN robinhood_holder_token_states state
+           ON state.chain = cohort.chain AND state.token_address = cohort.token_address
+        WHERE run.id = $1 AND run.chain = $2
+        GROUP BY run.id`, [runId, CHAIN]
+    );
+    if (!result.rowCount) throw new Error('Delta preparation run does not exist');
+    const row = result.rows[0];
+    return Object.freeze({ runId: String(runId), status: row.status,
+      cohortTokens: Number(row.cohort_token_count), remainingStates: Number(row.remaining_states) });
+  }
+
+  return Object.freeze({ createRun, prepareBatch, preparationStatus, previewRun });
 }
 
 module.exports = { createRobinhoodHolderGlobalDeltaRepository };

@@ -3839,6 +3839,23 @@ Uma confirmação recusa mais de 1.000 states adotados, e a limpeza usa
 `lock_timeout` de 2s e `statement_timeout` de 30s para falhar com rollback em vez
 de monopolizar o PostgreSQL. O rolling automático seleciona somente tokens sem
 state, portanto nunca executa essa limpeza destrutiva de adoção.
+Para uma coorte maior, use `--batched-adoption` junto dos mesmos filtros e
+`--confirm-create`, com o worker global parado e o grupo `robinhood-holders`
+parado somente até a coorte `frozen` ser criada. Essa confirmação não apaga os
+states: o seletor incremental ignora todos os tokens da coorte ativa, então o
+grupo de holders pode ser reiniciado imediatamente. Com o `runId` retornado,
+a hora de corte salva no run preserva eventos do journal capturados depois do
+congelamento enquanto os lotes antigos são removidos.
+`--prepare-run-id=ID` mostra quantos states restam sem escrever; execute
+`--prepare-run-id=ID --confirm-prepare` para apagar journal, balances e states
+em transações de 100 tokens. `--prepare-batch-size=N` aceita 1 a 1.000 quando
+um lote precisar ser reduzido. A preparação é retomável com o mesmo comando;
+o scanner global recusa iniciar enquanto algum state da coorte existir.
+Confira `remainingStates=0` antes de iniciar o worker global. Durante o scan,
+use `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL` para fixar o Archive; uma URL
+ausente faz o worker usar `ROBINHOOD_RPC_URL`. A limpeza remove o progresso
+incremental parcial dos tokens adotados e só deve ocorrer depois de validar
+coorte, início do scan e cobertura do Archive no dry-run.
 Quando a intenção for limpar somente states incrementais já `backfilling`, use
 `-- --backfilling-only` tanto no dry-run quanto junto de `--confirm-create`.
 Esse modo exclui tokens sem state e impede que um deployment histórico recém

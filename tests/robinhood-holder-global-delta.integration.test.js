@@ -5,6 +5,12 @@ const db = require('../src/models/db');
 const {
   createRobinhoodHolderGlobalDeltaRepository,
 } = require('../src/models/robinhood-holder-global-delta');
+const {
+  createRobinhoodHolderGlobalBackfillRepository,
+} = require('../src/models/robinhood-holder-global-backfill');
+const {
+  createRobinhoodHolderBackfillRepository,
+} = require('../src/models/robinhood-holder-backfill');
 
 const TOKENS = ['a', 'b', 'c', 'd'].map((digit) => `0x${digit.repeat(40)}`);
 const WALLET = `0x${'e'.repeat(40)}`;
@@ -162,6 +168,74 @@ describe('Robinhood holder global delta persistence', () => {
         repository.createRun({ catalogCutoff: '2026-08-12T00:00:00Z' }),
         { code: 'holder_global_backfill_active_run_exists' }
       );
+
+      await client.query(
+        `UPDATE robinhood_holder_global_backfill_runs
+            SET status = 'completed', completed_at = NOW() WHERE id = $1`, [created.runId]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block, backfill_next_block
+         ) VALUES ($1, 1, 'backfilling', 200, 500)`, [TOKENS[1]]
+      );
+      await client.query(`INSERT INTO token_catalog
+        SELECT 'robinhood', '0x' || lpad(to_hex(n), 40, '0'),
+               '2026-08-11T03:00:00Z'::timestamptz
+        FROM generate_series(1, 1001) AS n`);
+      await client.query(`INSERT INTO robinhood_token_attributions
+        SELECT 'robinhood', '0x' || lpad(to_hex(n), 40, '0'), 'rpc_direct', 250
+        FROM generate_series(1, 1001) AS n`);
+      await client.query(`INSERT INTO robinhood_holder_token_states (
+          token_address, holder_count, ledger_status, deployment_block, backfill_next_block)
+        SELECT '0x' || lpad(to_hex(n), 40, '0'), 0, 'backfilling', 250, 500
+        FROM generate_series(1, 1001) AS n`);
+      const batched = await repository.createRun({
+        catalogCutoff: '2026-08-12T00:00:00Z',
+        includeUnseeded: false, batchedAdoption: true,
+      });
+      assert.equal(batched.preparationPending, 1002);
+      assert.equal(batched.deletedJournalEvents, 0);
+      assert.equal((await repository.preparationStatus({ runId: batched.runId })).remainingStates,
+        1002);
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (1001, $1, $1, 0, 2, $2, $3, $4, 1)`,
+        [HASH, TOKENS[1], `0x${'0'.repeat(40)}`, WALLET]
+      );
+      const global = createRobinhoodHolderGlobalBackfillRepository({ database });
+      await assert.rejects(global.startRun({ runId: batched.runId, version: 0 }),
+        { code: 'holder_global_backfill_run_stale' });
+      const incremental = createRobinhoodHolderBackfillRepository({ database });
+      assert.equal(await incremental.getNextToken({ throughBlock: '1000' }), null);
+      assert.deepEqual(await repository.prepareBatch({ runId: batched.runId, limit: 1000 }), {
+        runId: batched.runId, preparedTokens: 1000,
+        deletedBalances: 0, deletedJournalEvents: 0,
+      });
+      assert.equal((await repository.preparationStatus({ runId: batched.runId })).remainingStates, 2);
+      assert.deepEqual(await repository.prepareBatch({ runId: batched.runId, limit: 1000 }), {
+        runId: batched.runId, preparedTokens: 2,
+        deletedBalances: 0, deletedJournalEvents: 1,
+      });
+      assert.equal((await client.query(
+        `SELECT COUNT(*)::int AS n FROM robinhood_holder_transfer_journal
+          WHERE token_address = $1 AND block_number = 1001`, [TOKENS[1]]
+      )).rows[0].n, 1);
+      assert.equal((await repository.preparationStatus({ runId: batched.runId })).remainingStates, 0);
+      assert.equal((await repository.prepareBatch({ runId: batched.runId })).preparedTokens, 0);
+      assert.equal((await global.startRun({ runId: batched.runId, version: 0 })).status,
+        'scanning');
+      await client.query(
+        `UPDATE robinhood_holder_global_backfill_tokens
+            SET status = 'materialized' WHERE run_id = $1`, [batched.runId]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block, backfill_next_block
+         ) VALUES ($1, 1, 'backfilling', 200, 500)`, [TOKENS[1]]
+      );
+      assert.equal(await incremental.getNextToken({ throughBlock: '1000' }), null);
     } finally {
       client.release();
     }
@@ -175,8 +249,8 @@ describe('Robinhood holder global delta persistence', () => {
     const client = {
       async query(sql) {
         if (sql === 'ROLLBACK') rolledBack = true;
-        if (/SELECT safe_head FROM robinhood_holder_cursors/.test(sql)) {
-          return { rowCount: 1, rows: [{ safe_head: '1000' }] };
+        if (/SELECT safe_head, next_block FROM robinhood_holder_cursors/.test(sql)) {
+          return { rowCount: 1, rows: [{ safe_head: '1000', next_block: '1001' }] };
         }
         if (/SELECT catalog\.address AS token_address/.test(sql)) {
           return { rowCount: candidates.length, rows: candidates };

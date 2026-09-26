@@ -30,10 +30,28 @@ async function latestCompletedCatalogCutoff(database) {
   return new Date(result.rows[0].catalog_cutoff).toISOString();
 }
 
+async function runPreparation(repository, input) {
+  const before = await repository.preparationStatus({ runId: input.prepareRunId });
+  if (input.confirm !== true) return Object.freeze({ mode: 'dry-run', preparation: before });
+  if (before.status !== 'frozen') throw new Error('Delta preparation requires a frozen run');
+  const totals = { preparedTokens: 0, deletedBalances: 0, deletedJournalEvents: 0 };
+  for (;;) {
+    const batch = await repository.prepareBatch({
+      runId: input.prepareRunId, limit: input.prepareBatchSize,
+    });
+    if (!batch.preparedTokens) break;
+    for (const key of Object.keys(totals)) totals[key] += batch[key];
+    input.onProgress?.(batch);
+  }
+  return Object.freeze({ mode: 'prepared', before, totals,
+    after: await repository.preparationStatus({ runId: input.prepareRunId }) });
+}
+
 async function runGlobalHolderDelta(input = {}) {
   const database = input.database || db;
   const repository = input.repository
     || createRobinhoodHolderGlobalDeltaRepository({ database });
+  if (input.prepareRunId != null) return runPreparation(repository, input);
   const catalogFloor = input.sinceLatestCompletedRun === true
     ? await latestCompletedCatalogCutoff(database) : input.catalogFloor;
   const candidateInput = {
@@ -56,6 +74,7 @@ async function runGlobalHolderDelta(input = {}) {
       maxScanBlocks: candidateInput.maximumGapBlocks == null
         ? null : Number(candidateInput.maximumGapBlocks),
       incrementalBackfillActive,
+      batchedAdoption: input.batchedAdoption === true,
       preview,
     });
   }
@@ -66,7 +85,9 @@ async function runGlobalHolderDelta(input = {}) {
   }
   return Object.freeze({
     mode: 'confirmed', before: preview,
-    created: await repository.createRun(candidateInput),
+    created: await repository.createRun({
+      ...candidateInput, batchedAdoption: input.batchedAdoption === true,
+    }),
   });
 }
 
@@ -75,12 +96,29 @@ async function main() {
     const maximumGapArgument = process.argv.find(
       (argument) => argument.startsWith('--max-scan-blocks=')
     );
+    const prepareRunArgument = process.argv.find(
+      (argument) => argument.startsWith('--prepare-run-id=')
+    );
+    const prepareBatchArgument = process.argv.find(
+      (argument) => argument.startsWith('--prepare-batch-size=')
+    );
+    const preparing = prepareRunArgument != null;
+    if (preparing && process.argv.includes('--confirm-create')) {
+      throw new Error('Use --confirm-prepare with --prepare-run-id');
+    }
+    if (!preparing && process.argv.includes('--confirm-prepare')) {
+      throw new Error('--confirm-prepare requires --prepare-run-id');
+    }
     console.log(JSON.stringify(await runGlobalHolderDelta({
       catalogCutoff: process.env.ROBINHOOD_HOLDER_GLOBAL_DELTA_CATALOG_CUTOFF,
       includeUnseeded: !process.argv.includes('--backfilling-only'),
       sinceLatestCompletedRun: process.argv.includes('--since-latest-completed-run'),
       maximumGapBlocks: maximumGapArgument?.slice('--max-scan-blocks='.length),
-      confirm: process.argv.includes('--confirm-create'),
+      batchedAdoption: process.argv.includes('--batched-adoption'),
+      prepareRunId: prepareRunArgument?.slice('--prepare-run-id='.length),
+      prepareBatchSize: prepareBatchArgument?.slice('--prepare-batch-size='.length),
+      onProgress: (batch) => console.log(JSON.stringify({ mode: 'preparing', ...batch })),
+      confirm: process.argv.includes(preparing ? '--confirm-prepare' : '--confirm-create'),
     }), null, 2));
   } finally {
     await db.pool.end().catch(() => {});
