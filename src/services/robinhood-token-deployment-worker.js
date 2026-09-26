@@ -21,8 +21,9 @@ const ROBINHOOD_CHAIN_ID = 4663n;
 const LOCAL_EVIDENCE_GRACE_MS = 15_000;
 const LOCAL_EVIDENCE_RETRY_MS = 1000;
 const PINNED_EVIDENCE_FAST_RETRIES = 8;
-const PHASE_HISTORY_LIMIT = 720;
+const PHASE_HISTORY_LIMIT = 4096;
 const POOL_HISTORY_LIMIT = 360;
+const PROCESS_HISTORY_LIMIT = 256;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -242,6 +243,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   let phaseStartedAt = null;
   const phaseHistory = [];
   const poolHistory = [];
+  const processHistory = [];
   const status = {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalResolved: 0, totalLocalResolved: 0, totalDeferred: 0, totalSkipped: 0,
@@ -272,7 +274,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     lastFirstAttemptHead: null, lastFirstAttemptCode32000: null,
     lastFirstAttemptTrace: null, recentFirstAttemptMisses: [],
     lastRunDurationMs: null, lastClaimDurationMs: null,
-    lastProcessDurationMs: null, lastRunClaimed: null,
+    lastProcessDurationMs: null, lastRunClaimed: null, lastProcessProfile: null,
     runPhase: 'idle', databasePool: null,
     databasePoolPeakBusy: 0, databasePoolPeakWaiting: 0,
     databasePoolPeakWaitingSample: null,
@@ -330,6 +332,60 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     phaseStartedAt = at;
   }
 
+  function createTaskTimer() {
+    const stageMs = {};
+    return {
+      stageMs,
+      async measure(stage, operation) {
+        const startedAt = now();
+        try { return await operation(); }
+        finally { stageMs[stage] = (stageMs[stage] || 0) + Math.max(0, now() - startedAt); }
+      },
+    };
+  }
+
+  function createProcessProfile(startedAt) {
+    const summary = {
+      run: status.totalRuns, startedAt: new Date(startedAt).toISOString(),
+      finishedAt: null, wallMs: null, tasks: 0, taskMs: 0,
+      maxTaskStartDelayMs: 0, stageTaskMs: {}, stageMaxMs: {}, slowestTasks: [],
+    };
+    return {
+      record(task, taskStartedAt, taskFinishedAt, stageMs, outcome) {
+        const durationMs = Math.max(0, taskFinishedAt - taskStartedAt);
+        summary.tasks += 1;
+        summary.taskMs += durationMs;
+        summary.maxTaskStartDelayMs = Math.max(
+          summary.maxTaskStartDelayMs, Math.max(0, taskStartedAt - startedAt)
+        );
+        for (const [stage, duration] of Object.entries(stageMs)) {
+          summary.stageTaskMs[stage] = (summary.stageTaskMs[stage] || 0) + duration;
+          summary.stageMaxMs[stage] = Math.max(summary.stageMaxMs[stage] || 0, duration);
+        }
+        summary.slowestTasks.push({
+          tokenAddress: task.tokenAddress, durationMs, outcome, stageMs: { ...stageMs },
+        });
+        summary.slowestTasks.sort((left, right) => right.durationMs - left.durationMs);
+        summary.slowestTasks.length = Math.min(summary.slowestTasks.length, 3);
+      },
+      finish(finishedAt) {
+        summary.finishedAt = new Date(finishedAt).toISOString();
+        summary.wallMs = Math.max(0, finishedAt - startedAt);
+        status.lastProcessProfile = summary;
+        processHistory.push({ from: startedAt, to: finishedAt, summary });
+        if (processHistory.length > PROCESS_HISTORY_LIMIT) processHistory.shift();
+      },
+    };
+  }
+
+  function blockingProcessRuns(anchorAt, claimedAt) {
+    return processHistory.map(({ from, to, summary }) => ({
+      overlapMs: Math.max(0, Math.min(to, claimedAt) - Math.max(from, anchorAt)),
+      ...summary,
+    })).filter(({ overlapMs }) => overlapMs > 0)
+      .sort((left, right) => right.overlapMs - left.overlapMs).slice(0, 2);
+  }
+
   function summarizePreClaimWindow(anchorAt, claimedAt) {
     if (!Number.isFinite(anchorAt) || anchorAt > claimedAt) return null;
     const phaseMs = { idle: 0, archive_expired: 0, claim: 0, process: 0 };
@@ -350,6 +406,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }, null);
     return {
       phaseMs, observedMs, unobservedMs: Math.max(0, claimedAt - anchorAt - observedMs),
+      blockingRuns: blockingProcessRuns(anchorAt, claimedAt),
       pool: {
         samples: samples.length,
         firstSampleAt: samples[0]?.sampledAt || null,
@@ -377,13 +434,14 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     ? Math.max(0, now() - new Date(task.createdAt).getTime())
     : Number.POSITIVE_INFINITY);
 
-  async function resolveLocally(current, task) {
+  async function resolveLocally(current, task, timer) {
     if (!canResolveLocally(current, task)) return null;
-    const mintHint = task.mintHint || await current.outbox.findMintHint(task.tokenAddress, {
+    const mintHint = task.mintHint || await timer.measure('evidenceDb', () => current.outbox.findMintHint(task.tokenAddress, {
       confirmations: options.confirmations, lookbackBlocks: options.stateLookbackBlocks,
-    });
+    }));
     const discoveryHint = !mintHint && typeof current.outbox.findDiscoveryHint === 'function'
-      ? await current.outbox.findDiscoveryHint(task.tokenAddress) : null;
+      ? await timer.measure('evidenceDb', () => current.outbox.findDiscoveryHint(task.tokenAddress))
+      : null;
     const localHint = mintHint || discoveryHint;
     if (!localHint) {
       if (taskAge(task) < LOCAL_EVIDENCE_GRACE_MS) {
@@ -393,7 +451,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       }
       return null;
     }
-    return verifyLocalHint(current.localResolver, mintHint, localHint);
+    return timer.measure('liveRpc', () => verifyLocalHint(current.localResolver, mintHint, localHint));
   }
 
   async function resolveCanonicalCreator(current, transition) {
@@ -437,16 +495,20 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     };
   }
 
-  async function materializeCreator(current, task, transition, traceBudget) {
-    const canonical = await resolveCanonicalCreator(current, transition);
+  async function materializeCreator(current, task, transition, traceBudget, timer) {
+    const canonical = await timer.measure('creatorDb', () =>
+      resolveCanonicalCreator(current, transition));
     if (canonical) {
-      await current.attributions.recordVerifiedDirectDeployments([canonical]);
+      await timer.measure('creatorDb', () =>
+        current.attributions.recordVerifiedDirectDeployments([canonical]));
       return canonical;
     }
-    const traced = await resolveTraceCreator(current, task, transition, traceBudget);
+    const traced = await timer.measure('creatorTraceRpc', () =>
+      resolveTraceCreator(current, task, transition, traceBudget));
     if (!traced) return null;
     try {
-      await current.attributions.recordVerifiedDirectDeployments([traced]);
+      await timer.measure('creatorDb', () =>
+        current.attributions.recordVerifiedDirectDeployments([traced]));
       status.totalTraceResolved += 1;
       status.lastTraceError = null;
       return traced;
@@ -464,11 +526,11 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     return retryDelay(task.attemptCount);
   }
 
-  async function deferTask(task, error) {
-    await (await runtime()).outbox.retry({
+  async function deferTask(task, error, timer) {
+    await timer.measure('outboxDb', async () => (await runtime()).outbox.retry({
       owner, tokenAddress: task.tokenAddress, retryMs: retryFor(task, error),
       error: `${error.stage || 'runtime'}:${error.code || 'deployment_resolution_failed'}:${error.message}`,
-    }).catch(() => {});
+    }).catch(() => {}));
     status.totalDeferred += 1;
   }
 
@@ -556,7 +618,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     };
   }
 
-  async function beginFirstAttemptTrace(current, task, claimedAt, outcome) {
+  async function beginFirstAttemptTrace(current, task, claimedAt, outcome, timer) {
     const wait = measureFirstAttemptWait(task, claimedAt);
     const pool = wait ? sampleDatabasePool() : null;
     outcome.trace = wait ? {
@@ -572,7 +634,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         total: pool.total, busy: pool.busy, waiting: pool.waiting, max: pool.max,
       } : null,
     } : null;
-    const head = await sampleFirstAttemptHead(current, task, wait);
+    const head = wait && typeof current.liveHead === 'function'
+      ? await timer.measure('headRpc', () => sampleFirstAttemptHead(current, task, wait))
+      : null;
     if (outcome.trace && head) outcome.trace.head = {
       sampledAt: head.sampledAt, headBlock: head.headBlock,
       distanceBlocks: head.distanceBlocks,
@@ -608,24 +672,28 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     };
   }
 
-  async function recoverPinnedWithArchive(current, task, error, budget) {
+  async function recoverPinnedWithArchive(current, task, error, budget, timer) {
     if (!eligibleForArchiveFallback(current, task, error) || !budget.take()) return null;
     status.totalArchiveFallbackAttempts += 1;
     try {
-      const inspected = await current.archiveResolver.inspect(task.mintHint);
+      const inspected = await timer.measure('archiveRpc', () =>
+        current.archiveResolver.inspect(task.mintHint));
       let transition = inspected?.status === 'transition' ? inspected.transition : null;
       if (inspected?.status === 'preexisting-code' && current.archiveDiscovery) {
-        transition = await current.archiveDiscovery.discover({
+        transition = await timer.measure('archiveRpc', () => current.archiveDiscovery.discover({
           tokenAddress: task.tokenAddress, upperBlock: task.mintHint.blockNumber,
           exactBlockHint: true, blockEvidenceOnly: true,
-        });
+        }));
       }
       if (!transition) throw new Error('Archive code transition is inconclusive');
-      const recorded = await current.attributions.recordCodeTransitions([transition]);
-      if (recorded.attributed !== 1 && !await current.outbox.isExact(task.tokenAddress)) {
+      const recorded = await timer.measure('archiveDb', () =>
+        current.attributions.recordCodeTransitions([transition]));
+      if (recorded.attributed !== 1 && !await timer.measure('archiveDb', () =>
+        current.outbox.isExact(task.tokenAddress))) {
         throw new Error('Archive code transition was not persisted');
       }
-      if (!await current.outbox.complete({ owner, tokenAddress: task.tokenAddress })) {
+      if (!await timer.measure('archiveDb', () =>
+        current.outbox.complete({ owner, tokenAddress: task.tokenAddress }))) {
         throw new Error('deployment task changed during Archive fallback');
       }
       status.totalResolved += 1;
@@ -642,13 +710,20 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }
   }
 
-  async function processTask(current, task, traceBudget, archiveBudget, claimedAt) {
+  async function processTask(current, task, traceBudget, archiveBudget, claimedAt, profile) {
+    const taskStartedAt = now();
+    const timer = createTaskTimer();
+    let result;
     const firstPinned = task?.attemptCount === 1 && Boolean(task.mintHint);
     if (firstPinned) status.firstAttemptPinnedStarted += 1;
     const outcome = { value: 'Error', trace: null, liveError: null };
     try {
-      return await processTaskInner(current, task, traceBudget, archiveBudget, claimedAt, outcome);
+      result = await processTaskInner(
+        current, task, traceBudget, archiveBudget, claimedAt, outcome, timer
+      );
+      return result;
     } finally {
+      profile.record(task, taskStartedAt, now(), timer.stageMs, result?.status || 'failed');
       if (firstPinned) {
         status.firstAttemptPinnedFinished += 1;
         status[`firstAttempt${outcome.value}`] += 1;
@@ -668,15 +743,15 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }
   }
 
-  async function handleTaskError(current, task, archiveBudget, outcome, attempt, error) {
+  async function handleTaskError(current, task, archiveBudget, outcome, attempt, error, timer) {
     recordFirstAttemptLiveError(outcome, error);
     recordFirstAttemptCodeError(task, attempt.head, attempt.wait, error);
-    const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
+    const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget, timer);
     if (recovered) {
       outcome.value = 'ArchiveResolved';
       return recovered;
     }
-    if (task) await deferTask(task, error);
+    if (task) await deferTask(task, error, timer);
     if (['local_deployment_evidence_pending', 'local_mint_pending'].includes(error.code)) {
       outcome.value = 'Deferred';
       return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
@@ -685,27 +760,37 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     return { status: 'error', tokenAddress: task?.tokenAddress || null, errors: 1 };
   }
 
-  async function processTaskInner(current, task, traceBudget, archiveBudget, claimedAt, outcome) {
+  async function processTaskInner(current, task, traceBudget, archiveBudget, claimedAt,
+    outcome, timer) {
     let attempt = { wait: null, head: null };
     try {
-      if (await current.outbox.isExact(task.tokenAddress)) {
-        await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
+      if (await timer.measure('outboxDb', () => current.outbox.isExact(task.tokenAddress))) {
+        await timer.measure('outboxDb', () => current.outbox.complete({
+          owner, tokenAddress: task.tokenAddress,
+        }));
         status.totalSkipped += 1;
         outcome.value = 'SkippedAlreadyAttributed';
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
-      attempt = await beginFirstAttemptTrace(current, task, claimedAt, outcome);
-      const transition = await resolveLocally(current, task);
+      attempt = await beginFirstAttemptTrace(current, task, claimedAt, outcome, timer);
+      const transition = await resolveLocally(current, task, timer);
       if (transition?.ignoredMint) {
-        await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
+        await timer.measure('outboxDb', () => current.outbox.complete({
+          owner, tokenAddress: task.tokenAddress,
+        }));
         status.totalSkipped += 1;
         outcome.value = 'SkippedNonDeploymentMint';
         return { status: 'non-deployment-mint', tokenAddress: task.tokenAddress };
       }
       if (transition) {
-        await current.attributions.recordCodeTransitions([transition]);
-        const deployment = await materializeCreator(current, task, transition, traceBudget);
-        await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
+        await timer.measure('attributionDb', () =>
+          current.attributions.recordCodeTransitions([transition]));
+        const deployment = await materializeCreator(
+          current, task, transition, traceBudget, timer
+        );
+        await timer.measure('outboxDb', () => current.outbox.complete({
+          owner, tokenAddress: task.tokenAddress,
+        }));
         status.totalResolved += 1; status.totalLocalResolved += 1;
         outcome.value = 'LiveResolved';
         return {
@@ -719,7 +804,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         code: 'local_deployment_evidence_pending', stage: 'canonical_creator_evidence',
       });
     } catch (error) {
-      return handleTaskError(current, task, archiveBudget, outcome, attempt, error);
+      return handleTaskError(current, task, archiveBudget, outcome, attempt, error, timer);
     }
   }
 
@@ -778,11 +863,17 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
           return true;
         },
       };
-      const results = await concurrentMap(
-        tasks, options.concurrency,
-        (task) => processTask(current, task, traceBudget, archiveBudget, claimedAt)
-      );
-      status.lastProcessDurationMs = Math.max(0, now() - claimedAt);
+      const profile = createProcessProfile(claimedAt);
+      let results;
+      try {
+        results = await concurrentMap(
+          tasks, options.concurrency,
+          (task) => processTask(current, task, traceBudget, archiveBudget, claimedAt, profile)
+        );
+      } finally {
+        profile.finish(now());
+        status.lastProcessDurationMs = Math.max(0, now() - claimedAt);
+      }
       if (results.length === 1) return results[0];
       return {
         status: 'completed', claimed: tasks.length,

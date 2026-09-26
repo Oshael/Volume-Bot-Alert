@@ -272,6 +272,7 @@ it('separates Archive fallback successes by time spent in the live queue', async
 });
 
 it('finds earlier code before completing a pinned mint that is not a deployment', async () => {
+  let clock = 100_000;
   let discovered;
   let recorded;
   const mintHint = {
@@ -279,25 +280,31 @@ it('finds earlier code before completing a pinned mint that is not a deployment'
     transactionHash: TRANSACTION_HASH,
   };
   const worker = createRobinhoodTokenDeploymentWorker({
-    owner: 'test',
+    owner: 'test', now: () => clock,
     runtime: {
       outbox: {
         claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, mintHint }),
-        isExact: async () => false,
-        complete: async () => true,
+        isExact: async () => { clock += 3; return false; },
+        complete: async () => { clock += 13; return true; },
         retry: async () => { throw new Error('must not retry'); },
       },
       localResolver: { verify: async () => null, inspect: async () => {
+        clock += 17;
         throw Object.assign(new Error('eth_getCode RPC error -32000'), {
           code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
         });
       } },
-      archiveResolver: { inspect: async () => ({ status: 'preexisting-code' }) },
+      archiveResolver: { inspect: async () => {
+        clock += 5;
+        return { status: 'preexisting-code' };
+      } },
       archiveDiscovery: { discover: async (input) => {
+        clock += 7;
         discovered = input;
         return { tokenAddress: TOKEN, blockNumber: '50', source: 'rpc_code_transition' };
       } },
       attributions: { recordCodeTransitions: async (items) => {
+        clock += 11;
         recorded = items;
         return { attributed: 1 };
       } },
@@ -307,6 +314,9 @@ it('finds earlier code before completing a pinned mint that is not a deployment'
   assert.equal(discovered.upperBlock, '100');
   assert.equal(discovered.blockEvidenceOnly, true);
   assert.equal(recorded[0].blockNumber, '50');
+  assert.deepEqual(worker.getStatus().lastProcessProfile.stageTaskMs, {
+    outboxDb: 3, liveRpc: 17, archiveRpc: 12, archiveDb: 24,
+  });
 });
 
 it('leaves the live task retryable when Archive proof is inconclusive', async () => {
@@ -440,6 +450,15 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
   assert.equal(status.lastClaimDurationMs, 3);
   assert.equal(status.lastProcessDurationMs, 36);
   assert.equal(status.lastRunDurationMs, 41);
+  assert.equal(status.lastProcessProfile.wallMs, 36);
+  assert.equal(status.lastProcessProfile.tasks, 1);
+  assert.deepEqual(status.lastProcessProfile.stageTaskMs, {
+    outboxDb: 18, headRpc: 7, liveRpc: 11,
+  });
+  assert.deepEqual(status.lastProcessProfile.stageMaxMs, {
+    outboxDb: 18, headRpc: 7, liveRpc: 11,
+  });
+  assert.equal(status.lastProcessProfile.slowestTasks[0].tokenAddress, TOKEN);
 });
 
 it('attributes a mint wait to a previous process run and its simultaneous pool holders', async () => {
@@ -498,6 +517,11 @@ it('attributes a mint wait to a previous process run and its simultaneous pool h
   assert.equal(trace.preClaimWindow.pool.maxWaiting, 4);
   assert.equal(trace.preClaimWindow.pool.peakSample.phase, 'process');
   assert.deepEqual(trace.preClaimWindow.pool.peakSample.holders, [holder]);
+  assert.equal(trace.preClaimWindow.blockingRuns.length, 1);
+  assert.equal(trace.preClaimWindow.blockingRuns[0].overlapMs, 39_000);
+  assert.equal(trace.preClaimWindow.blockingRuns[0].wallMs, 40_000);
+  assert.equal(trace.preClaimWindow.blockingRuns[0].stageTaskMs.outboxDb, 40_000);
+  assert.equal(trace.preClaimWindow.blockingRuns[0].slowestTasks[0].tokenAddress, TOKEN_B);
 });
 
 it('samples shared pool pressure while the deployment worker is idle', async () => {

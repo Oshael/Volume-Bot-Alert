@@ -3660,6 +3660,18 @@ impediu o claim.
 `databasePool` registra `total`, `idle`, `busy`, `waiting` e `max` do pool
 PostgreSQL compartilhado pelo processo, com `sampledAt`; não mede as conexões
 globais do servidor.
+`lastProcessProfile` resume o último lote de `process`: duração de parede,
+quantidade de tarefas, tempo acumulado das tarefas, maior atraso para iniciar
+uma tarefa e até três tarefas mais lentas. `stageTaskMs` soma o tempo de cada
+etapa entre as tarefas e `stageMaxMs` guarda o maior tempo individual. As etapas
+são `outboxDb`, `evidenceDb`, `headRpc`, `liveRpc`, `attributionDb`, `creatorDb`,
+`creatorTraceRpc`, `archiveRpc` e `archiveDb`. As somas podem exceder a duração
+de parede porque tarefas concorrentes se sobrepõem; cada etapa mede tempo
+decorrido da chamada, incluindo eventuais esperas de pool, sem separar execução
+de SQL da espera por conexão. `preClaimWindow.blockingRuns` inclui até dois
+perfis de runs `process` concluídos que coincidiram com a espera da âncora até
+o claim, ordenados por `overlapMs`. O histórico em memória é limitado e reinicia
+com o processo; ausência de perfil não prova ausência de bloqueio.
 `databasePoolPeakBusy` e `databasePoolPeakWaiting` guardam os máximos amostrados
 desde o início do processo; `databasePoolRunPeakBusy` e
 `databasePoolRunPeakWaiting` guardam os máximos do lote mais recente. Se um lote
