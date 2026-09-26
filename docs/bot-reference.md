@@ -6404,6 +6404,17 @@ round-trip da consulta; o registro não executa SQL adicional nem é um plano de
 execução. Use esses bounds para selecionar uma execução lenta real antes de pedir
 um `EXPLAIN` pontual.
 
+Para a consulta de evidências de redistribuição, a Stage 252 adiciona um índice
+de janela nas arestas e um índice parcial de vendas por token, wallet e bloco.
+Execute `node src/utils/db-init-stage252.js` na VPS somente depois de confirmar
+que `trendscope_nvme2` aponta para `/srv/trendscope-data-2/pg16-tablespace`, que
+o mount e o volume do WAL têm espaço livre. A migration recusa outro destino ou
+mount desmontado. Ela constrói os índices físicos concorrentemente, uma partição
+de swaps por vez. Se interrompida, pode ser retomada com o mesmo comando. O índice do pai
+mantém a colocação das futuras partições nesse tablespace. Não é necessário
+reiniciar o worker: compare a duração das leituras de evidência e o progresso da
+fila em janelas equivalentes antes e depois da criação.
+
 No grupo `robinhood-wallet-classification`, habilite-o explicitamente com
 `ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_ENABLED=true`; batch, concorrência, lease,
 retry e statement timeout têm knobs próprios documentados nos env examples. O

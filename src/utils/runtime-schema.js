@@ -6773,6 +6773,25 @@ const SCHEMA_GROUPS = [
         excludes: ['NOT VALID'] }],
     }],
   },
+  {
+    key: 'stage252-robinhood-redistribution-evidence-indexes',
+    name: 'Stage 252 Robinhood redistribution evidence indexes',
+    repair: 'node src/utils/db-init-stage252.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_edges',
+      indexes: [{
+        name: 'idx_rh_transfer_edges_redis_window',
+        includes: ['chain', 'classification_version', 'token_address',
+          'first_wallet_transfer_block'],
+      }],
+    }, {
+      table: 'robinhood_wallet_swaps',
+      indexes: [{
+        name: 'idx_rh_wallet_swaps_redis_sell',
+        includes: ['chain', 'token_address', 'wallet_address', 'block_number', 'sell'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
