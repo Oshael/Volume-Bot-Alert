@@ -3,8 +3,28 @@
 const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const {
-  createRobinhoodDeploymentLagRecorder,
+  createRobinhoodDeploymentLagRecorder, readActivity,
 } = require('../src/services/robinhood-deployment-lag-recorder');
+
+it('preserves a non-enumerable pool password for the independent activity probe', async () => {
+  const options = { host: 'localhost', database: 'test' };
+  Object.defineProperty(options, 'password', { value: 'secret', enumerable: false });
+  let received;
+  let ended = false;
+  class FakeClient {
+    constructor(config) { received = config; }
+    async connect() {
+      assert.equal(received.password, 'secret');
+    }
+    async query() { return { rows: [] }; }
+    async end() { ended = true; }
+  }
+  const activity = await readActivity({ options }, FakeClient);
+  assert.equal(activity.sessions.length, 0);
+  assert.equal(received.application_name, 'robinhood-deployment-lag-recorder');
+  assert.equal(JSON.stringify(activity).includes('secret'), false);
+  assert.equal(ended, true);
+});
 
 it('persists a bounded incident before probing PostgreSQL and limits repeated alerts', async () => {
   let clock = 100_000;

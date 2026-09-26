@@ -497,11 +497,11 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
 
   async function resolveLocally(current, task, timer) {
     if (!canResolveLocally(current, task)) return null;
-    const mintHint = task.mintHint || await timer.measure('evidenceDb', () => current.outbox.findMintHint(task.tokenAddress, {
+    const mintHint = task.mintHint || await timer.measure('mintEvidenceDb', () => current.outbox.findMintHint(task.tokenAddress, {
       confirmations: options.confirmations, lookbackBlocks: options.stateLookbackBlocks,
     }));
     const discoveryHint = !mintHint && typeof current.outbox.findDiscoveryHint === 'function'
-      ? await timer.measure('evidenceDb', () => current.outbox.findDiscoveryHint(task.tokenAddress))
+      ? await timer.measure('discoveryEvidenceDb', () => current.outbox.findDiscoveryHint(task.tokenAddress))
       : null;
     const localHint = mintHint || discoveryHint;
     if (!localHint) {

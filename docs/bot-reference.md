@@ -3673,8 +3673,9 @@ globais do servidor.
 quantidade de tarefas, tempo acumulado das tarefas, maior atraso para iniciar
 uma tarefa e até três tarefas mais lentas. `stageTaskMs` soma o tempo de cada
 etapa entre as tarefas e `stageMaxMs` guarda o maior tempo individual. As etapas
-são `outboxDb`, `evidenceDb`, `headRpc`, `liveRpc`, `attributionDb`, `creatorDb`,
-`creatorTraceRpc`, `archiveRpc` e `archiveDb`. As somas podem exceder a duração
+são `outboxDb`, `mintEvidenceDb`, `discoveryEvidenceDb`, `headRpc`, `liveRpc`,
+`attributionDb`, `creatorDb`, `creatorTraceRpc`, `archiveRpc` e `archiveDb`.
+As somas podem exceder a duração
 de parede porque tarefas concorrentes se sobrepõem; cada etapa mede tempo
 decorrido da chamada, incluindo eventuais esperas de pool, sem separar execução
 de SQL da espera por conexão. `preClaimWindow.blockingRuns` inclui até dois
@@ -3741,7 +3742,8 @@ se durou ao menos 5 s e `late_mint` quando a âncora esperou ao menos 5 s pelo
 claim ou o head ultrapassou a janela. Cada tipo é limitado a um registro a cada
 30 s. O evento `snapshot` contém fase, tarefas e etapas em andamento, perfis
 dos últimos três runs e pressão recente do pool; uma leitura PostgreSQL separada,
-com timeout curto, gera `postgres_activity` com waits e SQL abreviado, ou
+com timeout curto e credenciais explícitas do pool, gera `postgres_activity` com
+waits e SQL abreviado, ou
 `postgres_activity_error`. O snapshot é registrado antes dessa leitura, para
 preservar a evidência mesmo se o banco não responder. Consulte depois com
 `journalctl -u trendscope-worker@robinhood-wallet-classification.service --no-pager | rg RobinhoodDeploymentLag`.

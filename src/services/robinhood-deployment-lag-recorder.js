@@ -13,9 +13,10 @@ const ACTIVITY_SQL = `SELECT pid, application_name, state, wait_event_type, wait
     AND state <> 'idle'
   ORDER BY query_start NULLS LAST LIMIT 20`;
 
-async function readActivity(pool = db.pool) {
-  const client = new Client({
+async function readActivity(pool = db.pool, ClientClass = Client) {
+  const client = new ClientClass({
     ...pool.options,
+    ...(pool.options.password === undefined ? {} : { password: pool.options.password }),
     application_name: 'robinhood-deployment-lag-recorder',
     connectionTimeoutMillis: 1000, query_timeout: 1500, statement_timeout: 1000,
   });

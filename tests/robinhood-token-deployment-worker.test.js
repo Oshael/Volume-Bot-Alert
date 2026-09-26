@@ -742,13 +742,18 @@ it('completes from an exact code transition without requiring creator provenance
       recordVerifiedDirectDeployments: async () => { throw new Error('must not invent creator'); },
     },
   });
-  const result = await createRobinhoodTokenDeploymentWorker({
+  const worker = createRobinhoodTokenDeploymentWorker({
     runtime: fixture.value, owner: 'test',
-  }).runOnce();
+  });
+  const result = await worker.runOnce();
   assert.deepEqual(result, {
     status: 'resolved', tokenAddress: TOKEN, source: 'rpc_code_transition',
   });
   assert.deepEqual(fixture.calls, ['local-attributed', 'complete']);
+  assert.ok(Object.hasOwn(worker.getStatus().lastProcessProfile.stageTaskMs, 'mintEvidenceDb'));
+  assert.equal(Object.hasOwn(
+    worker.getStatus().lastProcessProfile.stageTaskMs, 'discoveryEvidenceDb'
+  ), false);
 });
 
 it('uses the canonical pool discovery transaction when no mint was observed', async () => {
@@ -773,12 +778,17 @@ it('uses the canonical pool discovery transaction when no mint was observed', as
       recordVerifiedDirectDeployments: async () => { throw new Error('must not invent creator'); },
     },
   });
-  const result = await createRobinhoodTokenDeploymentWorker({
+  const worker = createRobinhoodTokenDeploymentWorker({
     runtime: fixture.value, owner: 'test',
-  }).runOnce();
+  });
+  const result = await worker.runOnce();
   assert.deepEqual(verifiedHint, discoveryHint);
   assert.equal(result.source, 'rpc_code_transition');
   assert.deepEqual(fixture.calls, ['local-attributed', 'complete']);
+  assert.ok(Object.hasOwn(worker.getStatus().lastProcessProfile.stageTaskMs, 'mintEvidenceDb'));
+  assert.ok(Object.hasOwn(
+    worker.getStatus().lastProcessProfile.stageTaskMs, 'discoveryEvidenceDb'
+  ));
 });
 
 it('does not keep exact holder evidence queued when creator evidence is unavailable', async () => {
