@@ -3701,7 +3701,10 @@ Os listeners do grupo `robinhood-wallet-classification` compartilham uma única
 conexão do pool por processo para seus canais `LISTEN`. Ao perder a conexão,
 reinscrevem todos os canais; cada worker mantém seu polling de reconciliação até
 a reconexão. Parar um worker remove apenas seu canal, e a última inscrição libera
-a conexão. Os demais grupos mantêm o comportamento de listener independente.
+a conexão. O pool PostgreSQL desse grupo tem máximo padrão de 15 conexões,
+independente de `DB_POOL_MAX` global; ajuste somente por
+`ROBINHOOD_WALLET_CLASSIFICATION_POOL_MAX` (1–100) no env da instância. Os demais
+grupos mantêm o comportamento de listener independente e seu próprio limite de pool.
 Se o lote falhar, `lastRunFailure` registra a fase (`archive_expired`, `claim`
 ou `process`), o erro, o estado do pool e os picos;
 o mesmo resumo é escrito no log antes de o erro se propagar, mesmo quando não há

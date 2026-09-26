@@ -47,6 +47,21 @@ function withEnv(overrides, fn) {
 }
 
 describe('runtime worker groups config', () => {
+  it('uses 15 database connections for wallet classification without changing other groups', () => {
+    withEnv({
+      BACKGROUND_WORKER_GROUPS: 'robinhood-wallet-classification', DB_POOL_MAX: '10',
+      ROBINHOOD_WALLET_CLASSIFICATION_POOL_MAX: undefined,
+    }, (config) => assert.equal(config.db.poolMax, 15));
+    withEnv({
+      BACKGROUND_WORKER_GROUPS: 'robinhood-holders', DB_POOL_MAX: '10',
+      ROBINHOOD_WALLET_CLASSIFICATION_POOL_MAX: undefined,
+    }, (config) => assert.equal(config.db.poolMax, 10));
+    withEnv({
+      BACKGROUND_WORKER_GROUPS: 'robinhood-wallet-classification', DB_POOL_MAX: '10',
+      ROBINHOOD_WALLET_CLASSIFICATION_POOL_MAX: '18',
+    }, (config) => assert.equal(config.db.poolMax, 18));
+  });
+
   it('uses five-second polling only as the holder canonical capture fallback', () => {
     withEnv({ ROBINHOOD_HOLDER_LIVE_INTERVAL_MS: undefined }, (config) => {
       assert.equal(config.robinhoodHolderLiveWorker.intervalMs, 5000);

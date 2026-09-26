@@ -964,7 +964,9 @@ module.exports = {
 
   db: {
     ...db,
-    poolMax: parseInt(process.env.DB_POOL_MAX || '20', 10),
+    poolMax: workerGroups.active.includes('robinhood-wallet-classification')
+      ? parseIntegerInRange(process.env.ROBINHOOD_WALLET_CLASSIFICATION_POOL_MAX, 15, 1, 100)
+      : parseInt(process.env.DB_POOL_MAX || '20', 10),
     slowQueryLogMs: parseInt(
       process.env.DB_SLOW_QUERY_LOG_MS || (nodeEnv === 'production' ? '2500' : '1000'),
       10
