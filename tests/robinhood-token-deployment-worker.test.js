@@ -912,8 +912,11 @@ it('claims only the live lane with fresh pinned mints first and loads a canonica
         mint_transaction_hash: TRANSACTION_HASH,
         mint_block_time: '2026-08-30T20:00:30Z',
       }] };
+      if (sql.includes('FROM robinhood_chain_capture_cursor')) {
+        return { rows: [{ from_block: '4', through_block: '88' }] };
+      }
       return { rows: [{
-        block_number: '100', block_hash: BLOCK_HASH, transaction_hash: TRANSACTION_HASH,
+        block_number: '80', block_hash: BLOCK_HASH, transaction_hash: TRANSACTION_HASH,
       }] };
     } },
   });
@@ -931,17 +934,33 @@ it('claims only the live lane with fresh pinned mints first and loads a canonica
   assert.match(calls[0].sql, /created_at >= NOW\(\) - INTERVAL '30 seconds'/);
   assert.match(calls[0].sql, /live_deadline_at, next_attempt_at, created_at/);
   assert.deepEqual(await repository.findMintHint(TOKEN), {
-    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    tokenAddress: TOKEN, blockNumber: '80', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
   });
-  assert.match(calls[1].sql, /robinhood_chain_events event/);
-  assert.match(calls[1].sql, /block\.canonical=TRUE/);
-  assert.match(calls[1].sql, /event\.topics->>1=\$4/);
-  assert.match(calls[1].sql, /cursor\.node_head - \$2::bigint/);
-  assert.match(calls[1].sql, /cursor\.node_head - \$5::bigint/);
-  assert.deepEqual(calls[1].params.slice(1), [12,
+  assert.match(calls[1].sql, /FROM robinhood_chain_capture_cursor/);
+  assert.deepEqual(calls[1].params, [96, 12]);
+  assert.match(calls[2].sql, /robinhood_chain_events event/);
+  assert.match(calls[2].sql, /block\.canonical=TRUE/);
+  assert.match(calls[2].sql, /event\.topics->>1=\$3/);
+  assert.match(calls[2].sql, /event\.block_number >= \$4::bigint/);
+  assert.match(calls[2].sql, /event\.block_number <= \$5::bigint/);
+  assert.doesNotMatch(calls[2].sql, /JOIN robinhood_chain_capture_cursor/);
+  assert.deepEqual(calls[2].params, [TOKEN,
     '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-    `0x${'0'.repeat(64)}`, 96]);
+    `0x${'0'.repeat(64)}`, '4', '88']);
+});
+
+it('skips mint event partitions when the capture checkpoint is behind the lookback', async () => {
+  const calls = [];
+  const repository = createRobinhoodTokenDeploymentOutboxRepository({
+    database: { async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [{ from_block: '100', through_block: '99' }] };
+    } },
+  });
+  assert.equal(await repository.findMintHint(TOKEN), null);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /FROM robinhood_chain_capture_cursor/);
 });
 
 it('moves expired pending work to the Archive lane in a bounded batch', async () => {

@@ -139,25 +139,32 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     const parsedLookback = input.lookbackBlocks == null ? 96 : Number(input.lookbackBlocks);
     const lookbackBlocks = Number.isSafeInteger(parsedLookback)
       ? Math.max(confirmations + 2, Math.min(parsedLookback, 1000)) : 96;
+    const normalized = normalizeTokenAddress(CHAIN, tokenAddress);
+    const { rows: bounds } = await database.query(
+      `SELECT GREATEST(node_head - $1::bigint, 0)::text AS from_block,
+              LEAST(checkpoint_block, GREATEST(node_head - $2::bigint, 0))::text
+                AS through_block
+         FROM robinhood_chain_capture_cursor WHERE chain='${CHAIN}'`,
+      [lookbackBlocks, confirmations]
+    );
+    const { from_block: fromBlock, through_block: throughBlock } = bounds[0] || {};
+    if (fromBlock == null || throughBlock == null
+        || BigInt(fromBlock) > BigInt(throughBlock)) return null;
     const { rows } = await database.query(
       `SELECT event.block_number, event.block_hash, event.transaction_hash
          FROM robinhood_chain_events event
          INNER JOIN robinhood_chain_blocks block
            ON block.chain=event.chain AND block.block_hash=event.block_hash
           AND block.canonical=TRUE
-         CROSS JOIN robinhood_chain_capture_cursor cursor
-        WHERE event.chain='${CHAIN}' AND cursor.chain=event.chain
-          AND event.address=$1 AND event.topic0=$3 AND event.topics->>1=$4
-          AND event.block_number >= GREATEST(cursor.node_head - $5::bigint, 0)
-          AND event.block_number <= LEAST(
-            cursor.checkpoint_block, GREATEST(cursor.node_head - $2::bigint, 0)
-          )
+        WHERE event.chain='${CHAIN}'
+          AND event.address=$1 AND event.topic0=$2 AND event.topics->>1=$3
+          AND event.block_number >= $4::bigint
+          AND event.block_number <= $5::bigint
         ORDER BY event.block_number, event.transaction_index, event.log_index LIMIT 1`,
-      [normalizeTokenAddress(CHAIN, tokenAddress), confirmations, TRANSFER_TOPIC, ZERO_TOPIC,
-        lookbackBlocks]
+      [normalized, TRANSFER_TOPIC, ZERO_TOPIC, fromBlock, throughBlock]
     );
     return rows[0] ? Object.freeze({
-      tokenAddress: normalizeTokenAddress(CHAIN, tokenAddress),
+      tokenAddress: normalized,
       blockNumber: String(rows[0].block_number),
       blockHash: rows[0].block_hash,
       transactionHash: rows[0].transaction_hash,

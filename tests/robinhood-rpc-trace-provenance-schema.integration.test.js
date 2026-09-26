@@ -12,6 +12,7 @@ const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
 const stage165 = require('../src/utils/db-init-stage165');
 const stage183 = require('../src/utils/db-init-stage183');
+const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 const {
   createRobinhoodTokenDeploymentOutboxRepository,
 } = require('../src/models/robinhood-token-deployment-outbox');
@@ -44,10 +45,6 @@ describe('Robinhood RPC trace provenance schema integration', () => {
   });
 
   after(async () => {
-    await db.query(
-      'DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1',
-      [APPLIED_MINT_TOKEN]
-    );
     await db.query(
       'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
       [[TOKEN, INTERNAL_TOKEN, CODE_TOKEN]]
@@ -123,25 +120,56 @@ describe('Robinhood RPC trace provenance schema integration', () => {
     await db.query('DELETE FROM robinhood_token_deployment_outbox WHERE token_address = $1', [address]);
   });
 
-  it('reuses retained mint evidence after the holder journal applies it', async () => {
-    await db.query(
-      `INSERT INTO robinhood_holder_transfer_journal (
-         block_number, block_hash, transaction_hash, transaction_index, log_index,
-         token_address, from_wallet, to_wallet, amount_raw,
-         to_balance_before, to_balance_after, holder_delta, applied, applied_at
-       ) VALUES (
-         200, $1, $2, 0, 0, $3,
-         '0x0000000000000000000000000000000000000000', $4, 1,
-         0, 1, 1, true, NOW()
-       )`,
-      [HASH, APPLIED_MINT_HASH, APPLIED_MINT_TOKEN, CREATOR]
-    );
-    const repository = createRobinhoodTokenDeploymentOutboxRepository({ database: db });
-    assert.deepEqual(await repository.findMintHint(APPLIED_MINT_TOKEN), {
-      tokenAddress: APPLIED_MINT_TOKEN,
-      blockNumber: '200',
-      blockHash: HASH,
-      transactionHash: APPLIED_MINT_HASH,
-    });
+  it('reads a canonical mint only from the bounded event partition', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query(`CREATE TEMP TABLE robinhood_chain_events (
+        chain text, block_number bigint, block_hash text, transaction_hash text,
+        transaction_index integer, log_index integer, address text, topic0 text,
+        topics jsonb
+      ) PARTITION BY RANGE (block_number)`);
+      await client.query(`CREATE TEMP TABLE mint_events_old PARTITION OF robinhood_chain_events
+        FOR VALUES FROM (0) TO (250000)`);
+      await client.query(`CREATE TEMP TABLE mint_events_recent PARTITION OF robinhood_chain_events
+        FOR VALUES FROM (250000) TO (500000)`);
+      await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
+        chain text, block_hash text, canonical boolean)`);
+      await client.query(`CREATE TEMP TABLE robinhood_chain_capture_cursor (
+        chain text, node_head bigint, checkpoint_block bigint)`);
+      await client.query(`INSERT INTO robinhood_chain_capture_cursor VALUES
+        ('robinhood', 300000, 300000)`);
+      await client.query(`INSERT INTO robinhood_chain_blocks VALUES
+        ('robinhood', $1, true), ('robinhood', $2, true)`,
+      [HASH, `0x${'f'.repeat(64)}`]);
+      await client.query(`INSERT INTO robinhood_chain_events VALUES
+        ('robinhood', 100, $1, $2, 0, 0, $3, $4, $5::jsonb),
+        ('robinhood', 299950, $6, $7, 0, 0, $3, $4, $5::jsonb)`,
+      [`0x${'f'.repeat(64)}`, `0x${'d'.repeat(64)}`, APPLIED_MINT_TOKEN,
+        TRANSFER_TOPIC, JSON.stringify([TRANSFER_TOPIC, ZERO_TOPIC]), HASH, APPLIED_MINT_HASH]);
+      let eventQuery;
+      const repository = createRobinhoodTokenDeploymentOutboxRepository({
+        database: { query: (sql, params) => {
+          if (sql.includes('FROM robinhood_chain_events event')) eventQuery = { sql, params };
+          return client.query(sql, params);
+        } },
+      });
+      assert.deepEqual(await repository.findMintHint(APPLIED_MINT_TOKEN), {
+        tokenAddress: APPLIED_MINT_TOKEN,
+        blockNumber: '299950',
+        blockHash: HASH,
+        transactionHash: APPLIED_MINT_HASH,
+      });
+      const plan = await client.query(`EXPLAIN (FORMAT JSON) ${eventQuery.sql}`,
+        eventQuery.params);
+      const planText = JSON.stringify(plan.rows[0]['QUERY PLAN']);
+      assert.match(planText, /mint_events_recent/);
+      assert.doesNotMatch(planText, /mint_events_old/);
+    } finally {
+      for (const name of ['robinhood_chain_events', 'robinhood_chain_blocks',
+        'robinhood_chain_capture_cursor']) {
+        await client.query(`DROP TABLE IF EXISTS pg_temp.${name} CASCADE`);
+      }
+      client.release();
+    }
   });
 });
