@@ -6396,6 +6396,14 @@ o commit rejeita lease, versão ou frontier diferentes antes de gravar o snapsho
 a fila drene. O worker shadow PostgreSQL-only
 consome a fila em lotes e concorrência limitados, adia tokens cujas frontiers ainda
 não estejam prontas e publica snapshot + conclusão da versão na mesma transação.
+
+Leituras de evidência que levam pelo menos 5 s registram
+`[RobinhoodRedistributionEvidenceSlow]` no journal com token, bounds congelados,
+duração, número de linhas e código de erro. A duração inclui espera por conexão e
+round-trip da consulta; o registro não executa SQL adicional nem é um plano de
+execução. Use esses bounds para selecionar uma execução lenta real antes de pedir
+um `EXPLAIN` pontual.
+
 No grupo `robinhood-wallet-classification`, habilite-o explicitamente com
 `ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_ENABLED=true`; batch, concorrência, lease,
 retry e statement timeout têm knobs próprios documentados nos env examples. O

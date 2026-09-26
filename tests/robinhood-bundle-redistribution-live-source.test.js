@@ -100,6 +100,29 @@ describe('Robinhood BUNDLED redistribution live source', () => {
     assert.match(calls[2].params[1], new RegExp(RECIPIENT));
   });
 
+  it('records the exact bounds of a slow evidence read', async () => {
+    const warnings = [];
+    const database = { async query(sql) {
+      if (sql === __private.READINESS_SQL) return { rows: [ready()] };
+      if (sql === __private.EVIDENCE_SQL) return { rows: [edge()] };
+      return { rows: [] };
+    } };
+    const source = createRobinhoodBundleRedistributionLiveSource({
+      database, now: (() => { const times = [0, 6100]; return () => times.shift(); })(),
+      logger: { warn: (label, payload) => warnings.push([label, JSON.parse(payload)]) },
+    });
+
+    await source.loadToken(TOKEN, lineage());
+
+    assert.deepEqual(warnings, [[
+      '[RobinhoodRedistributionEvidenceSlow]', {
+        tokenAddress: TOKEN, observationFromBlock: '15', frontierBlock: '100',
+        observationFromTime: OBSERVATION_TIME, frontierTime: FRONTIER_TIME,
+        durationMs: 6100, rows: 1, errorCode: null,
+      },
+    ]]);
+  });
+
   it('fails closed when a durable anchor is absent or its timestamp diverges', async () => {
     for (const [change, reason] of [
       [{ observation_anchor_time: null }, 'redistribution_anchor_missing'],

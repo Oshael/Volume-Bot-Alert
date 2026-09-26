@@ -1,9 +1,11 @@
 const db = require('./db');
+const { performance } = require('node:perf_hooks');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
 const PROJECTION_VERSION = 'rh_transfer_v1';
 const MAX_EDGES = 10_000;
+const SLOW_EVIDENCE_MS = 5_000;
 const HASH = /^0x[0-9a-f]{64}$/;
 const INVALID_CREATORS = new Set([
   `0x${'0'.repeat(40)}`,
@@ -261,6 +263,8 @@ function actors(sources) {
 
 function createRobinhoodBundleRedistributionLiveSource(options = {}) {
   const database = options.database || db;
+  const now = options.now || (() => performance.now());
+  const logger = options.logger || console;
   const statementTimeoutMs = Math.max(1_000,
     Math.min(Number(options.statementTimeoutMs) || 120_000, 900_000));
   const query = (sql, params) => (database.queryWithStatementTimeout
@@ -281,10 +285,32 @@ function createRobinhoodBundleRedistributionLiveSource(options = {}) {
       observationFromBlock: lineage.observation.blockNumber });
     const state = readiness(row, tokenAddress, lineage.frontier);
     if (!state.ready) return state;
-    const evidence = normalizeEvidence((await query(EVIDENCE_SQL, [
+    const evidenceParams = [
       CHAIN, tokenAddress, PROJECTION_VERSION, state.frontier.blockNumber,
       lineage.observation.blockNumber, bounds.observationTime, bounds.frontierTime,
-    ])).rows, tokenAddress);
+    ];
+    const startedAt = now();
+    let evidenceRows;
+    let evidenceError = null;
+    try {
+      evidenceRows = (await query(EVIDENCE_SQL, evidenceParams)).rows;
+    } catch (error) {
+      evidenceError = error;
+      throw error;
+    } finally {
+      const durationMs = Math.round(now() - startedAt);
+      if (durationMs >= SLOW_EVIDENCE_MS) {
+        try {
+          logger.warn('[RobinhoodRedistributionEvidenceSlow]', JSON.stringify({
+            tokenAddress, observationFromBlock: evidenceParams[4],
+            frontierBlock: evidenceParams[3], observationFromTime: evidenceParams[5],
+            frontierTime: evidenceParams[6], durationMs,
+            rows: evidenceRows?.length ?? null, errorCode: evidenceError?.code ?? null,
+          }));
+        } catch (_) { /* Diagnostic logging must not affect processing. */ }
+      }
+    }
+    const evidence = normalizeEvidence(evidenceRows, tokenAddress);
     if (!evidence.ready) return Object.freeze({ ...evidence, frontier: state.frontier,
       observationFromBlock: lineage.observation.blockNumber });
     const barrierRows = evidence.sources.length ? (await query(BARRIERS_SQL, [
