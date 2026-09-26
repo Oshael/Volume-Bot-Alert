@@ -3645,9 +3645,21 @@ journal; nesse caso a primeira duração é nula. `taskCreatedAt` e os contadore
 antigos `firstAttemptQueueWait*` ainda usam a criação da linha, que pode ser
 anterior à âncora renovada. Valores negativos de duração indicam relógios ou
 timestamps inconsistentes e exigem conferência antes de atribuir a causa.
+Cada trace também traz `currentRunClaimDurationMs`, `currentRunClaimed` e
+`preClaimWindow` para o intervalo entre registro da âncora e claim. `phaseMs`
+distribui o tempo observado entre `idle`, `archive_expired`, `claim` e `process`,
+incluindo runs anteriores; `unobservedMs` explicita a parte fora do histórico
+limitado em memória. Amostras do pool desse mesmo intervalo registram contagem,
+máximos de conexões ocupadas e esperando e o snapshot de maior espera, com até
+12 holders e SQL ativo abreviado. O pool é amostrado a cada 500 ms enquanto o
+worker está ligado, inclusive quando sua fase é `idle`; `runOnce` isolado também
+amostra durante o run. `samples=0` ou poucos samples não provam
+ausência de pressão. O histórico de fases e pool é limitado e reinicia com o
+processo. Esses dados localizam a espera sem, por si só, provar qual consulta
+impediu o claim.
 `databasePool` registra `total`, `idle`, `busy`, `waiting` e `max` do pool
 PostgreSQL compartilhado pelo processo, com `sampledAt`; não mede as conexões
-globais do servidor. Durante cada lote, o worker amostra o pool a cada 500 ms.
+globais do servidor.
 `databasePoolPeakBusy` e `databasePoolPeakWaiting` guardam os máximos amostrados
 desde o início do processo; `databasePoolRunPeakBusy` e
 `databasePoolRunPeakWaiting` guardam os máximos do lote mais recente. Se um lote

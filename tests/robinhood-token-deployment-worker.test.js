@@ -425,6 +425,11 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
   assert.equal(trace.mintBlockToAnchorMs, 10_000);
   assert.equal(trace.anchorToClaimMs, 5_005);
   assert.equal(trace.claimToFirstAttemptMs, 5);
+  assert.equal(trace.currentRunClaimDurationMs, 3);
+  assert.deepEqual(trace.preClaimWindow.phaseMs, {
+    idle: 0, archive_expired: 2, claim: 3, process: 0,
+  });
+  assert.equal(trace.preClaimWindow.unobservedMs, 5_000);
   assert.equal(trace.head.bucket, 'BeyondLookback');
   assert.deepEqual(trace.liveError, {
     stage: 'rpc_code_transition', method: 'eth_getCode', code: 'rpc_error', rpcCode: -32000,
@@ -435,6 +440,103 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
   assert.equal(status.lastClaimDurationMs, 3);
   assert.equal(status.lastProcessDurationMs, 36);
   assert.equal(status.lastRunDurationMs, 41);
+});
+
+it('attributes a mint wait to a previous process run and its simultaneous pool holders', async () => {
+  let clock = 100_000;
+  let claims = 0;
+  const pool = { totalCount: 10, idleCount: 0, waitingCount: 0, options: { max: 10 } };
+  const holder = { pid: 123, heldMs: 5000, origin: 'other worker query',
+    activeSql: 'SELECT expensive_evidence' };
+  let worker;
+  worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', now: () => clock, pool,
+    poolHoldersSnapshot: () => pool.waitingCount ? [holder] : [],
+    runtime: {
+      outbox: {
+        archiveExpiredBatch: async () => 0,
+        claimBatch: async () => {
+          claims += 1;
+          if (claims === 1) return [{ tokenAddress: TOKEN_B, attemptCount: 2 }];
+          clock += 10;
+          return [{ tokenAddress: TOKEN, attemptCount: 1,
+            createdAt: new Date(101_000), mintAnchorRecordedAt: new Date(101_000),
+            mintBlockTime: new Date(100_900), mintHint: {
+              tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+              transactionHash: TRANSACTION_HASH,
+            } }];
+        },
+        isExact: async () => false,
+        retry: async ({ tokenAddress }) => {
+          if (tokenAddress === TOKEN_B) {
+            clock += 5_000;
+            pool.waitingCount = 4;
+            worker.getStatus();
+            clock += 35_000;
+            pool.waitingCount = 0;
+          }
+          return true;
+        },
+      },
+      liveHead: async () => '250',
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+    },
+  });
+  await worker.runOnce();
+  await worker.runOnce();
+  const trace = worker.getStatus().lastFirstAttemptTrace;
+  assert.equal(trace.anchorToClaimMs, 39_010);
+  assert.equal(trace.currentRunClaimDurationMs, 10);
+  assert.deepEqual(trace.preClaimWindow.phaseMs, {
+    idle: 0, archive_expired: 0, claim: 10, process: 39_000,
+  });
+  assert.equal(trace.preClaimWindow.unobservedMs, 0);
+  assert.equal(trace.preClaimWindow.pool.maxWaiting, 4);
+  assert.equal(trace.preClaimWindow.pool.peakSample.phase, 'process');
+  assert.deepEqual(trace.preClaimWindow.pool.peakSample.holders, [holder]);
+});
+
+it('samples shared pool pressure while the deployment worker is idle', async () => {
+  let clock = 100_000;
+  let tick;
+  let cleared = false;
+  const interval = { unref() {} };
+  const pool = { totalCount: 10, idleCount: 0, waitingCount: 2, options: { max: 10 } };
+  const mintHint = { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH };
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test', now: () => clock, pool,
+    poolSampleIntervalFactory: (callback) => { tick = callback; return interval; },
+    clearPoolSampleInterval: (handle) => { assert.equal(handle, interval); cleared = true; },
+    schedule: () => ({ unref() {} }), cancelSchedule: () => {},
+    listenerFactory: () => ({ start: async () => {}, stop: async () => {} }),
+    runtime: {
+      outbox: { claimBatch: async () => [{ tokenAddress: TOKEN, attemptCount: 1,
+        createdAt: new Date(100_500), mintAnchorRecordedAt: new Date(100_500), mintHint }],
+      isExact: async () => false, retry: async () => true },
+      liveHead: async () => '250',
+      localResolver: { verify: async () => null, inspect: async () => {
+        throw Object.assign(new Error('eth_getCode RPC error -32000'), {
+          code: 'rpc_error', rpcCode: -32000, method: 'eth_getCode',
+        });
+      } },
+    },
+  });
+  assert.equal(worker.start({ enabled: true }), true);
+  clock = 101_000;
+  tick();
+  clock = 102_000;
+  await worker.runOnce();
+  const window = worker.getStatus().lastFirstAttemptTrace.preClaimWindow;
+  assert.equal(window.phaseMs.idle, 1_500);
+  assert.equal(window.pool.maxWaiting, 2);
+  assert.equal(window.pool.peakSample.phase, 'idle');
+  await worker.stop();
+  assert.equal(cleared, true);
 });
 
 it('records local pool pressure and the failing phase before a database timeout escapes', async () => {
