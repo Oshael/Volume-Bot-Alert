@@ -3632,6 +3632,19 @@ de entrada e início, além do bloco do mint, para situar o máximo no tempo.
 `lastProcessDurationMs` e `lastRunClaimed` mostram o lote mais recente. Essas
 medidas são do worker, reiniciam com ele e não incluem tempo entre o bloco do
 mint e a criação da tarefa.
+`lastFirstAttemptTrace` relaciona o último mint fixado à hora do bloco canônico,
+ao registro da âncora, ao claim, ao início e fim da primeira tentativa, ao head
+live, ao erro do RPC e ao resultado final. `recentFirstAttemptMisses` mantém até
+12 traces com head além da janela ou erro `eth_getCode -32000`. As durações
+`mintBlockToAnchorMs`, `anchorToClaimMs` e `claimToFirstAttemptMs` distinguem
+atraso na captura, na fila e no começo do processamento. O horário da âncora é
+derivado de `live_deadline_at - 72h`, prazo renovado ao fixar um mint canônico;
+para linhas antigas que receberam prazo por migração, ele pode refletir a
+criação da tarefa. A hora do bloco pode não estar disponível após poda do
+journal; nesse caso a primeira duração é nula. `taskCreatedAt` e os contadores
+antigos `firstAttemptQueueWait*` ainda usam a criação da linha, que pode ser
+anterior à âncora renovada. Valores negativos de duração indicam relógios ou
+timestamps inconsistentes e exigem conferência antes de atribuir a causa.
 `databasePool` registra `total`, `idle`, `busy`, `waiting` e `max` do pool
 PostgreSQL compartilhado pelo processo, com `sampledAt`; não mede as conexões
 globais do servidor. Durante cada lote, o worker amostra o pool a cada 500 ms.

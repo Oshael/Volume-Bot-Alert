@@ -260,6 +260,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     firstAttemptCode32000BeyondLookback: 0,
     firstAttemptCode32000NodeBehind: 0, firstAttemptCode32000Unmeasured: 0,
     lastFirstAttemptHead: null, lastFirstAttemptCode32000: null,
+    lastFirstAttemptTrace: null, recentFirstAttemptMisses: [],
     lastRunDurationMs: null, lastClaimDurationMs: null,
     lastProcessDurationMs: null, lastRunClaimed: null,
     runPhase: 'idle', databasePool: null,
@@ -437,7 +438,20 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         };
       }
     }
-    return { queueWaitMs, claimWaitMs };
+    const anchorAt = task.mintAnchorRecordedAt == null
+      ? NaN : new Date(task.mintAnchorRecordedAt).getTime();
+    const blockAt = task.mintBlockTime == null
+      ? NaN : new Date(task.mintBlockTime).getTime();
+    return {
+      queueWaitMs, claimWaitMs, firstAttemptAt: new Date(startedAt).toISOString(),
+      mintBlockTime: Number.isFinite(blockAt) ? new Date(blockAt).toISOString() : null,
+      mintAnchorRecordedAt: Number.isFinite(anchorAt) ? new Date(anchorAt).toISOString() : null,
+      mintBlockToAnchorMs: Number.isFinite(blockAt) && Number.isFinite(anchorAt)
+        ? anchorAt - blockAt : null,
+      anchorToClaimMs: Number.isFinite(anchorAt) ? claimedAt - anchorAt : null,
+      claimToFirstAttemptMs: claimWaitMs,
+      claimedAt: new Date(claimedAt).toISOString(),
+    };
   }
 
   async function sampleFirstAttemptHead(current, task, wait) {
@@ -476,6 +490,33 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     status[`firstAttemptCode32000${bucket}`] += 1;
     status.lastFirstAttemptCode32000 = sample || {
       sampledAt: new Date(now()).toISOString(), bucket, ...wait,
+    };
+  }
+
+  async function beginFirstAttemptTrace(current, task, claimedAt, outcome) {
+    const wait = measureFirstAttemptWait(task, claimedAt);
+    const pool = wait ? sampleDatabasePool() : null;
+    outcome.trace = wait ? {
+      tokenAddress: task.tokenAddress, mintBlock: task.mintHint.blockNumber,
+      taskCreatedAt: task.createdAt ?? null, ...wait,
+      head: null, poolAtFirstAttempt: pool ? {
+        total: pool.total, busy: pool.busy, waiting: pool.waiting, max: pool.max,
+      } : null,
+    } : null;
+    const head = await sampleFirstAttemptHead(current, task, wait);
+    if (outcome.trace && head) outcome.trace.head = {
+      sampledAt: head.sampledAt, headBlock: head.headBlock,
+      distanceBlocks: head.distanceBlocks,
+      lookbackBlocks: head.lookbackBlocks, bucket: head.bucket,
+    };
+    return { wait, head };
+  }
+
+  function recordFirstAttemptLiveError(outcome, error) {
+    if (!outcome.trace) return;
+    outcome.liveError = {
+      stage: error.stage || null, method: error.method || null,
+      code: error.code || null, rpcCode: error.rpcCode ?? null,
     };
   }
 
@@ -535,7 +576,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   async function processTask(current, task, traceBudget, archiveBudget, claimedAt) {
     const firstPinned = task?.attemptCount === 1 && Boolean(task.mintHint);
     if (firstPinned) status.firstAttemptPinnedStarted += 1;
-    const outcome = { value: 'Error' };
+    const outcome = { value: 'Error', trace: null, liveError: null };
     try {
       return await processTaskInner(current, task, traceBudget, archiveBudget, claimedAt, outcome);
     } finally {
@@ -543,13 +584,40 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         status.firstAttemptPinnedFinished += 1;
         status[`firstAttempt${outcome.value}`] += 1;
         if (outcome.value.startsWith('Skipped')) status.firstAttemptSkipped += 1;
+        if (outcome.trace) {
+          const trace = {
+            ...outcome.trace, finishedAt: new Date(now()).toISOString(),
+            outcome: outcome.value, liveError: outcome.liveError,
+          };
+          status.lastFirstAttemptTrace = trace;
+          if (trace.head?.bucket === 'BeyondLookback'
+              || trace.liveError?.rpcCode === -32000) {
+            status.recentFirstAttemptMisses = [...status.recentFirstAttemptMisses, trace].slice(-12);
+          }
+        }
       }
     }
   }
 
+  async function handleTaskError(current, task, archiveBudget, outcome, attempt, error) {
+    recordFirstAttemptLiveError(outcome, error);
+    recordFirstAttemptCodeError(task, attempt.head, attempt.wait, error);
+    const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
+    if (recovered) {
+      outcome.value = 'ArchiveResolved';
+      return recovered;
+    }
+    if (task) await deferTask(task, error);
+    if (['local_deployment_evidence_pending', 'local_mint_pending'].includes(error.code)) {
+      outcome.value = 'Deferred';
+      return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
+    }
+    status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
+    return { status: 'error', tokenAddress: task?.tokenAddress || null, errors: 1 };
+  }
+
   async function processTaskInner(current, task, traceBudget, archiveBudget, claimedAt, outcome) {
-    let firstAttemptHead = null;
-    let firstAttemptWait = null;
+    let attempt = { wait: null, head: null };
     try {
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -557,8 +625,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         outcome.value = 'SkippedAlreadyAttributed';
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
-      firstAttemptWait = measureFirstAttemptWait(task, claimedAt);
-      firstAttemptHead = await sampleFirstAttemptHead(current, task, firstAttemptWait);
+      attempt = await beginFirstAttemptTrace(current, task, claimedAt, outcome);
       const transition = await resolveLocally(current, task);
       if (transition?.ignoredMint) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -583,19 +650,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         code: 'local_deployment_evidence_pending', stage: 'canonical_creator_evidence',
       });
     } catch (error) {
-      recordFirstAttemptCodeError(task, firstAttemptHead, firstAttemptWait, error);
-      const recovered = await recoverPinnedWithArchive(current, task, error, archiveBudget);
-      if (recovered) {
-        outcome.value = 'ArchiveResolved';
-        return recovered;
-      }
-      if (task) await deferTask(task, error);
-      if (['local_deployment_evidence_pending', 'local_mint_pending'].includes(error.code)) {
-        outcome.value = 'Deferred';
-        return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
-      }
-      status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
-      return { status: 'error', tokenAddress: task?.tokenAddress || null, errors: 1 };
+      return handleTaskError(current, task, archiveBudget, outcome, attempt, error);
     }
   }
 

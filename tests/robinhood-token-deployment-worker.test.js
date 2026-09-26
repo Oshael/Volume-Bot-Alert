@@ -224,6 +224,10 @@ it('uses bounded Archive fallback for a pinned live eth_getCode -32000 failure',
   assert.equal(worker.getStatus().firstAttemptPinnedFinished, 2);
   assert.equal(worker.getStatus().firstAttemptArchiveResolved, 1);
   assert.equal(worker.getStatus().firstAttemptError, 1);
+  const misses = worker.getStatus().recentFirstAttemptMisses;
+  assert.equal(misses.length, 2);
+  assert.deepEqual(misses.map(({ outcome }) => outcome).sort(), ['ArchiveResolved', 'Error']);
+  assert.ok(misses.every(({ liveError }) => liveError.rpcCode === -32000));
 });
 
 it('separates Archive fallback successes by time spent in the live queue', async () => {
@@ -383,6 +387,8 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
         claimBatch: async () => {
           clock += 3;
           return [{ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date(90_000),
+            mintBlockTime: new Date(85_000),
+            mintAnchorRecordedAt: new Date(95_000),
             mintHint: { tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
               transactionHash: TRANSACTION_HASH } }];
         },
@@ -414,6 +420,17 @@ it('measures first-attempt queue wait, claim wait and batch duration', async () 
   assert.equal(status.firstAttemptClaimWaitMaxMs, 5);
   assert.equal(status.lastFirstAttemptCode32000.queueWaitMs, 10_010);
   assert.equal(status.lastFirstAttemptCode32000.claimWaitMs, 5);
+  const trace = status.lastFirstAttemptTrace;
+  assert.equal(trace.tokenAddress, TOKEN);
+  assert.equal(trace.mintBlockToAnchorMs, 10_000);
+  assert.equal(trace.anchorToClaimMs, 5_005);
+  assert.equal(trace.claimToFirstAttemptMs, 5);
+  assert.equal(trace.head.bucket, 'BeyondLookback');
+  assert.deepEqual(trace.liveError, {
+    stage: 'rpc_code_transition', method: 'eth_getCode', code: 'rpc_error', rpcCode: -32000,
+  });
+  assert.equal(trace.outcome, 'Error');
+  assert.deepEqual(status.recentFirstAttemptMisses, [trace]);
   assert.equal(status.lastRunClaimed, 1);
   assert.equal(status.lastClaimDurationMs, 3);
   assert.equal(status.lastProcessDurationMs, 36);
@@ -712,18 +729,25 @@ it('claims only the live lane with fresh pinned mints first and loads a canonica
       if (sql.includes('WITH candidate')) return { rows: [{
         claimed: true, token_address: TOKEN, attempt_count: 1,
         created_at: '2026-08-30T20:00:00Z',
+        live_deadline_at: '2026-09-02T20:01:00Z',
         mint_block_number: '100', mint_block_hash: BLOCK_HASH,
         mint_transaction_hash: TRANSACTION_HASH,
+        mint_block_time: '2026-08-30T20:00:30Z',
       }] };
       return { rows: [{
         block_number: '100', block_hash: BLOCK_HASH, transaction_hash: TRANSACTION_HASH,
       }] };
     } },
   });
-  assert.deepEqual((await repository.claim({ owner: 'test', leaseMs: 30_000 })).mintHint, {
+  const claimed = await repository.claim({ owner: 'test', leaseMs: 30_000 });
+  assert.deepEqual(claimed.mintHint, {
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
   });
+  assert.equal(claimed.mintAnchorRecordedAt, '2026-08-30T20:01:00.000Z');
+  assert.equal(claimed.mintBlockTime, '2026-08-30T20:00:30Z');
+  assert.match(calls[0].sql, /block\.block_timestamp AS mint_block_time/);
+  assert.match(calls[0].sql, /block\.canonical = TRUE/);
   assert.match(calls[0].sql, /live_deadline_at > NOW\(\)/);
   assert.match(calls[0].sql, /mint_block_number IS NOT NULL/);
   assert.match(calls[0].sql, /created_at >= NOW\(\) - INTERVAL '30 seconds'/);

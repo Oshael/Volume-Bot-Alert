@@ -31,6 +31,9 @@ function claimedTask(row) {
   return Object.freeze({
     tokenAddress: normalizeTokenAddress(CHAIN, row.token_address),
     attemptCount: Number(row.attempt_count), createdAt: row.created_at, mintHint,
+    mintBlockTime: row.mint_block_time ?? null,
+    mintAnchorRecordedAt: row.live_deadline_at == null ? null
+      : new Date(new Date(row.live_deadline_at).getTime() - 72 * 60 * 60 * 1000).toISOString(),
   });
 }
 
@@ -78,14 +81,21 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
           AND outbox.token_address = classified.token_address
           AND NOT classified.exact
        RETURNING outbox.token_address, outbox.attempt_count, outbox.created_at,
+                 outbox.live_deadline_at,
                  outbox.mint_block_number, outbox.mint_block_hash,
                  outbox.mint_transaction_hash
        )
-       SELECT TRUE AS claimed, token_address, attempt_count, created_at,
-              mint_block_number, mint_block_hash, mint_transaction_hash FROM claimed
+       SELECT TRUE AS claimed, claimed.token_address, claimed.attempt_count,
+              claimed.created_at, claimed.live_deadline_at,
+              claimed.mint_block_number, claimed.mint_block_hash,
+              claimed.mint_transaction_hash, block.block_timestamp AS mint_block_time
+         FROM claimed LEFT JOIN robinhood_chain_blocks block
+           ON block.chain = '${CHAIN}' AND block.block_hash = claimed.mint_block_hash
+          AND block.canonical = TRUE
        UNION ALL
        SELECT FALSE, token_address, NULL::integer, NULL::timestamptz,
-              NULL::bigint, NULL::varchar(66), NULL::varchar(66) FROM removed`,
+              NULL::timestamptz, NULL::bigint, NULL::varchar(66),
+              NULL::varchar(66), NULL::timestamptz FROM removed`,
       [owner, leaseMs, limit, EXACT_SOURCES]
     );
     return Object.freeze({
