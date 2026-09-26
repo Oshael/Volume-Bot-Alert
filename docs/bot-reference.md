@@ -3850,7 +3850,10 @@ congelamento enquanto os lotes antigos são removidos.
 `--prepare-run-id=ID --confirm-prepare` para apagar journal, balances e states
 em transações de 100 tokens. `--prepare-batch-size=N` aceita 1 a 1.000 quando
 um lote precisar ser reduzido. A preparação é retomável com o mesmo comando;
-o scanner global recusa iniciar enquanto algum state da coorte existir.
+cada lote espera até 30s pela trava do cursor live ao final da limpeza, mantendo
+o incremento de versão que invalida capturas iniciadas antes da remoção do state;
+as demais aquisições de lock continuam limitadas a 2s.
+O scanner global recusa iniciar enquanto algum state da coorte existir.
 Confira `remainingStates=0` antes de iniciar o worker global. Durante o scan,
 use `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL` para fixar o Archive; uma URL
 ausente faz o worker usar `ROBINHOOD_RPC_URL`. A limpeza remove o progresso

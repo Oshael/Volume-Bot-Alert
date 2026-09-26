@@ -332,6 +332,9 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         if (states.rowCount !== addresses.length) {
           throw new Error('Delta holder state preparation changed while locked');
         }
+        // Live capture can hold this cursor while it commits a range. Keep the
+        // version fence, but let the existing statement timeout bound the wait.
+        await client.query("SET LOCAL lock_timeout = '0'");
         await client.query(
           `UPDATE robinhood_holder_cursors
               SET version = version + 1, updated_at = NOW()

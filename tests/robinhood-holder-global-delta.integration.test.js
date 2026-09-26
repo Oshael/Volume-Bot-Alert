@@ -268,4 +268,66 @@ describe('Robinhood holder global delta persistence', () => {
     }), { code: 'holder_global_delta_adoption_too_large' });
     assert.equal(rolledBack, true);
   });
+
+  it('waits for an in-flight live cursor commit before finishing a prepared batch', async () => {
+    const schema = `rh_delta_cursor_lock_${process.pid}_${Date.now()}`;
+    const setup = await db.getClient();
+    const blocker = await db.getClient();
+    const worker = await db.getClient();
+    let blockerOpen = false;
+    try {
+      await setup.query(`CREATE SCHEMA ${schema}`);
+      await setup.query(`CREATE TABLE ${schema}.robinhood_holder_global_backfill_runs (
+        id int PRIMARY KEY, chain text, status text, telemetry jsonb)`);
+      await setup.query(`CREATE TABLE ${schema}.robinhood_holder_global_backfill_tokens (
+        run_id int, chain text, token_address text, status text)`);
+      await setup.query(`CREATE TABLE ${schema}.robinhood_holder_token_states (
+        chain text, token_address text, ledger_status text)`);
+      await setup.query(`CREATE TABLE ${schema}.robinhood_holder_transfer_journal (
+        chain text, token_address text, applied boolean, captured_at timestamptz)`);
+      await setup.query(`CREATE TABLE ${schema}.robinhood_holder_balances (
+        chain text, token_address text)`);
+      await setup.query(`CREATE TABLE ${schema}.robinhood_holder_cursors (
+        chain text, stream text, version bigint, updated_at timestamptz)`);
+      await setup.query(`INSERT INTO ${schema}.robinhood_holder_global_backfill_runs
+        VALUES (13, 'robinhood', 'frozen', jsonb_build_object(
+          'adoptionJournalCutoverAt', now()))`);
+      await setup.query(`INSERT INTO ${schema}.robinhood_holder_global_backfill_tokens
+        VALUES (13, 'robinhood', $1, 'active')`, [TOKENS[0]]);
+      await setup.query(`INSERT INTO ${schema}.robinhood_holder_token_states
+        VALUES ('robinhood', $1, 'backfilling')`, [TOKENS[0]]);
+      await setup.query(`INSERT INTO ${schema}.robinhood_holder_cursors
+        VALUES ('robinhood', 'live', 0, now())`);
+      await blocker.query(`SET search_path TO ${schema}`);
+      await worker.query(`SET search_path TO ${schema}`);
+      await blocker.query('BEGIN');
+      blockerOpen = true;
+      await blocker.query(`SELECT 1 FROM robinhood_holder_cursors
+        WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`);
+
+      const repository = createRobinhoodHolderGlobalDeltaRepository({
+        database: { getClient: async () => ({
+          query: (sql, params) => worker.query(sql, params), release() {},
+        }) },
+      });
+      const preparation = repository.prepareBatch({ runId: 13, limit: 1 })
+        .then((value) => ({ value }), (error) => ({ error }));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await blocker.query('COMMIT');
+      blockerOpen = false;
+      const outcome = await preparation;
+      if (outcome.error) throw outcome.error;
+      assert.equal(outcome.value.preparedTokens, 1);
+      assert.equal((await worker.query(`SELECT version FROM robinhood_holder_cursors`))
+        .rows[0].version, '1');
+      assert.equal((await worker.query(`SELECT count(*)::int AS n
+        FROM robinhood_holder_token_states`)).rows[0].n, 0);
+    } finally {
+      if (blockerOpen) await blocker.query('ROLLBACK').catch(() => {});
+      blocker.release();
+      worker.release();
+      await setup.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      setup.release();
+    }
+  });
 });
