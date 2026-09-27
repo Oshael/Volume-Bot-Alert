@@ -21,6 +21,7 @@ function event(walletAddress, overrides = {}) {
 function harness(overrides = {}) {
   const calls = [];
   const service = createRobinhoodWalletRankingWindowCoverage({
+    snapshotRunner: { run: (read) => read({}) },
     eventsRepository: { async getWindowEvents() {
       return overrides.events || [event(WALLET_A), event(WALLET_B)];
     } },

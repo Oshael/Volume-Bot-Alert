@@ -10,6 +10,9 @@ const {
 const {
   createRobinhoodWalletRankingTransferClassificationRepository,
 } = require('../models/robinhood-wallet-ranking-transfer-classification');
+const {
+  createRobinhoodWalletRankingReadSnapshot,
+} = require('../models/robinhood-wallet-ranking-read-snapshot');
 
 function pairKey(item) {
   return `${item.tokenAddress}:${item.walletAddress}`;
@@ -57,37 +60,41 @@ function classifyPair(events, classification, availability, frontiers, globals) 
 }
 
 function createRobinhoodWalletRankingWindowCoverage(options = {}) {
-  const repositoryOptions = { database: options.database };
-  const eventsRepository = options.eventsRepository
-    || createRobinhoodWalletRankingWindowEventsRepository(repositoryOptions);
-  const availabilityRepository = options.availabilityRepository
-    || createRobinhoodWalletRankingTransferAvailabilityRepository(repositoryOptions);
-  const frontiersRepository = options.frontiersRepository
-    || createRobinhoodWalletRankingSourceFrontiersRepository(repositoryOptions);
-  const classificationRepository = options.classificationRepository
-    || createRobinhoodWalletRankingTransferClassificationRepository(repositoryOptions);
+  const snapshotRunner = options.snapshotRunner
+    || createRobinhoodWalletRankingReadSnapshot({ database: options.database });
 
   return {
     async getWindowEvents(input = {}) {
-      const events = await eventsRepository.getWindowEvents(input);
-      if (!events.length) return [];
-      const windowStart = events[0].windowStart;
-      const asOf = events[0].asOf;
-      const pairs = events.map(({ tokenAddress, walletAddress }) => ({
-        tokenAddress, walletAddress,
-      }));
-      const [availability, frontiers, classifications] = await Promise.all([
-        availabilityRepository.inspectWindow({ windowStart, asOf }),
-        frontiersRepository.inspectAsOf({ asOf, transferVersion: input.classificationVersion }),
-        classificationRepository.inspectWindow({
+      return snapshotRunner.run(async (database) => {
+        const repositoryOptions = { database };
+        const eventsRepository = options.eventsRepository
+          || createRobinhoodWalletRankingWindowEventsRepository(repositoryOptions);
+        const availabilityRepository = options.availabilityRepository
+          || createRobinhoodWalletRankingTransferAvailabilityRepository(repositoryOptions);
+        const frontiersRepository = options.frontiersRepository
+          || createRobinhoodWalletRankingSourceFrontiersRepository(repositoryOptions);
+        const classificationRepository = options.classificationRepository
+          || createRobinhoodWalletRankingTransferClassificationRepository(repositoryOptions);
+        const events = await eventsRepository.getWindowEvents(input);
+        if (!events.length) return [];
+        const windowStart = events[0].windowStart;
+        const asOf = events[0].asOf;
+        const pairs = events.map(({ tokenAddress, walletAddress }) => ({
+          tokenAddress, walletAddress,
+        }));
+        const availability = await availabilityRepository.inspectWindow({ windowStart, asOf });
+        const frontiers = await frontiersRepository.inspectAsOf({
+          asOf, transferVersion: input.classificationVersion,
+        });
+        const classifications = await classificationRepository.inspectWindow({
           pairs, windowStart, asOf, classificationVersion: input.classificationVersion,
-        }),
-      ]);
-      const globals = globalReasons(availability, frontiers);
-      const byPair = new Map(classifications.map((item) => [pairKey(item), item]));
-      return events.map((item) => classifyPair(
-        item, byPair.get(pairKey(item)), availability, frontiers, globals,
-      ));
+        });
+        const globals = globalReasons(availability, frontiers);
+        const byPair = new Map(classifications.map((item) => [pairKey(item), item]));
+        return events.map((item) => classifyPair(
+          item, byPair.get(pairKey(item)), availability, frontiers, globals,
+        ));
+      });
     },
   };
 }
