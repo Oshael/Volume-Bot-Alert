@@ -5558,6 +5558,9 @@ Ambas as etapas recusam lease ativa ou cursor diferente e seguram o lock do
 cursor durante a operação. Deixe a captura parada até concluir a validação;
 se o cursor mudar, reavalie a partição e o espelho antes de repetir. Este
 procedimento preserva a FK antiga e não efetua o cutover das transações.
+Com a captura parada, o mesmo par de comandos aceita também a partição futura
+imediata, desde que ela esteja vazia; todas as partições existentes precisam
+terminar com a FK nova validada antes do cutover.
 Depois do cutover das transações, provisione cada faixa futura com
 `npm run robinhood:chain-journal-partition -- --partition-start=N`; o padrão
 somente inspeciona. `--apply` cria no máximo um par de partições vazias, de
@@ -5589,6 +5592,15 @@ somente se toda a faixa indicada terminar sem divergência. `nextBlock` permite
 retomar após `page_limit`; divergência ou faixa incompleta retorna código 2.
 Para validar o corte, cubra toda a faixa pretendida e repita a auditoria do trecho
 mais recente após a cópia alcançar o espelho LIVE.
+O cutover usa `npm run robinhood:chain-transaction-cutover -- --audit-report=PATH`
+para inspecionar; `--apply --expected-next-block=N` executa a troca com a captura
+parada. PATH é um JSONL formado pela concatenação dos resultados da auditoria,
+com relatórios `summary` completos e contíguos desde o primeiro bloco retido
+até o head finalizado. O comando compara o restante até o checkpoint (máximo
+64 blocos), exige FK nova validada em todas as partições de eventos e faz a
+troca de nomes na mesma transação que remove a FK antiga do pai de eventos.
+A monolítica fica como `robinhood_chain_transactions_retired`; nenhuma partição
+de eventos é apagada. Provisionar a próxima faixa antes de reiniciar a captura.
 
 Para limitar o preenchimento dos snapshots V3 à faixa já copiada e validada na
 sombra de eventos, use

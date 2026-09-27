@@ -39,9 +39,9 @@ function parseArgs(args = []) {
   }
   if (input.paused) {
     if (!input.action || !Number.isSafeInteger(input.expectedNextBlock)
-        || input.expectedNextBlock < start
+        || input.expectedNextBlock < Math.max(1, start - PARTITION_SIZE)
         || input.expectedNextBlock >= start + PARTITION_SIZE) {
-      throw new Error('--paused requires --prepare or --validate and an expected next block in the partition');
+      throw new Error('--paused requires an expected next block in or directly before the partition');
     }
   } else if (input.expectedNextBlock != null) {
     throw new Error('--expected-next-block requires --paused');
@@ -101,9 +101,16 @@ async function assertCapturePaused(client, start, expectedNextBlock, options = {
       || row.next_block == null || row.checkpoint_block == null
       || BigInt(row.next_block) !== BigInt(expectedNextBlock)
       || BigInt(row.checkpoint_block) + 1n !== BigInt(row.next_block)
-      || BigInt(row.next_block) < BigInt(start)
+      || BigInt(row.next_block) < BigInt(Math.max(1, start - PARTITION_SIZE))
       || BigInt(row.next_block) >= BigInt(start + PARTITION_SIZE)) {
     throw new Error('capture is active or its stopped checkpoint differs from the expected active partition');
+  }
+  if (BigInt(row.next_block) < BigInt(start)) {
+    const leaf = `public.robinhood_chain_events_shadow_b${start}`;
+    const data = await client.query(`SELECT EXISTS (
+      SELECT 1 FROM ${leaf} LIMIT 1
+    ) AS present`);
+    if (data.rows[0]?.present) throw new Error('future event partition is not empty');
   }
   return row.next_block;
 }

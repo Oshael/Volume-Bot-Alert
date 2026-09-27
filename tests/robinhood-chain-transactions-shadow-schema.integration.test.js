@@ -209,7 +209,12 @@ it('prepares and validates one leaf FK while the legacy FK remains active', asyn
     assert.throws(() => eventFks.parseArgs([
       '--partition-start=70750000', '--prepare', '--paused',
       '--expected-next-block=71000000',
-    ]), /expected next block in the partition/);
+    ]), /expected next block in or directly before the partition/);
+    assert.deepEqual(eventFks.parseArgs([
+      '--partition-start=71000000', '--prepare', '--paused',
+      '--expected-next-block=70750002',
+    ]), { action: 'prepare', partitionStart: 71000000,
+      paused: true, expectedNextBlock: 70750002 });
   } finally {
     await client.query('ROLLBACK');
     client.release();
@@ -242,6 +247,18 @@ it('requires an inactive capture lease and an exact stopped cursor for the activ
     await client.query('ROLLBACK');
     client.release();
   }
+});
+
+it('allows a paused capture to prepare only an empty future event leaf', async () => {
+  let occupied = false;
+  const client = { query: async (sql) => ({ rows: [sql.includes('FROM public.robinhood_chain_capture_cursor')
+    ? { next_block: '70750002', checkpoint_block: '70750001',
+      recovery_state: 'running', capture_active: false }
+    : { present: occupied }] }) };
+  assert.equal(await eventFks.assertCapturePaused(client, 71000000, 70750002), '70750002');
+  occupied = true;
+  await assert.rejects(eventFks.assertCapturePaused(client, 71000000, 70750002),
+    /future event partition is not empty/);
 });
 
 it('provisions a future transaction/event pair with a validated FK in one transaction', async () => {

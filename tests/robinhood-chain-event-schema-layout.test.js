@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const {
   getGroupsForProfile, groupsForPartitionedChainEvents,
+  groupsForPartitionedChainTransactions,
 } = require('../src/utils/runtime-schema');
 
 test('runtime schema checks the partitioned active table after event cutover', () => {
@@ -28,4 +29,20 @@ test('runtime schema checks the partitioned active table after event cutover', (
   }
   assert.ok(legacy.find((group) => group.key === 'stage247-robinhood-chain-events-shadow')
     .tables.some((table) => table.table === 'robinhood_chain_events_shadow'));
+});
+
+test('runtime schema accepts the partitioned transaction cutover layout', () => {
+  const groups = groupsForPartitionedChainTransactions(groupsForPartitionedChainEvents(
+    getGroupsForProfile('runtime')
+  ));
+  const journal = groups.find((group) => group.key === 'stage191-robinhood-canonical-chain-journal');
+  const tx = journal.tables.find((table) => table.table === 'robinhood_chain_transactions');
+  const events = journal.tables.find((table) => table.table === 'robinhood_chain_events');
+  assert.ok(tx.columns.includes('block_number'));
+  assert.ok(tx.constraints.some((constraint) => (
+    constraint.name === 'rh_chain_transactions_shadow_pkey'
+  )));
+  assert.equal(events.constraints.some((constraint) => (
+    constraint.name === 'rh_chain_events_shadow_transaction_fkey'
+  )), false);
 });

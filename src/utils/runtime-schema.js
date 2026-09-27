@@ -6877,6 +6877,40 @@ function groupsForPartitionedChainEvents(groups) {
   });
 }
 
+function groupsForPartitionedChainTransactions(groups) {
+  return groups.map((group) => {
+    if (group.key !== 'stage191-robinhood-canonical-chain-journal') return group;
+    return { ...group, tables: group.tables.map((entry) => {
+      if (entry.table === 'robinhood_chain_events') {
+        return { ...entry, constraints: entry.constraints.filter((constraint) => (
+          constraint.name !== 'rh_chain_events_shadow_transaction_fkey'
+        )) };
+      }
+      if (entry.table !== 'robinhood_chain_transactions') return entry;
+      return { ...entry, columns: [...entry.columns, 'block_number'],
+        constraints: entry.constraints.map((constraint) => {
+          if (constraint.name === 'rh_chain_transactions_pkey') return {
+            name: 'rh_chain_transactions_shadow_pkey', includes: [
+              'PRIMARY KEY', 'chain', 'block_number', 'block_hash', 'transaction_hash',
+            ],
+          };
+          if (constraint.name === 'rh_chain_transactions_block_fkey') return {
+            name: 'rh_chain_transactions_shadow_block_fkey',
+            includes: ['FOREIGN KEY', 'chain', 'block_hash'],
+          };
+          return constraint;
+        }).concat([{ name: 'rh_chain_transactions_shadow_index_key', includes: [
+          'UNIQUE', 'chain', 'block_number', 'block_hash', 'transaction_index',
+        ] }]),
+        indexes: [{ name: 'idx_rh_chain_transactions_shadow_hash', includes: [
+          'chain', 'block_hash', 'transaction_hash',
+        ] }, { name: 'idx_rh_chain_transactions_shadow_txhash', includes: [
+          'chain', 'transaction_hash', 'block_hash',
+        ] }] };
+    }) };
+  });
+}
+
 function summarizeList(items, limit = 12) {
   if (items.length <= limit) {
     return items;
@@ -7195,14 +7229,24 @@ function createRuntimeSchemaError(report, profile = 'runtime') {
 async function inspectRuntimeSchema(options = {}) {
   const profile = String(options.profile || 'runtime').trim().toLowerCase() || 'runtime';
   const layout = await query(`SELECT active.relkind AS active_kind,
-      to_regclass('public.robinhood_chain_events_shadow') IS NOT NULL AS shadow_present
+      to_regclass('public.robinhood_chain_events_shadow') IS NOT NULL AS shadow_present,
+      (SELECT relkind FROM pg_class WHERE oid=to_regclass(
+        'public.robinhood_chain_transactions')) AS transaction_kind,
+      to_regclass('public.robinhood_chain_transactions_shadow') IS NOT NULL
+        AS transaction_shadow_present
     FROM pg_class active WHERE active.oid=to_regclass('public.robinhood_chain_events')`);
   const partitioned = layout.rows[0]?.active_kind === 'p';
   if (partitioned && layout.rows[0].shadow_present) {
     throw new Error('partitioned active events still have a shadow relation');
   }
+  const transactionsPartitioned = layout.rows[0]?.transaction_kind === 'p';
+  if (transactionsPartitioned && (!partitioned || layout.rows[0].transaction_shadow_present)) {
+    throw new Error('partitioned transactions have an inconsistent event or shadow layout');
+  }
   const selected = getGroupsForProfile(profile);
-  const groups = partitioned ? groupsForPartitionedChainEvents(selected) : selected;
+  const eventGroups = partitioned ? groupsForPartitionedChainEvents(selected) : selected;
+  const groups = transactionsPartitioned
+    ? groupsForPartitionedChainTransactions(eventGroups) : eventGroups;
   const tableNames = groups.flatMap((group) => group.tables.map((entry) => entry.table));
   const snapshot = await loadSchemaSnapshot(tableNames);
   const report = buildSchemaReport(groups, snapshot);
@@ -7221,6 +7265,7 @@ module.exports = {
   SCHEMA_GROUPS,
   getGroupsForProfile,
   groupsForPartitionedChainEvents,
+  groupsForPartitionedChainTransactions,
   inspectRuntimeSchema,
   assertRuntimeSchema,
   createRuntimeSchemaError,
