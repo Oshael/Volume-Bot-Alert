@@ -296,6 +296,10 @@ Uma leitura limitada por pares `(wallet, token)` identifica transfers brutos da
 janela que continuam `unknown`/`unclassified` ou têm versão de classificação
 divergente. Ausência desses casos vale apenas para as linhas brutas disponíveis;
 não prova captura completa nem resolve retenção ou alinhamento da projeção.
+O serviço de composição reúne eventos e essas auditorias por par, separando
+falhas globais das falhas da wallet/token. Mesmo com pré-condições satisfeitas,
+`eventsComplete` permanece falso até existir leitura em snapshot consistente e
+prova da cobertura por token; o domínio não publica ganho exato nesse estágio.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
