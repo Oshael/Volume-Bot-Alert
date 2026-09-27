@@ -280,6 +280,10 @@ O cálculo temporal também aceita posição corrente mais eventos completos da
 janela, sem exigir todo o histórico de compras da wallet; ALL usa o custo
 remanescente da projeção. Cobertura dos eventos e alinhamento da projeção
 continuam sendo pré-requisitos para publicar ganho exato.
+O leitor de eventos de janela consulta swaps e `wallet_transfer` classificados
+em lote limitado por par `(wallet, token)`. Ele informa truncamento e lacunas
+de ordenação; a cobertura da fonte continua não verificada até auditoria de
+partições, classificação e cursores.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
