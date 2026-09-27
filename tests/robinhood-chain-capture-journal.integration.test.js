@@ -110,6 +110,7 @@ const stage240 = require('../src/utils/db-init-stage240');
 const stage247 = require('../src/utils/db-init-stage247');
 const stage253 = require('../src/utils/db-init-stage253');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
+const transactionShadowCopy = require('../src/utils/copy-robinhood-chain-transaction-shadow-page');
 const {
   mirrorCapturedTransactions,
 } = require('../src/models/robinhood-chain-transaction-shadow');
@@ -842,6 +843,48 @@ describe('Robinhood canonical chain capture journal', () => {
       client.release();
     }
   });
+
+  it('copies a bounded finalized transaction page without changing the capture cursor',
+    async () => {
+      await createRobinhoodChainCaptureJournal().commitBlock(capture());
+      await db.query(`UPDATE robinhood_chain_capture_cursor
+        SET finalized_head=100 WHERE chain='robinhood'`);
+      const options = { database: db, fromBlock: 100, throughBlock: 101, maxBlocks: 1 };
+      const preview = await transactionShadowCopy.copyPage(options);
+      assert.deepEqual({ mode: preview.mode, transactions: preview.transactions,
+        inserted: preview.inserted, nextBlock: preview.nextBlock },
+      { mode: 'read-only', transactions: '1', inserted: 0, nextBlock: 101 });
+      assert.equal((await db.query(`SELECT count(*)::int AS n
+        FROM robinhood_chain_transactions_shadow`)).rows[0].n, 0);
+      assert.equal((await transactionShadowCopy.copyPage({ ...options, apply: true })).inserted, 1);
+      assert.equal((await transactionShadowCopy.copyPage({ ...options, apply: true })).inserted, 0);
+      assert.equal((await db.query(`SELECT next_block FROM robinhood_chain_capture_cursor
+        WHERE chain='robinhood'`)).rows[0].next_block, '101');
+      await db.query(`UPDATE robinhood_chain_transactions_shadow SET nonce=8
+        WHERE block_hash=$1`, [HASH]);
+      await assert.rejects(transactionShadowCopy.copyPage({ ...options, apply: true }),
+        (error) => error.code === 'capture_transaction_shadow_mismatch');
+      await assert.rejects(transactionShadowCopy.copyPage({ ...options,
+        fromBlock: 101 }), /above finalized head/);
+      assert.throws(() => transactionShadowCopy.parseArgs([
+        '--from-block=1', '--through-block=2', '--max-blocks=101',
+      ]), /maxBlocks/);
+      assert.throws(() => transactionShadowCopy.assertBoundedSource({
+        transactions: '5001', source_bytes: '0',
+      }), (error) => error.code === 'transaction_shadow_copy_page_too_large');
+    });
+
+  it('leaves a finalized source block intact when its shadow partition is absent',
+    async () => {
+      await createRobinhoodChainCaptureJournal().commitBlock(capture(500000));
+      await db.query(`UPDATE robinhood_chain_capture_cursor
+        SET finalized_head=500000 WHERE chain='robinhood'`);
+      await assert.rejects(transactionShadowCopy.copyPage({
+        database: db, fromBlock: 500000, throughBlock: 500000, apply: true,
+      }), (error) => error.code === 'capture_transaction_shadow_unavailable');
+      assert.equal((await db.query(`SELECT count(*)::int AS n
+        FROM robinhood_chain_transactions WHERE block_hash=$1`, [HASH])).rows[0].n, 1);
+    });
 
   it('backfills only a V3 snapshot present in the shadow and rejects a wrong block',
     async () => {

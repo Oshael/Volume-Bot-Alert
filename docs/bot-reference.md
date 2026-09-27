@@ -5533,6 +5533,18 @@ particionado inclui essa coluna. Provisionar a Stage 253 na VPS somente após
 aprovar o corte de escrita espelhada e seu orçamento de WAL, espaço e partições;
 o espelho exigirá essas partições antes de ser ativado.
 
+Para copiar transações históricas finalizadas, use
+`npm run robinhood:chain-transaction-shadow-copy -- --from-block=N
+--through-block=M --max-blocks=10`. O padrão é somente leitura; `--apply` copia
+somente uma página e retorna `nextBlock` para retomar. Cada página aceita até
+100 alturas, 5.000 transações e 16 MiB de linhas de origem, sob timeout de 30 s.
+O comando consulta o índice de blocos e busca cada hash no índice da tabela
+monolítica; inclui blocos não canônicos ainda retidos. Exige captura em execução,
+faixa finalizada e partições da sombra já criadas. Reduza `--max-blocks` se a
+página exceder os limites. A cópia é idempotente, recusa payload divergente e não
+altera o cursor da captura. Confirme espaço livre e WAL a cada página; a cópia
+sozinha não autoriza cutover ou poda, que exigem auditoria completa de paridade.
+
 Para limitar o preenchimento dos snapshots V3 à faixa já copiada e validada na
 sombra de eventos, use
 `npm run robinhood:v3-snapshot-shadow-backfill -- --from-block=N --through-block=M
