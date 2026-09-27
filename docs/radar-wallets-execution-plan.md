@@ -52,29 +52,33 @@ paginação e contexto do Radar. Links diretos devem conter rede e endereço.
 Requisito confirmado: lucro das posições ainda abertas; quando a wallet vende
 integralmente uma posição, essa posição deixa de contribuir para o ranking.
 
-UPNL = valor atual da quantidade remanescente − custo atribuído a essa quantidade.
-Não é saldo da wallet e não inclui lucro já realizado. Venda parcial retira
+Em ALL, UPNL = valor atual da quantidade remanescente − custo atribuído a essa
+quantidade. Nas janelas, o ganho usa a referência temporal definida abaixo.
+Nenhum modo é saldo da wallet ou inclui lucro já realizado. Venda parcial retira
 apenas a parcela vendida. Wallet sem posições elegíveis sai do ranking.
 
 Mostrar rank, wallet, avatar/nome/perfil quando disponível, plataforma de origem
-e UPNL em USD, ordenado do maior para o menor, com desempate determinístico.
+e ganho em USD, ordenado do maior para o menor, com desempate determinístico.
 Selecionar 24h, 7d, 30d ou ALL. A agregação é por wallet, não por perfil; não
 somar automaticamente todas as wallets vinculadas a uma pessoa.
 
-### Definição temporal proposta — confirmar antes do cálculo
+### Definição temporal confirmada
 
-A recomendação discutida foi considerar o UPNL atual das parcelas de compras
-feitas dentro da janela selecionada e que continuam abertas. ALL cobre todo o
-histórico disponível, não uma garantia de histórico completo desde a criação.
-Essa semântica ainda precisa de confirmação: o usuário confirmou a saída do
-lucro após vender, mas não escolheu explicitamente a atribuição por janela.
+Há quatro filtros: 24h, 7d, 30d e ALL. “Overall” foi apenas outro nome para ALL;
+não há quinto ranking. As janelas ordenam pelo ganho não realizado em USD das
+quantidades ainda abertas durante cada período, independentemente de quando a
+wallet comprou. Para uma compra anterior à janela, usar a variação entre o preço
+confiável no início da janela e o preço atual. Para uma compra feita dentro da
+janela, contar somente desde seu custo de execução. ALL usa o lucro não
+realizado acumulado das posições abertas pelo custo de compra remanescente.
+Venda integral tira a posição do ranking; venda parcial reduz sua contribuição
+proporcionalmente, acompanhando a política contábil da projeção existente.
 
-Não implementar o filtro apenas por `last_activity_at`: isso atribuiria à janela
-uma posição antiga inteira após uma compra ou venda pequena. Antes da etapa de
-ranking, definir a atribuição de custo e quantidade entre compras de janelas
-diferentes, vendas parciais, reaberturas e transferências. Reutilizar a política
-contábil existente quando compatível; não introduzir FIFO ou custo médio novo
-sem explicar a diferença e fechar o contrato.
+Não implementar o filtro apenas por `last_activity_at`: uma posição antiga
+pode subir de preço sem nova atividade da wallet. Histórico e preço de referência
+incompletos devem ser marcados como cobertura parcial, sem ganho exato presumido.
+ALL cobre o histórico disponível, não uma garantia de cobertura desde a criação.
+Transferência recebida sem custo conhecido não é compra gratuita.
 
 Valores sem custo ou preço confiável não viram zero nem ganho presumido. A API
 deve informar cobertura, instante de referência e exclusões relevantes. Ranking
@@ -213,8 +217,8 @@ não comprova plano de execução ou desempenho em PostgreSQL com dados reais.
 
 Continuação implementada no corte 1B abaixo; a tabela única já foi conectada.
 `history-bootstrap` continua restrito ao fluxo Solana.
-A semântica temporal do UPNL e o corte de contrapartes continuam pendentes para
-suas respectivas etapas e não bloqueiam o contrato unificado de tokens.
+O corte de contrapartes continua pendente para sua etapa e não bloqueia o
+contrato unificado de tokens.
 
 ### Dimensionamento e sequência
 
