@@ -284,6 +284,10 @@ O leitor de eventos de janela consulta swaps e `wallet_transfer` classificados
 em lote limitado por par `(wallet, token)`. Ele informa truncamento e lacunas
 de ordenação; a cobertura da fonte continua não verificada até auditoria de
 partições, classificação e cursores.
+Uma auditoria limitada por janela verifica a presença, anexação, limites diários
+e marcação de descarte das partições brutas de transfers. Ausência de lacuna nessa
+auditoria ainda não comprova classificação, avanço dos cursores nem cobertura dos
+swaps; portanto não libera ganhos exatos.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
