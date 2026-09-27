@@ -5,7 +5,7 @@ require('dotenv').config();
 const db = require('../models/db');
 const { mirrorCapturedTransactions } = require('../models/robinhood-chain-transaction-shadow');
 
-const MAX_BLOCKS = 100;
+const MAX_BLOCKS = 500;
 const MAX_TRANSACTIONS = 5000;
 const MAX_SOURCE_BYTES = 16 * 1024 * 1024;
 

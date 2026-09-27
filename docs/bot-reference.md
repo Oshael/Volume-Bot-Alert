@@ -5595,7 +5595,7 @@ Para copiar transações históricas finalizadas, use
 `npm run robinhood:chain-transaction-shadow-copy -- --from-block=N
 --through-block=M --max-blocks=10`. O padrão é somente leitura; `--apply` copia
 somente uma página e retorna `nextBlock` para retomar. Cada página aceita até
-100 alturas, 5.000 transações e 16 MiB de linhas de origem, sob timeout de 30 s.
+500 alturas, 5.000 transações e 16 MiB de linhas de origem, sob timeout de 30 s.
 O comando consulta o índice de blocos e busca cada hash no índice da tabela
 monolítica; inclui blocos não canônicos ainda retidos. Exige captura em execução,
 faixa finalizada e partições da sombra já criadas. Reduza `--max-blocks` se a
@@ -5609,6 +5609,10 @@ Para copiar lotes com retomada, use
 O comando reduz páginas acima de 5.000 transações ou 16 MiB, verifica o fim
 confirmado de cada página e informa `nextBlock` na saída `summary`. No máximo
 10.000 páginas são copiadas por execução; retome exatamente de `nextBlock`.
+Para medir páginas maiores sem alterar o padrão, passe `--max-blocks=300` em
+uma faixa curta e compare blocos/s, lag da captura e espaço livre com uma
+faixa semelhante copiada a 100 blocos por página. Se a consulta ultrapassar
+30 s ou a captura atrasar, retome com 100 blocos por página.
 Antes de cada gravação, exige lease de captura fresca, estado `running`, espelho
 de transações desligado, lag até 800 blocos e pelo menos 20 GiB livres na raiz,
 75 GiB no volume do heap e 50 GiB no volume dos índices. Interrompe antes da

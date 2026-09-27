@@ -47,6 +47,8 @@ it('bounds the run and halves dense pages without skipping a block', async () =>
   assert.deepEqual(committed, [[100, 124], [125, 149], [150, 174]]);
   assert.deepEqual(report, { mode: 'apply', pages: 3, inserted: 21,
     nextBlock: 175, stopReason: 'page_limit' });
+  assert.equal(parseArgs(['--from-block=1', '--through-block=500',
+    '--max-blocks=500']).maxBlocks, 500);
   assert.throws(() => parseArgs(['--from-block=1', '--through-block=2',
     '--max-pages=10001']), /max-pages/);
 });

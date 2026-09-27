@@ -867,8 +867,11 @@ describe('Robinhood canonical chain capture journal', () => {
         (error) => error.code === 'capture_transaction_shadow_mismatch');
       await assert.rejects(transactionShadowCopy.copyPage({ ...options,
         fromBlock: 101 }), /above finalized head/);
+      assert.equal(transactionShadowCopy.parseArgs([
+        '--from-block=1', '--through-block=500', '--max-blocks=500',
+      ]).pageEnd, 500);
       assert.throws(() => transactionShadowCopy.parseArgs([
-        '--from-block=1', '--through-block=2', '--max-blocks=101',
+        '--from-block=1', '--through-block=2', '--max-blocks=501',
       ]), /maxBlocks/);
       assert.throws(() => transactionShadowCopy.assertBoundedSource({
         transactions: '5001', source_bytes: '0',
