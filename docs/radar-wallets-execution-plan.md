@@ -288,6 +288,10 @@ Uma auditoria limitada por janela verifica a presença, anexação, limites diá
 e marcação de descarte das partições brutas de transfers. Ausência de lacuna nessa
 auditoria ainda não comprova classificação, avanço dos cursores nem cobertura dos
 swaps; portanto não libera ganhos exatos.
+Uma segunda auditoria lê os cursores seed/live de swaps e transfers, verifica
+continuidade, avanço além do `asOf` e checkpoint canônico. Mesmo com essas
+condições satisfeitas, classificação, completude por token e alinhamento com a
+projeção ainda precisam ser demonstrados antes de publicar o ranking exato.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
