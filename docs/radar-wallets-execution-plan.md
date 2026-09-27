@@ -1,7 +1,7 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: tabela unificada Robinhood disponível; feed paginado de swaps por wallet
-disponível na API; rankings e telas de detalhe ainda pendentes.
+Status: tabela unificada Robinhood disponível; feed de swaps por wallet na API e
+rota direta de compras/vendas disponíveis; rankings e demais detalhes pendentes.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -90,12 +90,11 @@ UPNL total exato. Transferência recebida sem custo conhecido não é compra gra
   vir do universo elegível no servidor, não da página atual da tabela principal.
 - Reaproveitar política de bloqueio, qualidade, identidade e links por rede.
 
-Pendência de produto: um token com menos de 24h normalmente não tem preço de
-24h atrás. Recomenda-se variação desde o primeiro preço confiável, rotulada
-“desde o lançamento” (ou “desde o primeiro preço”, quando essa for a evidência).
-Não chamar esse cálculo de variação 24h. Confirmar essa opção antes da etapa;
-se a definição exigir estritamente 24h, dados ausentes permanecem indisponíveis
-e podem deixar esse ranking vazio. Nunca inventar preço-base ou zero percentual.
+Decisão confirmada: para tokens com menos de 24h, usar variação desde o primeiro
+preço confiável, rotulada “desde o primeiro preço” (ou “desde o lançamento”
+somente quando a evidência coincidir com o lançamento). Não chamar esse cálculo
+de variação 24h. Sem preço-base confiável, a variação permanece indisponível;
+nunca inventar preço-base ou zero percentual.
 
 ## 5. Tabela única de tokens
 
@@ -175,7 +174,7 @@ Inspeção inicial identificou bases reutilizáveis, não prova de cobertura em 
 | `src/models/callout-wallet-profile-read.js` | Associação EVM a Fomo/Pump; política de múltiplos vínculos |
 | `src/services/robinhood-wallet-position-domain.js` | Custo e UPNL por posição; não é ranking temporal |
 | `src/models/robinhood-wallet-position.js` | Projeções atuais; verificar reconstrução histórica necessária |
-| `src/models/robinhood-wallet-swap-read.js` | Feed por token; falta consulta paginada por wallet |
+| `src/models/robinhood-wallet-swap-read.js` e `robinhood-wallet-trade-read.js` | Feeds paginados por token e wallet; falta integrar posições e transfers |
 | Modelos `robinhood-wallet-transfer-*` | Evidência/classificação; verificar retenção e consulta por wallet |
 | `src/models/callout-event-read.js` e `callout_thesis_archive` | Teses existentes; leitura por autor + ativo |
 | `frontend/src/services/charts/chart-wallet-buys.ts` | Investigar reaproveitamento; vendas precisam cobertura explícita |
@@ -212,9 +211,9 @@ misturadas, contagem, ordem, identidade, filtros e isolamento de Solana. O adapt
 Solana também conserva compatibilidade com o contrato multichain. Essa validação
 não comprova plano de execução ou desempenho em PostgreSQL com dados reais.
 
-Continuação implementada no corte 1B abaixo; falta conectar a tabela única.
-O frontend e `history-bootstrap` ainda exibem/retornam os dois grupos antigos.
-As decisões da etapa 0 sobre UPNL, altas e contrapartes continuam pendentes para
+Continuação implementada no corte 1B abaixo; a tabela única já foi conectada.
+`history-bootstrap` continua restrito ao fluxo Solana.
+A semântica temporal do UPNL e o corte de contrapartes continuam pendentes para
 suas respectivas etapas e não bloqueiam o contrato unificado de tokens.
 
 ### Dimensionamento e sequência

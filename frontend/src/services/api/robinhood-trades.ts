@@ -32,6 +32,45 @@ export interface FetchRobinhoodTokenTradesParams {
 
 export type RobinhoodTradeScope = 'all' | 'dev';
 
+export type RobinhoodWalletTradeSide = 'all' | 'buy' | 'sell';
+
+export interface RobinhoodWalletTrade {
+  chain: 'robinhood';
+  walletAddress: string;
+  tokenAddress: string;
+  transactionHash: string;
+  actionIndex: number;
+  blockNumber: number;
+  blockTime: string;
+  side: 'buy' | 'sell';
+  tokenAmount: string | null;
+  tokenAmountRaw: string;
+  tokenDecimals: number | null;
+  amountUsd: number | null;
+  priceUsd: number | null;
+}
+
+export interface RobinhoodWalletTradesPage {
+  chain: 'robinhood';
+  wallet: string;
+  side: RobinhoodWalletTradeSide;
+  trades: RobinhoodWalletTrade[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export function fetchRobinhoodWalletTrades(
+  params: { wallet: string; side: RobinhoodWalletTradeSide; cursor?: string | null; limit?: number },
+  authToken?: string | null,
+) {
+  const query = new URLSearchParams({ wallet: params.wallet, side: params.side });
+  if (params.cursor) query.set('cursor', params.cursor);
+  if (params.limit) query.set('limit', String(params.limit));
+  return apiFetch<RobinhoodWalletTradesPage>(`/api/robinhood/wallet-trades?${query.toString()}`, {
+    method: 'GET', token: authToken ?? null,
+  });
+}
+
 // GET /api/robinhood/trades — recent per-swap trades for one Robinhood token.
 // Authenticated + Robinhood-visibility gated on the server; the panel is only
 // mounted for the Robinhood chain, so a hidden-Robinhood user never calls this.

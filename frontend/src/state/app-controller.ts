@@ -1217,6 +1217,11 @@ function getWorkspacePath(workspace: WorkspaceView) {
   return workspace === 'history' ? '/monitor' : '/alerts';
 }
 
+function parseRadarWalletRoute(pathname: string | null | undefined) {
+  const match = String(pathname || '').match(/^\/radar\/wallet\/robinhood\/(0x[0-9a-f]{40})\/?$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
 function getWorkspaceSparklinePath(
   workspace: WorkspaceView,
   address: string,
@@ -4286,13 +4291,16 @@ export function createAppController(): AppController {
 
     const nextWorkspace = resolveWorkspaceFromPath(pathname);
     const changed = state.ui.workspace !== nextWorkspace;
+    const walletAddress = parseRadarWalletRoute(pathname);
+    const walletChanged = state.ui.radarWalletAddress !== walletAddress;
     if (changed) {
       clearHistoryBucketOrderLocks({ applyPending: false });
     }
     state.ui.workspace = nextWorkspace;
+    state.ui.radarWalletAddress = walletAddress;
     const isSparklineRoute = syncWorkspaceSparklineRouteFromLocation();
 
-    if (options?.canonicalize && !isSparklineRoute) {
+    if (options?.canonicalize && !isSparklineRoute && !walletAddress) {
       const canonicalPath = getWorkspacePath(nextWorkspace);
       if (pathname !== canonicalPath) {
         window.history.replaceState({}, document.title, canonicalPath);
@@ -4304,7 +4312,7 @@ export function createAppController(): AppController {
       refreshWorkspaceSnapshot();
     }
 
-    if (changed) {
+    if (changed || walletChanged) {
       emitWorkspaceChange();
     }
   }
@@ -4324,6 +4332,7 @@ export function createAppController(): AppController {
     if (state.ui.workspace !== nextWorkspace) {
       clearHistoryBucketOrderLocks({ applyPending: false });
       state.ui.workspace = nextWorkspace;
+      state.ui.radarWalletAddress = null;
       syncWorkspaceCapabilities();
       refreshWorkspaceSnapshot();
       emitWorkspaceChange();
@@ -4332,6 +4341,7 @@ export function createAppController(): AppController {
 
     syncWorkspaceCapabilities();
     if (routeChanged) {
+      state.ui.radarWalletAddress = null;
       emitWorkspaceChange();
     }
   }

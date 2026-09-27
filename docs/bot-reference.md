@@ -4025,6 +4025,10 @@ disponíveis, horário e hash. Transferências não entram nesse feed. A fonte �
 `robinhood_wallet_swaps`; a rota usa a mesma autenticação e visibilidade RH do
 feed de trades por token.
 
+No frontend, a rota direta `/radar/wallet/robinhood/:address` apresenta o feed
+All/Buy/Sell dessa wallet com paginação e retorno ao Radar sem descartar os filtros
+em memória. Ela ainda não inclui posições, transfers, contrapartes ou perfis.
+
 O painel fixo de holders fica na parte inferior e pode ser redimensionado pelo
 handle horizontal (ou pelas setas/Home/End quando focado); aumentar holders
 reduz a área compartilhada por chart e trades. A tabela compacta funde U. PnL

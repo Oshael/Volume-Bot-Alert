@@ -10181,6 +10181,25 @@ button,
 .unified-radar-bar .token-table.unified tr.radar-age-recent .token-symbol { color: #00ff88; }
 .unified-radar-bar .token-table.unified tr.radar-age-old .token-symbol { color: #ff8c00; }
 .unified-radar-bar .token-table.unified tr.radar-age-unknown .token-symbol { color: #d8e1ea; }
+.radar-wallet-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.radar-wallet-head code { color: #d8e1ea; font-size: 12px; }
+.radar-wallet-head button, .radar-wallet-head a,
+.radar-wallet-trade-filters button, .radar-wallet-trades [data-wallet-more] {
+  background: var(--surface); color: #edf2f7; border: 1px solid rgba(255,255,255,.2);
+  border-radius: 5px; padding: 6px 10px; cursor: pointer; text-decoration: none;
+}
+.radar-wallet-trades-content { padding: 14px; }
+.radar-wallet-trades-content h2 { margin: 0 0 12px; font-size: 15px; }
+.radar-wallet-trade-filters { display: flex; gap: 6px; margin-bottom: 12px; }
+.radar-wallet-trade-filters [aria-pressed="true"] { border-color: #00ff88; color: #00ff88; }
+.radar-wallet-trades-scroll { overflow-x: auto; }
+.radar-wallet-trades table { width: 100%; border-collapse: collapse; min-width: 600px; }
+.radar-wallet-trades th, .radar-wallet-trades td {
+  padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,.12); text-align: left;
+}
+.radar-wallet-trade-buy td:first-child { color: #00ff88; }
+.radar-wallet-trade-sell td:first-child { color: #ff6f78; }
+.radar-wallet-trades [data-wallet-more] { margin-top: 12px; }
 .unified-radar-bar .token-table.unified tr.radar-age-recent td { border-bottom-color: rgba(0,204,102,.12); }
 .unified-radar-bar .token-table.unified tr.radar-age-old td { border-bottom-color: rgba(255,140,0,.12); }
 

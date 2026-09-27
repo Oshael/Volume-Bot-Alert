@@ -5,6 +5,7 @@ import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay
 import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
 import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { renderUnifiedRadarSection } from './sections/unified-radar-section';
+import { renderRadarWalletTradesSection } from './sections/radar-wallet-trades-section';
 import { resolveMonitoredViewRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
@@ -255,7 +256,9 @@ export function renderAppShell(
         'recent',
         dirtyRegions,
         getUnifiedRadarRenderKey(state),
-        () => [renderUnifiedRadarSection(state, controller)],
+        () => [state.ui.radarWalletAddress
+          ? renderRadarWalletTradesSection(state, controller)
+          : renderUnifiedRadarSection(state, controller)],
       );
     } else {
       updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
@@ -1355,6 +1358,14 @@ function getMonitoredRenderKey(state: AppState, pane: MonitoredPaneKey) {
 }
 
 function getUnifiedRadarRenderKey(state: AppState) {
+  if (state.ui.radarWalletAddress) {
+    return JSON.stringify({
+      wallet: state.ui.radarWalletAddress,
+      authToken: state.session.token,
+      visible: state.data.availableChains.includes('robinhood')
+        && state.data.chainReadiness.robinhood?.capabilities.history === true,
+    });
+  }
   const tokens = getUnifiedRadarTokens(state);
   return JSON.stringify({
     radar: state.radar,

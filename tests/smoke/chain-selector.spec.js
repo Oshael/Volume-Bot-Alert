@@ -2734,6 +2734,61 @@ test('renders one globally paginated Robinhood Radar table with age colors and f
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('opens wallet trade history, filters and pages it, then restores Radar filters', async ({ page }) => {
+  test.setTimeout(45_000);
+  const requests = [];
+  const fixtures = {
+    ...ROBINHOOD_RADAR_API_FIXTURES,
+    'GET /api/robinhood/wallet-trades': (request) => {
+      const query = new URL(request.url()).searchParams;
+      requests.push({ wallet: query.get('wallet'), side: query.get('side'), cursor: query.get('cursor') });
+      const side = query.get('side') || 'all';
+      const cursor = query.get('cursor');
+      const trades = side === 'sell' || cursor ? [{
+        chain: 'robinhood', walletAddress: ROBINHOOD_DEV, tokenAddress: ROBINHOOD_OLD,
+        transactionHash: `0x${'b'.repeat(64)}`, actionIndex: 2, blockNumber: 101,
+        blockTime: '2026-07-15T11:01:00.000Z', side: 'sell',
+        tokenAmount: '12.5', tokenAmountRaw: '12500000', tokenDecimals: 6,
+        amountUsd: null, priceUsd: null,
+      }] : [{
+        chain: 'robinhood', walletAddress: ROBINHOOD_DEV, tokenAddress: ROBINHOOD_TOKEN,
+        transactionHash: `0x${'a'.repeat(64)}`, actionIndex: 1, blockNumber: 100,
+        blockTime: '2026-07-15T11:00:00.000Z', side: 'buy',
+        tokenAmount: '25', tokenAmountRaw: '25000000', tokenDecimals: 6,
+        amountUsd: 100, priceUsd: 4,
+      }];
+      return { chain: 'robinhood', wallet: ROBINHOOD_DEV, side, trades,
+        hasMore: side === 'all' && !cursor, nextCursor: side === 'all' && !cursor ? 'next' : null };
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures, '/radar');
+  const table = page.locator('.unified-radar-bar');
+  await table.locator('[data-radar-search]').fill('RADAROLD');
+  await table.locator('[data-radar-search]').press('Enter');
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+
+  await page.evaluate((wallet) => {
+    window.history.pushState({}, '', `/radar/wallet/robinhood/${wallet}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, ROBINHOOD_DEV);
+  const detail = page.locator('.radar-wallet-trades');
+  await expect(detail).toBeVisible();
+  await expect(detail.locator('[data-wallet-trades] tr')).toHaveCount(1);
+  await detail.locator('[data-wallet-more]').click();
+  await expect(detail.locator('[data-wallet-trades] tr')).toHaveCount(2);
+  await expect(detail.locator('[data-wallet-trades]')).toContainText('Valuation unavailable');
+  await detail.locator('[data-wallet-side="sell"]').click();
+  await expect(detail.locator('[data-wallet-trades] tr')).toHaveCount(1);
+  await detail.locator('[data-wallet-back]').click();
+  await expect(table.locator('[data-radar-search]')).toHaveValue('RADAROLD');
+  await page.goto(`/radar/wallet/robinhood/${ROBINHOOD_DEV}`);
+  await expect(page.locator('.radar-wallet-trades [data-wallet-trades] tr')).toHaveCount(1);
+  expect(requests.some((item) => item.wallet === ROBINHOOD_DEV && item.cursor === 'next')).toBe(true);
+  expect(requests.some((item) => item.side === 'sell')).toBe(true);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('loads Robinhood Radar without requesting legacy buckets when only Robinhood is selected', async ({ page }) => {
   test.setTimeout(45_000);
   unifiedRadarPayloads.length = 0;

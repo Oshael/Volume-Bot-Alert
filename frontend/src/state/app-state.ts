@@ -962,6 +962,7 @@ export interface AppState {
     oldWeekSearchPending: boolean;
     expandedSparklineChain: TokenChain;
     expandedSparklineAddress: string | null;
+    radarWalletAddress: string | null;
     expandedSparklineGranularityMinutes: number;
     expandedSparklineTimeZone: string;
     sparklineRange: {
@@ -1214,6 +1215,7 @@ export function createAppState(): AppState {
       oldWeekSearchPending: false,
       expandedSparklineChain: 'solana',
       expandedSparklineAddress: null,
+      radarWalletAddress: null,
       expandedSparklineGranularityMinutes: 5,
       expandedSparklineTimeZone: 'browser',
       sparklineRange: {
