@@ -72,19 +72,42 @@ describe('Robinhood holder archive deployment recovery', () => {
     });
   });
 
+  it('restricts no-hint recovery to archived tasks and keeps its archive identity', async () => {
+    let query;
+    const rows = await listCandidates({
+      async query(sql) {
+        query = sql;
+        return { rows: [{
+          token_address: TOKEN_A, upper_block: null,
+          archive_required_at: '2026-09-24 10:00:00.123456+00',
+        }] };
+      },
+    }, 20, { archiveNoHint: true });
+    assert.match(query, /outbox\.status = 'archive_required'/);
+    assert.match(query, /outbox\.mint_block_number IS NULL/);
+    assert.match(query, /outbox\.archive_required_at::text AS archive_required_at/);
+    assert.equal(rows[0].archiveNoHint, true);
+    assert.equal(rows[0].archiveRequiredAt, '2026-09-24 10:00:00.123456+00');
+  });
+
   it('is read-only by default and validates bounded options', async () => {
     assert.deepEqual(parseArgs([]), {
       confirm: false, catalogOnly: false, pinnedLiveRpcError: false,
+      archiveNoHint: false,
       limit: 100, concurrency: 2, timeoutMs: 30000,
     });
     assert.deepEqual(parseArgs([
-      CONFIRM_FLAG, '--catalog-only', '--pinned-live-rpc-error',
+      CONFIRM_FLAG, '--catalog-only', '--archive-no-hint',
       '--limit=10', '--concurrency=4', '--timeout-ms=5000',
     ]), {
-      confirm: true, catalogOnly: true, pinnedLiveRpcError: true,
+      confirm: true, catalogOnly: true, pinnedLiveRpcError: false,
+      archiveNoHint: true,
       limit: 10, concurrency: 4, timeoutMs: 5000,
     });
     assert.throws(() => parseArgs(['--concurrency=9']), /between 1 and 8/);
+    assert.throws(() => parseArgs([
+      '--archive-no-hint', '--pinned-live-rpc-error',
+    ]), /mutually exclusive/);
     const report = await main([], {
       logger: { log() {} },
       listCandidates: async () => [candidate(TOKEN_A)],
@@ -173,6 +196,29 @@ describe('Robinhood holder archive deployment recovery', () => {
     }, { ...candidate(TOKEN_A, '40'), pinnedHint });
     assert.deepEqual(calls, ['inspect', 'attribute', 'complete']);
     assert.equal(result.deploymentBlock, '40');
+  });
+
+  it('reports a race when an archived no-hint task changes during recovery', async () => {
+    const calls = [];
+    const archiveRequiredAt = '2026-09-24 10:00:00.123456+00';
+    await assert.rejects(recoverCandidate({
+      getArchiveHead: async () => '100',
+      discovery: { async discover() {
+        calls.push('discover');
+        return { tokenAddress: TOKEN_A, blockNumber: '40', source: 'rpc_code_transition' };
+      } },
+      attributions: { async recordCodeTransitions() {
+        calls.push('attribute');
+        return { attributed: 1 };
+      } },
+      outbox: { async completeArchiveNoHintRecovered(selected) {
+        calls.push('complete');
+        assert.equal(selected.archiveRequiredAt, archiveRequiredAt);
+        return false;
+      } },
+    }, { ...candidate(TOKEN_A, null), archiveNoHint: true, archiveRequiredAt }),
+    /archive no-hint task changed during recovery/);
+    assert.deepEqual(calls, ['discover', 'attribute', 'complete']);
   });
 
   it('searches earlier code for a preexisting contract and keeps uncertain tasks', async () => {

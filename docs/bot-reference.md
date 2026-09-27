@@ -3596,6 +3596,13 @@ e também fora do limite incremental ainda devem entrar em uma coorte delta do
 backfill global abaixo; essa seleção aceita `rpc_code_transition` como deployment
 exato mesmo sem provenance de creator.
 
+Para tarefas antigas sem mint fixado, use `--archive-no-hint --catalog-only`.
+Esse filtro seleciona apenas `archive_required` com `mint_block_number` nulo;
+a prévia continua read-only. Quando o journal não oferece um mint, o apply usa o
+head do Archive como limite superior. A conclusão exige que a tarefa ainda esteja
+em `archive_required`, sem mint fixado e com o mesmo `archive_required_at` da
+seleção. Pare ao primeiro lote com falhas e investigue antes de repetir.
+
 Para o estoque `archive_required` com mint fixado cujo RPC live devolveu
 `eth_getCode RPC error -32000`, use `--pinned-live-rpc-error` no mesmo recovery.
 Esse modo seleciona apenas essas tarefas e usa o bloco/hash/transação persistidos

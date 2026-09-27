@@ -231,6 +231,17 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     return result.rowCount === 1;
   }
 
+  async function completeArchiveNoHintRecovered(candidate) {
+    const result = await database.query(
+      `DELETE FROM robinhood_token_deployment_outbox
+        WHERE chain = '${CHAIN}' AND token_address = $1
+          AND status = 'archive_required' AND mint_block_number IS NULL
+          AND archive_required_at = $2::timestamptz`,
+      [normalizeTokenAddress(CHAIN, candidate.tokenAddress), candidate.archiveRequiredAt]
+    );
+    return result.rowCount === 1;
+  }
+
   async function retry(input = {}) {
     const retryMs = Math.max(1000, Math.min(Number(input.retryMs) || 15_000, 3_600_000));
     const result = await database.query(
@@ -248,7 +259,7 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
 
   return Object.freeze({
     archiveExpiredBatch, claim, claimBatch, claimBatchWithStats, complete, completeRecovered,
-    completePinnedRecovered,
+    completePinnedRecovered, completeArchiveNoHintRecovered,
     findDiscoveryHint, findMintHint, isExact, retry,
   });
 }

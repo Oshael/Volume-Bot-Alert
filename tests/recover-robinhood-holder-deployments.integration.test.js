@@ -71,3 +71,38 @@ it('does not delete a reopened or changed deployment task', async () => {
     client.release();
   }
 });
+
+it('selects only archived no-hint tasks and guards their completion', async () => {
+  const client = await db.getClient();
+  await client.query('BEGIN');
+  try {
+    await client.query(`INSERT INTO robinhood_token_deployment_outbox(
+      chain, token_address, status, archive_required_at, last_error
+    ) VALUES ('robinhood', $1, 'archive_required', NOW(),
+      'canonical_creator_evidence:local_deployment_evidence_pending')`, [TOKEN]);
+    const database = { query: (sql, params) => client.query(sql, params) };
+    const repository = createRobinhoodTokenDeploymentOutboxRepository({ database });
+    const selected = (await listCandidates(database, 1000, { archiveNoHint: true }))
+      .find(({ tokenAddress }) => tokenAddress === TOKEN);
+    assert.equal(selected.archiveNoHint, true);
+    assert.equal(selected.upperBlock, null);
+    assert.equal(await repository.completeArchiveNoHintRecovered({
+      ...selected, archiveRequiredAt: '2026-09-24 10:00:00+00',
+    }), false);
+
+    await client.query('SAVEPOINT before_reopen');
+    await client.query(`UPDATE robinhood_token_deployment_outbox SET
+      status='pending', archive_required_at=NULL,
+      mint_block_number=101, mint_block_hash=$2, mint_transaction_hash=$3
+      WHERE chain='robinhood' AND token_address=$1`, [TOKEN, NEW_HASH, TX]);
+    assert.equal(await repository.completeArchiveNoHintRecovered(selected), false);
+    await client.query('ROLLBACK TO SAVEPOINT before_reopen');
+
+    assert.equal(await repository.completeArchiveNoHintRecovered(selected), true);
+    assert.equal((await client.query(`SELECT 1 FROM robinhood_token_deployment_outbox
+      WHERE chain='robinhood' AND token_address=$1`, [TOKEN])).rowCount, 0);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
