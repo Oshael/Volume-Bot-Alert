@@ -1908,6 +1908,10 @@ parcial. O Radar web usa `radar-bootstrap` para uma tabela RH com busca, filtros
 ordem, contagem e paginação globais. O ticker fica verde até 7 dias inclusive e
 laranja depois; idade ausente é neutra. `history-bootstrap` ainda carrega os dois
 grupos legados para consumidores internos, sem exibi-los como tabelas separadas.
+Os filtros persistentes do Radar (favoritos, tamanho da página, ordem, idade,
+MCAP e FDV) ficam em `uiPrefs.radar`; busca e página atual são transitórias. Para
+preferências anteriores, o filtro único de favoritos herda Recent ou Old, e
+tamanho da página e ordem herdam Recent, respeitando os limites do Radar.
 
 Rotas web principais:
 

@@ -4593,6 +4593,17 @@ export function createAppController(): AppController {
       },
       recentStarredOnly: Boolean(state.ui.recentStarredOnly),
       oldWeekStarredOnly: Boolean(state.ui.oldWeekStarredOnly),
+      radar: {
+        starredOnly: state.radar.starredOnly,
+        perPage: state.radar.perPage,
+        sorts: [...state.radar.sorts],
+        ageMinMinutes: state.radar.ageMinMinutes,
+        ageMaxMinutes: state.radar.ageMaxMinutes,
+        minMcap: state.radar.minMcap,
+        maxMcap: state.radar.maxMcap,
+        minFdv: state.radar.minFdv,
+        maxFdv: state.radar.maxFdv,
+      },
       chainFilters: state.ui.chainFilters,
       monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
       recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
@@ -4975,6 +4986,20 @@ export function createAppController(): AppController {
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
   }
 
+  function applyRadarUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
+    const radarPrefs = uiPrefs?.radar ?? {
+      starredOnly: Boolean(uiPrefs?.recentStarredOnly || uiPrefs?.oldWeekStarredOnly),
+      perPage: uiPrefs?.recentPerPage,
+      sorts: uiPrefs?.recentSorts,
+    };
+    state.radar = {
+      ...state.radar,
+      ...radarPrefs,
+      perPage: Math.min(100, normalizeUiPerPage(radarPrefs.perPage, 30)),
+      sorts: normalizeBucketSorts(radarPrefs.sorts, 'recent'),
+    };
+  }
+
   function applyUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
     applyCollapsedUiPreferences(uiPrefs);
     state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
@@ -4985,6 +5010,7 @@ export function createAppController(): AppController {
     );
     applyPaginationUiPreferences(uiPrefs);
     applySortUiPreferences(uiPrefs);
+    applyRadarUiPreferences(uiPrefs);
     applyExpandedSparklineUiPreferences(uiPrefs);
     state.ui.sparklineRange = normalizeSparklineRange(uiPrefs?.sparklineRange);
     state.ui.enabledTradeTerminals = normalizeTradeTerminals(uiPrefs?.enabledTradeTerminals);
@@ -14044,6 +14070,8 @@ export function createAppController(): AppController {
     setUnifiedRadarFilters(filters) {
       state.radar = { ...state.radar, ...filters, page: filters.page ?? (filters.perPage == null ? state.radar.page : 0) };
       if (filters.page == null && filters.perPage == null) state.radar.page = 0;
+      if (filters.perPage != null) state.radar.perPage = Math.min(100, normalizeUiPerPage(filters.perPage, 30));
+      if (Object.keys(filters).some((key) => key !== 'page' && key !== 'searchQuery')) queueUiPrefsPersist();
       emit('recent');
       if (usesHistoryBucketBootstrap()) void refreshHistoryWorkspaceBootstrap();
     },

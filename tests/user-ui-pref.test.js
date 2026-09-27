@@ -4,6 +4,34 @@ const assert = require('node:assert/strict');
 const userUiPref = require('../src/models/user-ui-pref');
 
 describe('user-ui-pref', () => {
+  it('migrates legacy bucket preferences into one Radar preference', () => {
+    const prefs = userUiPref.normalizePrefs({
+      recentStarredOnly: false,
+      oldWeekStarredOnly: true,
+      recentPerPage: 125,
+      recentSorts: [{ mode: 'vol', window: '5m' }, { mode: 'age', window: 'newest' }],
+    });
+    assert.equal(prefs.radar.starredOnly, true);
+    assert.equal(prefs.radar.perPage, 100);
+    assert.deepEqual(prefs.radar.sorts, [{ mode: 'age', window: 'newest' }]);
+
+    const saved = userUiPref.normalizePrefs({ ...prefs, radar: {
+      ...prefs.radar, starredOnly: false, perPage: 25, sorts: [{ mode: 'mcap', window: 'highest' }],
+    } });
+    assert.equal(saved.radar.starredOnly, false);
+    assert.equal(saved.radar.perPage, 25);
+    assert.deepEqual(saved.radar.sorts, [{ mode: 'mcap', window: 'highest' }]);
+  });
+
+  it('rejects Radar preferences that the unified query cannot serve', () => {
+    const invalid = userUiPref.validatePatch({ radar: {
+      ageMinMinutes: 20_000,
+      ageMaxMinutes: 10_000,
+    } });
+    assert.equal(invalid.valid, false);
+    assert.ok(invalid.errors.some((error) => error.includes('invalid Radar filters')));
+  });
+
   it('defaults enabled trade terminals for legacy prefs', () => {
     const prefs = userUiPref.normalizePrefs({});
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);

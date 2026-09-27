@@ -915,6 +915,32 @@ describe('Config routes', () => {
     });
   });
 
+  it('persists unified Radar preferences across requests', async () => {
+    const radar = {
+      starredOnly: true,
+      perPage: 25,
+      sorts: [{ mode: 'age', window: 'oldest' }],
+      ageMinMinutes: 60,
+      ageMaxMinutes: null,
+      minMcap: 150_000,
+      maxMcap: 90_000_000,
+      minFdv: 170_000,
+      maxFdv: 95_000_000,
+    };
+    const update = await request(app)
+      .patch('/api/config/ui-prefs')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ uiPrefs: { radar } });
+    assert.equal(update.status, 200);
+    assert.deepEqual(update.body.uiPrefs.radar, radar);
+
+    const read = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.uiPrefs.radar, radar);
+  });
+
   it('invalidates the alert profile only when enabled chains change', async () => {
     const { rows } = await db.query(
       "SELECT id FROM users WHERE role = 'user' ORDER BY id LIMIT 1",

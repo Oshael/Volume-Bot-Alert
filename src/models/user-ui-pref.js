@@ -5,6 +5,7 @@ const {
   isRobinhoodUserVisible,
 } = require('../utils/token-chain-availability');
 const config = require('../../config');
+const { normalizeRadarQuery } = require('../services/dashboard-radar-query');
 
 const COLLAPSIBLE_SECTIONS = ['watchlist', 'recent', 'oldWeek', 'monitored', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
@@ -64,6 +65,17 @@ const DEFAULT_CHAIN_FILTERS = Object.freeze({
   alertFeedChains: Object.freeze(['solana']),
   browserNotificationChains: Object.freeze(['solana']),
 });
+const DEFAULT_RADAR_PREFS = Object.freeze({
+  starredOnly: false,
+  perPage: 30,
+  sorts: Object.freeze([{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]),
+  ageMinMinutes: 0,
+  ageMaxMinutes: null,
+  minMcap: 120_000,
+  maxMcap: 100_000_000,
+  minFdv: 120_000,
+  maxFdv: 100_000_000,
+});
 
 function getConfiguredAvailableTokenChains() {
   return getAvailableTokenChains({
@@ -82,6 +94,7 @@ const DEFAULT_UI_PREFS = {
   },
   recentStarredOnly: false,
   oldWeekStarredOnly: false,
+  radar: DEFAULT_RADAR_PREFS,
   chainFilters: DEFAULT_CHAIN_FILTERS,
   monitoredPerPage: 30,
   recentPerPage: 30,
@@ -137,6 +150,39 @@ function validatePerPage(key, value) {
     return { valid: false, error: `${key} must be between 10 and 500` };
   }
   return { valid: true, value: Math.floor(num) };
+}
+
+function validateRadarPreferences(key, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key} must be an object` };
+  }
+  const allowed = Object.keys(DEFAULT_RADAR_PREFS);
+  if (Object.keys(value).some((field) => !allowed.includes(field))) {
+    return { valid: false, error: `${key} contains an unknown field` };
+  }
+  const input = { ...DEFAULT_RADAR_PREFS, ...value };
+  if (typeof input.starredOnly !== 'boolean'
+    || !Number.isSafeInteger(input.perPage) || input.perPage < 10 || input.perPage > 100) {
+    return { valid: false, error: `${key} has invalid starredOnly or perPage` };
+  }
+  for (const field of ['ageMinMinutes', 'minMcap', 'maxMcap', 'minFdv', 'maxFdv']) {
+    if (typeof input[field] !== 'number' || !Number.isFinite(input[field]) || input[field] < 0) {
+      return { valid: false, error: `${key}.${field} must be a nonnegative number` };
+    }
+  }
+  if (input.ageMaxMinutes !== null
+    && (typeof input.ageMaxMinutes !== 'number' || !Number.isFinite(input.ageMaxMinutes))) {
+    return { valid: false, error: `${key}.ageMaxMinutes must be a number or null` };
+  }
+  try {
+    const normalized = normalizeRadarQuery({ ...input, bucket: 'all', chains: ['robinhood'] });
+    return { valid: true, value: {
+      ...input,
+      sorts: normalized.sorts.map(({ mode, window }) => ({ mode, window })),
+    } };
+  } catch (_) {
+    return { valid: false, error: `${key} contains invalid Radar filters` };
+  }
 }
 
 function normalizeExpandedSparklineGranularity(value) {
@@ -732,6 +778,17 @@ function normalizePrefs(raw) {
   };
   defaults.recentStarredOnly = Boolean(source.recentStarredOnly);
   defaults.oldWeekStarredOnly = Boolean(source.oldWeekStarredOnly);
+  const legacySorts = (Array.isArray(source.recentSorts) ? source.recentSorts : DEFAULT_RADAR_PREFS.sorts)
+    .filter((sort) => sort?.mode !== 'vol' || sort?.window !== '5m');
+  const legacyRadar = {
+    starredOnly: defaults.recentStarredOnly || defaults.oldWeekStarredOnly,
+    perPage: Math.min(100, normalizeStoredPerPage(source.recentPerPage, DEFAULT_RADAR_PREFS.perPage)),
+    sorts: legacySorts.length ? legacySorts : DEFAULT_RADAR_PREFS.sorts,
+  };
+  defaults.radar = normalizedStoredValue(
+    validateRadarPreferences('radar', source.radar ?? legacyRadar),
+    defaults.radar,
+  );
   defaults.chainFilters = normalizeChainFilters(source.chainFilters);
   defaults.monitoredPerPage = normalizeStoredPerPage(source.monitoredPerPage, defaults.monitoredPerPage);
   defaults.recentPerPage = normalizeStoredPerPage(source.recentPerPage, defaults.recentPerPage);
@@ -791,6 +848,7 @@ const UI_PREF_VALIDATORS = new Map([
   ['monitoredPerPage', validatePerPage],
   ['recentPerPage', validatePerPage],
   ['oldWeekPerPage', validatePerPage],
+  ['radar', validateRadarPreferences],
   ['expandedSparklineGranularityMinutes', validateExpandedSparklineGranularity],
   ['expandedSparklineTimeZone', validateExpandedChartTimeZone],
   ['sparklineRange', validateSparklineRange],

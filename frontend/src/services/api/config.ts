@@ -119,6 +119,17 @@ export interface UiPrefsPayload {
   manualFolderDeleteWarningDismissed?: boolean;
   recentStarredOnly: boolean;
   oldWeekStarredOnly: boolean;
+  radar: {
+    starredOnly: boolean;
+    perPage: number;
+    sorts: BucketSortCriterionPayload[];
+    ageMinMinutes: number;
+    ageMaxMinutes: number | null;
+    minMcap: number;
+    maxMcap: number;
+    minFdv: number;
+    maxFdv: number;
+  };
   chainFilters: ChainFilterPreferences;
   monitoredPerPage: number;
   recentPerPage: number;
