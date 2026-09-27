@@ -11,6 +11,7 @@ const EVENTS = 'public.robinhood_chain_events';
 const OLD_FK = 'rh_chain_events_shadow_transaction_fkey';
 const NEW_FK = 'rh_chain_events_transaction_shadow_fkey';
 const CAPTURE_LEASE = 'robinhood-chain-capture-worker';
+const PARTITION_WIDTH = 250000;
 
 function parseArgs(args = []) {
   const values = {};
@@ -93,7 +94,52 @@ async function captureState(client, lock = false) {
   return row;
 }
 
-async function assertEventFks(client, state) {
+function eventLeafStart(row) {
+  const bound = /^FOR VALUES FROM \('([0-9]+)'\) TO \('([0-9]+)'\)$/.exec(row.bound);
+  const start = Number(bound?.[1]);
+  if (!bound || !Number.isSafeInteger(start) || start % PARTITION_WIDTH !== 0
+      || Number(bound[2]) !== start + PARTITION_WIDTH
+      || row.relname !== `robinhood_chain_events_shadow_b${start}`) {
+    throw new Error('event partition has an unexpected bound or legacy FK');
+  }
+  return start;
+}
+
+function hasLegacyEventFk(row) {
+  return row.legacy_validated && row.legacy_references_old
+    && row.legacy_definition?.includes(
+      'FOREIGN KEY (chain, block_hash, transaction_hash)')
+    && row.legacy_definition?.includes('ON DELETE CASCADE');
+}
+
+function hasReplacementEventFk(row) {
+  return row.replacement_validated && row.references_shadow
+    && row.definition?.includes(
+      'FOREIGN KEY (chain, block_number, block_hash, transaction_hash)')
+    && row.definition?.includes('ON DELETE CASCADE');
+}
+
+function eventLeafCoverage(rows, retentionFromBlock) {
+  if (!rows.length) throw new Error('event partitions are missing');
+  let historicalEventPartitions = 0;
+  for (const row of rows) {
+    const start = eventLeafStart(row);
+    if (!hasLegacyEventFk(row)) {
+      throw new Error('event partition has an unexpected bound or legacy FK');
+    }
+    if (start < retentionFromBlock) {
+      if (row.replacement_validated != null) {
+        throw new Error('historical event partition already has a replacement FK');
+      }
+      historicalEventPartitions += 1;
+    } else if (!hasReplacementEventFk(row)) {
+      throw new Error('every retained and future event partition needs a validated shadow FK');
+    }
+  }
+  return { eventPartitions: rows.length, historicalEventPartitions };
+}
+
+async function assertEventFks(client, state, retentionFromBlock) {
   const root = await client.query(`SELECT conname, convalidated,
       confrelid=$2::oid AS references_old,
       pg_get_constraintdef(oid) AS definition
@@ -106,24 +152,24 @@ async function assertEventFks(client, state) {
       || !root.rows[0].definition.includes('ON DELETE CASCADE')) {
     throw new Error('event parent lacks its validated legacy transaction FK');
   }
-  const leaves = await client.query(`SELECT child.oid,
-      child.relname, replacement.convalidated AS replacement_validated,
+  const leaves = await client.query(`SELECT child.oid, child.relname,
+      pg_get_expr(child.relpartbound, child.oid) AS bound,
+      legacy.convalidated AS legacy_validated,
+      legacy.confrelid=$4::oid AS legacy_references_old,
+      pg_get_constraintdef(legacy.oid) AS legacy_definition,
+      replacement.convalidated AS replacement_validated,
       replacement.confrelid=$2::oid AS references_shadow,
       pg_get_constraintdef(replacement.oid) AS definition
     FROM pg_inherits inheritance
     JOIN pg_class child ON child.oid=inheritance.inhrelid
+    LEFT JOIN pg_constraint legacy ON legacy.conrelid=child.oid
+      AND legacy.conname=$3 AND legacy.contype='f'
     LEFT JOIN pg_constraint replacement ON replacement.conrelid=child.oid
-      AND replacement.conname=$3 AND replacement.conparentid=0
+      AND replacement.conname=$5 AND replacement.conparentid=0
       AND replacement.contype='f'
     WHERE inheritance.inhparent=to_regclass($1)`,
-  [EVENTS, state.shadow_oid, NEW_FK]);
-  if (!leaves.rows.length || leaves.rows.some((row) => !row.replacement_validated
-      || !row.references_shadow
-      || !row.definition.includes(
-        'FOREIGN KEY (chain, block_number, block_hash, transaction_hash)')
-      || !row.definition.includes('ON DELETE CASCADE'))) {
-    throw new Error('every event partition needs a validated FK to transaction shadow');
-  }
+  [EVENTS, state.shadow_oid, OLD_FK, state.active_oid, NEW_FK]);
+  const coverage = eventLeafCoverage(leaves.rows, retentionFromBlock);
   const other = await client.query(`SELECT conrelid::regclass::text AS child, conname
     FROM pg_constraint WHERE contype='f' AND confrelid=$1::oid
       AND conparentid=0 AND conrelid<>to_regclass($2) LIMIT 1`,
@@ -137,7 +183,22 @@ async function assertEventFks(client, state) {
       AND relation.relkind IN ('v','m') LIMIT 1) AS dependent`,
   [state.active_oid]);
   if (views.rows[0]?.dependent) throw new Error('a view still depends on monolithic transactions');
-  return leaves.rows.length;
+  return coverage;
+}
+
+async function assertRetentionFloor(client, fromBlock, earliest) {
+  if (BigInt(fromBlock) <= BigInt(earliest)) return;
+  if (fromBlock % PARTITION_WIDTH !== 0) {
+    throw new Error('retained transaction audit must start at a partition boundary');
+  }
+  const result = await client.query(`SELECT block_number::text,
+      block_timestamp <= NOW() - INTERVAL '72 hours' AS old_enough
+    FROM public.robinhood_chain_blocks
+    WHERE chain='robinhood' AND canonical AND block_number >= $1::bigint
+    ORDER BY block_number LIMIT 1`, [fromBlock]);
+  if (result.rows[0]?.old_enough !== true) {
+    throw new Error('retained transaction audit starts after the three-day boundary');
+  }
 }
 
 async function assertNextPartition(client, nextBlock) {
@@ -183,20 +244,19 @@ async function tailParity(client, fromBlock, checkpointBlock) {
 
 async function inspectBefore(client, state, reports, lock = false) {
   const capture = await captureState(client, lock);
-  const eventPartitions = await assertEventFks(client, state);
-  const nextPartitionStart = await assertNextPartition(client, capture.next_block);
   const first = await client.query(`SELECT min(block_number)::text AS first_block
     FROM public.robinhood_chain_blocks WHERE chain='robinhood'`);
   const earliest = first.rows[0]?.first_block;
   if (earliest == null) throw new Error('canonical block journal is empty');
+  const retentionFromBlock = reports?.fromBlock ?? Number(earliest);
   let auditedThrough = null;
   let checkedFrom = null;
   if (reports) {
-    if (BigInt(reports.fromBlock) > BigInt(earliest)
-        || BigInt(reports.throughBlock) < BigInt(capture.finalized_head)
+    if (BigInt(reports.throughBlock) < BigInt(capture.finalized_head)
         || BigInt(reports.throughBlock) > BigInt(capture.checkpoint_block)) {
       throw new Error('audit reports do not cover the retained transaction journal');
     }
+    await assertRetentionFloor(client, reports.fromBlock, earliest);
     auditedThrough = String(reports.throughBlock);
     checkedFrom = await tailParity(client, BigInt(reports.throughBlock) + 1n,
       BigInt(capture.checkpoint_block));
@@ -205,9 +265,12 @@ async function inspectBefore(client, state, reports, lock = false) {
       AND block_number>$1::bigint LIMIT 1) AS present`, [capture.checkpoint_block]);
     if (beyond.rows[0]?.present) throw new Error('blocks exist after capture checkpoint');
   }
+  const coverage = await assertEventFks(client, state, retentionFromBlock);
+  const nextPartitionStart = await assertNextPartition(client, capture.next_block);
   return { phase: 'before', ready: Boolean(reports) && !capture.capture_active,
     activeOid: state.active_oid, shadowOid: state.shadow_oid,
-    earliestBlock: earliest, eventPartitions, nextPartitionStart,
+    earliestBlock: earliest, retentionFromBlock,
+    ...coverage, nextPartitionStart,
     auditedThrough, checkedFrom, ...capture };
 }
 
@@ -280,4 +343,5 @@ if (require.main === module) run(parseArgs(process.argv.slice(2))).then((result)
 });
 
 module.exports = { parseArgs, readAuditReports, layout, captureState,
-  assertEventFks, assertNextPartition, tailParity, inspectBefore, swapRelations, swap, run };
+  assertEventFks, assertNextPartition, assertRetentionFloor, eventLeafCoverage,
+  tailParity, inspectBefore, swapRelations, swap, run };

@@ -5575,9 +5575,13 @@ Ambas as etapas recusam lease ativa ou cursor diferente e seguram o lock do
 cursor durante a operação. Deixe a captura parada até concluir a validação;
 se o cursor mudar, reavalie a partição e o espelho antes de repetir. Este
 procedimento preserva a FK antiga e não efetua o cutover das transações.
-Com a captura parada, o mesmo par de comandos aceita também a partição futura
-imediata, desde que ela esteja vazia; todas as partições existentes precisam
-terminar com a FK nova validada antes do cutover.
+Com a captura parada, o mesmo par de comandos aceita qualquer partição futura
+vazia; o cursor esperado e a lease inativa são conferidos em cada operação.
+Para o corte com retenção de 72 horas, valide a FK nova em todas as partições
+de eventos desde `candidate.fromBlock` do plano, incluindo as futuras vazias.
+Partições anteriores a esse bloco preservam seus eventos e não recebem a FK
+nova: ao remover a FK do pai no cutover, elas deixam de referenciar as
+transações antigas. A monolítica aposentada permanece até uma exclusão separada.
 Depois do cutover das transações, provisione cada faixa futura com
 `npm run robinhood:chain-journal-partition -- --partition-start=N`; o padrão
 somente inspeciona. `--apply` cria no máximo um par de partições vazias, de
@@ -5613,9 +5617,13 @@ O cutover usa `npm run robinhood:chain-transaction-cutover -- --audit-report=PAT
 para inspecionar; `--apply --expected-next-block=N` executa a troca com a captura
 parada. PATH é um JSONL formado pela concatenação dos resultados da auditoria,
 com relatórios `summary` completos e contíguos desde o primeiro bloco retido
-até o head finalizado. O comando compara o restante até o checkpoint (máximo
-64 blocos), exige FK nova validada em todas as partições de eventos e faz a
-troca de nomes na mesma transação que remove a FK antiga do pai de eventos.
+até o head finalizado. O início deve ser uma fronteira de partição cuja primeira
+linha canônica tem pelo menos 72 horas no relógio do PostgreSQL; a auditoria
+integral desde o primeiro bloco do journal também continua aceita. O comando
+compara o restante até o checkpoint (máximo 64 blocos), exige FK nova validada
+nas partições de eventos retidas e futuras e faz a troca de nomes na mesma
+transação que remove a FK antiga do pai de eventos. Isso não comprova por si
+só a materialização dos consumidores nem autoriza excluir a monolítica.
 A monolítica fica como `robinhood_chain_transactions_retired`; nenhuma partição
 de eventos é apagada. Provisionar a próxima faixa antes de reiniciar a captura.
 

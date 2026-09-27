@@ -39,9 +39,9 @@ function parseArgs(args = []) {
   }
   if (input.paused) {
     if (!input.action || !Number.isSafeInteger(input.expectedNextBlock)
-        || input.expectedNextBlock < Math.max(1, start - PARTITION_SIZE)
+        || input.expectedNextBlock < 1
         || input.expectedNextBlock >= start + PARTITION_SIZE) {
-      throw new Error('--paused requires an expected next block in or directly before the partition');
+      throw new Error('--paused requires an expected next block in or before the partition');
     }
   } else if (input.expectedNextBlock != null) {
     throw new Error('--expected-next-block requires --paused');
@@ -101,7 +101,6 @@ async function assertCapturePaused(client, start, expectedNextBlock, options = {
       || row.next_block == null || row.checkpoint_block == null
       || BigInt(row.next_block) !== BigInt(expectedNextBlock)
       || BigInt(row.checkpoint_block) + 1n !== BigInt(row.next_block)
-      || BigInt(row.next_block) < BigInt(Math.max(1, start - PARTITION_SIZE))
       || BigInt(row.next_block) >= BigInt(start + PARTITION_SIZE)) {
     throw new Error('capture is active or its stopped checkpoint differs from the expected active partition');
   }
