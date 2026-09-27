@@ -108,7 +108,11 @@ const stage222 = require('../src/utils/db-init-stage222');
 const stage239 = require('../src/utils/db-init-stage239');
 const stage240 = require('../src/utils/db-init-stage240');
 const stage247 = require('../src/utils/db-init-stage247');
+const stage253 = require('../src/utils/db-init-stage253');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
+const {
+  mirrorCapturedTransactions,
+} = require('../src/models/robinhood-chain-transaction-shadow');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -388,6 +392,9 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
     await stage247.init({ closePool: false, tablespace: 'pg_default',
+      fromBlock: 0, throughBlock: 499999 });
+    await stage253.init({ database: db, closePool: false,
+      heapTablespace: 'pg_default', indexTablespace: 'pg_default',
       fromBlock: 0, throughBlock: 499999 });
     await stage216.init({ closePool: false });
     await stage222.init({ closePool: false });
@@ -777,6 +784,64 @@ describe('Robinhood canonical chain capture journal', () => {
       assert.equal((await db.query('SELECT count(*)::int AS n FROM robinhood_chain_events_shadow'))
         .rows[0].n, 0);
     });
+
+  it('commits the transaction shadow with the canonical block and cascades on reorg',
+    async () => {
+      const input = capture();
+      const journal = createRobinhoodChainCaptureJournal({ transactionShadowEnabled: true });
+      assert.equal((await journal.commitBlock(input)).shadowTransactions, 1);
+      const parity = await db.query(`SELECT
+          to_jsonb(tx) = to_jsonb(shadow)-'block_number' AS equal,
+          shadow.block_number::text AS block_number
+        FROM robinhood_chain_transactions tx
+        JOIN robinhood_chain_transactions_shadow shadow
+          USING (chain, block_hash, transaction_hash)`);
+      assert.deepEqual(parity.rows, [{ equal: true, block_number: '100' }]);
+      assert.equal((await journal.commitBlock(input)).status, 'replayed');
+      assert.equal((await db.query(`SELECT count(*)::int AS n
+        FROM robinhood_chain_transactions_shadow`)).rows[0].n, 1);
+      await db.query('DELETE FROM robinhood_chain_blocks WHERE block_hash=$1', [HASH]);
+      assert.equal((await db.query(`SELECT count(*)::int AS n
+        FROM robinhood_chain_transactions_shadow`)).rows[0].n, 0);
+    });
+
+  it('rolls back capture and cursor when the transaction shadow partition is missing',
+    async () => {
+      const input = capture(500000);
+      await assert.rejects(
+        createRobinhoodChainCaptureJournal({ transactionShadowEnabled: true })
+          .commitBlock(input),
+        (error) => error.code === 'capture_transaction_shadow_unavailable'
+      );
+      const counts = await db.query(`SELECT
+        (SELECT count(*)::int FROM robinhood_chain_blocks) AS blocks,
+        (SELECT count(*)::int FROM robinhood_chain_transactions) AS transactions,
+        (SELECT count(*)::int FROM robinhood_chain_capture_cursor) AS cursors`);
+      assert.deepEqual(counts.rows[0], { blocks: 0, transactions: 0, cursors: 0 });
+    });
+
+  it('rejects a divergent pre-existing transaction shadow row', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(`INSERT INTO robinhood_chain_transactions_shadow (
+        chain, block_number, block_hash, transaction_hash, transaction_index,
+        from_address, to_address, receipt_succeeded, contract_address, nonce, value_wei
+      ) SELECT chain, 100, block_hash, transaction_hash, transaction_index,
+               from_address, to_address, receipt_succeeded, contract_address, nonce, value_wei
+          FROM robinhood_chain_transactions WHERE block_hash=$1`, [HASH]);
+    const client = await db.getClient();
+    try {
+      assert.deepEqual(await mirrorCapturedTransactions(client, [{ block_hash: HASH }]),
+        { inserted: 0 });
+      await client.query(`UPDATE robinhood_chain_transactions_shadow SET nonce=8
+        WHERE block_hash=$1`, [HASH]);
+      await assert.rejects(
+        mirrorCapturedTransactions(client, [{ block_hash: HASH }]),
+        (error) => error.code === 'capture_transaction_shadow_mismatch'
+      );
+    } finally {
+      client.release();
+    }
+  });
 
   it('backfills only a V3 snapshot present in the shadow and rejects a wrong block',
     async () => {

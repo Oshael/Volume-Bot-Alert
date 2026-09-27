@@ -30,6 +30,20 @@ async function resolveEventShadowEnabled(database, requested) {
   return requested === true;
 }
 
+async function resolveTransactionShadowEnabled(database, requested) {
+  if (!requested) return false;
+  const result = await database.query(`SELECT active.relkind AS active_kind,
+      shadow.relkind AS shadow_kind
+    FROM pg_class active
+    LEFT JOIN pg_class shadow
+      ON shadow.oid=to_regclass('public.robinhood_chain_transactions_shadow')
+    WHERE active.oid=to_regclass('public.robinhood_chain_transactions')`);
+  if (result.rows[0]?.active_kind !== 'r' || result.rows[0]?.shadow_kind !== 'p') {
+    throw new Error('partitioned transaction shadow is unavailable');
+  }
+  return true;
+}
+
 function captureRpcOptions(options, base = config.robinhoodIngestionWorker) {
   let parsed;
   try { parsed = new URL(String(options.rpcUrl || '')); } catch (_) {
@@ -56,9 +70,12 @@ async function main(deps = {}) {
   const eventShadowEnabled = await (deps.resolveEventShadowEnabled || resolveEventShadowEnabled)(
     database, options.eventShadowEnabled
   );
-  const effectiveOptions = { ...options, eventShadowEnabled };
+  const transactionShadowEnabled = await (
+    deps.resolveTransactionShadowEnabled || resolveTransactionShadowEnabled
+  )(database, options.transactionShadowEnabled);
+  const effectiveOptions = { ...options, eventShadowEnabled, transactionShadowEnabled };
   const journal = deps.journal || createRobinhoodChainCaptureJournal({
-    database, shadowEnabled: eventShadowEnabled,
+    database, shadowEnabled: eventShadowEnabled, transactionShadowEnabled,
   });
   const recoveryPlanner = deps.recoveryPlanner
     || (deps.recoveryPlannerFactory || createRobinhoodChainRecoveryPlanner)(
@@ -108,4 +125,5 @@ if (require.main === module) main().catch((error) => {
 });
 
 module.exports = { LEASE_KEY, captureRpcOptions, main, resolveEventShadowEnabled,
+  resolveTransactionShadowEnabled,
   __private: { captureRpcOptions } };

@@ -5,7 +5,8 @@ const {
   CAPTURE_TOPICS, createRobinhoodChainCaptureWorker, __private,
 } = require('../src/services/robinhood-chain-capture-worker');
 const {
-  main: captureMain, resolveEventShadowEnabled, __private: captureProcess,
+  main: captureMain, resolveEventShadowEnabled, resolveTransactionShadowEnabled,
+  __private: captureProcess,
 } = require('../src/utils/run-robinhood-chain-capture-worker');
 
 const hash = (character) => `0x${character.repeat(64)}`;
@@ -292,3 +293,18 @@ test('partitioned active events disable the legacy mirror even if its flag stays
     active_kind: 'r', shadow_present: false,
   }] }) }, true), /shadow is unavailable/);
 });
+
+test('transaction mirror requires a partitioned shadow and a monolithic active table',
+  async () => {
+    assert.equal(await resolveTransactionShadowEnabled({}, false), false);
+    const database = { query: async () => ({ rows: [{
+      active_kind: 'r', shadow_kind: 'p',
+    }] }) };
+    assert.equal(await resolveTransactionShadowEnabled(database, true), true);
+    await assert.rejects(resolveTransactionShadowEnabled({ query: async () => ({
+      rows: [{ active_kind: 'r', shadow_kind: null }],
+    }) }, true), /unavailable/);
+    await assert.rejects(resolveTransactionShadowEnabled({ query: async () => ({
+      rows: [{ active_kind: 'p', shadow_kind: 'p' }],
+    }) }, true), /unavailable/);
+  });

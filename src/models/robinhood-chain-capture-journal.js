@@ -2,6 +2,7 @@
 const { createHash } = require('node:crypto');
 const db = require('./db');
 const { mirrorCapturedEvents } = require('./robinhood-chain-event-shadow');
+const { mirrorCapturedTransactions } = require('./robinhood-chain-transaction-shadow');
 const {
   createRobinhoodChainRecoveryJournal,
 } = require('./robinhood-chain-recovery-journal');
@@ -264,6 +265,7 @@ function validateSequence(entries, current) {
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
   const shadowEnabled = options.shadowEnabled === true;
+  const transactionShadowEnabled = options.transactionShadowEnabled === true;
   const recoveryJournal = options.recoveryJournal
     || createRobinhoodChainRecoveryJournal({ database });
   async function getCursor(client = database) {
@@ -416,6 +418,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                nonce NUMERIC, value_wei NUMERIC
              )`, [CHAIN, JSON.stringify(payload.transactions)]
       );
+      await mirrorCapturedTransactions(client, payload.blocks, {
+        enabled: transactionShadowEnabled,
+      });
       await client.query(
         `INSERT INTO robinhood_chain_events(
            chain, block_hash, block_number, transaction_hash, transaction_index,
@@ -522,6 +527,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         events: entry.events.length, v3Snapshots: entry.v3Snapshots.length,
         workItems: routeCanonicalEvents(entry.events).length,
         ...(shadowEnabled ? { shadowEvents: entry.events.length } : {}),
+        ...(transactionShadowEnabled ? { shadowTransactions: entry.transactions.length } : {}),
       }));
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

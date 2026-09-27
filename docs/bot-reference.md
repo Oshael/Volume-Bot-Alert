@@ -5524,8 +5524,11 @@ pelas mesmas faixas de 250.000 blocos. Exige `--heap-tablespace`,
 `--index-tablespace`, `--from-block` e `--through-block` explícitos; a PK fica no
 tablespace do heap e a chave de posição no tablespace de índices. Cada partição
 mantém FK para `robinhood_chain_blocks`. Esta etapa não copia transações, não
-troca a FK dos eventos, não muda o capturador e não habilita poda. A futura FK
-dos eventos deverá incluir `block_number`, pois a chave única do pai
+troca a FK dos eventos e não habilita poda. O capturador pode espelhar cada lote
+no mesmo commit usando `ROBINHOOD_CHAIN_TRANSACTION_SHADOW_ENABLED=true`,
+desligado por padrão. O espelho exige a tabela particionada e a partição de cada
+bloco antes de ativar; ausência ou divergência impede o commit e o avanço do
+cursor. A futura FK dos eventos deverá incluir `block_number`, pois a chave única do pai
 particionado inclui essa coluna. Provisionar a Stage 253 na VPS somente após
 aprovar o corte de escrita espelhada e seu orçamento de WAL, espaço e partições;
 o espelho exigirá essas partições antes de ser ativado.
