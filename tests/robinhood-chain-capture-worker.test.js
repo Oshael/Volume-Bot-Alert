@@ -6,6 +6,7 @@ const {
 } = require('../src/services/robinhood-chain-capture-worker');
 const {
   main: captureMain, resolveEventShadowEnabled, resolveTransactionShadowEnabled,
+  resolveTransactionStorage,
   __private: captureProcess,
 } = require('../src/utils/run-robinhood-chain-capture-worker');
 
@@ -260,6 +261,7 @@ test('capture process seeds and injects the V3 snapshotter', async () => {
   const process = await captureMain({
     options: { enabled: true, leaseHeartbeatMs: 1000, leaseTtlMs: 5000 },
     resolveEventShadowEnabled: async () => false,
+    resolveTransactionStorage: async () => ({ partitioned: false, shadowEnabled: false }),
     rpcOptions: {},
     rpcClientFactory: () => ({ request: async () => null }),
     catalog: { listActivePools: async () => seedPools },
@@ -306,5 +308,22 @@ test('transaction mirror requires a partitioned shadow and a monolithic active t
     }) }, true), /unavailable/);
     await assert.rejects(resolveTransactionShadowEnabled({ query: async () => ({
       rows: [{ active_kind: 'p', shadow_kind: 'p' }],
-    }) }, true), /unavailable/);
+    }) }, true), /still have a shadow relation/);
+  });
+
+test('transaction storage selects the active partitioned layout and disables the old mirror',
+  async () => {
+    const partitioned = { query: async () => ({ rows: [{
+      active_kind: 'p', shadow_kind: null,
+    }] }) };
+    assert.deepEqual(await resolveTransactionStorage(partitioned, true),
+      { partitioned: true, shadowEnabled: false });
+    await assert.rejects(resolveTransactionStorage({ query: async () => ({ rows: [{
+      active_kind: 'p', shadow_kind: 'p',
+    }] }) }, true), /still have a shadow relation/);
+    const monolith = { query: async () => ({ rows: [{
+      active_kind: 'r', shadow_kind: 'p',
+    }] }) };
+    assert.deepEqual(await resolveTransactionStorage(monolith, true),
+      { partitioned: false, shadowEnabled: true });
   });

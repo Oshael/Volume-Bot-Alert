@@ -5535,6 +5535,10 @@ cursor. A futura FK dos eventos deverá incluir `block_number`, pois a chave ún
 particionado inclui essa coluna. Provisionar a Stage 253 na VPS somente após
 aprovar o corte de escrita espelhada e seu orçamento de WAL, espaço e partições;
 o espelho exigirá essas partições antes de ser ativado.
+Na inicialização, a captura distingue a tabela ativa monolítica da particionada.
+Após o cutover, escreve `block_number` diretamente na tabela ativa particionada
+e desliga o espelho mesmo que a flag permaneça configurada; uma segunda relação
+shadow ou uma partição ausente impede o avanço do cursor.
 No PostgreSQL 16, a FK `NOT VALID` não pode ser adicionada ao pai particionado de
 eventos apontando para o pai particionado de transações. A migração deve validar
 FKs por partição antes de retirar a FK antiga e preservar todas as partições.

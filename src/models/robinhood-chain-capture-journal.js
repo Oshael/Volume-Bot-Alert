@@ -3,6 +3,7 @@ const { createHash } = require('node:crypto');
 const db = require('./db');
 const { mirrorCapturedEvents } = require('./robinhood-chain-event-shadow');
 const { mirrorCapturedTransactions } = require('./robinhood-chain-transaction-shadow');
+const { insertCapturedTransactions } = require('./robinhood-chain-transaction-writer');
 const {
   createRobinhoodChainRecoveryJournal,
 } = require('./robinhood-chain-recovery-journal');
@@ -211,7 +212,7 @@ function batchPayload(entries) {
       capture_version: block.captureVersion,
     });
     transactions.push(...entry.transactions.map((transaction) => ({
-      block_hash: block.hash, ...transaction,
+      block_number: block.number.toString(), block_hash: block.hash, ...transaction,
     })));
     events.push(...entry.events.map((event) => ({
       block_hash: block.hash, block_number: block.number.toString(), ...event,
@@ -266,6 +267,10 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
   const shadowEnabled = options.shadowEnabled === true;
   const transactionShadowEnabled = options.transactionShadowEnabled === true;
+  const transactionPartitioned = options.transactionPartitioned === true;
+  if (transactionShadowEnabled && transactionPartitioned) {
+    throw new Error('partitioned transaction capture cannot mirror to the retired shadow');
+  }
   const recoveryJournal = options.recoveryJournal
     || createRobinhoodChainRecoveryJournal({ database });
   async function getCursor(client = database) {
@@ -405,19 +410,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                receipts_available_at TIMESTAMPTZ, capture_version INTEGER
              )`, [CHAIN, JSON.stringify(payload.blocks)]
       );
-      await client.query(
-        `INSERT INTO robinhood_chain_transactions(
-           chain, block_hash, transaction_hash, transaction_index, from_address,
-           to_address, receipt_succeeded, contract_address, nonce, value_wei
-         ) SELECT $1, item.block_hash, item.transaction_hash, item.transaction_index,
-                  item.from_address, item.to_address, item.receipt_succeeded,
-                  item.contract_address, item.nonce, item.value_wei
-             FROM jsonb_to_recordset($2::jsonb) AS item(
-               block_hash TEXT, transaction_hash TEXT, transaction_index INTEGER, from_address TEXT,
-               to_address TEXT, receipt_succeeded BOOLEAN, contract_address TEXT,
-               nonce NUMERIC, value_wei NUMERIC
-             )`, [CHAIN, JSON.stringify(payload.transactions)]
-      );
+      await insertCapturedTransactions(client, payload.transactions, {
+        partitioned: transactionPartitioned,
+      });
       await mirrorCapturedTransactions(client, payload.blocks, {
         enabled: transactionShadowEnabled,
       });

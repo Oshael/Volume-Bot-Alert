@@ -6,6 +6,7 @@ const db = require('../src/models/db');
 const stage253 = require('../src/utils/db-init-stage253');
 const eventFks = require('../src/utils/migrate-robinhood-chain-transaction-event-fks');
 const partitionProvisioner = require('../src/utils/provision-robinhood-chain-journal-partition');
+const { insertCapturedTransactions } = require('../src/models/robinhood-chain-transaction-writer');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK = 70750001;
@@ -116,6 +117,36 @@ it('lets partitioned event FKs reject missing transactions and cascade on reorg'
       FROM public.robinhood_chain_transactions_shadow WHERE block_hash=$1`, [HASH])).rows[0].n, 0);
     assert.equal((await client.query(`SELECT count(*)::int AS n
       FROM public.rh_tx_retention_event_probe`)).rows[0].n, 0);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
+
+it('writes block_number to the active partitioned transaction layout', async () => {
+  const client = await db.getClient();
+  const block = 70750003;
+  try {
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO robinhood_chain_blocks (
+      block_number, block_hash, parent_hash, capture_digest, block_timestamp,
+      head_observed_at, receipts_available_at
+    ) VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())`,
+    [block, HASH, PARENT, TX]);
+    const rows = [{ block_number: String(block), block_hash: HASH,
+      transaction_hash: TX, transaction_index: 0, from_address: ADDRESS,
+      receipt_succeeded: true, nonce: '7', value_wei: '42' }];
+    await insertCapturedTransactions(client, rows, { partitioned: true,
+      relation: stage253.SHADOW });
+    assert.equal((await client.query(`SELECT block_number::text AS block_number
+      FROM robinhood_chain_transactions_shadow WHERE block_hash=$1`, [HASH]))
+      .rows[0].block_number, String(block));
+    await client.query('SAVEPOINT missing_partition');
+    await assert.rejects(insertCapturedTransactions(client,
+      [{ ...rows[0], block_number: '80000000' }], {
+        partitioned: true, relation: stage253.SHADOW,
+      }), /partition/);
+    await client.query('ROLLBACK TO SAVEPOINT missing_partition');
   } finally {
     await client.query('ROLLBACK');
     client.release();
