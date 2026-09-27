@@ -5603,6 +5603,18 @@ página exceder os limites. A cópia é idempotente, recusa payload divergente e
 altera o cursor da captura. Confirme espaço livre e WAL a cada página; a cópia
 sozinha não autoriza cutover ou poda, que exigem auditoria completa de paridade.
 
+Para copiar lotes com retomada, use
+`npm run robinhood:chain-transaction-shadow-copy-batches -- --from-block=N
+--through-block=M --max-blocks=100 --max-pages=500 --pause-ms=100 --apply`.
+O comando reduz páginas acima de 5.000 transações ou 16 MiB, verifica o fim
+confirmado de cada página e informa `nextBlock` na saída `summary`. No máximo
+10.000 páginas são copiadas por execução; retome exatamente de `nextBlock`.
+Antes de cada gravação, exige lease de captura fresca, estado `running`, espelho
+de transações desligado, lag até 800 blocos e pelo menos 20 GiB livres na raiz,
+75 GiB no volume do heap e 50 GiB no volume dos índices. Interrompe antes da
+próxima página se alguma condição falhar. Audite cada faixa concluída antes de
+avançar; o `summary` da cópia não é prova de paridade.
+
 Audite uma faixa fixa finalizada com
 `npm run robinhood:chain-transaction-shadow-audit -- --from-block=N
 --through-block=M --max-blocks=10 --max-pages=100`. A auditoria é somente leitura:
