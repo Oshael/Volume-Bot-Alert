@@ -300,8 +300,10 @@ O serviço de composição reúne eventos e essas auditorias por par, separando
 falhas globais das falhas da wallet/token. Mesmo com pré-condições satisfeitas,
 `eventsComplete` permanece falso até existir prova da cobertura por token.
 Eventos e auditorias agora leem no mesmo snapshot PostgreSQL `REPEATABLE READ`
-somente leitura; posições e preços ainda não participam desse snapshot, portanto
-o domínio não publica ganho exato nesse estágio.
+somente leitura. Uma leitura de candidatos por conjunto explícito de tokens
+reúne até 20 posições abertas, preços e eventos nesse mesmo snapshot. Ela não
+prova universo global nem alinhamento temporal da projeção; por isso não publica
+ranking ou ganho exato nesse estágio.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
