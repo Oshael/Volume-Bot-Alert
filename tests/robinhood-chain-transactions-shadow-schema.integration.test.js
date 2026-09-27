@@ -5,6 +5,7 @@ const { after, before, it } = require('node:test');
 const db = require('../src/models/db');
 const stage253 = require('../src/utils/db-init-stage253');
 const eventFks = require('../src/utils/migrate-robinhood-chain-transaction-event-fks');
+const partitionProvisioner = require('../src/utils/provision-robinhood-chain-journal-partition');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK = 70750001;
@@ -206,6 +207,66 @@ it('requires an inactive capture lease and an exact stopped cursor for the activ
       VALUES ($1, 'rh-tx-fk-test', NOW()+INTERVAL '1 minute')`, [options.leaseKey]);
     await assert.rejects(eventFks.assertCapturePaused(client, 70750000, 70750002, options),
       /capture is active/);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
+
+it('provisions a future transaction/event pair with a validated FK in one transaction', async () => {
+  const client = await db.getClient();
+  const start = 80000000;
+  const txParent = 'public.rh_tx_future_test';
+  const eventParent = 'public.rh_event_future_test';
+  const txLeaf = `${txParent}_b${start}`;
+  const eventLeaf = `${eventParent}_b${start}`;
+  const options = { txParent, eventParent, txLeaf, eventLeaf };
+  try {
+    await client.query('BEGIN');
+    await client.query(`CREATE TABLE ${txParent} (
+      chain varchar(16) NOT NULL DEFAULT 'robinhood',
+      block_number bigint NOT NULL, block_hash varchar(66) NOT NULL,
+      transaction_hash varchar(66) NOT NULL,
+      PRIMARY KEY (chain, block_number, block_hash, transaction_hash),
+      FOREIGN KEY (chain, block_hash) REFERENCES robinhood_chain_blocks
+        (chain, block_hash) ON DELETE CASCADE
+    ) PARTITION BY RANGE (block_number)`);
+    await client.query(`CREATE TABLE ${eventParent} (
+      chain varchar(16) NOT NULL DEFAULT 'robinhood',
+      block_number bigint NOT NULL, block_hash varchar(66) NOT NULL,
+      transaction_hash varchar(66) NOT NULL, log_index integer NOT NULL DEFAULT 0,
+      PRIMARY KEY (chain, block_number, block_hash, log_index)
+    ) PARTITION BY RANGE (block_number)`);
+    assert.deepEqual(await partitionProvisioner.provision(client, start, false, options),
+      { start, txPresent: false, eventPresent: false });
+    assert.deepEqual(await partitionProvisioner.provision(client, start, true, options),
+      { start, txPresent: true, eventPresent: true,
+        createdTransactions: true, createdEvents: true });
+    assert.deepEqual(await partitionProvisioner.provision(client, start, true, options),
+      { start, txPresent: true, eventPresent: true,
+        createdTransactions: false, createdEvents: false });
+    await client.query(`INSERT INTO robinhood_chain_blocks (
+      block_number, block_hash, parent_hash, capture_digest, block_timestamp,
+      head_observed_at, receipts_available_at
+    ) VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())`,
+    [start, HASH, PARENT, TX]);
+    await client.query(`INSERT INTO ${txParent}
+      (block_number, block_hash, transaction_hash) VALUES ($1,$2,$3)`,
+    [start, HASH, TX]);
+    await client.query('SAVEPOINT missing_transaction');
+    await assert.rejects(client.query(`INSERT INTO ${eventParent}
+      (block_number, block_hash, transaction_hash) VALUES ($1,$2,$3)`,
+    [start, HASH, PARENT]), /foreign key/);
+    await client.query('ROLLBACK TO SAVEPOINT missing_transaction');
+    await client.query(`INSERT INTO ${eventParent}
+      (block_number, block_hash, transaction_hash) VALUES ($1,$2,$3)`,
+    [start, HASH, TX]);
+    await client.query(`DELETE FROM ${txParent} WHERE block_number=$1`, [start]);
+    assert.equal((await client.query(`SELECT count(*)::int AS n FROM ${eventParent}`))
+      .rows[0].n, 0);
+    assert.deepEqual(partitionProvisioner.parseArgs([
+      '--partition-start=80000000', '--apply',
+    ]), { start, apply: true });
   } finally {
     await client.query('ROLLBACK');
     client.release();

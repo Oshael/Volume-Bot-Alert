@@ -5554,6 +5554,14 @@ Ambas as etapas recusam lease ativa ou cursor diferente e seguram o lock do
 cursor durante a operação. Deixe a captura parada até concluir a validação;
 se o cursor mudar, reavalie a partição e o espelho antes de repetir. Este
 procedimento preserva a FK antiga e não efetua o cutover das transações.
+Depois do cutover das transações, provisione cada faixa futura com
+`npm run robinhood:chain-journal-partition -- --partition-start=N`; o padrão
+somente inspeciona. `--apply` cria no máximo um par de partições vazias, de
+transações e eventos, na mesma transação e adiciona FK validada no novo leaf de
+eventos. N deve ser uma fronteira de 250.000 blocos ainda não alcançada pela
+captura. O comando exige os dois pais particionados ativos e recusa FK legada
+no pai de eventos ou partição existente sem a FK nova. Prepare a próxima faixa
+antes de a captura alcançá-la; o comando não cria partições históricas podadas.
 
 Para copiar transações históricas finalizadas, use
 `npm run robinhood:chain-transaction-shadow-copy -- --from-block=N
