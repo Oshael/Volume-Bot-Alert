@@ -268,6 +268,12 @@ uma etapa funcional quando necessário, sem esconder trabalho parcial.
 | 9 | Detalhe do token, buys/sells e teses | Consistência chart/feed, autoria e identidade multichain |
 | 10 | Integração final e referência operacional | Fluxo completo, regressões e revisão de diff |
 
+No corte 4, o domínio temporal, a leitura limitada de preços de referência e a
+agregação por wallet já estão implementados. A agregação exige confirmação de
+universo completo antes de produzir uma ordem global; wallets com cobertura
+parcial não entram na soma exata. Ainda faltam a seleção global de candidatos,
+a reconstrução confiável dos eventos e a consulta pública do ranking.
+
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
 arquivos de repair de transfers que já estavam alterados durante a inspeção.
