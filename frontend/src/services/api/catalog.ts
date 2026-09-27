@@ -328,6 +328,31 @@ export interface DashboardHistoryBootstrapPayload {
   } | null;
 }
 
+export interface DashboardRadarBootstrapRequest {
+  page: number;
+  perPage: number;
+  searchQuery: string;
+  starredOnly: boolean;
+  sorts: DashboardHistoryBucketRequest['sorts'];
+  ageMinMinutes: number;
+  ageMaxMinutes?: number;
+  minMcap: number;
+  maxMcap: number;
+  minFdv: number;
+  maxFdv: number;
+  starredIdentities: string[];
+  dismissedIdentities: string[];
+  pinnedIdentities: string[];
+}
+
+export interface DashboardRadarBootstrapPayload {
+  source: 'workspace-radar-v1';
+  asOf: string | null;
+  generatedAt: string | null;
+  chains: TokenChain[];
+  all: DashboardHistoryBucketSlicePayload;
+}
+
 function normalizeDashboardHistoryBucketSlice(
   slice: Partial<DashboardHistoryBucketSlicePayload> | null | undefined,
 ): DashboardHistoryBucketSlicePayload {
@@ -1016,6 +1041,21 @@ export function fetchDashboardHistoryBootstrap(
     recent: normalizeDashboardHistoryBucketSlice(response.recent),
     oldWeek: normalizeDashboardHistoryBucketSlice(response.oldWeek),
     debug: response.debug ?? null,
+  }));
+}
+
+export function fetchDashboardRadarBootstrap(
+  request: DashboardRadarBootstrapRequest,
+  token?: string | null,
+) {
+  return apiFetch<DashboardRadarBootstrapPayload>('/api/dashboard/radar-bootstrap', {
+    method: 'POST',
+    body: JSON.stringify({ ...request, chains: ['robinhood'] }),
+    token,
+    rateLimitScope: 'dashboard',
+  }).then((response) => ({
+    ...response,
+    all: normalizeDashboardHistoryBucketSlice(response.all),
   }));
 }
 

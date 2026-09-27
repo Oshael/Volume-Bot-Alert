@@ -30,6 +30,7 @@ import {
   type LivePanelLayoutPreference,
 } from '../utils/live-panel-layout';
 import type { GlobalSearchHit } from '../services/api/search';
+import { createRadarUnifiedState, type RadarUnifiedState } from '../utils/radar-unified';
 
 export type GlobalSearchUiStatus = 'idle' | 'debouncing' | 'loading' | 'ready' | 'empty' | 'syncing' | 'unavailable' | 'unsupported' | 'error';
 export interface GlobalSearchState {
@@ -889,6 +890,7 @@ export interface AppState {
     bondTargetMcap: number;
   };
   configSummary: ConfigSummary;
+  radar: RadarUnifiedState;
   data: {
     configs: Record<string, string | number>;
     availableChains: TokenChain[];
@@ -1117,6 +1119,7 @@ export function createAppState(): AppState {
       starredTokens: 0,
       eligibleCatalogTokens: 0,
     },
+    radar: createRadarUnifiedState(),
     data: {
       configs: {},
       availableChains: ['solana'],
