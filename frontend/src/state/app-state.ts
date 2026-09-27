@@ -1561,6 +1561,19 @@ export function getOldWeekTokens(state: AppState) {
   return getRoutedTokensByIdentity(state, state.data.oldWeekTokenIdentities);
 }
 
+export function getUnifiedRadarTokens(state: AppState) {
+  return state.radar.tokenIdentities.flatMap((identityKey) => {
+    try {
+      const identity = parseTokenIdentityKey(identityKey);
+      if (identity.chain !== 'robinhood') return [];
+      const token = getTrackedToken(state, identity.address, identity.chain);
+      return token ? [token] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function getRoutedTokensByIdentity(state: AppState, identityKeys: string[]) {
   const tokens = identityKeys.flatMap((identityKey) => {
     try {

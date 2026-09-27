@@ -227,8 +227,11 @@ em `tests/dashboard.test.js`; SQL real com tabelas temporárias em
 produção. O teste SQL cobre seleção/paginação e filtros; não mede desempenho
 do catálogo de produção. O corte 2A adiciona o contrato tipado do cliente e o
 estado isolado da consulta única, com limites de paginação e identidades RH.
-Ainda não ativa a tabela: o próximo corte conecta esse estado ao controller e
-à renderização, seguido pela migração das preferências e validação visual.
+O corte 2B conecta a consulta à tela: uma tabela RH usa página, contagem, busca,
+favoritos e filtros globais, com ticker verde até 7 dias e laranja acima.
+O carregamento legado dos dois grupos permanece temporariamente para consumidores
+internos. Próximo corte: migrar preferências, retirar esse carregamento e validar
+o fluxo visual completo.
 
 O escopo ampliado inclui Radar, consultas de wallet, contabilidade temporal,
 transfers, gráficos e conteúdo social. Estimativa preliminar: 3.500–5.500 linhas

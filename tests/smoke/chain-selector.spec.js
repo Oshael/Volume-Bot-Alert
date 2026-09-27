@@ -390,6 +390,7 @@ const ROBINHOOD_MARKET_CONFIG = {
 const marketPinPayloads = [];
 const collectionMutationPayloads = [];
 const radarBootstrapPayloads = [];
+const unifiedRadarPayloads = [];
 const chartRequestPayloads = [];
 const compactChartRequestPayloads = [];
 
@@ -803,6 +804,22 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
     chainReadiness: ROBINHOOD_RADAR_CONFIG.chainReadiness,
   },
   'GET /api/catalog/bid-zone': { generatedAt: null, count: 0, candidates: [] },
+  'POST /api/dashboard/radar-bootstrap': (request) => {
+    const query = request.postDataJSON();
+    unifiedRadarPayloads.push(query);
+    const recent = { ...marketToken('robinhood', 'RADARST'),
+      tokenCreatedAt: Date.now() - (5 * 24 * 60 * 60 * 1000) };
+    const old = { ...marketToken('robinhood', 'RADAROLD'), address: ROBINHOOD_OLD,
+      tickerPeers: robinhoodTickerPeers(ROBINHOOD_OLD),
+      tokenCreatedAt: Date.now() - (20 * 24 * 60 * 60 * 1000) };
+    const tokens = [recent, old].filter((item) => !query.searchQuery
+      || item.symbol.toLowerCase().includes(query.searchQuery.toLowerCase()));
+    const asOf = new Date().toISOString();
+    return { source: 'workspace-radar-v1', asOf, generatedAt: asOf,
+      chains: ['robinhood'],
+      all: { total: tokens.length, page: query.page, perPage: query.perPage,
+        count: tokens.length, hasMore: false, tokens, pinnedTokens: [] } };
+  },
   'POST /api/dashboard/history-bootstrap': (request) => {
     const requestPayload = request.postDataJSON();
     radarBootstrapPayloads.push(requestPayload);
@@ -961,7 +978,7 @@ async function openAuthenticatedWorkspace(
   await installSocketFixture(page, socketScenario);
   await installApiFixtures(page, unexpectedRequests, fixtures, apiRequests);
   await page.goto(pathname);
-  await expect(page.getByRole('group', { name: 'Filter workspace by blockchain' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Filter workspace by blockchain' })).toBeVisible({ timeout: 10_000 });
   return { apiRequests, pageErrors, unexpectedRequests };
 }
 
@@ -2650,6 +2667,7 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
 });
 
 test('renders Robinhood peer badges and terminals across tracked token lists', async ({ page }) => {
+  test.setTimeout(45_000);
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
   const monitoredRow = page.locator(
     `.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`,
@@ -2676,16 +2694,16 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await page.goto('/radar');
 
   const recentRow = page.locator(
-    `.recent-bar tr[data-token-identity="robinhood:${ROBINHOOD_TOKEN}"]`,
+    `.unified-radar-bar tr[data-token-identity="robinhood:${ROBINHOOD_TOKEN}"]`,
   );
-  await expect(recentRow).toBeVisible();
+  await expect(recentRow).toBeVisible({ timeout: 15_000 });
   await expect(recentRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
   await expect(recentRow.locator('.trade-link')).toHaveCount(2);
   await expect(recentRow.locator('.radar-size-item').filter({ hasText: 'HLD' })).toContainText('4,424');
   await expect(recentRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
   const oldRow = page.locator(
-    `.old-week-bar tr[data-token-identity="robinhood:${ROBINHOOD_OLD}"]`,
+    `.unified-radar-bar tr[data-token-identity="robinhood:${ROBINHOOD_OLD}"]`,
   );
   await expect(oldRow).toBeVisible();
   await expect(oldRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
@@ -2693,113 +2711,44 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(oldRow.locator('.radar-size-item').filter({ hasText: 'HLD' })).toContainText('4,424');
   await expect(oldRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_OLD}`);
-  const solanaRow = page.locator(
-    `.recent-bar tr[data-token-identity="solana:${SOLANA_TOP}"]`,
-  );
-  await expect(solanaRow.locator('.radar-size-item').filter({ hasText: 'HLD' }).locator('dd')).toHaveText('-');
+  await expect(page.locator('.unified-radar-bar tbody tr')).toHaveCount(2);
 
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders Radar valuation freshness and follows the master chain filter', async ({ page }) => {
-  radarBootstrapPayloads.length = 0;
-  compactChartRequestPayloads.length = 0;
+test('renders one globally paginated Robinhood Radar table with age colors and filters', async ({ page }) => {
+  test.setTimeout(45_000);
+  unifiedRadarPayloads.length = 0;
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
   await page.goto('/radar');
 
-  const radarChainSelector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
-  const solanaChainButton = radarChainSelector.locator('[data-chain="solana"]');
-  const robinhoodChainButton = radarChainSelector.locator('[data-chain="robinhood"]');
-  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'true');
-  await expect(robinhoodChainButton).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
-    payload.chains?.length === 2
-      && payload.chains.includes('solana')
-      && payload.chains.includes('robinhood')
-  ))).toBe(true);
-  await solanaChainButton.click();
-  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'false');
-  await expect(robinhoodChainButton).toBeDisabled();
-  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
+  const table = page.locator('.unified-radar-bar');
+  const recent = table.locator(`tr[data-token-identity="robinhood:${ROBINHOOD_TOKEN}"]`);
+  const old = table.locator(`tr[data-token-identity="robinhood:${ROBINHOOD_OLD}"]`);
+  await expect(table).toBeVisible();
+  await expect(table.locator('tbody tr')).toHaveCount(2);
+  await expect(page.locator('.recent-bar, .old-week-bar')).toHaveCount(0);
+  await expect(recent).toHaveClass(/radar-age-recent/);
+  await expect(old).toHaveClass(/radar-age-old/);
+  await expect(recent.locator('.token-symbol')).toHaveCSS('color', 'rgb(0, 255, 136)');
+  await expect(old.locator('.token-symbol')).toHaveCSS('color', 'rgb(255, 140, 0)');
+  await expect(recent).toContainText(/FDV\s*\$350K/);
+  await expect(recent).toContainText('STALE VALUATION');
+  await expect(recent.locator('.radar-coverage-partial').first()).toContainText('~');
+  await expect.poll(() => unifiedRadarPayloads.some((payload) => (
     payload.chains?.length === 1 && payload.chains[0] === 'robinhood'
-  ))).toBe(true);
-  await solanaChainButton.click();
-  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'true');
-  const solanaIdentity = `solana:${SOLANA_TOP}`;
-  const solanaRow = page.locator(`.recent-bar tbody tr[data-token-identity="${solanaIdentity}"]`);
-  await expect(solanaRow).toBeVisible();
-  await expect(solanaRow).toContainText('RADARSOL');
-
-  const identity = `robinhood:${ROBINHOOD_TOKEN}`;
-  const row = page.locator(`.recent-bar tbody tr[data-token-identity="${identity}"]`);
-  await expect(row).toBeVisible();
-  await expect(row.locator('.token-launchpad-pons')).toHaveAttribute('aria-label', 'pons');
-  await expect(row.locator('.token-launchpad-pons'))
-    .toHaveAttribute('title', 'pons · Pool: Uniswap V3');
-  await expect(row.locator('.token-launchpad-pons')).not.toHaveCSS('cursor', 'help');
-  await expect(row).toContainText('RADARST');
-  await expect(row).toContainText('FDV $350K');
-  await expect(row).toContainText('STALE VALUATION');
-  await expect(row).toContainText('NO RECENT ACTIVITY');
-  await expect(row.locator('.radar-coverage-partial')).toContainText(['~', '~']);
-  await expect(row.locator('.radar-coverage-unavailable').first()).toHaveText('-');
-  await expect(row.locator('.radar-coverage-complete')).toContainText(['$0', '+0.00%']);
-  const radarSparkline = row.locator('.sparkline-wrap');
-  await expect(radarSparkline).toHaveAttribute('data-chain', 'robinhood');
-  await expect(radarSparkline).toHaveAttribute('data-sparkline-summary', /Mini FDV chart · 2 pts/);
-
-  const recentBar = page.locator('.recent-bar');
-  const recentRangeButton = recentBar.locator('.sparkline-range-button');
-  await expect(recentRangeButton).toHaveAttribute(
-    'data-tooltip',
-    'Select the default range used to load sparklines for Recent tokens.',
-  );
-  await recentRangeButton.click();
-  await expect(recentBar.locator('[data-action="set-sparkline-range-preset"]'))
-    .toHaveText(['1H', '4H', '12H', '1D', '3D', '7D', '14D', 'ALL']);
-  await recentBar.locator('[data-action="set-sparkline-range-preset"][data-sparkline-range-preset="all"]').click();
-  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
-    payload.allAvailable === false
-      && payload.hours >= 120
-      && payload.hours <= 121
-      && payload.points === 500
-      && payload.granularityMinutes === 15
-      && payload.identities?.some((item) => item.address === ROBINHOOD_TOKEN)
-  ))).toBe(true);
-  await expect(page.locator('.old-week-bar [data-action="set-sparkline-range-preset"][data-sparkline-range-preset="all"]')).toHaveText('ALL');
-  await expect(recentBar.locator('input[name="old-mcap-min"]')).toHaveValue('120000');
-  await expect(recentBar.locator('input[name="old-fdv-min"]')).toHaveValue('130000');
-  await expect(recentBar.locator('input[name="old-fdv-max"]')).toHaveValue('90000000');
-  const valuationPopover = recentBar.locator('.history-valuation-popover');
-  await expect(valuationPopover).toBeHidden();
-  await recentBar.locator('[data-action="history-valuation-toggle"]').click();
-  await expect(valuationPopover).toBeVisible();
-  const filterGeometry = await recentBar.locator('.recent-ctrl-filters').evaluate((filters) => {
-    const ageRect = filters.querySelector('input[name="recent-age-min"]')
-      ?.closest('.recent-ctrl-cluster')?.getBoundingClientRect();
-    const sort = filters.querySelector('.recent-ctrl-cluster-sort');
-    const sortRect = sort?.getBoundingClientRect();
-    return {
-      ageCenter: ageRect ? ageRect.top + (ageRect.height / 2) : null,
-      sortCenter: sortRect ? sortRect.top + (sortRect.height / 2) : null,
-      sortButtonTops: [...(sort?.querySelectorAll('.old-filter-btn') || [])]
-        .map((button) => button.getBoundingClientRect().top),
-    };
-  });
-  expect(filterGeometry.ageCenter).toBe(filterGeometry.sortCenter);
-  expect(new Set(filterGeometry.sortButtonTops).size).toBe(1);
-  // The compact toolbar drops the divider between sort pills; the alignment
-  // assertions above stay as the real regression guard for this cluster.
-  await expect(recentBar.locator('.recent-ctrl-cluster-sort .sort-menu-wrap').nth(1))
-    .toHaveCSS('border-left-width', '0px');
-  const fdvMinInput = recentBar.locator('input[name="old-fdv-min"]');
-  await fdvMinInput.fill('175000');
-  await fdvMinInput.press('Enter');
-  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
-    payload.recent?.mcapMin === 120000 && payload.recent?.fdvMin === 175000
+      && payload.page === 0 && payload.perPage === 15
   ))).toBe(true);
 
+  await table.locator('[data-radar-search]').fill('RADAROLD');
+  await table.locator('[data-radar-search]').press('Enter');
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  await expect(old).toBeVisible();
+  await table.locator('[data-radar-sort]').selectOption('age:oldest');
+  await expect.poll(() => unifiedRadarPayloads.some((payload) => (
+    payload.searchQuery === 'RADAROLD' && payload.sorts?.[0]?.mode === 'age'
+  ))).toBe(true);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

@@ -3,15 +3,24 @@ const { before, describe, it } = require('node:test');
 
 let createRadarUnifiedState;
 let buildRadarUnifiedRequest;
+let resolveUnifiedRadarAgeTone;
 
 before(async () => {
-  ({ createRadarUnifiedState, buildRadarUnifiedRequest } = await import('../frontend/src/utils/radar-unified.ts'));
+  ({ createRadarUnifiedState, buildRadarUnifiedRequest, resolveUnifiedRadarAgeTone } = await import('../frontend/src/utils/radar-unified.ts'));
 });
 
 const RH = 'robinhood:0x1111111111111111111111111111111111111111';
 const SOL = 'solana:So11111111111111111111111111111111111111112';
 
 describe('unified Radar request state', () => {
+  it('colors the seven-day boundary and leaves missing age neutral', () => {
+    const asOf = '2026-09-27T12:00:00.000Z';
+    const boundary = Date.parse(asOf) - (7 * 24 * 60 * 60 * 1000);
+    assert.equal(resolveUnifiedRadarAgeTone(boundary, asOf), 'recent');
+    assert.equal(resolveUnifiedRadarAgeTone(boundary - 1, asOf), 'old');
+    assert.equal(resolveUnifiedRadarAgeTone(null, asOf), 'unknown');
+    assert.equal(resolveUnifiedRadarAgeTone(Date.parse(asOf) + 1, asOf), 'unknown');
+  });
   it('starts with one global page and an unbounded age range', () => {
     const state = createRadarUnifiedState();
     const request = buildRadarUnifiedRequest(state, { starred: [], dismissed: [] });

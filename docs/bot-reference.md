@@ -1889,8 +1889,7 @@ explícitos são inclusivos, em minutos. Neste modo, máximo `0` significa idade
 zero, não intervalo aberto. Idades desconhecidas ou futuras ficam fora da lista.
 Continuam valendo até 100 itens por página e prefixo de até 500 por chain.
 Os modos `recent`/`oldWeek`, defaults e seleção explícita de chains continuam
-compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstrap`
-nem unifica automaticamente as tabelas do frontend.
+compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstrap`.
 
 `POST /api/dashboard/radar-bootstrap` expõe a lista unificada com autenticação,
 rate limit e validação de origem existentes. O rollout aceita somente
@@ -1905,7 +1904,10 @@ rate limit e validação de origem existentes. O rollout aceita somente
 `hasMore`, `tokens` e `pinnedTokens`. Bloqueios do usuário excluem resultados
 e pins; pins preservam a semântica de order-lock fora dos filtros, sem repetir
 a página. Payload inválido retorna 400; falha de leitura retorna 500 sem lista
-parcial. `history-bootstrap` continua compatível com o frontend atual.
+parcial. O Radar web usa `radar-bootstrap` para uma tabela RH com busca, filtros,
+ordem, contagem e paginação globais. O ticker fica verde até 7 dias inclusive e
+laranja depois; idade ausente é neutra. `history-bootstrap` ainda carrega os dois
+grupos legados para consumidores internos, sem exibi-los como tabelas separadas.
 
 Rotas web principais:
 
@@ -1916,7 +1918,7 @@ Rotas web principais:
 | `/access` | acesso/token gate e billing quando habilitado |
 | `/account-security` | segurança e identidades vinculadas |
 | `/alerts` | monitorados, manuais e feed de alertas |
-| `/monitor` | RADAR, tokens recentes, antigos e bid zone |
+| `/monitor` | RADAR RH em tabela única e bid zone |
 
 Chains visíveis:
 
@@ -2709,7 +2711,7 @@ Responsabilidades atuais incluem:
 - descoberta e atualização de catálogo;
 - snapshots e buckets de mercado;
 - monitorados e tokens manuais;
-- RADAR;
+- reader de histórico compatível com o Radar;
 - alertas;
 - snapshots Meteora;
 - PumpFun;

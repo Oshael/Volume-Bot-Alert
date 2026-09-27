@@ -1,10 +1,10 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredPaneViewTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredPaneViewTokens, getMonitoredTokens, getRecentTokens, getTokenSparkline, getTrackedToken, getUnifiedRadarTokens, isMockTradingEnabled, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
 import { renderMarketTickerSection } from './sections/market-ticker-section';
-import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
+import { renderUnifiedRadarSection } from './sections/unified-radar-section';
 import { resolveMonitoredViewRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
@@ -244,26 +244,18 @@ export function renderAppShell(
   updateRegionSlot(renderFrame.legacySlot, 'legacy', dirtyRegions, getLegacyRenderKey(state), () => [renderLegacyShell(state, controller)]);
 
   if (state.session.status === 'authenticated' && !isAccountSecurityRoute) {
-    renderFrame.oldWeekSlot.hidden = !isHistoryWorkspace;
+    renderFrame.oldWeekSlot.hidden = true;
     renderFrame.recentSlot.hidden = !isHistoryWorkspace;
     renderFrame.panels.hidden = false;
 
     if (isHistoryWorkspace) {
-      updateRegionSlot(
-        renderFrame.oldWeekSlot,
-        'old-week',
-        dirtyRegions,
-        getOldWeekRenderKey(state),
-        () => [renderOldWeekSection(state, controller)],
-        () => patchOldWeekSection(renderFrame.oldWeekSlot, state, controller),
-      );
+      updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
       updateRegionSlot(
         renderFrame.recentSlot,
         'recent',
         dirtyRegions,
-        getRecentRenderKey(state),
-        () => [renderRecentSection(state, controller)],
-        () => patchRecentSection(renderFrame.recentSlot, state, controller),
+        getUnifiedRadarRenderKey(state),
+        () => [renderUnifiedRadarSection(state, controller)],
       );
     } else {
       updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
@@ -1362,61 +1354,22 @@ function getMonitoredRenderKey(state: AppState, pane: MonitoredPaneKey) {
   });
 }
 
-function getRecentRenderKey(state: AppState) {
+function getUnifiedRadarRenderKey(state: AppState) {
+  const tokens = getUnifiedRadarTokens(state);
   return JSON.stringify({
-    collapsed: state.ui.collapsed.recent,
-    busy: state.ui.busy,
-    role: state.session.role,
-    tradeTerminals: state.ui.enabledTradeTerminals,
-    robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
-    runtimeMode: state.runtime.mode,
-    starredRevision: state.runtime.starredRevision,
-    search: state.ui.recentSearchQuery,
-    starredOnly: state.ui.recentStarredOnly,
-    page: state.ui.recentPage,
-    perPage: state.ui.recentPerPage,
-    sorts: state.ui.recentSorts,
-    sparklineRange: state.ui.sparklineRange,
-    barsRecent: state.bars.recent,
-    oldMcapMin: state.data.configs['old-mcap-min'],
-    oldMcapMax: state.data.configs['old-mcap-max'],
-    tokenCount: getRecentTokens(state).length,
-    ageMinute: Math.floor(Date.now() / 60000),
-    tokens: getRecentTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
-    sparklines: getPagedBucketSparklineRenderSnapshot(
-      state,
-      getRecentTokens(state),
-      state.ui.recentPage,
-      state.ui.recentPerPage,
-    ),
-  });
-}
-
-function getOldWeekRenderKey(state: AppState) {
-  return JSON.stringify({
-    collapsed: state.ui.collapsed.oldWeek,
+    radar: state.radar,
     busy: state.ui.busy,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
     starredRevision: state.runtime.starredRevision,
-    search: state.ui.oldWeekSearchQuery,
-    starredOnly: state.ui.oldWeekStarredOnly,
-    page: state.ui.oldWeekPage,
-    perPage: state.ui.oldWeekPerPage,
-    sorts: state.ui.oldWeekSorts,
-    sparklineRange: state.ui.sparklineRange,
-    barsOldWeek: state.bars.oldWeek,
-    oldWeekMcapMin: state.data.configs['old-week-mcap-min'],
-    oldWeekMcapMax: state.data.configs['old-week-mcap-max'],
-    tokenCount: getOldWeekTokens(state).length,
     ageMinute: Math.floor(Date.now() / 60000),
-    tokens: getOldWeekTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
+    tokens: tokens.map((token) => serializeRoutedTokenForView(state, token)),
     sparklines: getPagedBucketSparklineRenderSnapshot(
       state,
-      getOldWeekTokens(state),
-      state.ui.oldWeekPage,
-      state.ui.oldWeekPerPage,
+      tokens,
+      state.radar.page,
+      state.radar.perPage,
     ),
   });
 }

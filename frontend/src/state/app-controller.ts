@@ -1,5 +1,7 @@
-import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getMonitoredPaneViewTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getMonitoredPaneViewTokens, getOldWeekTokens, getPrimaryMonitoredViewTokens, getRecentTokens, getTrackedToken, getUnifiedRadarTokens, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveMonitoredTableRows, resolveMonitoredViewRows } from '../utils/token-table';
+import { buildRadarUnifiedRequest, type RadarUnifiedState } from '../utils/radar-unified';
+import { fetchDashboardRadarBootstrap, type DashboardRadarBootstrapPayload, type DashboardRadarBootstrapRequest } from '../services/api/catalog';
 import {
   createLegacyCompatibleTokenIdentity,
   didEnabledChainCapabilityBecomeAvailable,
@@ -417,6 +419,7 @@ type HistoryBootstrapRequestPayload = {
   recentPinnedIdentities?: string[];
   oldWeekPinnedIdentities?: string[];
   recentDebugProbeIdentities?: string[];
+  radar: DashboardRadarBootstrapRequest;
 };
 
 type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>;
@@ -428,6 +431,7 @@ type HistorySyncBootstrapSnapshotMessage = {
   workspace: WorkspaceView;
   requestPayload: HistoryBootstrapRequestPayload;
   payload: HistoryBootstrapPayload;
+  radarPayload?: DashboardRadarBootstrapPayload | null;
   ts: number;
 };
 
@@ -831,6 +835,7 @@ export interface AppController {
   setOldWeekSearchQuery(query: string): void;
   setRecentStarredOnly(enabled: boolean): void;
   setOldWeekStarredOnly(enabled: boolean): void;
+  setUnifiedRadarFilters(filters: Partial<Pick<RadarUnifiedState, 'page' | 'perPage' | 'searchQuery' | 'starredOnly' | 'sorts' | 'ageMinMinutes' | 'ageMaxMinutes' | 'minMcap' | 'maxMcap' | 'minFdv' | 'maxFdv'>>): void;
   toggleEnabledChain(chain: TokenChain): void;
   toggleSurfaceChain(
     surface: 'radarChains' | 'alertFeedChains' | 'browserNotificationChains',
@@ -7701,6 +7706,13 @@ export function createAppController(): AppController {
   }
 
   function getVisibleRoutedHistorySparklineIdentityScopes() {
+    if (state.radar.asOf) {
+      return getUnifiedRadarTokens(state)
+        .slice(0, SPARKLINE_VISIBLE_LIMIT_TOTAL)
+        .map((token) => getChartCapableIdentity(token.chain, token.address))
+        .filter((identity): identity is TokenIdentity => Boolean(identity))
+        .map((identity) => ({ identity, scope: 'recent' as const }));
+    }
     const recentIdentities = getRecentTokens(state)
       .map((token) => getChartCapableIdentity(token.chain, token.address))
       .filter((identity): identity is TokenIdentity => Boolean(identity));
@@ -9399,6 +9411,7 @@ export function createAppController(): AppController {
   function broadcastHistoryBootstrapSnapshot(
     payload: HistoryBootstrapPayload,
     requestPayload: HistoryBootstrapRequestPayload,
+    radarPayload: DashboardRadarBootstrapPayload | null,
   ) {
     if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
       return;
@@ -9410,6 +9423,7 @@ export function createAppController(): AppController {
       workspace: state.ui.workspace,
       requestPayload,
       payload,
+      radarPayload,
       ts: Date.now(),
     });
   }
@@ -9453,7 +9467,7 @@ export function createAppController(): AppController {
           return true;
         }
         clearHistorySearchPending({ emitRegions: false });
-        applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload);
+        applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload, message.radarPayload);
         emit('recent', 'old-week', 'bid-zone', 'header');
         return true;
       case 'bid-zone-snapshot':
@@ -9542,12 +9556,13 @@ export function createAppController(): AppController {
     }
 
     historyBootstrapRefreshInFlight = true;
+    state.radar.loading = true;
     historyBootstrapInFlightRequestKey = requestKey;
     const requestRevision = historyBootstrapRequestRevision + 1;
     historyBootstrapRequestRevision = requestRevision;
 
     try {
-      const payload = await measureRuntimePerfAsync(
+      const [payload, radarResult] = await Promise.all([measureRuntimePerfAsync(
         'api.dashboard.history-bootstrap',
         isRuntimePerfDebugActive(),
         {
@@ -9555,7 +9570,9 @@ export function createAppController(): AppController {
           oldWeekPerPage: requestPayload.oldWeek.perPage,
         },
         () => fetchDashboardHistoryBootstrap(requestPayload, token),
-      );
+      ), fetchDashboardRadarBootstrap(requestPayload.radar, token)
+        .then((value) => ({ value, error: null as string | null }))
+        .catch((error: unknown) => ({ value: null, error: error instanceof Error ? error.message : 'Radar unavailable' }))]);
       if (
         requestRevision !== historyBootstrapRequestRevision
         || !usesHistoryBucketBootstrap()
@@ -9565,8 +9582,10 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(payload, options?.watchlistTokensOverride, requestPayload);
-      broadcastHistoryBootstrapSnapshot(payload, requestPayload);
+      state.radar.loading = false;
+      state.radar.error = radarResult.error;
+      applyHistoryBootstrapPayload(payload, options?.watchlistTokensOverride, requestPayload, radarResult.value);
+      broadcastHistoryBootstrapSnapshot(payload, requestPayload, radarResult.value);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'history-bootstrap' });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
@@ -9587,6 +9606,8 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending();
+      state.radar.loading = false;
+      state.radar.error = error instanceof Error ? error.message : 'Radar unavailable';
       const message = error instanceof Error ? error.message : 'Failed to refresh monitor history';
       lastMonitoredDashboardError = message;
       setError(message);
@@ -11037,6 +11058,10 @@ export function createAppController(): AppController {
       recentPinnedIdentities,
       oldWeekPinnedIdentities,
       recentDebugProbeIdentities,
+      radar: buildRadarUnifiedRequest(state.radar, {
+        starred: state.data.watchlistTokenIdentities,
+        dismissed: [...state.data.dismissedRecentIdentities, ...state.data.dismissedOldWeekIdentities],
+      }),
       recent: {
         page: state.ui.recentPage,
         perPage: state.ui.recentPerPage,
@@ -11081,6 +11106,7 @@ export function createAppController(): AppController {
       oldWeek: requestPayload.oldWeek,
       recentPinnedIdentities: requestPayload.recentPinnedIdentities ?? [],
       oldWeekPinnedIdentities: requestPayload.oldWeekPinnedIdentities ?? [],
+      radar: requestPayload.radar,
     };
   }
 
@@ -11254,10 +11280,23 @@ export function createAppController(): AppController {
     return recentChanged || oldWeekChanged;
   }
 
+  function applyUnifiedRadarPayload(payload?: DashboardRadarBootstrapPayload | null) {
+    if (!payload) return [];
+    state.radar.tokenIdentities = payload.all.tokens.map((item) => getTrackedTokenKey(item.address, item.chain));
+    state.radar.total = payload.all.total;
+    state.radar.page = payload.all.page;
+    state.radar.perPage = payload.all.perPage;
+    state.radar.asOf = payload.asOf;
+    state.radar.error = null;
+    state.radar.loading = false;
+    return [...payload.all.tokens, ...(payload.all.pinnedTokens ?? [])];
+  }
+
   function applyHistoryBootstrapPayload(
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
     watchlistTokensOverride?: AddressItem[],
     appliedRequestPayload?: HistoryBootstrapRequestPayload,
+    radarPayload?: DashboardRadarBootstrapPayload | null,
   ) {
     const previousRecentIdentities = state.data.recentTokenIdentities.slice();
     const previousOldWeekIdentities = state.data.oldWeekTokenIdentities.slice();
@@ -11288,7 +11327,7 @@ export function createAppController(): AppController {
       payload.asOf ?? payload.generatedAt ?? null,
       getCurrentPinnedMonitoredDashboardSnapshot(),
     );
-    syncNonSolanaHistoryTrackedTokens(monitoredDashboardTokens);
+    syncNonSolanaHistoryTrackedTokens([...monitoredDashboardTokens, ...applyUnifiedRadarPayload(radarPayload)]);
     setPendingHistoryOrder('recent', recentOrder.pendingAddresses);
     setPendingHistoryOrder('old-week', oldWeekOrder.pendingAddresses);
     state.data.recentTokenIdentities = recentOrder.visibleAddresses;
@@ -14001,6 +14040,12 @@ export function createAppController(): AppController {
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
       }
+    },
+    setUnifiedRadarFilters(filters) {
+      state.radar = { ...state.radar, ...filters, page: filters.page ?? (filters.perPage == null ? state.radar.page : 0) };
+      if (filters.page == null && filters.perPage == null) state.radar.page = 0;
+      emit('recent');
+      if (usesHistoryBucketBootstrap()) void refreshHistoryWorkspaceBootstrap();
     },
     toggleEnabledChain(chain: TokenChain) {
       const next = toggleEnabledTokenChain(

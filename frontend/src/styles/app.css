@@ -10169,6 +10169,21 @@ button,
     0 0 18px rgba(255, 140, 0, 0.04);
 }
 
+.unified-radar-bar .legacy-bar-title { color: #e7edf4; font-weight: 700; }
+.unified-radar-head { justify-content: flex-start; }
+.unified-radar-controls { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: end; gap: 8px; }
+.unified-radar-controls label { display: grid; gap: 3px; color: #aebbc9; font-size: 10px; font-weight: 700; }
+.unified-radar-controls input,
+.unified-radar-controls select,
+.unified-radar-controls button { min-height: 30px; max-width: 125px; background: var(--surface); color: #edf2f7; border: 1px solid rgba(255,255,255,.2); border-radius: 5px; padding: 4px 6px; }
+.unified-radar-controls [data-radar-search] { max-width: 210px; flex: 1 1 160px; }
+.unified-radar-controls [data-radar-starred][aria-pressed="true"] { color: #ffd15d; }
+.unified-radar-bar .token-table.unified tr.radar-age-recent .token-symbol { color: #00ff88; }
+.unified-radar-bar .token-table.unified tr.radar-age-old .token-symbol { color: #ff8c00; }
+.unified-radar-bar .token-table.unified tr.radar-age-unknown .token-symbol { color: #d8e1ea; }
+.unified-radar-bar .token-table.unified tr.radar-age-recent td { border-bottom-color: rgba(0,204,102,.12); }
+.unified-radar-bar .token-table.unified tr.radar-age-old td { border-bottom-color: rgba(255,140,0,.12); }
+
 .legacy-bar-head,
 .legacy-bar-secondary,
 .legacy-bucket-toolbar {

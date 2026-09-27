@@ -3,6 +3,15 @@ import type { DashboardRadarBootstrapRequest } from '../services/api/catalog';
 import { parseTokenIdentityKey } from './token-chain.ts';
 
 const MAX_PREFIX = 500;
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function resolveUnifiedRadarAgeTone(createdAt: number | null | undefined, asOf: string | null): 'recent' | 'old' | 'unknown' {
+  const reference = asOf ? Date.parse(asOf) : Date.now();
+  if (!Number.isFinite(createdAt) || !createdAt || !Number.isFinite(reference) || createdAt > reference) {
+    return 'unknown';
+  }
+  return reference - createdAt <= SEVEN_DAYS_MS ? 'recent' : 'old';
+}
 
 export interface RadarUnifiedState {
   tokenIdentities: string[];
