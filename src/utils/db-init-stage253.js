@@ -9,6 +9,8 @@ const PREFIX = 'robinhood_chain_transactions_shadow_b';
 const PK = 'rh_chain_transactions_shadow_pkey';
 const POSITION_KEY = 'rh_chain_transactions_shadow_index_key';
 const BLOCK_FK = 'rh_chain_transactions_shadow_block_fkey';
+const BLOCK_LOOKUP = 'idx_rh_chain_transactions_shadow_hash';
+const TX_LOOKUP = 'idx_rh_chain_transactions_shadow_txhash';
 
 function placement(tablespace) {
   return tablespace === 'pg_default' ? '' : ` TABLESPACE ${tablespace}`;
@@ -16,6 +18,19 @@ function placement(tablespace) {
 
 function indexPlacement(tablespace) {
   return tablespace === 'pg_default' ? '' : ` USING INDEX TABLESPACE ${tablespace}`;
+}
+
+function assertIndexPlacement(rows, heapTablespace, indexTablespace, label) {
+  const byName = new Map(rows.map((row) => [row.relname || row.parent_name, row]));
+  const expected = [
+    [PK, heapTablespace], [POSITION_KEY, indexTablespace],
+    [BLOCK_LOOKUP, heapTablespace], [TX_LOOKUP, heapTablespace],
+  ];
+  if (rows.length !== expected.length
+      || expected.some(([name, tablespace]) => byName.get(name)?.tablespace !== tablespace)
+      || rows.some((row) => !row.indisvalid || !row.indisready)) {
+    throw new Error(`${label} index placement mismatch`);
+  }
 }
 
 function statements(heapTablespace, indexTablespace) {
@@ -34,6 +49,10 @@ function statements(heapTablespace, indexTablespace) {
          REFERENCES public.robinhood_chain_blocks(chain, block_hash)
          ON DELETE CASCADE
      ) PARTITION BY RANGE (block_number)${placement(heapTablespace)}`,
+    `CREATE INDEX IF NOT EXISTS ${BLOCK_LOOKUP} ON ${SHADOW}
+       (chain, block_hash, transaction_hash)${placement(heapTablespace)}`,
+    `CREATE INDEX IF NOT EXISTS ${TX_LOOKUP} ON ${SHADOW}
+       (chain, transaction_hash, block_hash)${placement(heapTablespace)}`,
   ];
 }
 
@@ -70,13 +89,8 @@ async function verifyParent(client, heapTablespace, indexTablespace) {
     JOIN pg_class index_relation ON index_relation.oid=state.indexrelid
     LEFT JOIN pg_tablespace space ON space.oid=index_relation.reltablespace
     WHERE state.indrelid=$1::regclass`, [SHADOW]);
-  const positions = new Map(indexes.rows.map((row) => [row.relname, row]));
-  if (indexes.rows.length !== 2
-      || positions.get(PK)?.tablespace !== heapTablespace
-      || positions.get(POSITION_KEY)?.tablespace !== indexTablespace
-      || indexes.rows.some((row) => !row.indisvalid || !row.indisready)) {
-    throw new Error('transaction shadow index placement mismatch');
-  }
+  assertIndexPlacement(indexes.rows, heapTablespace, indexTablespace,
+    'transaction shadow');
 }
 
 async function verifyPartition(client, range, heapTablespace, indexTablespace) {
@@ -104,13 +118,8 @@ async function verifyPartition(client, range, heapTablespace, indexTablespace) {
     JOIN pg_index state ON state.indexrelid=child_index.oid
     LEFT JOIN pg_tablespace space ON space.oid=child_index.reltablespace
     WHERE state.indrelid=to_regclass($1)`, [`public.${name}`]);
-  const positions = new Map(indexes.rows.map((row) => [row.parent_name, row]));
-  if (indexes.rows.length !== 2
-      || positions.get(PK)?.tablespace !== heapTablespace
-      || positions.get(POSITION_KEY)?.tablespace !== indexTablespace
-      || indexes.rows.some((row) => !row.indisvalid || !row.indisready)) {
-    throw new Error(`transaction shadow partition ${name} indexes mismatch`);
-  }
+  assertIndexPlacement(indexes.rows, heapTablespace, indexTablespace,
+    `transaction shadow partition ${name}`);
 }
 
 async function init(options = {}) {

@@ -5522,7 +5522,10 @@ backfill limitado resolver os registros que precisarão da nova FK.
 A Stage 253 prepara `robinhood_chain_transactions_shadow` vazia, particionada
 pelas mesmas faixas de 250.000 blocos. Exige `--heap-tablespace`,
 `--index-tablespace`, `--from-block` e `--through-block` explícitos; a PK fica no
-tablespace do heap e a chave de posição no tablespace de índices. Cada partição
+tablespace do heap e a chave de posição no tablespace de índices. Os índices
+de busca por `(chain, block_hash, transaction_hash)` e por
+`(chain, transaction_hash, block_hash)` ficam no tablespace do heap; orce o espaço
+dos dois antes de copiar o histórico. Cada partição
 mantém FK para `robinhood_chain_blocks`. Esta etapa não copia transações, não
 troca a FK dos eventos e não habilita poda. O capturador pode espelhar cada lote
 no mesmo commit usando `ROBINHOOD_CHAIN_TRANSACTION_SHADOW_ENABLED=true`,
@@ -5532,6 +5535,9 @@ cursor. A futura FK dos eventos deverá incluir `block_number`, pois a chave ún
 particionado inclui essa coluna. Provisionar a Stage 253 na VPS somente após
 aprovar o corte de escrita espelhada e seu orçamento de WAL, espaço e partições;
 o espelho exigirá essas partições antes de ser ativado.
+No PostgreSQL 16, a FK `NOT VALID` não pode ser adicionada ao pai particionado de
+eventos apontando para o pai particionado de transações. A migração deve validar
+FKs por partição antes de retirar a FK antiga e preservar todas as partições.
 
 Para copiar transações históricas finalizadas, use
 `npm run robinhood:chain-transaction-shadow-copy -- --from-block=N

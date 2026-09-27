@@ -21,7 +21,7 @@ before(async () => {
 
 after(async () => db.pool.end());
 
-it('creates only the requested empty partitions and rejects a different layout', async () => {
+it('verifies the requested empty partitions and rejects a different layout', async () => {
   await stage253.init({ database: db, closePool: false,
     heapTablespace: 'pg_default', indexTablespace: 'pg_default',
     fromBlock: 70750000, throughBlock: 71249999 });
@@ -30,12 +30,29 @@ it('creates only the requested empty partitions and rejects a different layout',
     FROM pg_inherits inheritance
     JOIN pg_class child ON child.oid=inheritance.inhrelid
     WHERE inheritance.inhparent=$1::regclass
-    ORDER BY child.relname`, [stage253.SHADOW]);
+      AND child.relname=ANY($2::text[])
+    ORDER BY child.relname`, [stage253.SHADOW, [
+      'robinhood_chain_transactions_shadow_b70750000',
+      'robinhood_chain_transactions_shadow_b71000000',
+    ]]);
   assert.deepEqual(rows.map((row) => row.relname), [
     'robinhood_chain_transactions_shadow_b70750000',
     'robinhood_chain_transactions_shadow_b71000000',
   ]);
   assert.match(rows[0].bound, /FROM \('70750000'\) TO \('71000000'\)/);
+  const indexes = await db.query(`SELECT parent_index.relname AS parent_name,
+      pg_get_indexdef(child_index.oid) AS definition
+    FROM pg_inherits inheritance
+    JOIN pg_class child_index ON child_index.oid=inheritance.inhrelid
+    JOIN pg_class parent_index ON parent_index.oid=inheritance.inhparent
+    JOIN pg_index state ON state.indexrelid=child_index.oid
+    WHERE state.indrelid='public.robinhood_chain_transactions_shadow_b70750000'::regclass`);
+  const byName = new Map(indexes.rows.map((row) => [row.parent_name, row.definition]));
+  assert.equal(byName.size, 4);
+  assert.match(byName.get('idx_rh_chain_transactions_shadow_hash'),
+    /\(chain, block_hash, transaction_hash\)/);
+  assert.match(byName.get('idx_rh_chain_transactions_shadow_txhash'),
+    /\(chain, transaction_hash, block_hash\)/);
   assert.equal((await db.query(`SELECT COUNT(*)::int AS n
     FROM public.robinhood_chain_transactions_shadow`)).rows[0].n, 0);
   assert.throws(() => stage253.cliOptions(['--from-block=1']), /required/);
