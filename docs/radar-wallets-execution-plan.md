@@ -273,6 +273,9 @@ agregação por wallet já estão implementados. A agregação exige confirmaç�
 universo completo antes de produzir uma ordem global; wallets com cobertura
 parcial não entram na soma exata. Ainda faltam a seleção global de candidatos,
 a reconstrução confiável dos eventos e a consulta pública do ranking.
+Há leitura paginada de posições abertas por lote explícito de tokens e versão
+da projeção; páginas independentes não constituem um snapshot consistente nem
+provam que o universo global foi percorrido.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
