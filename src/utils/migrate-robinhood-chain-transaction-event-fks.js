@@ -8,27 +8,46 @@ const SHADOW = 'public.robinhood_chain_transactions_shadow';
 const LEGACY = 'public.robinhood_chain_transactions';
 const OLD_FK = 'rh_chain_events_shadow_transaction_fkey';
 const NEW_FK = 'rh_chain_events_transaction_shadow_fkey';
+const CAPTURE_LEASE = 'robinhood-chain-capture-worker';
 const PARTITION_SIZE = 250000;
 const RELATION = /^(?:public|pg_temp)\.[a-z_][a-z0-9_]*$/;
 
-function parseArgs(args = []) {
-  const input = {};
-  for (const arg of args) {
-    if (arg === '--prepare' || arg === '--validate') {
-      if (input.action) throw new Error('choose only one action');
-      input.action = arg.slice(2);
-      continue;
-    }
+function addArgument(input, arg) {
+  if (arg === '--paused') {
+    if (input.paused) throw new Error('duplicate --paused');
+    input.paused = true;
+  } else if (arg === '--prepare' || arg === '--validate') {
+    if (input.action) throw new Error('choose only one action');
+    input.action = arg.slice(2);
+  } else if (/^--expected-next-block=\d+$/.test(arg)) {
+    if (input.expectedNextBlock != null) throw new Error('duplicate --expected-next-block');
+    input.expectedNextBlock = Number(arg.slice('--expected-next-block='.length));
+  } else {
     const match = /^--partition-start=(\d+)$/.exec(arg);
     if (!match || input.partitionStart != null) throw new Error(`invalid argument: ${arg}`);
     input.partitionStart = Number(match[1]);
   }
+}
+
+function parseArgs(args = []) {
+  const input = {};
+  for (const arg of args) addArgument(input, arg);
   const start = input.partitionStart;
   if (!Number.isSafeInteger(start) || start < 0 || start % PARTITION_SIZE !== 0
       || start + PARTITION_SIZE >= Number.MAX_SAFE_INTEGER) {
     throw new Error('--partition-start must be a nonnegative 250000-block boundary');
   }
-  return { action: input.action || 'read-only', partitionStart: start };
+  if (input.paused) {
+    if (!input.action || !Number.isSafeInteger(input.expectedNextBlock)
+        || input.expectedNextBlock < start
+        || input.expectedNextBlock >= start + PARTITION_SIZE) {
+      throw new Error('--paused requires --prepare or --validate and an expected next block in the partition');
+    }
+  } else if (input.expectedNextBlock != null) {
+    throw new Error('--expected-next-block requires --paused');
+  }
+  return { action: input.action || 'read-only', partitionStart: start,
+    ...(input.paused ? { paused: true, expectedNextBlock: input.expectedNextBlock } : {}) };
 }
 
 function relation(value) {
@@ -67,6 +86,26 @@ async function assertFinalized(client, start) {
       || BigInt(result.rows[0].finalized_head) < BigInt(start + PARTITION_SIZE - 1)) {
     throw new Error('event partition is not entirely finalized');
   }
+}
+
+async function assertCapturePaused(client, start, expectedNextBlock, options = {}) {
+  const leaseKey = options.leaseKey || CAPTURE_LEASE;
+  const result = await client.query(`SELECT cursor.next_block::text,
+      cursor.checkpoint_block::text, cursor.recovery_state,
+      EXISTS (SELECT 1 FROM worker_leases
+        WHERE lease_key=$1 AND lease_until>NOW()) AS capture_active
+    FROM public.robinhood_chain_capture_cursor cursor
+    WHERE cursor.chain='robinhood' FOR UPDATE OF cursor NOWAIT`, [leaseKey]);
+  const row = result.rows[0];
+  if (!row || row.recovery_state !== 'running' || row.capture_active
+      || row.next_block == null || row.checkpoint_block == null
+      || BigInt(row.next_block) !== BigInt(expectedNextBlock)
+      || BigInt(row.checkpoint_block) + 1n !== BigInt(row.next_block)
+      || BigInt(row.next_block) < BigInt(start)
+      || BigInt(row.next_block) >= BigInt(start + PARTITION_SIZE)) {
+    throw new Error('capture is active or its stopped checkpoint differs from the expected active partition');
+  }
+  return row.next_block;
 }
 
 async function inspectLeaf(client, leaf, options = {}) {
@@ -138,7 +177,11 @@ async function run(input, options = {}) {
     if (input.action === 'read-only') {
       state = await inspectLeaf(client, leaf);
     } else {
-      await assertFinalized(client, input.partitionStart);
+      if (input.paused) {
+        await assertCapturePaused(client, input.partitionStart, input.expectedNextBlock);
+      } else {
+        await assertFinalized(client, input.partitionStart);
+      }
       state = input.action === 'prepare'
         ? await prepareLeaf(client, leaf) : await validateLeaf(client, leaf);
     }
@@ -160,5 +203,5 @@ if (require.main === module) run(parseArgs(process.argv.slice(2))).then((result)
   process.exitCode = 1;
 });
 
-module.exports = { assertFinalized, inspectLeaf, parseArgs, prepareLeaf,
+module.exports = { assertCapturePaused, assertFinalized, inspectLeaf, parseArgs, prepareLeaf,
   resolvePartition, run, validateLeaf };

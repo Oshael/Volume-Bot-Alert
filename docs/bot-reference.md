@@ -5544,9 +5544,16 @@ uma partição de eventos. Depois de copiar e auditar as transações daquela fa
 confere os eventos antigos e marca a FK como validada. Cada comando altera no
 máximo uma partição e exige que ela esteja inteiramente abaixo do head finalizado.
 N deve ser o início da partição de 250.000 blocos. A validação pode ler toda a
-partição e tem timeout de 15 minutos; acompanhe locks, I/O e lag. A partição
-ativa ainda requer procedimento separado com a captura parada. Não remova a FK
+partição e tem timeout de 15 minutos; acompanhe locks, I/O e lag. Não remova a FK
 antiga nem troque o nome das tabelas só porque algumas partições passaram.
+Para preparar a partição que contém o LIVE, pare a captura, espere a lease
+`robinhood-chain-capture-worker` expirar e registre `next_block` do cursor.
+Execute o mesmo comando com `--partition-start=N --paused
+--expected-next-block=M --prepare`; depois use `--validate` com os mesmos N e M.
+Ambas as etapas recusam lease ativa ou cursor diferente e seguram o lock do
+cursor durante a operação. Deixe a captura parada até concluir a validação;
+se o cursor mudar, reavalie a partição e o espelho antes de repetir. Este
+procedimento preserva a FK antiga e não efetua o cutover das transações.
 
 Para copiar transações históricas finalizadas, use
 `npm run robinhood:chain-transaction-shadow-copy -- --from-block=N

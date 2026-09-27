@@ -169,6 +169,43 @@ it('prepares and validates one leaf FK while the legacy FK remains active', asyn
       FROM robinhood_chain_transactions WHERE block_hash=$1`, [HASH])).rows[0].n, 1);
     assert.deepEqual(eventFks.parseArgs(['--partition-start=70750000', '--prepare']),
       { action: 'prepare', partitionStart: 70750000 });
+    assert.deepEqual(eventFks.parseArgs([
+      '--partition-start=70750000', '--prepare', '--paused',
+      '--expected-next-block=70750002',
+    ]), { action: 'prepare', partitionStart: 70750000,
+      paused: true, expectedNextBlock: 70750002 });
+    assert.throws(() => eventFks.parseArgs([
+      '--partition-start=70750000', '--prepare', '--paused',
+      '--expected-next-block=71000000',
+    ]), /expected next block in the partition/);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
+
+it('requires an inactive capture lease and an exact stopped cursor for the active leaf', async () => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO robinhood_chain_capture_cursor
+      (chain, next_block, checkpoint_block, checkpoint_hash, node_head,
+       finalized_head, recovery_state)
+      VALUES ('robinhood', 70750002, 70750001, $1, 70750001, 70750001, 'running')
+      ON CONFLICT (chain) DO UPDATE SET next_block=EXCLUDED.next_block,
+        checkpoint_block=EXCLUDED.checkpoint_block,
+        checkpoint_hash=EXCLUDED.checkpoint_hash, node_head=EXCLUDED.node_head,
+        finalized_head=EXCLUDED.finalized_head, recovery_state='running',
+        recovery_plan=NULL, recovery_detected_at=NULL`, [HASH]);
+    const options = { leaseKey: 'rh-tx-fk-test-capture-lease' };
+    assert.equal(await eventFks.assertCapturePaused(client, 70750000, 70750002, options),
+      '70750002');
+    await assert.rejects(eventFks.assertCapturePaused(client, 70750000, 70750003, options),
+      /checkpoint differs/);
+    await client.query(`INSERT INTO worker_leases (lease_key, owner_id, lease_until)
+      VALUES ($1, 'rh-tx-fk-test', NOW()+INTERVAL '1 minute')`, [options.leaseKey]);
+    await assert.rejects(eventFks.assertCapturePaused(client, 70750000, 70750002, options),
+      /capture is active/);
   } finally {
     await client.query('ROLLBACK');
     client.release();
