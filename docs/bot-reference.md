@@ -5545,6 +5545,17 @@ página exceder os limites. A cópia é idempotente, recusa payload divergente e
 altera o cursor da captura. Confirme espaço livre e WAL a cada página; a cópia
 sozinha não autoriza cutover ou poda, que exigem auditoria completa de paridade.
 
+Audite uma faixa fixa finalizada com
+`npm run robinhood:chain-transaction-shadow-audit -- --from-block=N
+--through-block=M --max-blocks=10 --max-pages=100`. A auditoria é somente leitura:
+compara contagem, identidade e todas as colunas nas duas direções, incluindo
+blocos não canônicos retidos. Cada página aceita até 5.000 linhas por lado e
+30 s de consulta; páginas densas são reduzidas automaticamente. `verified=true`
+somente se toda a faixa indicada terminar sem divergência. `nextBlock` permite
+retomar após `page_limit`; divergência ou faixa incompleta retorna código 2.
+Para validar o corte, cubra toda a faixa pretendida e repita a auditoria do trecho
+mais recente após a cópia alcançar o espelho LIVE.
+
 Para limitar o preenchimento dos snapshots V3 à faixa já copiada e validada na
 sombra de eventos, use
 `npm run robinhood:v3-snapshot-shadow-backfill -- --from-block=N --through-block=M

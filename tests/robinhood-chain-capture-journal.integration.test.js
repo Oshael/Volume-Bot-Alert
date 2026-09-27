@@ -111,6 +111,7 @@ const stage247 = require('../src/utils/db-init-stage247');
 const stage253 = require('../src/utils/db-init-stage253');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
 const transactionShadowCopy = require('../src/utils/copy-robinhood-chain-transaction-shadow-page');
+const transactionShadowAudit = require('../src/utils/audit-robinhood-chain-transaction-shadow');
 const {
   mirrorCapturedTransactions,
 } = require('../src/models/robinhood-chain-transaction-shadow');
@@ -884,6 +885,44 @@ describe('Robinhood canonical chain capture journal', () => {
       }), (error) => error.code === 'capture_transaction_shadow_unavailable');
       assert.equal((await db.query(`SELECT count(*)::int AS n
         FROM robinhood_chain_transactions WHERE block_hash=$1`, [HASH])).rows[0].n, 1);
+    });
+
+  it('audits transaction shadow parity in both directions and stops at a mismatch',
+    async () => {
+      await createRobinhoodChainCaptureJournal().commitBlock(capture());
+      await db.query(`UPDATE robinhood_chain_capture_cursor
+        SET finalized_head=100 WHERE chain='robinhood'`);
+      const page = { database: db, fromBlock: 100, throughBlock: 100, apply: true };
+      await transactionShadowCopy.copyPage(page);
+      const range = { fromBlock: 100, throughBlock: 100, maxBlocks: 1, maxPages: 1 };
+      const audit = () => transactionShadowAudit.auditRange(range, { database: db });
+      assert.deepEqual(await audit(), { mode: 'read-only', verified: true,
+        stopReason: 'complete', fromBlock: 100, throughBlock: 100,
+        nextBlock: null, pages: 1, transactions: 1 });
+      assert.deepEqual(await transactionShadowAudit.auditRange({
+        ...range, throughBlock: 101,
+      }, { database: db }), { mode: 'read-only', verified: false,
+        stopReason: 'page_limit', fromBlock: 100, throughBlock: 101,
+        nextBlock: 101, pages: 1, transactions: 1 });
+      await db.query(`UPDATE robinhood_chain_transactions_shadow SET nonce=8
+        WHERE block_hash=$1`, [HASH]);
+      assert.equal((await audit()).mismatch.reason, 'payload');
+      await db.query(`UPDATE robinhood_chain_transactions_shadow SET nonce=7
+        WHERE block_hash=$1`, [HASH]);
+      await db.query(`DELETE FROM robinhood_chain_transactions_shadow
+        WHERE block_hash=$1`, [HASH]);
+      assert.equal((await audit()).mismatch, 'count');
+      await db.query(`INSERT INTO robinhood_chain_transactions_shadow (
+        chain, block_number, block_hash, transaction_hash, transaction_index,
+        from_address, receipt_succeeded, nonce, value_wei
+      ) VALUES ('robinhood', 100, $1, $2, 1, $3, TRUE, 7, 42)`,
+      [HASH, NEXT_TX, ADDRESS]);
+      assert.match((await audit()).mismatch.reason, /missing_shadow|extra_shadow/);
+      await assert.rejects(transactionShadowAudit.auditPage(db, 101, 101),
+        /above finalized head/);
+      assert.throws(() => transactionShadowAudit.parseArgs([
+        '--from-block=100', '--through-block=101', '--max-pages=1001',
+      ]), /maxPages/);
     });
 
   it('backfills only a V3 snapshot present in the shadow and rejects a wrong block',
