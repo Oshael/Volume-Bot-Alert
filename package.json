@@ -152,6 +152,7 @@
     "robinhood:chain-event-shadow-copy": "node src/utils/copy-robinhood-chain-event-shadow-page.js",
     "robinhood:chain-transaction-shadow-copy": "node src/utils/copy-robinhood-chain-transaction-shadow-page.js",
     "robinhood:chain-transaction-shadow-audit": "node src/utils/audit-robinhood-chain-transaction-shadow.js",
+    "robinhood:chain-transaction-retention-plan": "node src/utils/plan-robinhood-chain-transaction-retention.js",
     "robinhood:chain-transaction-event-fks": "node src/utils/migrate-robinhood-chain-transaction-event-fks.js",
     "robinhood:chain-journal-partition": "node src/utils/provision-robinhood-chain-journal-partition.js",
     "robinhood:chain-transaction-cutover": "node src/utils/cutover-robinhood-chain-transactions.js",

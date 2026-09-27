@@ -5542,6 +5542,16 @@ cursor. A futura FK dos eventos deverá incluir `block_number`, pois a chave ún
 particionado inclui essa coluna. Provisionar a Stage 253 na VPS somente após
 aprovar o corte de escrita espelhada e seu orçamento de WAL, espaço e partições;
 o espelho exigirá essas partições antes de ser ativado.
+
+`npm run robinhood:chain-transaction-retention-plan` é somente leitura. Usa o
+relógio do PostgreSQL para marcar 72 horas e escolhe a partição inteira de
+250.000 blocos que contém a fronteira temporal, preservando pelo menos três
+dias. Informa o intervalo candidato para cópia/auditoria, partições ausentes e
+quantas FKs antigas e novas estão validadas nas partições de eventos. O resultado
+é apenas um inventário: não prova paridade, conclusão dos consumidores, nem
+autoriza cutover ou exclusão da monolítica. Reexecute antes de planejar uma
+janela operacional, pois a fronteira temporal avança.
+
 Na inicialização, a captura distingue a tabela ativa monolítica da particionada.
 Após o cutover, escreve `block_number` diretamente na tabela ativa particionada
 e desliga o espelho mesmo que a flag permaneça configurada; uma segunda relação
