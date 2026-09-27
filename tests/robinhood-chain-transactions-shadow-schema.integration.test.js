@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { after, before, it } = require('node:test');
 const db = require('../src/models/db');
 const stage253 = require('../src/utils/db-init-stage253');
+const eventFks = require('../src/utils/migrate-robinhood-chain-transaction-event-fks');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK = 70750001;
@@ -114,6 +115,60 @@ it('lets partitioned event FKs reject missing transactions and cascade on reorg'
       FROM public.robinhood_chain_transactions_shadow WHERE block_hash=$1`, [HASH])).rows[0].n, 0);
     assert.equal((await client.query(`SELECT count(*)::int AS n
       FROM public.rh_tx_retention_event_probe`)).rows[0].n, 0);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
+
+it('prepares and validates one leaf FK while the legacy FK remains active', async () => {
+  const client = await db.getClient();
+  const leaf = 'public.rh_tx_fk_test_events_b70750000';
+  const options = { oldName: 'rh_tx_fk_test_old', newName: 'rh_tx_fk_test_new' };
+  try {
+    await client.query('BEGIN');
+    await client.query(`CREATE TABLE public.rh_tx_fk_test_events (
+      chain varchar(16) NOT NULL DEFAULT 'robinhood',
+      block_number bigint NOT NULL, block_hash varchar(66) NOT NULL,
+      transaction_hash varchar(66) NOT NULL,
+      CONSTRAINT rh_tx_fk_test_old FOREIGN KEY (chain, block_hash, transaction_hash)
+        REFERENCES public.robinhood_chain_transactions
+          (chain, block_hash, transaction_hash) ON DELETE CASCADE
+    ) PARTITION BY RANGE (block_number)`);
+    await client.query(`CREATE TABLE ${leaf} PARTITION OF public.rh_tx_fk_test_events
+      FOR VALUES FROM (70750000) TO (71000000)`);
+    await client.query(`INSERT INTO robinhood_chain_blocks (
+      block_number, block_hash, parent_hash, capture_digest, block_timestamp,
+      head_observed_at, receipts_available_at
+    ) VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())`,
+    [BLOCK, HASH, PARENT, TX]);
+    await client.query(`INSERT INTO robinhood_chain_transactions (
+      block_hash, transaction_hash, transaction_index, from_address, receipt_succeeded
+    ) VALUES ($1, $2, 0, $3, TRUE)`, [HASH, TX, ADDRESS]);
+    await client.query(`INSERT INTO public.rh_tx_fk_test_events (
+      block_number, block_hash, transaction_hash
+    ) VALUES ($1, $2, $3)`, [BLOCK, HASH, TX]);
+    assert.deepEqual(await eventFks.inspectLeaf(client, leaf, options), {
+      partition: leaf, prepared: false, validated: false,
+    });
+    assert.equal((await eventFks.prepareLeaf(client, leaf, options)).prepared, true);
+    assert.equal((await eventFks.prepareLeaf(client, leaf, options)).validated, false);
+    await client.query('SAVEPOINT missing_shadow_transaction');
+    await assert.rejects(eventFks.validateLeaf(client, leaf, options), /foreign key/);
+    await client.query('ROLLBACK TO SAVEPOINT missing_shadow_transaction');
+    await client.query(`INSERT INTO robinhood_chain_transactions_shadow (
+      block_number, block_hash, transaction_hash, transaction_index,
+      from_address, receipt_succeeded
+    ) VALUES ($1, $2, $3, 0, $4, TRUE)`, [BLOCK, HASH, TX, ADDRESS]);
+    assert.equal((await eventFks.validateLeaf(client, leaf, options)).validated, true);
+    assert.equal((await eventFks.validateLeaf(client, leaf, options)).validated, true);
+    await client.query(`DELETE FROM robinhood_chain_transactions_shadow
+      WHERE block_number=$1 AND block_hash=$2`, [BLOCK, HASH]);
+    assert.equal((await client.query(`SELECT count(*)::int AS n FROM ${leaf}`)).rows[0].n, 0);
+    assert.equal((await client.query(`SELECT count(*)::int AS n
+      FROM robinhood_chain_transactions WHERE block_hash=$1`, [HASH])).rows[0].n, 1);
+    assert.deepEqual(eventFks.parseArgs(['--partition-start=70750000', '--prepare']),
+      { action: 'prepare', partitionStart: 70750000 });
   } finally {
     await client.query('ROLLBACK');
     client.release();

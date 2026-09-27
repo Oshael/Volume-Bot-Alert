@@ -5538,6 +5538,15 @@ o espelho exigirá essas partições antes de ser ativado.
 No PostgreSQL 16, a FK `NOT VALID` não pode ser adicionada ao pai particionado de
 eventos apontando para o pai particionado de transações. A migração deve validar
 FKs por partição antes de retirar a FK antiga e preservar todas as partições.
+`npm run robinhood:chain-transaction-event-fks -- --partition-start=N` inspeciona
+uma partição de eventos. Depois de copiar e auditar as transações daquela faixa,
+`--prepare` adiciona a FK nova como `NOT VALID` sem remover a antiga; `--validate`
+confere os eventos antigos e marca a FK como validada. Cada comando altera no
+máximo uma partição e exige que ela esteja inteiramente abaixo do head finalizado.
+N deve ser o início da partição de 250.000 blocos. A validação pode ler toda a
+partição e tem timeout de 15 minutos; acompanhe locks, I/O e lag. A partição
+ativa ainda requer procedimento separado com a captura parada. Não remova a FK
+antiga nem troque o nome das tabelas só porque algumas partições passaram.
 
 Para copiar transações históricas finalizadas, use
 `npm run robinhood:chain-transaction-shadow-copy -- --from-block=N

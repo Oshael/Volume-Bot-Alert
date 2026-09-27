@@ -152,6 +152,7 @@
     "robinhood:chain-event-shadow-copy": "node src/utils/copy-robinhood-chain-event-shadow-page.js",
     "robinhood:chain-transaction-shadow-copy": "node src/utils/copy-robinhood-chain-transaction-shadow-page.js",
     "robinhood:chain-transaction-shadow-audit": "node src/utils/audit-robinhood-chain-transaction-shadow.js",
+    "robinhood:chain-transaction-event-fks": "node src/utils/migrate-robinhood-chain-transaction-event-fks.js",
     "robinhood:chain-event-shadow-copy-batches": "node src/utils/run-robinhood-chain-event-shadow-copy-batches.js",
     "robinhood:chain-event-shadow-audit": "node src/utils/audit-robinhood-chain-event-shadow.js",
     "robinhood:v3-snapshot-shadow-backfill": "node src/utils/backfill-robinhood-v3-snapshot-blocks-from-shadow.js",
