@@ -9,6 +9,14 @@ const EVENTS = 'robinhood_chain_events';
 const SHADOW = 'robinhood_chain_transactions_shadow';
 const OLD_FK = 'rh_chain_events_shadow_transaction_fkey';
 const NEW_FK = 'rh_chain_events_transaction_shadow_fkey';
+const FK_INVENTORY_SQL = `SELECT child.relname AS child,
+  fk.conname, fk.convalidated
+  FROM pg_constraint fk
+  JOIN pg_class child ON child.oid=fk.conrelid
+  JOIN pg_inherits inheritance ON inheritance.inhrelid=child.oid
+  WHERE inheritance.inhparent=to_regclass('public.robinhood_chain_events')
+    AND fk.contype='f'
+    AND fk.conname IN ($1, $2)`;
 
 function block(value, label) {
   if (value == null || value === '') throw new Error(`${label} is invalid`);
@@ -142,14 +150,7 @@ async function inspect(database = db) {
       JOIN pg_class child ON child.oid=inheritance.inhrelid
       WHERE parent.oid IN (to_regclass('public.robinhood_chain_events'),
         to_regclass('public.robinhood_chain_transactions_shadow'))`);
-    const { rows: fks } = await client.query(`SELECT child.relname AS child,
-      constraint.conname, constraint.convalidated
-      FROM pg_constraint constraint
-      JOIN pg_class child ON child.oid=constraint.conrelid
-      JOIN pg_inherits inheritance ON inheritance.inhrelid=child.oid
-      WHERE inheritance.inhparent=to_regclass('public.robinhood_chain_events')
-        AND constraint.contype='f'
-        AND constraint.conname IN ($1, $2)`, [OLD_FK, NEW_FK]);
+    const { rows: fks } = await client.query(FK_INVENTORY_SQL, [OLD_FK, NEW_FK]);
     const report = buildReport(state, boundaries, partitions, fks);
     await client.query('COMMIT');
     return report;
@@ -168,4 +169,4 @@ if (require.main === module) inspect().then((report) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { WIDTH, buildReport, chooseFloor, inspect, partitionMap };
+module.exports = { FK_INVENTORY_SQL, WIDTH, buildReport, chooseFloor, inspect, partitionMap };
