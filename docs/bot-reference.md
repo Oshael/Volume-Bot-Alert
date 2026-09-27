@@ -5518,7 +5518,20 @@ com cursor retornado a cada execução; o modo padrão é somente leitura e `--a
 confirma cada página. Conferir a igualdade dos blocos com o evento pai antes de
 trocar as FKs. A coluna continua nullable para os snapshots históricos até o
 backfill limitado resolver os registros que precisarão da nova FK.
-Para limitar esse preenchimento à faixa já copiada e validada na sombra, use
+
+A Stage 253 prepara `robinhood_chain_transactions_shadow` vazia, particionada
+pelas mesmas faixas de 250.000 blocos. Exige `--heap-tablespace`,
+`--index-tablespace`, `--from-block` e `--through-block` explícitos; a PK fica no
+tablespace do heap e a chave de posição no tablespace de índices. Cada partição
+mantém FK para `robinhood_chain_blocks`. Esta etapa não copia transações, não
+troca a FK dos eventos, não muda o capturador e não habilita poda. A futura FK
+dos eventos deverá incluir `block_number`, pois a chave única do pai
+particionado inclui essa coluna. Provisionar a Stage 253 na VPS somente após
+aprovar o corte de escrita espelhada e seu orçamento de WAL, espaço e partições;
+o espelho exigirá essas partições antes de ser ativado.
+
+Para limitar o preenchimento dos snapshots V3 à faixa já copiada e validada na
+sombra de eventos, use
 `npm run robinhood:v3-snapshot-shadow-backfill -- --from-block=N --through-block=M
 --batch-size=1000`. O padrão é somente leitura; `--apply` confirma uma página e
 retorna `nextCursor` para a próxima execução. Cada página examina no máximo 5.000
