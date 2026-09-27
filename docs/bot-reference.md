@@ -4013,6 +4013,18 @@ inclui `totalSupplyRaw` (última observação `accepted` de `robinhood_market_ob
 só no caminho ledger; `null` no fallback Blockscout), consumido pelo frontend.
 
 No expanded chart RH, chart, trades e holders ficam visíveis simultaneamente.
+
+`GET /api/robinhood/wallet-trades?wallet=0x...` expõe swaps atribuídos à wallet
+Robinhood consultada por usuário autenticado, com filtros `side=all|buy|sell`,
+`limit` de 1 a 100 (padrão 50) e cursor opaco vinculado à wallet e ao filtro.
+A ordem é decrescente por tempo, bloco, índice de ação e hash da transação;
+`nextCursor` só existe
+quando há mais resultados. Cada item traz token, lado, quantidade decimal
+(`tokenAmount`, que pode ser `null`), quantidade raw, decimais, USD/price quando
+disponíveis, horário e hash. Transferências não entram nesse feed. A fonte é
+`robinhood_wallet_swaps`; a rota usa a mesma autenticação e visibilidade RH do
+feed de trades por token.
+
 O painel fixo de holders fica na parte inferior e pode ser redimensionado pelo
 handle horizontal (ou pelas setas/Home/End quando focado); aumentar holders
 reduz a área compartilhada por chart e trades. A tabela compacta funde U. PnL

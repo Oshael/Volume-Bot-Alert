@@ -1,6 +1,7 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: tabela unificada Robinhood disponível; rankings e detalhes ainda pendentes.
+Status: tabela unificada Robinhood disponível; feed paginado de swaps por wallet
+disponível na API; rankings e telas de detalhe ainda pendentes.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 

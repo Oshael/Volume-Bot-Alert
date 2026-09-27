@@ -14,6 +14,9 @@ const {
 const {
   createRobinhoodWalletSwapReadRepository,
 } = require('../src/models/robinhood-wallet-swap-read');
+const {
+  createRobinhoodWalletTradeReadRepository,
+} = require('../src/models/robinhood-wallet-trade-read');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN_A = `0x${'a'.repeat(40)}`;
@@ -23,6 +26,7 @@ const QUOTE = `0x${'c'.repeat(40)}`;
 
 const writer = createRobinhoodWalletSwapRepository({ database: db });
 const reader = createRobinhoodWalletSwapReadRepository({ database: db });
+const walletReader = createRobinhoodWalletTradeReadRepository({ database: db });
 
 // A swap fixture; `fdvUsd` set => the sidecar (and thus the feed's MC) is populated.
 function swap({ block, actionIndex = 0, token = TOKEN_A, minute = 0, fdvUsd = null }) {
@@ -122,5 +126,49 @@ describe('Robinhood wallet-swap trades read model (integration)', () => {
     // Every swap seen exactly once, strictly newest-first across the boundary.
     assert.deepEqual(seen, [304, 303, 302, 301, 300]);
     assert.equal(new Set(seen).size, 5);
+  });
+
+  it('pages one wallet across tokens and partitions with side filtering', async () => {
+    await writer.insertWalletSwaps([
+      swap({ block: 400, minute: 10 }),
+      { ...swap({ block: 401, minute: 20, token: TOKEN_B }), side: 'sell' },
+      { ...swap({ block: 402, minute: 30 }), walletAddress: `0x${'2'.repeat(40)}` },
+      { ...swap({ block: 403, minute: 40 }), blockTime: '2026-08-07T00:05:00.000Z' },
+    ]);
+
+    const first = await walletReader.getWalletTrades({ walletAddress: WALLET, limit: 2 });
+    const second = await walletReader.getWalletTrades({
+      walletAddress: WALLET, limit: 2, cursor: first.nextCursor,
+    });
+    assert.deepEqual(
+      [...first.trades, ...second.trades].map(({ blockNumber }) => blockNumber),
+      [403, 401, 400],
+    );
+    assert.equal(first.hasMore, true);
+    assert.equal(second.hasMore, false);
+    assert.equal(second.nextCursor, null);
+    assert.equal(first.trades[1].tokenAddress, TOKEN_B);
+    assert.equal(first.trades[1].side, 'sell');
+    assert.equal(first.trades[1].amountUsd, 2500);
+    assert.equal(first.trades[1].tokenAmount, null);
+
+    const buys = await walletReader.getWalletTrades({ walletAddress: WALLET, side: 'buy' });
+    assert.deepEqual(buys.trades.map(({ blockNumber }) => blockNumber), [403, 400]);
+  });
+
+  it('does not skip swaps sharing time, block and action index', async () => {
+    const laterHash = `0x${'f'.repeat(64)}`;
+    await writer.insertWalletSwaps([
+      swap({ block: 500 }),
+      { ...swap({ block: 500, token: TOKEN_B }), transactionHash: laterHash },
+    ]);
+
+    const first = await walletReader.getWalletTrades({ walletAddress: WALLET, limit: 1 });
+    const second = await walletReader.getWalletTrades({
+      walletAddress: WALLET, limit: 1, cursor: first.nextCursor,
+    });
+    assert.equal(first.trades[0].transactionHash, laterHash);
+    assert.equal(second.trades[0].transactionHash, swap({ block: 500 }).transactionHash);
+    assert.equal(second.hasMore, false);
   });
 });
