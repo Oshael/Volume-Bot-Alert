@@ -32,6 +32,7 @@ const HASH_B = `0x${'b'.repeat(64)}`;
 const HASH_C = `0x${'c'.repeat(64)}`;
 const HASH_D = `0x${'d'.repeat(64)}`;
 const HASH_E = `0x${'e'.repeat(64)}`;
+const HASH_F = `0x${'f'.repeat(64)}`;
 
 after(() => db.pool.end());
 
@@ -219,6 +220,21 @@ describe('Robinhood holder backfill persistence', () => {
       );
       await client.query(`UPDATE robinhood_holder_token_states
         SET tail_capture_from_block = 103 WHERE token_address = $1`, [TOKEN]);
+      assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
+      await client.query(`UPDATE robinhood_holder_token_states
+        SET tail_capture_from_block = 104 WHERE token_address = $1`, [TOKEN]);
+      await client.query(`INSERT INTO robinhood_holder_transfer_journal (
+        block_number, block_hash, transaction_hash, transaction_index,
+        log_index, token_address, from_wallet, to_wallet, amount_raw
+      ) VALUES (101, $1, $2, 0, 0, $3, $4, $5, 1)`,
+      [HASH_B, HASH_F, TOKEN, ALICE, BOB]);
+      assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
+      await client.query(`UPDATE robinhood_holder_capture_policy
+        SET capture_mode='tracked' WHERE chain='robinhood'`);
+      assert.equal((await repository.getNextToken({ throughBlock: '103' }))?.tokenAddress,
+        TOKEN);
+      await client.query(`UPDATE robinhood_holder_token_states
+        SET tail_capture_from_block = NULL WHERE token_address = $1`, [TOKEN]);
       assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
       assert.deepEqual(await repository.markResyncing({
         tokenAddress: TOKEN, backfillNextBlock: '103',

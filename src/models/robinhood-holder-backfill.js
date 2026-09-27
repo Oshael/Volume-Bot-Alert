@@ -288,6 +288,10 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
                AND state.live_through_block + 1 = state.backfill_next_block
                AND state.backfill_next_block
                    BETWEEN cursor.journal_floor_block AND cursor.next_block
+               AND NOT (state.tail_capture_from_block IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM robinhood_holder_capture_policy policy
+                  WHERE policy.chain = state.chain AND policy.capture_mode = 'tracked'
+               ))
                AND state.backfill_next_block >= COALESCE((
                  SELECT journal.block_number
                    FROM robinhood_holder_transfer_journal journal

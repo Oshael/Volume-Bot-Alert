@@ -3425,6 +3425,10 @@ essa fronteira. Se deployment e tail forem iguais e ainda não existir checkpoin
 o executor processa somente esse bloco para criar uma âncora verificável; o overlap
 pendente é removido atomicamente no handoff. A promoção exige replay no mínimo até
 o tail, checkpoint confirmado e encontro dentro da cobertura retida do journal.
+Em captura `tracked`, o seletor continua o replay de tokens com tail durável mesmo
+quando já existe journal pendente atrás do cursor; o handoff descarta essa
+sobreposição após o replay. Em modo `legacy` ou sem tail durável, o seletor mantém
+a condição anterior baseada no cursor live e no primeiro evento pendente.
 Em captura `tracked`, um token com tail durável também pode passar ao handoff
 quando seu primeiro evento pendente está depois do checkpoint: o intervalo sem
 evento permanece sob a cobertura capturada, e o evento futuro fica no journal
