@@ -292,6 +292,10 @@ Uma segunda auditoria lê os cursores seed/live de swaps e transfers, verifica
 continuidade, avanço além do `asOf` e checkpoint canônico. Mesmo com essas
 condições satisfeitas, classificação, completude por token e alinhamento com a
 projeção ainda precisam ser demonstrados antes de publicar o ranking exato.
+Uma leitura limitada por pares `(wallet, token)` identifica transfers brutos da
+janela que continuam `unknown`/`unclassified` ou têm versão de classificação
+divergente. Ausência desses casos vale apenas para as linhas brutas disponíveis;
+não prova captura completa nem resolve retenção ou alinhamento da projeção.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
