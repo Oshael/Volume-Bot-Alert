@@ -88,6 +88,20 @@ describe('Robinhood Top Wallets aggregation', () => {
     assert.deepEqual(result.ranked.map(({ walletAddress }) => walletAddress), [A, B]);
   });
 
+  it('ranks an old bag from a current snapshot when window evidence is complete', () => {
+    const result = rank([position(A, TOKEN_ONE, {
+      quantityRaw: '10', costBasisUsd: '10', quality: 'exact_swap_only',
+      projectionAligned: true, eventsComplete: true, events: [],
+    })], { positionSource: 'snapshot' });
+    assert.equal(result.ranked[0].gainUsd, '10');
+    const partial = rank([position(A, TOKEN_ONE, {
+      quantityRaw: '10', costBasisUsd: '10', quality: 'exact_swap_only',
+      projectionAligned: true, eventsComplete: false, events: [],
+    })], { positionSource: 'snapshot' });
+    assert.equal(partial.ranked.length, 0);
+    assert.equal(partial.coverage, 'partial');
+  });
+
   it('rejects duplicate pairs and invalid ranking limits', () => {
     assert.throws(() => rank([
       position(A, TOKEN_ONE), position(`0x${'A'.repeat(40)}`, TOKEN_ONE),

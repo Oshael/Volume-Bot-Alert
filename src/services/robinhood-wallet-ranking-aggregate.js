@@ -1,6 +1,7 @@
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { formatDecimal, parseDecimal, rational } = require('./evm-market-metrics');
 const { scoreOpenWalletPosition } = require('./robinhood-wallet-ranking-domain');
+const { scoreOpenWalletPositionSnapshot } = require('./robinhood-wallet-ranking-snapshot-domain');
 
 const WINDOW_MS = Object.freeze({
   '24h': 24 * 60 * 60 * 1000,
@@ -28,6 +29,9 @@ function compareGain(left, right) {
 function normalizeInput(input) {
   if (!Object.hasOwn(WINDOW_MS, input.window)) throw new Error('window is invalid');
   if (!Array.isArray(input.positions)) throw new Error('positions must be a list');
+  if (input.positionSource != null && !['event_history', 'snapshot'].includes(input.positionSource)) {
+    throw new Error('positionSource is invalid');
+  }
   const asOf = new Date(input.asOf);
   if (!Number.isFinite(asOf.getTime())) throw new Error('asOf is invalid');
   const limit = input.limit ?? DEFAULT_LIMIT;
@@ -52,14 +56,16 @@ function rankOpenWalletPositions(input = {}) {
     const pair = `${walletAddress}:${tokenAddress}`;
     if (seenPairs.has(pair)) throw new Error('duplicate wallet/token position');
     seenPairs.add(pair);
-    const score = scoreOpenWalletPosition({
-      asOf, windowStart,
-      tokenDecimals: position.tokenDecimals,
-      currentPriceUsd: position.currentPriceUsd,
-      windowStartPriceUsd: position.windowStartPriceUsd,
-      historyComplete: position.historyComplete,
-      events: position.events,
-    });
+    const score = input.positionSource === 'snapshot'
+      ? scoreOpenWalletPositionSnapshot({ ...position, asOf, window: input.window })
+      : scoreOpenWalletPosition({
+        asOf, windowStart,
+        tokenDecimals: position.tokenDecimals,
+        currentPriceUsd: position.currentPriceUsd,
+        windowStartPriceUsd: position.windowStartPriceUsd,
+        historyComplete: position.historyComplete,
+        events: position.events,
+      });
     const wallet = wallets.get(walletAddress) || {
       walletAddress, gain: rational(0n), openPositionCount: 0, partial: false,
     };

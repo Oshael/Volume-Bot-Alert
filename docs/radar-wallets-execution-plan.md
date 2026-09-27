@@ -276,6 +276,10 @@ a reconstrução confiável dos eventos e a consulta pública do ranking.
 Há leitura paginada de posições abertas por lote explícito de tokens e versão
 da projeção; páginas independentes não constituem um snapshot consistente nem
 provam que o universo global foi percorrido.
+O cálculo temporal também aceita posição corrente mais eventos completos da
+janela, sem exigir todo o histórico de compras da wallet; ALL usa o custo
+remanescente da projeção. Cobertura dos eventos e alinhamento da projeção
+continuam sendo pré-requisitos para publicar ganho exato.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
