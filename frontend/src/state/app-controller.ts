@@ -413,6 +413,7 @@ type HistorySyncMonitoredSnapshotMessage = {
 
 type HistoryBootstrapRequestPayload = {
   chains: TokenChain[];
+  radarAvailable: boolean;
   starredTokenIdentities: string[];
   recent: DashboardHistoryBucketRequest;
   oldWeek: DashboardHistoryBucketRequest;
@@ -432,6 +433,7 @@ type HistorySyncBootstrapSnapshotMessage = {
   requestPayload: HistoryBootstrapRequestPayload;
   payload: HistoryBootstrapPayload;
   radarPayload?: DashboardRadarBootstrapPayload | null;
+  radarError?: string | null;
   ts: number;
 };
 
@@ -1784,6 +1786,11 @@ export function createAppController(): AppController {
       state.data.chainReadiness,
       capability,
     );
+  }
+
+  function canLoadRobinhoodRadar() {
+    return state.data.availableChains.includes('robinhood')
+      && state.data.chainReadiness.robinhood?.capabilities.history === true;
   }
 
   function getReadySelectedChains(capability: WorkspaceChainCapability) {
@@ -9438,6 +9445,7 @@ export function createAppController(): AppController {
     payload: HistoryBootstrapPayload,
     requestPayload: HistoryBootstrapRequestPayload,
     radarPayload: DashboardRadarBootstrapPayload | null,
+    radarError: string | null,
   ) {
     if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
       return;
@@ -9450,6 +9458,7 @@ export function createAppController(): AppController {
       requestPayload,
       payload,
       radarPayload,
+      radarError,
       ts: Date.now(),
     });
   }
@@ -9494,6 +9503,7 @@ export function createAppController(): AppController {
         }
         clearHistorySearchPending({ emitRegions: false });
         applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload, message.radarPayload);
+        state.radar.error = message.radarError ?? null;
         emit('recent', 'old-week', 'bid-zone', 'header');
         return true;
       case 'bid-zone-snapshot':
@@ -9563,6 +9573,51 @@ export function createAppController(): AppController {
       || isApiRateLimitBackoffError(input.error);
   }
 
+  function isStaleHistoryBootstrapResponse(requestRevision: number, token: string) {
+    return requestRevision !== historyBootstrapRequestRevision
+      || !usesHistoryBucketBootstrap()
+      || state.session.token !== token;
+  }
+
+  function buildEmptyHistoryBootstrapPayload(asOf: string | null, request: HistoryBootstrapRequestPayload): HistoryBootstrapPayload {
+    return {
+      asOf,
+      generatedAt: asOf,
+      debug: null,
+      recent: { total: 0, page: 0, perPage: request.recent.perPage ?? ROUTED_BUCKET_DEFAULT_PER_PAGE,
+        count: 0, tokens: [], pinnedTokens: [] },
+      oldWeek: { total: 0, page: 0, perPage: request.oldWeek.perPage ?? ROUTED_BUCKET_DEFAULT_PER_PAGE,
+        count: 0, tokens: [], pinnedTokens: [] },
+    };
+  }
+
+  function hasNoReadyHistorySource(request: HistoryBootstrapRequestPayload) {
+    return request.chains.length === 0 && !request.radarAvailable;
+  }
+
+  async function fetchHistoryWorkspaceBootstrapPayloads(requestPayload: HistoryBootstrapRequestPayload, token: string) {
+    const historyPayloadPromise: Promise<HistoryBootstrapPayload | null> = requestPayload.chains.length
+      ? measureRuntimePerfAsync(
+        'api.dashboard.history-bootstrap',
+        isRuntimePerfDebugActive(),
+        {
+          recentPerPage: requestPayload.recent.perPage,
+          oldWeekPerPage: requestPayload.oldWeek.perPage,
+        },
+        () => fetchDashboardHistoryBootstrap(requestPayload, token),
+      ) : Promise.resolve(null);
+    const radarPayloadPromise = requestPayload.radarAvailable
+      ? fetchDashboardRadarBootstrap(requestPayload.radar, token)
+        .then((value) => ({ value, error: null as string | null }))
+        .catch((error: unknown) => ({ value: null, error: error instanceof Error ? error.message : 'Radar unavailable' }))
+      : Promise.resolve({ value: null, error: 'Robinhood Radar unavailable' });
+    const [historyPayload, radarResult] = await Promise.all([historyPayloadPromise, radarPayloadPromise]);
+    return {
+      payload: historyPayload ?? buildEmptyHistoryBootstrapPayload(radarResult.value?.asOf ?? null, requestPayload),
+      radarResult,
+    };
+  }
+
   async function refreshHistoryWorkspaceBootstrap(options?: HistoryBootstrapRefreshOptions) {
     const token = options?.token ?? state.session.token;
     if (!token) {
@@ -9571,8 +9626,13 @@ export function createAppController(): AppController {
     }
 
     const requestPayload = buildHistoryBootstrapRequest();
-    if (requestPayload.chains.length === 0) {
+    if (hasNoReadyHistorySource(requestPayload)) {
       clearHistorySearchPending({ emitRegions: false });
+      const payload = buildEmptyHistoryBootstrapPayload(null, requestPayload);
+      applyHistoryBootstrapPayload(payload, options?.watchlistTokensOverride, requestPayload);
+      state.radar.loading = false;
+      state.radar.error = 'Robinhood Radar unavailable';
+      broadcastHistoryBootstrapSnapshot(payload, requestPayload, null, state.radar.error);
       emit('recent', 'old-week', 'header');
       return;
     }
@@ -9582,28 +9642,14 @@ export function createAppController(): AppController {
     }
 
     historyBootstrapRefreshInFlight = true;
-    state.radar.loading = true;
+    state.radar.loading = requestPayload.radarAvailable;
     historyBootstrapInFlightRequestKey = requestKey;
     const requestRevision = historyBootstrapRequestRevision + 1;
     historyBootstrapRequestRevision = requestRevision;
 
     try {
-      const [payload, radarResult] = await Promise.all([measureRuntimePerfAsync(
-        'api.dashboard.history-bootstrap',
-        isRuntimePerfDebugActive(),
-        {
-          recentPerPage: requestPayload.recent.perPage,
-          oldWeekPerPage: requestPayload.oldWeek.perPage,
-        },
-        () => fetchDashboardHistoryBootstrap(requestPayload, token),
-      ), fetchDashboardRadarBootstrap(requestPayload.radar, token)
-        .then((value) => ({ value, error: null as string | null }))
-        .catch((error: unknown) => ({ value: null, error: error instanceof Error ? error.message : 'Radar unavailable' }))]);
-      if (
-        requestRevision !== historyBootstrapRequestRevision
-        || !usesHistoryBucketBootstrap()
-        || state.session.token !== token
-      ) {
+      const { payload, radarResult } = await fetchHistoryWorkspaceBootstrapPayloads(requestPayload, token);
+      if (isStaleHistoryBootstrapResponse(requestRevision, token)) {
         return;
       }
 
@@ -9611,7 +9657,7 @@ export function createAppController(): AppController {
       state.radar.loading = false;
       state.radar.error = radarResult.error;
       applyHistoryBootstrapPayload(payload, options?.watchlistTokensOverride, requestPayload, radarResult.value);
-      broadcastHistoryBootstrapSnapshot(payload, requestPayload, radarResult.value);
+      broadcastHistoryBootstrapSnapshot(payload, requestPayload, radarResult.value, radarResult.error);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'history-bootstrap' });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
@@ -9651,12 +9697,6 @@ export function createAppController(): AppController {
     if (isLiveWorkspaceHiddenForUiWork()) {
       return;
     }
-    const requestedChains = getReadySelectedChains('monitored');
-    if (requestedChains.length === 0) {
-      emit('monitored');
-      return;
-    }
-
     if (usesHistoryBucketBootstrap()) {
       await refreshHistoryWorkspaceBootstrap({ token });
       void hydrateWatchlistTokensMetadataBatch(token, getWatchlistTokens(state).map((item) => ({
@@ -9664,6 +9704,12 @@ export function createAppController(): AppController {
         address: item.address,
         label: item.label ?? null,
       })), { emitOnComplete: isLiveWorkspace() });
+      return;
+    }
+
+    const requestedChains = getReadySelectedChains('monitored');
+    if (requestedChains.length === 0) {
+      emit('monitored');
       return;
     }
 
@@ -11078,8 +11124,9 @@ export function createAppController(): AppController {
 
     return {
       chains: state.ui.chainFilters.enabledChains.filter((chain) => (
-        state.data.chainReadiness[chain]?.capabilities.history === true
+        chain === 'solana' && state.data.chainReadiness.solana?.capabilities.history === true
       )),
+      radarAvailable: canLoadRobinhoodRadar(),
       starredTokenIdentities: state.data.watchlistTokenIdentities,
       recentPinnedIdentities,
       oldWeekPinnedIdentities,
@@ -11127,6 +11174,7 @@ export function createAppController(): AppController {
   function buildComparableHistoryBootstrapRequest(requestPayload: HistoryBootstrapRequestPayload) {
     return {
       chains: requestPayload.chains,
+      radarAvailable: requestPayload.radarAvailable,
       starredTokenIdentities: requestPayload.starredTokenIdentities,
       recent: requestPayload.recent,
       oldWeek: requestPayload.oldWeek,
@@ -11324,6 +11372,11 @@ export function createAppController(): AppController {
     appliedRequestPayload?: HistoryBootstrapRequestPayload,
     radarPayload?: DashboardRadarBootstrapPayload | null,
   ) {
+    if (appliedRequestPayload?.radarAvailable === false) {
+      state.radar.tokenIdentities = [];
+      state.radar.total = 0;
+      state.radar.asOf = null;
+    }
     const previousRecentIdentities = state.data.recentTokenIdentities.slice();
     const previousOldWeekIdentities = state.data.oldWeekTokenIdentities.slice();
     const previousRecentDebugMap = buildPreviousRecentDebugMap(previousRecentIdentities);
@@ -11993,10 +12046,7 @@ export function createAppController(): AppController {
       watchlistTokens: watchlistTokens.length,
       usesHistoryBootstrap: usesHistoryBucketBootstrap(),
     });
-    if (
-      (usesHistoryBucketBootstrap() && !selectedChainsSupport('history'))
-      || (!usesHistoryBucketBootstrap() && !selectedChainsSupport('monitored'))
-    ) {
+    if (!usesHistoryBucketBootstrap() && !selectedChainsSupport('monitored')) {
       emitMonitoredWorkspaceRegions();
       return;
     }

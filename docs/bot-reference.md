@@ -1906,8 +1906,11 @@ e pins; pins preservam a semântica de order-lock fora dos filtros, sem repetir
 a página. Payload inválido retorna 400; falha de leitura retorna 500 sem lista
 parcial. O Radar web usa `radar-bootstrap` para uma tabela RH com busca, filtros,
 ordem, contagem e paginação globais. O ticker fica verde até 7 dias inclusive e
-laranja depois; idade ausente é neutra. `history-bootstrap` ainda carrega os dois
-grupos legados para consumidores internos, sem exibi-los como tabelas separadas.
+laranja depois; idade ausente é neutra. Na tela Radar, `history-bootstrap` é
+consultado apenas para Solana selecionada e pronta; Robinhood vem exclusivamente
+de `radar-bootstrap`. Sem capacidade Robinhood disponível, a tabela informa
+indisponibilidade. O carregamento Solana continua alimentando consumidores
+internos, sem exibir as tabelas Recent/Old.
 Os filtros persistentes do Radar (favoritos, tamanho da página, ordem, idade,
 MCAP e FDV) ficam em `uiPrefs.radar`; busca e página atual são transitórias. Para
 preferências anteriores, o filtro único de favoritos herda Recent ou Old, e

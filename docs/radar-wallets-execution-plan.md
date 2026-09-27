@@ -1,6 +1,6 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: consulta unificada disponível no reader e na API; interface ainda pendente.
+Status: tabela unificada Robinhood disponível; rankings e detalhes ainda pendentes.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -232,10 +232,12 @@ favoritos e filtros globais, com ticker verde até 7 dias e laranja acima.
 As preferências da tabela única agora são persistidas separadamente. Na primeira
 leitura de preferências antigas, favoritos ativos em Recent ou Old viram o filtro
 de favoritos único; paginação e ordem vêm de Recent, limitadas pelo contrato do
-Radar. A lista de favoritos permanece compartilhada. O carregamento legado dos
-dois grupos permanece para consumidores internos, incluindo Solana. Próximo
-corte: retirar a dependência desse carregamento sem afetar esses consumidores e
-validar o fluxo visual completo.
+Radar. A lista de favoritos permanece compartilhada. O frontend consulta
+`history-bootstrap` apenas para Solana, quando selecionada e pronta; no Radar
+Robinhood usa somente `radar-bootstrap`. Sem disponibilidade Robinhood, a tabela
+indica indisponibilidade. O fluxo visual foi coberto em smoke com seleção mista,
+Robinhood isolada e Robinhood indisponível. As outras áreas do plano permanecem
+pendentes.
 
 O escopo ampliado inclui Radar, consultas de wallet, contabilidade temporal,
 transfers, gráficos e conteúdo social. Estimativa preliminar: 3.500–5.500 linhas

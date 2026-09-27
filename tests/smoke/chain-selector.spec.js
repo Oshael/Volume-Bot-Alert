@@ -823,22 +823,6 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
   'POST /api/dashboard/history-bootstrap': (request) => {
     const requestPayload = request.postDataJSON();
     radarBootstrapPayloads.push(requestPayload);
-    const robinhoodToken = {
-      ...marketToken('robinhood', 'RADARST'),
-      valuation: {
-        type: 'fdv', usd: 350000, observedAt: '2026-07-14T17:30:00.000Z', freshness: 'stale',
-      },
-      volume1h: 70000,
-      volume6h: null,
-      volume24h: 0,
-      coverage: { '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
-      priceChange1h: 3.5,
-      priceChange6h: null,
-      priceChange24h: 0,
-      priceChangeCoverage: { '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
-      activityState: 'stale',
-      tokenCreatedAt: Date.now() - (5 * 24 * 60 * 60 * 1000),
-    };
     const solanaToken = {
       ...marketToken('solana', 'RADARSOL'),
       address: SOLANA_TOP,
@@ -849,20 +833,12 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
       priceChangeCoverage: { '1h': 'complete', '6h': 'complete', '24h': 'complete' },
       tokenCreatedAt: Date.now() - (5 * 24 * 60 * 60 * 1000),
     };
-    const recentTokens = requestPayload.chains?.includes('solana')
-      ? [robinhoodToken, solanaToken]
-      : [robinhoodToken];
-    const oldToken = {
-      ...marketToken('robinhood', 'RADAROLD'),
-      address: ROBINHOOD_OLD,
-      tickerPeers: robinhoodTickerPeers(ROBINHOOD_OLD),
-      tokenCreatedAt: Date.now() - (20 * 24 * 60 * 60 * 1000),
-    };
+    const recentTokens = requestPayload.chains?.includes('solana') ? [solanaToken] : [];
     return {
       generatedAt: '2026-07-14T18:00:00.000Z',
       asOf: '2026-07-14T18:00:00.000Z',
       recent: { total: recentTokens.length, page: 0, perPage: 15, count: recentTokens.length, hasMore: false, tokens: recentTokens, pinnedTokens: [] },
-      oldWeek: { total: 1, page: 0, perPage: 15, count: 1, hasMore: false, tokens: [oldToken], pinnedTokens: [] },
+      oldWeek: { total: 0, page: 0, perPage: 15, count: 0, hasMore: false, tokens: [], pinnedTokens: [] },
     };
   },
 };
@@ -2720,6 +2696,7 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
 test('renders one globally paginated Robinhood Radar table with age colors and filters', async ({ page }) => {
   test.setTimeout(45_000);
   unifiedRadarPayloads.length = 0;
+  radarBootstrapPayloads.length = 0;
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
   await page.goto('/radar');
 
@@ -2733,12 +2710,16 @@ test('renders one globally paginated Robinhood Radar table with age colors and f
   await expect(old).toHaveClass(/radar-age-old/);
   await expect(recent.locator('.token-symbol')).toHaveCSS('color', 'rgb(0, 255, 136)');
   await expect(old.locator('.token-symbol')).toHaveCSS('color', 'rgb(255, 140, 0)');
+  await expect.poll(() => radarBootstrapPayloads.length).toBeGreaterThan(0);
+  expect(radarBootstrapPayloads.every((payload) => (
+    payload.chains?.length === 1 && payload.chains[0] === 'solana'
+  ))).toBe(true);
   await expect(recent).toContainText(/FDV\s*\$350K/);
   await expect(recent).toContainText('STALE VALUATION');
   await expect(recent.locator('.radar-coverage-partial').first()).toContainText('~');
   await expect.poll(() => unifiedRadarPayloads.some((payload) => (
     payload.chains?.length === 1 && payload.chains[0] === 'robinhood'
-      && payload.page === 0 && payload.perPage === 15
+      && payload.page === 0 && payload.perPage === 30
   ))).toBe(true);
 
   await table.locator('[data-radar-search]').fill('RADAROLD');
@@ -2749,6 +2730,67 @@ test('renders one globally paginated Robinhood Radar table with age colors and f
   await expect.poll(() => unifiedRadarPayloads.some((payload) => (
     payload.searchQuery === 'RADAROLD' && payload.sorts?.[0]?.mode === 'age'
   ))).toBe(true);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('loads Robinhood Radar without requesting legacy buckets when only Robinhood is selected', async ({ page }) => {
+  test.setTimeout(45_000);
+  unifiedRadarPayloads.length = 0;
+  radarBootstrapPayloads.length = 0;
+  const fixtures = {
+    ...ROBINHOOD_RADAR_API_FIXTURES,
+    'GET /api/config': {
+      ...ROBINHOOD_RADAR_CONFIG,
+      uiPrefs: {
+        ...ROBINHOOD_RADAR_CONFIG.uiPrefs,
+        chainFilters: {
+          ...ROBINHOOD_RADAR_CONFIG.uiPrefs.chainFilters,
+          enabledChains: ['robinhood'],
+        },
+      },
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+  await page.goto('/radar');
+  await expect(page.locator('.unified-radar-bar tbody tr')).toHaveCount(2);
+  expect(unifiedRadarPayloads.length).toBeGreaterThan(0);
+  expect(radarBootstrapPayloads).toHaveLength(0);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('keeps Radar unavailable when Robinhood is not exposed', async ({ page }) => {
+  test.setTimeout(45_000);
+  unifiedRadarPayloads.length = 0;
+  radarBootstrapPayloads.length = 0;
+  const config = {
+    ...ROBINHOOD_RADAR_CONFIG,
+    availableChains: ['solana'],
+    chainReadiness: { solana: {
+      ...SOLANA_READINESS,
+      capabilities: { ...SOLANA_CAPABILITIES, history: false },
+    } },
+    uiPrefs: {
+      ...ROBINHOOD_RADAR_CONFIG.uiPrefs,
+      chainFilters: {
+        ...ROBINHOOD_RADAR_CONFIG.uiPrefs.chainFilters,
+        enabledChains: ['solana'], radarChains: ['solana'],
+      },
+    },
+  };
+  const fixtures = {
+    ...ROBINHOOD_RADAR_API_FIXTURES,
+    'GET /api/config': config,
+    'GET /api/config/chain-readiness': {
+      availableChains: ['solana'], chainReadiness: config.chainReadiness,
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+  await page.goto('/radar');
+  await expect(page.locator('.unified-radar-bar [role="alert"]')).toContainText('Radar temporarily unavailable');
+  expect(unifiedRadarPayloads).toHaveLength(0);
+  expect(radarBootstrapPayloads).toHaveLength(0);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
