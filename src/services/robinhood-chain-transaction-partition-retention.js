@@ -167,9 +167,7 @@ async function dropEligiblePartition(client, safety, report) {
   await client.query(`LOCK TABLE ONLY ${PARENT} IN ACCESS EXCLUSIVE MODE`);
   await client.query(`LOCK TABLE ${report.eventPartition} IN ACCESS EXCLUSIVE MODE`);
   await client.query(`LOCK TABLE robinhood_token_deployment_outbox,
-    robinhood_bundle_funding_live_queue,
-    robinhood_holder_transfer_journal
-    IN SHARE MODE`);
+    robinhood_bundle_funding_live_queue IN SHARE MODE`);
   const checked = await inspect(client, safety);
   if (!checked.ready || checked.candidate?.name !== report.candidate.name) {
     throw new Error('transaction retention conditions changed under lock');
