@@ -13,9 +13,13 @@ const BLOCK = { blockNumber: '100', blockHash: HASH, transactions: 2 };
 
 describe('Robinhood deployment trace impact probe', () => {
   it('rejects unbounded options and non-pruned RPC targets', () => {
-    assert.deepEqual(parseArgs([]), { phaseSeconds: 15, traces: 3,
-      maxTransactions: 25, timeoutMs: 3000, maxExtraLagBlocks: 100 });
-    assert.throws(() => parseArgs(['--traces=7']), /between/);
+    assert.deepEqual(parseArgs([]), { phaseSeconds: 60, traces: 6,
+      sampleSeconds: 10, maxTransactions: 25, timeoutMs: 3000,
+      maxExtraLagBlocks: 100 });
+    assert.equal(parseArgs(['--phase-seconds=300', '--traces=120']).traces, 120);
+    assert.throws(() => parseArgs(['--traces=121']), /between/);
+    assert.throws(() => parseArgs(['--phase-seconds=10', '--traces=11']), /one trace per second/);
+    assert.throws(() => parseArgs(['--phase-seconds=10']), /sample-seconds must be shorter/);
     assert.throws(() => parseArgs(['--apply']), /unknown/);
     assert.throws(() => rpcTarget({ RH_NODE_RPC_URL: 'http://127.0.0.1:18547' }), /8547/);
     assert.equal(rpcTarget({ RH_NODE_RPC_URL: 'http://127.0.0.1:8547' }).port, '8547');
@@ -73,7 +77,8 @@ describe('Robinhood deployment trace impact probe', () => {
     let current = 0;
     let snapshots = 0;
     const outputs = [];
-    const options = { phaseSeconds: 10, traces: 1, maxTransactions: 10,
+    const options = { phaseSeconds: 10, traces: 1, sampleSeconds: 5,
+      maxTransactions: 10,
       timeoutMs: 3000, maxExtraLagBlocks: 10 };
     const report = await main([], { options, database: {},
       url: new URL('http://127.0.0.1:8547'),
@@ -97,5 +102,33 @@ describe('Robinhood deployment trace impact probe', () => {
     assert.deepEqual(outputs[0], report);
     assert.equal(process.exitCode, 2);
     process.exitCode = 0;
+  });
+
+  it('paces traces across a longer phase and samples independently of trace count', async () => {
+    let current = 0;
+    const options = { phaseSeconds: 30, traces: 3, sampleSeconds: 5,
+      maxTransactions: 10, timeoutMs: 3000, maxExtraLagBlocks: 100 };
+    const report = await main([], { options, database: {},
+      url: new URL('http://127.0.0.1:8547'),
+      rpc: { request: async () => '0x1237' }, nodeStats: async () => ({}),
+      selectBlocks: async () => [BLOCK, { ...BLOCK, blockNumber: '101' },
+        { ...BLOCK, blockNumber: '102' }],
+      now: () => current, pause: async (ms) => { current += ms; },
+      captureSnapshot: async () => ({ at: new Date(current).toISOString(),
+        rpcHead: String(100 + Math.floor(current / 1000)), checkpoint: '100',
+        captureLagBlocks: Math.floor(current / 1000), node: {} }),
+      traceBlock: async (_rpc, block) => {
+        current += 1000;
+        return { ...block, traceMs: 1000, creations: 0 };
+      },
+      logger: { log() {} },
+    });
+    assert.equal(report.baseline.delta.elapsedSeconds, 30);
+    assert.equal(report.impact.delta.elapsedSeconds, 30);
+    assert.equal(report.baseline.samples.length, 5);
+    assert.equal(report.impact.samples.length, 5);
+    assert.equal(report.impact.traces.length, 3);
+    assert.equal(report.impact.tracedFractionOfNewBlocks, 0.1);
+    assert.equal(report.impact.stoppedReason, null);
   });
 });

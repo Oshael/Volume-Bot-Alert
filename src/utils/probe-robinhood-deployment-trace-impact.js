@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const os = require('node:os');
 const db = require('../models/db');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
 
@@ -21,13 +22,20 @@ function bounded(raw, fallback, min, max, label) {
 function parseArgs(argv = []) {
   const values = {};
   for (const arg of argv) {
-    const match = /^--(phase-seconds|traces|max-transactions|timeout-ms|max-extra-lag-blocks)=(\d+)$/.exec(arg);
+    const match = /^--(phase-seconds|traces|sample-seconds|max-transactions|timeout-ms|max-extra-lag-blocks)=(\d+)$/.exec(arg);
     if (!match || values[match[1]] != null) throw new Error(`unknown or repeated argument: ${arg}`);
     values[match[1]] = match[2];
   }
+  const phaseSeconds = bounded(values['phase-seconds'], 60, 10, 300, '--phase-seconds');
+  const traces = bounded(values.traces, 6, 1, 120, '--traces');
+  const sampleSeconds = bounded(values['sample-seconds'], 10, 5, 30, '--sample-seconds');
+  if (traces > phaseSeconds) throw new Error('--traces cannot exceed one trace per second');
+  if (sampleSeconds >= phaseSeconds) {
+    throw new Error('--sample-seconds must be shorter than --phase-seconds');
+  }
   return {
-    phaseSeconds: bounded(values['phase-seconds'], 15, 10, 60, '--phase-seconds'),
-    traces: bounded(values.traces, 3, 1, 6, '--traces'),
+    phaseSeconds, traces,
+    sampleSeconds,
     maxTransactions: bounded(values['max-transactions'], 25, 1, 50, '--max-transactions'),
     timeoutMs: bounded(values['timeout-ms'], 3000, 1000, 10000, '--timeout-ms'),
     maxExtraLagBlocks: bounded(values['max-extra-lag-blocks'], 100, 10, 500,
@@ -74,7 +82,8 @@ async function captureSnapshot(database, rpc, nodeStats, now = Date.now) {
     captureLagBlocks: Number(BigInt(head.value) - checkpoint),
     recoveryState: row.recovery_state,
     queryMs: query.latencyMs, rpcHeadMs: head.latencyMs,
-    dockerStatsMs: stats.latencyMs, node: stats.value };
+    dockerStatsMs: stats.latencyMs, node: stats.value,
+    hostLoad: os.loadavg().map((value) => Number(value.toFixed(2))) };
 }
 
 async function selectBlocks(database, options) {
@@ -134,33 +143,51 @@ function phaseDelta(start, end) {
 
 async function runImpact({ candidates, options, snapshot, rpc, now, pause, runTrace }) {
   const start = await snapshot();
+  const endAt = Date.parse(start.at) + options.phaseSeconds * 1000;
   const traces = [];
   const samples = [];
   let stoppedReason = null;
+  let nextSampleAt = Date.parse(start.at) + options.sampleSeconds * 1000;
+  async function sampleUntil(deadline) {
+    while (nextSampleAt < endAt && nextSampleAt <= deadline) {
+      await pause(Math.max(0, nextSampleAt - now()));
+      const current = await snapshot();
+      samples.push(current);
+      nextSampleAt = Math.max(nextSampleAt + options.sampleSeconds * 1000,
+        now() + options.sampleSeconds * 1000);
+      if (current.captureLagBlocks - start.captureLagBlocks > options.maxExtraLagBlocks) {
+        stoppedReason = 'capture_lag_guardrail';
+        break;
+      }
+    }
+  }
   for (const [index, block] of candidates.entries()) {
     const dueAt = Date.parse(start.at)
       + (index * options.phaseSeconds * 1000 / candidates.length);
+    await sampleUntil(dueAt);
+    if (stoppedReason) break;
     await pause(Math.max(0, dueAt - now()));
+    if (now() >= endAt) { stoppedReason = 'phase_deadline'; break; }
     try {
       traces.push(await runTrace(rpc, block, options, now));
     } catch (error) {
       stoppedReason = `trace_error:${String(error.message || error).slice(0, 200)}`;
       break;
     }
-    const current = await snapshot();
-    samples.push(current);
-    if (current.captureLagBlocks - start.captureLagBlocks > options.maxExtraLagBlocks) {
-      stoppedReason = 'capture_lag_guardrail';
-      break;
-    }
+    await sampleUntil(now());
+    if (stoppedReason) break;
   }
   if (!stoppedReason) {
-    await pause(Math.max(0, Date.parse(start.at) + options.phaseSeconds * 1000 - now()));
+    await sampleUntil(endAt);
+    if (!stoppedReason) await pause(Math.max(0, endAt - now()));
   }
   const end = await snapshot();
   const delta = phaseDelta(start, end);
   return { start, samples, end, delta, traces, stoppedReason,
-    attemptedRatePerSecond: traces.length / Math.max(1, delta.elapsedSeconds) };
+    candidateCount: candidates.length,
+    attemptedRatePerSecond: traces.length / Math.max(1, delta.elapsedSeconds),
+    tracedFractionOfNewBlocks: delta.rpcBlocks > 0
+      ? traces.length / delta.rpcBlocks : null };
 }
 
 async function main(argv = process.argv.slice(2), deps = {}) {
@@ -179,20 +206,21 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   }
   // Require resource telemetry before sending any trace to the production node.
   await nodeStats();
-  const candidates = await (deps.selectBlocks || selectBlocks)(database, options);
-  if (!candidates.length) throw new Error('no recent committed block fits the transaction cap');
   const snapshot = () => (deps.captureSnapshot || captureSnapshot)(database, rpc, nodeStats, now);
   const baselineStart = await snapshot();
   const baselineSamples = [];
-  for (let index = 0; index < candidates.length; index += 1) {
-    const dueAt = Date.parse(baselineStart.at)
-      + ((index + 1) * options.phaseSeconds * 1000 / (candidates.length + 1));
+  const baselineEndAt = Date.parse(baselineStart.at) + options.phaseSeconds * 1000;
+  for (let dueAt = Date.parse(baselineStart.at) + options.sampleSeconds * 1000;
+    dueAt < baselineEndAt;
+    dueAt = Math.max(dueAt + options.sampleSeconds * 1000,
+      now() + options.sampleSeconds * 1000)) {
     await pause(Math.max(0, dueAt - now()));
     baselineSamples.push(await snapshot());
   }
-  await pause(Math.max(0, Date.parse(baselineStart.at)
-    + options.phaseSeconds * 1000 - now()));
+  await pause(Math.max(0, baselineEndAt - now()));
   const baselineEnd = await snapshot();
+  const candidates = await (deps.selectBlocks || selectBlocks)(database, options);
+  if (!candidates.length) throw new Error('no recent committed block fits the transaction cap');
   const impact = await runImpact({ candidates, options, snapshot, rpc, now, pause,
     runTrace: deps.traceBlock || traceBlock });
   const report = { mode: 'read-only', target: `${url.hostname}:${url.port}`, options,

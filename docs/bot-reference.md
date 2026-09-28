@@ -4187,18 +4187,24 @@ Antes de considerar trace de todos os blocos no node podado da VPS, execute
 `npm run robinhood:deployment-trace-impact-probe` no host do `rh-node`, com
 `RH_NODE_RPC_URL=http://127.0.0.1:8547` e acesso ao Docker e ao banco. O probe
 exige esse endpoint e valida chain ID e hash dos blocos contra o journal. Ele
-mede uma janela sem trace e outra com até três `debug_traceBlockByNumber` de
+mede uma janela sem trace e outra com seis `debug_traceBlockByNumber` por padrão, de
 blocos canônicos recentes que tenham de 1 a 25 transações. As duas janelas têm
-15 segundos por padrão. A saída inclui head e atraso da captura, amostras pontuais
-de CPU, memória e I/O do `rh-node`, latência de RPC/banco, tempo dos traces e taxa
-efetivamente testada. O probe é
-somente de leitura e interrompe os traces após erro, timeout ou crescimento do
+60 segundos por padrão. A saída inclui head e atraso da captura, amostras pontuais
+de CPU, memória e I/O do `rh-node`, carga do host, latência de RPC/banco, tempo
+dos traces e taxa efetivamente testada. O probe é somente de leitura e
+interrompe os traces após erro, timeout ou crescimento do
 atraso da captura acima de 100 blocos; saída 2 indica interrupção antecipada.
-Para uma primeira exposição menor, use `--traces=1 --max-transactions=10`.
-Os limites são 1–6 traces, 1–50 transações por bloco, 10–60 segundos por janela
-e timeout de 1–10 segundos. Compare também a taxa testada com o avanço do head:
+Para uma primeira exposição menor, use `--phase-seconds=15 --traces=1 --max-transactions=10`.
+O teste sustentado pode usar, por exemplo,
+`--phase-seconds=300 --traces=120`: cinco minutos de baseline e cinco de carga,
+com amostras a cada dez segundos. Os limites são 1–120 traces, no máximo um por
+segundo, 1–50 transações por bloco, 10–300 segundos por janela, amostragem a cada
+5–30 segundos (sempre menos que a duração da janela) e timeout de 1–10 segundos.
+Compare também a taxa testada com o avanço do head:
 uma amostra curta e abaixo da taxa de blocos não demonstra capacidade para
-trace contínuo. Este comando não cria tabelas, cursor, filas nem dead tuples.
+trace contínuo. Os blocos são selecionados uma vez, logo após o baseline; num
+teste longo, ficam mais antigos ao longo da fase de carga. Este comando não cria
+tabelas, cursor, filas nem dead tuples.
 
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com
