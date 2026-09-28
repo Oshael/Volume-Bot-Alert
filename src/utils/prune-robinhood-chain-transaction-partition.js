@@ -3,11 +3,23 @@
 require('dotenv').config();
 const { run } = require('../services/robinhood-chain-transaction-partition-retention');
 
-async function main(args = process.argv.slice(2), deps = {}) {
-  if (args.some((arg) => arg !== '--apply') || args.length > 1) {
-    throw new Error('only --apply is supported');
+function parseArgs(args) {
+  const resume = args.filter((arg) => arg.startsWith('--resume-detached-start='));
+  if (resume.length > 1 || args.filter((arg) => arg === '--apply').length > 1
+      || args.some((arg) => arg !== '--apply'
+        && !arg.startsWith('--resume-detached-start='))) {
+    throw new Error('only --apply and one --resume-detached-start=N are supported');
   }
-  const report = await run({ apply: args.includes('--apply') }, deps);
+  const start = resume[0]?.slice('--resume-detached-start='.length);
+  if (start != null && !/^\d+$/.test(start)) {
+    throw new Error('--resume-detached-start must be a partition boundary');
+  }
+  return { apply: args.includes('--apply'),
+    ...(start == null ? {} : { resumeDetachedStart: Number(start) }) };
+}
+
+async function main(args = process.argv.slice(2), deps = {}) {
+  const report = await run(parseArgs(args), deps);
   console.log(JSON.stringify(report, null, 2));
   return report;
 }
@@ -28,4 +40,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { main, timeoutDiagnostic };
+module.exports = { main, parseArgs, timeoutDiagnostic };

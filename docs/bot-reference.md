@@ -5676,7 +5676,12 @@ o leaf de transações com `DROP TABLE ... RESTRICT`; os eventos permanecem. A
 inspeção usa timeout de 15 segundos, o detach até cinco minutos e a checagem
 final até cinco segundos por comando. Se o detach completar mas a checagem final
 falhar, a tabela física permanece destacada e a poda automática recusa outras
-partições até recuperação manual. Se o detach for interrompido, confira
+partições. Após resolver o bloqueio, use
+`npm run robinhood:chain-transaction-partition-prune -- --resume-detached-start=N`
+para inspecionar o leaf destacado e acrescente `--apply` para repetir a auditoria,
+os locks e o `DROP ... RESTRICT` sem executar outro detach. `N` é o início da
+partição; a retomada exige que ela seja a candidata mais antiga e que os gates
+continuem aprovados. Se o detach for interrompido, confira
 `pg_inherits.inhdetachpending` antes de repetir; um detach pendente também
 interrompe a poda. A captura pode sofrer pressão de I/O ou waits durante o
 detach: acompanhe seu lag no piloto. Funding pendente usa transações raw e

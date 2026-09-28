@@ -6,7 +6,7 @@ const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { coverageFloor, decide, run } = require('../src/services/robinhood-chain-transaction-partition-retention');
 const { createTimeoutDiagnostic } = require('../src/services/robinhood-retention-timeout-diagnostic');
-const { timeoutDiagnostic } = require('../src/utils/prune-robinhood-chain-transaction-partition');
+const { parseArgs, timeoutDiagnostic } = require('../src/utils/prune-robinhood-chain-transaction-partition');
 
 after(() => db.pool.end());
 
@@ -65,6 +65,14 @@ it('labels audit timeouts even when no blocker sample is available', () => {
   assert.deepEqual(timeoutDiagnostic(error), {
     phase: 'safety.wallet-classification', sqlState: '57014', sampled: false,
   });
+});
+
+it('requires an explicit valid boundary to resume a detached partition', () => {
+  assert.deepEqual(parseArgs(['--resume-detached-start=71500000']),
+    { apply: false, resumeDetachedStart: 71500000 });
+  assert.throws(() => parseArgs(['--resume-detached-start=bad']), /partition boundary/);
+  assert.throws(() => parseArgs(['--resume-detached-start=0', '--resume-detached-start=0']),
+    /only --apply/);
 });
 
 function fakeMutation(sql, state) {
@@ -175,6 +183,26 @@ it('retains the detached table when the consumer gate changes after detach', asy
     database: { getClient: async () => client },
     audit: { inspect: async () => base().safety },
   }), /detached transaction partition requires recovery/);
+  const blocked = await run({ apply: true, resumeDetachedStart: 0 }, {
+    database: { getClient: async () => client },
+    audit: { inspect: async () => ({ chain_events: {
+      ready_for_pilot: false, candidate_cutoff_block: '250000',
+    } }) },
+  });
+  assert.ok(blocked.blockers.includes('consumer_safety_blocked'));
+  assert.deepEqual(state(), { detached: true, dropped: false, eventFk: false });
+  const preview = await run({ resumeDetachedStart: 0 }, {
+    database: { getClient: async () => client },
+    audit: { inspect: async () => base().safety },
+  });
+  assert.equal(preview.ready, true);
+  assert.equal(preview.action, 'none');
+  const recovered = await run({ apply: true, resumeDetachedStart: 0 }, {
+    database: { getClient: async () => client },
+    audit: { inspect: async () => base().safety },
+  });
+  assert.equal(recovered.action, 'dropped_detached_transaction_partition');
+  assert.deepEqual(state(), { detached: true, dropped: true, eventFk: false });
 });
 
 it('detaches concurrently and drops only the expired transaction leaf', async () => {

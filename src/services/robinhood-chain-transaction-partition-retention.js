@@ -199,7 +199,8 @@ async function lockAndRecheck(client, safety, report, diagnostic, stage, detache
   const checked = await diagnostic.run(`${stage}.recheck`,
     () => inspect(client, safety, detachedCandidate));
   if (!checked.ready || checked.candidate?.name !== report.candidate.name) {
-    throw new Error('transaction retention conditions changed under lock');
+    const reason = checked.blockers.length ? checked.blockers.join(',') : 'candidate_changed';
+    throw new Error(`transaction retention conditions changed under lock: ${reason}`);
   }
   return checked;
 }
@@ -211,6 +212,10 @@ async function detachAndDrop(client, audit, report, diagnostic) {
   await diagnostic.run('detach.concurrently', () => client.query(
     `ALTER TABLE ${PARENT} DETACH PARTITION ${report.candidate.name}
       CONCURRENTLY`));
+  await dropDetached(client, audit, report, diagnostic);
+}
+
+async function dropDetached(client, audit, report, diagnostic) {
   let inTransaction = false;
   try {
     const safety = await audit.inspect();
@@ -271,6 +276,30 @@ async function releaseRunClient(client, advisoryLocked) {
   client.release();
 }
 
+function detachedCandidate(resumeStart) {
+  if (!Number.isSafeInteger(resumeStart)
+      || !Number.isSafeInteger(resumeStart + WIDTH)
+      || resumeStart < 0 || resumeStart % WIDTH !== 0) {
+    throw new Error('resume detached start must be a nonnegative partition boundary');
+  }
+  return { start: resumeStart, end: resumeStart + WIDTH,
+    name: `public.robinhood_chain_transactions_shadow_b${resumeStart}`,
+    event: `public.robinhood_chain_events_shadow_b${resumeStart}`, bytes: null };
+}
+
+async function resumeDetached(client, audit, safety, diagnostic, resumeStart, apply) {
+  const detached = detachedCandidate(resumeStart);
+  const report = await inspect(client, safety, detached);
+  if (report.candidate?.name !== detached.name) {
+    throw new Error('detached transaction partition is not the oldest candidate');
+  }
+  if (!apply || !report.ready) {
+    return { mode: apply ? 'apply' : 'read-only', action: 'none', ...report };
+  }
+  await dropDetached(client, audit, report, diagnostic);
+  return { mode: 'apply', action: 'dropped_detached_transaction_partition', ...report };
+}
+
 async function run(input = {}, deps = {}) {
   const database = deps.database || db;
   const apply = input.apply === true;
@@ -284,6 +313,9 @@ async function run(input = {}, deps = {}) {
     client = await database.getClient();
     const diagnostic = createTimeoutDiagnostic(database, client);
     advisoryLocked = await acquirePrunerLock(client, apply);
+    if (input.resumeDetachedStart != null) {
+      return resumeDetached(client, audit, safety, diagnostic, input.resumeDetachedStart, apply);
+    }
     const report = await inspectAndPrepare(client, safety, apply, diagnostic);
     if (!apply || !report.ready) {
       return { mode: apply ? 'apply' : 'read-only', action: 'none', ...report };
