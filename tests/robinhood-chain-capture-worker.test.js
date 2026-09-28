@@ -186,10 +186,10 @@ test('worker preserves a durable recovery halt across process restart', async ()
   assert.deepEqual(worker.getStatus().recoveryPlan, plan);
 });
 
-test('snapshot window skips old catch-up and covers its inclusive boundary across drains', async () => {
+test('capture reads V3 balances on every block across catch-up drains', async () => {
   const commits = []; const commitFences = []; const snapshotCalls = [];
   const rpcClient = { request: async (method, params) => {
-    if (method === 'eth_blockNumber') return '0x67';
+    if (method === 'eth_blockNumber') return '0xc8';
     const sample = fixture(Number(BigInt(params[0])));
     return method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
   } };
@@ -208,17 +208,17 @@ test('snapshot window skips old catch-up and covers its inclusive boundary acros
       missedPools: 0, skippedPools: readBalances ? 0 : 1 };
   } };
   const worker = createRobinhoodChainCaptureWorker({ rpcClient, journal, v3Snapshotter }, {
-    maxBlocksPerDrain: 2, v3SnapshotWindowBlocks: 3,
+    maxBlocksPerDrain: 2,
   });
   await worker.captureOnce();
   await worker.captureOnce();
-  assert.deepEqual(snapshotCalls, [[100n, false], [101n, true], [102n, true], [103n, true]]);
+  assert.deepEqual(snapshotCalls, [[100n, true], [101n, true],
+    [102n, true], [103n, true]]);
   assert.deepEqual(commitFences, Array(4).fill({ expectedGeneration: '4' }));
-  assert.deepEqual(commits.map((capture) => capture.v3Snapshots), [[], [snapshot], [snapshot], [snapshot]]);
+  assert.deepEqual(commits.map((capture) => capture.v3Snapshots),
+    [[snapshot], [snapshot], [snapshot], [snapshot]]);
   const status = worker.getStatus();
-  assert.equal(status.v3SnapshotWindowBlocks, 3);
-  assert.equal(status.v3SkippedPools, 1);
-  assert.equal(status.v3Snapshots, 3);
+  assert.equal(status.v3Snapshots, 4);
   assert.equal(status.nextBlock, '104');
 });
 

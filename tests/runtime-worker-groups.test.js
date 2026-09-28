@@ -120,14 +120,10 @@ describe('runtime worker groups config', () => {
     }
   });
 
-  it('bounds the chain capture V3 snapshot window', () => {
-    for (const [value, expected] of [
-      ['', 32], ['invalid', 32], ['0', 1], ['4', 4], ['999', 256],
-    ]) {
-      withEnv({ ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS: value }, (config) => {
-        assert.equal(config.robinhoodChainCaptureWorker.v3SnapshotWindowBlocks, expected);
-      });
-    }
+  it('ignores the retired chain capture V3 snapshot window setting', () => {
+    withEnv({ ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS: '1' }, (config) => {
+      assert.equal(Object.hasOwn(config.robinhoodChainCaptureWorker, 'v3SnapshotWindowBlocks'), false);
+    });
   });
 
   it('bounds chain capture block fetch concurrency', () => {

@@ -6360,28 +6360,29 @@ de reiniciar o chain-capture e o canonical-head. A Stage 254 adiciona
 `balance_status` ao mesmo sidecar: `observed` contém os dois saldos;
 `skipped_window`, `historical_unavailable` e `balance_failed` contêm saldos
 nulos. Os marcadores são gravados no commit do bloco, sem update posterior;
-o claim canônico só entrega snapshots `observed`. O cliente RPC preserva a
+o claim canônico entrega o resultado e sua identidade para cada swap V3. O cliente RPC preserva a
 mensagem do erro separadamente em `rpcMessage`; apenas `eth_call` com código
 `-32000` e mensagem `historical state is not available` vira
 `historical_unavailable`. Outros erros RPC continuam segurando o cursor para
-retry. A ausência de um snapshot observado ainda resulta na rejeição canônica
-atual; a mudança para processar preço/volume sem liquidez pertence a um deploy
-posterior.
+retry. O capturador tenta os saldos em cada bloco V3, inclusive durante
+catch-up; `ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS` não é mais usado.
+O canônico só aceita `observed` com os dois saldos como liquidez conhecida.
+Para `skipped_window` legado, `historical_unavailable` ou `balance_failed`,
+registra evidência `unavailable_backfill`: preço, FDV e volume seguem
+processáveis e a liquidez permanece desconhecida. Snapshot ausente ou
+identidade divergente continuam sendo falhas, sem leitura histórica pelo
+canonical-head. Capturas antigas já rejeitadas requerem reparo separado.
 
-Em cada bloco dos últimos `ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS` (default 32,
-limites 1–256, incluindo o head observado na drenagem), o capturador agrupa
+Em cada bloco, o capturador agrupa
 todos os pools V3 em um único Multicall
 `eth_call` ancorado no número do bloco; vários swaps do mesmo pool reutilizam o
 mesmo par de saldos final do bloco, igual ao contrato legado. Isso cobre blocos
-intermediários que chegam entre notificações/polls. A janela é um limite de
-carga, não uma garantia de retenção de estado do node; não há fallback para
+intermediários que chegam entre notificações/polls. Não há fallback para
 `latest`. As leituras são sequenciais, no máximo um Multicall por bloco com
-pools V3 elegíveis. Catch-up fora da janela atualiza o tracking de pools sem
-consultar saldos e grava `skipped_window` para cada swap V3. A telemetria expõe
-`v3SnapshotWindowBlocks` e os contadores cumulativos `v3Snapshots` (apenas
-saldos observados), `v3MissedPools` (pools com saldo inválido ou histórico indisponível) e
-`v3SkippedPools` (pools fora da janela); zero missed não prova cobertura se
-houve skipped. Reinicie o chain-capture para aplicar alterações na janela.
+pools V3 elegíveis. A telemetria expõe os contadores cumulativos `v3Snapshots`
+(saldos observados), `v3MissedPools` (pools com saldo inválido ou histórico
+indisponível) e `v3SkippedPools` (somente em versões antigas que pulavam leitura).
+Monitore lag e `snapshotMs` durante catch-up, além de CPU/RPC do node.
 Isso não repara snapshots ausentes já persistidos: para validar uma sessão
 nova, drene o outbox antigo com o shadow, pare o shadow e inicie o canário
 após o preflight, preservando as evidências anteriores. O RPC

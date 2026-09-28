@@ -739,6 +739,7 @@ describe('Robinhood canonical chain capture journal', () => {
       owner: 'snapshot-contract', leaseMs: 60_000, maxBlocks: 1,
     });
     assert.deepEqual(claimed.v3_balance_snapshot, {
+      balanceStatus: 'observed',
       poolAddress: `0x${'6'.repeat(40)}`,
       tokenAddress: `0x${'7'.repeat(40)}`,
       quoteAddress: `0x${'8'.repeat(40)}`,
@@ -774,7 +775,11 @@ describe('Robinhood canonical chain capture journal', () => {
     const [claimed] = await createRobinhoodChainDomainOutboxRepository().claimNextBlock({
       owner: 'v3-unavailable', leaseMs: 60_000, maxBlocks: 1,
     });
-    assert.equal(claimed.v3_balance_snapshot, null);
+    assert.deepEqual(claimed.v3_balance_snapshot, {
+      balanceStatus: 'historical_unavailable',
+      poolAddress: LIQUIDITY_POOL, tokenAddress: TOKEN, quoteAddress: RECIPIENT,
+      tokenBalanceRaw: null, quoteBalanceRaw: null,
+    });
   });
 
   it('mirrors the committed event and V3 block number while preserving reorg semantics',

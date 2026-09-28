@@ -100,6 +100,26 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
     };
   }
 
+  function unavailableV3Evidence(swap, tag) {
+    return { v3: {
+      poolAddress: swap.poolAddress, blockTag: tag,
+      balanceStatus: 'unavailable_backfill',
+      tokenBalanceRaw: null, quoteBalanceRaw: null,
+      sqrtPriceX96: swap.sqrtPriceX96 ?? null,
+    } };
+  }
+
+  function unavailableV3Snapshot(swap, tag, snapshot) {
+    if (!['skipped_window', 'historical_unavailable', 'balance_failed']
+      .includes(snapshot.balanceStatus)
+      || snapshot.tokenBalanceRaw != null || snapshot.quoteBalanceRaw != null) {
+      const error = new Error('V3 balance outcome is invalid');
+      error.code = 'v3_balance_outcome_invalid';
+      throw error;
+    }
+    return unavailableV3Evidence(swap, tag);
+  }
+
   async function resolveV3Balances(swap, options = {}) {
     if (swap.protocol !== 'uniswap-v3') return null;
     const tag = blockTag(swap.blockNumber);
@@ -116,6 +136,10 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
         error.code = 'v3_balance_snapshot_mismatch';
         throw error;
       }
+      const balanceStatus = snapshot.balanceStatus || 'observed';
+      if (balanceStatus !== 'observed') {
+        return unavailableV3Snapshot(swap, tag, snapshot);
+      }
       return {
         v3: {
           poolAddress: swap.poolAddress,
@@ -128,16 +152,7 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
       };
     }
     if (options.skipV3Balances === true) {
-      return {
-        v3: {
-          poolAddress: swap.poolAddress,
-          blockTag: tag,
-          balanceStatus: 'unavailable_backfill',
-          tokenBalanceRaw: null,
-          quoteBalanceRaw: null,
-          sqrtPriceX96: swap.sqrtPriceX96 ?? null,
-        },
-      };
+      return unavailableV3Evidence(swap, tag);
     }
     if (options.requireV3Snapshot === true) {
       return { unavailable: true, reason: 'v3_pool_balance_snapshot_unavailable' };

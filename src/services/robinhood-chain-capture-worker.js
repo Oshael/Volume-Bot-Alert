@@ -193,7 +193,6 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
   const fetchConcurrency = Math.max(1, Math.min(32, Number(options.fetchConcurrency) || 8));
-  const v3SnapshotWindowBlocks = BigInt(options.v3SnapshotWindowBlocks ?? 32);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     eventShadowEnabled: options.eventShadowEnabled === true, shadowEvents: 0,
     transactionShadowEnabled: options.transactionShadowEnabled === true,
@@ -204,7 +203,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     lastTiming: null, halted: false, recoveryState: null, recoveryPlan: null,
     generation: null, blocks: 0, transactions: 0, events: 0,
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
-    fetchConcurrency, v3SnapshotWindowBlocks: Number(v3SnapshotWindowBlocks) };
+    fetchConcurrency };
   let timer = null; let inFlight = null; let requested = false;
   const subscription = createHeadSubscription(options.wsUrl, () => {
     status.lastHeadObservedAt = now().toISOString(); void kick();
@@ -273,10 +272,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       const { blockNumber, capture, startedAt, receiptsAvailableAt } = entry;
       const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
       const snapshotStartedAt = now();
-      const v3State = await deps.v3Snapshotter.captureBlock(capture, {
-        // Cover intervening live blocks too; old catch-up only updates pool tracking.
-        readBalances: nodeHead - blockNumber < v3SnapshotWindowBlocks,
-      });
+      const v3State = await deps.v3Snapshotter.captureBlock(capture, { readBalances: true });
       snapshotMs += now() - snapshotStartedAt;
       const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
         ? nodeHead - BigInt(options.confirmations || 0) : 0n;

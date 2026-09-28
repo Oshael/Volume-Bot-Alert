@@ -88,6 +88,34 @@ describe('head capture builder — market', () => {
     }), (error) => error.code === 'v3_balance_snapshot_mismatch');
   });
 
+  it('keeps canonical V3 price and volume evidence when the recorded balance is unavailable', async () => {
+    const capture = await builder({ metadataReader: {
+      getBalanceOf: async () => { throw new Error('canonical mode must not read historical balance'); },
+    } }).buildMarketCapture(v3Swap(), {
+      requireV3Snapshot: true,
+      v3BalanceSnapshot: {
+        poolAddress: '0xpool', tokenAddress: TOKEN, quoteAddress: ROBINHOOD_WETH,
+        balanceStatus: 'historical_unavailable',
+        tokenBalanceRaw: null, quoteBalanceRaw: null,
+      },
+    });
+    assert.equal(capture.evidence.rejected, undefined);
+    assert.equal(capture.evidence.v3.balanceStatus, 'unavailable_backfill');
+    assert.equal(capture.evidence.v3.tokenBalanceRaw, null);
+    assert.equal(capture.evidence.v3.quoteBalanceRaw, null);
+  });
+
+  it('rejects an inconsistent unavailable V3 outcome', async () => {
+    await assert.rejects(() => builder().buildMarketCapture(v3Swap(), {
+      requireV3Snapshot: true,
+      v3BalanceSnapshot: {
+        poolAddress: '0xpool', tokenAddress: TOKEN, quoteAddress: ROBINHOOD_WETH,
+        balanceStatus: 'historical_unavailable',
+        tokenBalanceRaw: '1', quoteBalanceRaw: null,
+      },
+    }), (error) => error.code === 'v3_balance_outcome_invalid');
+  });
+
   it('captures a V2 swap with log reserves and no pool-balance reads', async () => {
     const capture = await builder().buildMarketCapture({
       protocol: 'uniswap-v2', tokenAddress: TOKEN, quoteAddress: ROBINHOOD_WETH,
