@@ -482,6 +482,15 @@ cada autovacuum local a `10ms/300`. Isso evita tanto o limite padrão tardio
 quanto o perfil anterior `2ms/2000`, que permitia três workers simultâneos
 competirem agressivamente com a captura.
 
+Aplique `node src/utils/db-init-stage255.js` para limitar a elegibilidade de
+autovacuum por tuplas mortas a 350 mil em `robinhood_market_buckets_agg`,
+`robinhood_holder_realtime_outbox` e `robinhood_liquidity_realtime_outbox`.
+A stage define threshold 350000 e scale factor 0 apenas nessas três tabelas;
+é idempotente, usa lock timeout de 5 segundos e não reescreve os dados.
+O autovacuum pode começar depois de atingir o limiar, conforme a estimativa de
+tuplas mortas e a disponibilidade de workers. Verifique `pg_class.reloptions`
+após aplicar. Essa configuração não substitui a Stage 219 nas demais tabelas.
+
 A Stage 219 deliberadamente não altera `autovacuum_enabled`. Após uma contenção
 emergencial, reative primeiro `robinhood_token_holder_daily_snapshots`, aguarde o
 vacuum terminar, depois faça o mesmo com `robinhood_head_captures` e somente então
