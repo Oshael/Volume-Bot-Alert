@@ -224,6 +224,10 @@ async function dropDetached(client, audit, report, diagnostic) {
     await client.query("SET LOCAL lock_timeout='500ms'");
     await client.query("SET LOCAL statement_timeout='5s'");
     await client.query("SET LOCAL idle_in_transaction_session_timeout='10s'");
+    // DROP removes the detached leaf's FK to blocks. Acquire that exclusive
+    // lock before the deployment outbox, matching capture's write order.
+    await diagnostic.run('final.lock_blocks', () => client.query(
+      'LOCK TABLE robinhood_chain_blocks IN ACCESS EXCLUSIVE MODE'));
     const candidate = { ...report.candidate, event: report.eventPartition };
     await lockAndRecheck(client, safety, report, diagnostic, 'final', candidate);
     await diagnostic.run('final.drop_partition', () => client.query(

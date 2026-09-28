@@ -80,8 +80,15 @@ function fakeMutation(sql, state) {
   if (sql === 'COMMIT' || sql === 'ROLLBACK') {
     state.inTransaction = false;
     state.queueLocked = false;
+    state.blocksLocked = false;
   }
-  if (sql.includes('LOCK TABLE robinhood_token_deployment_outbox')) state.queueLocked = true;
+  if (sql === 'LOCK TABLE robinhood_chain_blocks IN ACCESS EXCLUSIVE MODE') {
+    state.blocksLocked = true;
+  }
+  if (sql.includes('LOCK TABLE robinhood_token_deployment_outbox')) {
+    assert.equal(state.blocksLocked, true, 'lock blocks before the capture outbox');
+    state.queueLocked = true;
+  }
   if (sql === "SET statement_timeout='5min'") state.timeout = '5min';
   if (sql.includes('DROP CONSTRAINT')) {
     assert.equal(state.queueLocked, false, 'capture outbox must stay writable during FK removal');
@@ -99,6 +106,7 @@ function fakeMutation(sql, state) {
     assert.equal(state.inTransaction, true);
     assert.equal(state.detached, true);
     assert.equal(state.queueLocked, true, 'the final destructive gate must lock the queues');
+    assert.equal(state.blocksLocked, true, 'DROP must already hold the referenced block lock');
     state.dropped = true;
   }
 }
@@ -145,7 +153,7 @@ function fakeSelection(sql, state) {
 
 function fakePartitionClient(options = {}) {
   const state = { inTransaction: false, detached: false, dropped: false,
-    eventFk: true, queueLocked: false, timeout: null, ...options };
+    eventFk: true, queueLocked: false, blocksLocked: false, timeout: null, ...options };
   const client = { release() {}, async query(sql) {
     fakeMutation(sql, state);
     return fakeSelection(sql, state);
@@ -230,10 +238,14 @@ it('detaches concurrently and drops only the expired transaction leaf', async ()
   try {
     await client.query('BEGIN');
     inTransaction = true;
+    await client.query(`CREATE TABLE rh_block_retention_probe (
+      chain text NOT NULL, block_hash text NOT NULL, PRIMARY KEY (chain, block_hash)
+    )`);
     await client.query(`CREATE TABLE rh_tx_retention_probe (
       chain text NOT NULL, block_number bigint NOT NULL, block_hash text NOT NULL,
       transaction_hash text NOT NULL,
-      PRIMARY KEY (chain, block_number, block_hash, transaction_hash)
+      PRIMARY KEY (chain, block_number, block_hash, transaction_hash),
+      FOREIGN KEY (chain, block_hash) REFERENCES rh_block_retention_probe(chain, block_hash)
     ) PARTITION BY RANGE (block_number)`);
     await client.query(`CREATE TABLE rh_tx_retention_probe_old
       PARTITION OF rh_tx_retention_probe FOR VALUES FROM (0) TO (250000)`);
@@ -255,6 +267,8 @@ it('detaches concurrently and drops only the expired transaction leaf', async ()
       FOREIGN KEY (chain, block_number, block_hash, transaction_hash)
       REFERENCES rh_tx_retention_probe(chain, block_number, block_hash, transaction_hash)
       ON DELETE CASCADE`);
+    await client.query(`INSERT INTO rh_block_retention_probe VALUES
+      ('robinhood','old'), ('robinhood','new')`);
     await client.query(`INSERT INTO rh_tx_retention_probe VALUES
       ('robinhood',100,'old','old'), ('robinhood',250100,'new','new')`);
     await client.query(`INSERT INTO rh_event_retention_probe VALUES
@@ -266,7 +280,12 @@ it('detaches concurrently and drops only the expired transaction leaf', async ()
     inTransaction = false;
     await client.query(`ALTER TABLE rh_tx_retention_probe
       DETACH PARTITION rh_tx_retention_probe_old CONCURRENTLY`);
+    await client.query('BEGIN');
+    inTransaction = true;
+    await client.query('LOCK TABLE rh_block_retention_probe IN ACCESS EXCLUSIVE MODE');
     await client.query('DROP TABLE rh_tx_retention_probe_old RESTRICT');
+    await client.query('COMMIT');
+    inTransaction = false;
     assert.equal((await client.query('SELECT count(*)::int AS n FROM rh_event_retention_probe'))
       .rows[0].n, 2);
     assert.equal((await client.query('SELECT count(*)::int AS n FROM rh_tx_retention_probe'))
@@ -283,6 +302,7 @@ it('detaches concurrently and drops only the expired transaction leaf', async ()
     await client.query('DROP TABLE IF EXISTS rh_event_retention_probe').catch(() => {});
     await client.query('DROP TABLE IF EXISTS rh_tx_retention_probe').catch(() => {});
     await client.query('DROP TABLE IF EXISTS rh_tx_retention_probe_old').catch(() => {});
+    await client.query('DROP TABLE IF EXISTS rh_block_retention_probe').catch(() => {});
     client.release();
   }
 });

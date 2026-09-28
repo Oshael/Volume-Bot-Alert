@@ -5672,7 +5672,11 @@ e funding: remover a FK pede lock exclusivo na tabela pai de transações, enqua
 a captura grava transações e depois deployment na mesma transação. Depois executa
 `DETACH PARTITION CONCURRENTLY` fora da transação, sem locks nas filas.
 Após uma nova auditoria, revalida as condições sob locks curtos e descarta apenas
-o leaf de transações com `DROP TABLE ... RESTRICT`; os eventos permanecem. A
+o leaf de transações com `DROP TABLE ... RESTRICT`; os eventos permanecem. O
+descarte toma primeiro lock exclusivo em `robinhood_chain_blocks`, exigido pela
+FK do leaf destacado, e só depois bloqueia as filas de deployment e funding.
+Esse lock pode pausar brevemente a captura e leitores de blocos; se não for
+obtido em 500 ms, a tentativa é revertida e o leaf permanece no disco. A
 inspeção usa timeout de 15 segundos, o detach até cinco minutos e a checagem
 final até cinco segundos por comando. Se o detach completar mas a checagem final
 falhar, a tabela física permanece destacada e a poda automática recusa outras
