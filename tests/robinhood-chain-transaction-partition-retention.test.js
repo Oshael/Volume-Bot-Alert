@@ -143,9 +143,9 @@ function fakeSelection(sql, state) {
   return { rows: [] };
 }
 
-function fakePartitionClient() {
+function fakePartitionClient(options = {}) {
   const state = { inTransaction: false, detached: false, dropped: false,
-    eventFk: true, queueLocked: false, timeout: null };
+    eventFk: true, queueLocked: false, timeout: null, ...options };
   const client = { release() {}, async query(sql) {
     fakeMutation(sql, state);
     return fakeSelection(sql, state);
@@ -153,6 +153,24 @@ function fakePartitionClient() {
   return { client, state: () => ({ detached: state.detached,
     dropped: state.dropped, eventFk: state.eventFk }) };
 }
+
+it('keeps the client open until detached preview completes', async () => {
+  const { client } = fakePartitionClient({ detached: true, eventFk: false });
+  let released = false;
+  const query = client.query;
+  client.query = async (...args) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (released) throw new Error('query after client release');
+    return query(...args);
+  };
+  client.release = () => { released = true; };
+  const report = await run({ resumeDetachedStart: 0 }, {
+    database: { getClient: async () => client },
+    audit: { inspect: async () => base().safety },
+  });
+  assert.equal(report.ready, true);
+  assert.equal(released, true);
+});
 
 it('detaches concurrently without queue locks and drops only after a fresh audit', async () => {
   const { client, state } = fakePartitionClient();

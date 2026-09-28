@@ -314,7 +314,8 @@ async function run(input = {}, deps = {}) {
     const diagnostic = createTimeoutDiagnostic(database, client);
     advisoryLocked = await acquirePrunerLock(client, apply);
     if (input.resumeDetachedStart != null) {
-      return resumeDetached(client, audit, safety, diagnostic, input.resumeDetachedStart, apply);
+      return await resumeDetached(client, audit, safety, diagnostic,
+        input.resumeDetachedStart, apply);
     }
     const report = await inspectAndPrepare(client, safety, apply, diagnostic);
     if (!apply || !report.ready) {
