@@ -304,6 +304,10 @@ somente leitura. Uma leitura de candidatos por conjunto explícito de tokens
 reúne até 20 posições abertas, preços e eventos nesse mesmo snapshot. Ela não
 prova universo global nem alinhamento temporal da projeção; por isso não publica
 ranking ou ganho exato nesse estágio.
+O leitor de posições também oferece página global por `(token, wallet)` e versão
+da projeção, limitada e estável. Páginas chamadas separadamente continuam sem
+snapshot comum; só a travessia inteira sob uma leitura consistente poderá provar
+que o universo de candidatos foi esgotado.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os

@@ -26,6 +26,18 @@ const OPEN_POSITIONS_SQL = `SELECT position.token_address, position.wallet_addre
   ORDER BY position.token_address, position.wallet_address
   LIMIT $5::int`;
 
+const GLOBAL_OPEN_POSITIONS_SQL = `SELECT position.token_address, position.wallet_address,
+    position.quantity_raw, position.cost_basis_usd, position.cost_basis_source,
+    position.zero_cost_received_raw, position.quality,
+    position.through_block, position.through_log_index
+  FROM robinhood_wallet_token_positions position
+  WHERE position.chain = '${CHAIN}' AND position.projection_version = $1
+    AND position.quantity_raw > 0
+    AND ($2::varchar IS NULL OR (position.token_address, position.wallet_address)
+      > ($2::varchar, $3::varchar))
+  ORDER BY position.token_address, position.wallet_address
+  LIMIT $4::int`;
+
 function projectionVersion(value) {
   const version = String(value ?? '').trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(version)) {
@@ -60,6 +72,17 @@ function normalizeAfter(value, tokens) {
   return { tokenAddress, walletAddress };
 }
 
+function normalizeGlobalAfter(value) {
+  if (value == null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('after must be a token/wallet pair');
+  }
+  return {
+    tokenAddress: normalizeTokenAddress(CHAIN, value.tokenAddress),
+    walletAddress: normalizeTokenAddress(CHAIN, value.walletAddress),
+  };
+}
+
 function normalizeRow(row) {
   return {
     tokenAddress: row.token_address,
@@ -71,6 +94,18 @@ function normalizeRow(row) {
     quality: row.quality,
     throughBlock: String(row.through_block),
     throughLogIndex: String(row.through_log_index),
+  };
+}
+
+function pageResult(version, rows, limit) {
+  const hasMore = rows.length > limit;
+  const positions = rows.slice(0, limit).map(normalizeRow);
+  const last = positions.at(-1);
+  return {
+    projectionVersion: version, positions, hasMore,
+    nextAfter: hasMore ? { tokenAddress: last.tokenAddress,
+      walletAddress: last.walletAddress } : null,
+    snapshotConsistent: false,
   };
 }
 
@@ -89,17 +124,16 @@ function createRobinhoodWalletRankingPositionReadRepository(options = {}) {
       const result = await database.queryWithStatementTimeout(OPEN_POSITIONS_SQL, [
         version, tokens, after?.tokenAddress || null, after?.walletAddress || null, limit + 1,
       ], TIMEOUT_MS);
-      const hasMore = result.rows.length > limit;
-      const positions = result.rows.slice(0, limit).map(normalizeRow);
-      const last = positions.at(-1);
-      return {
-        projectionVersion: version,
-        positions,
-        hasMore,
-        nextAfter: hasMore ? { tokenAddress: last.tokenAddress,
-          walletAddress: last.walletAddress } : null,
-        snapshotConsistent: false,
-      };
+      return pageResult(version, result.rows, limit);
+    },
+    async getGlobalOpenPositions(input = {}) {
+      const version = projectionVersion(input.projectionVersion);
+      const limit = normalizeLimit(input.limit);
+      const after = normalizeGlobalAfter(input.after);
+      const result = await database.queryWithStatementTimeout(GLOBAL_OPEN_POSITIONS_SQL, [
+        version, after?.tokenAddress || null, after?.walletAddress || null, limit + 1,
+      ], TIMEOUT_MS);
+      return pageResult(version, result.rows, limit);
     },
   };
 }

@@ -59,6 +59,21 @@ describe('Robinhood ranking open-position candidate read', () => {
       assert.equal(second.positions[0].zeroCostReceivedRaw, '3');
       assert.equal(second.hasMore, false);
       assert.equal(second.nextAfter, null);
+
+      const globalFirst = await repository.getGlobalOpenPositions({
+        projectionVersion: VERSION, limit: 2,
+      });
+      assert.deepEqual(globalFirst.positions.map(({ tokenAddress, walletAddress }) => (
+        [tokenAddress, walletAddress]
+      )), [[TOKEN_A, WALLET_A], [TOKEN_B, WALLET_A]]);
+      assert.equal(globalFirst.hasMore, true);
+      assert.equal(globalFirst.snapshotConsistent, false);
+      const globalLast = await repository.getGlobalOpenPositions({
+        projectionVersion: VERSION, limit: 2, after: globalFirst.nextAfter,
+      });
+      assert.deepEqual(globalLast.positions.map(({ walletAddress }) => walletAddress),
+        [WALLET_B]);
+      assert.equal(globalLast.hasMore, false);
     } finally {
       await client.query('ROLLBACK');
       client.release();
@@ -78,6 +93,13 @@ describe('Robinhood ranking open-position candidate read', () => {
     }), /outside the requested set/);
     await assert.rejects(repository.getOpenPositions({ ...base, limit: 101 }),
       /limit must be between/);
+    await assert.rejects(repository.getGlobalOpenPositions({
+      projectionVersion: VERSION, limit: 101,
+    }), /limit must be between/);
+    await assert.rejects(repository.getGlobalOpenPositions({
+      projectionVersion: VERSION,
+      after: { tokenAddress: TOKEN_A, walletAddress: 'not-a-wallet' },
+    }), /address|wallet/i);
     assert.deepEqual(await repository.getOpenPositions({
       projectionVersion: VERSION, tokenAddresses: [],
     }), { projectionVersion: VERSION, positions: [], hasMore: false,
