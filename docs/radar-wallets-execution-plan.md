@@ -308,6 +308,11 @@ O leitor de posições também oferece página global por `(token, wallet)` e ve
 da projeção, limitada e estável. Páginas chamadas separadamente continuam sem
 snapshot comum; só a travessia inteira sob uma leitura consistente poderá provar
 que o universo de candidatos foi esgotado.
+Uma travessia em snapshot somente leitura percorre até 10 páginas globais de 100
+posições abertas. Ela confirma esgotamento apenas quando a última página não tem
+continuação; ao atingir 1.000 posições com mais dados, retorna cursor e cobertura
+incompleta. Isso não comprova a cobertura histórica da projeção nem libera o
+ranking público.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
