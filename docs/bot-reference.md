@@ -5683,6 +5683,10 @@ redistribution usa projeções materializadas e não é uma referência por faix
 para a tabela de transações. Depois de conferir um piloto manual, a flag
 `ROBINHOOD_CHAIN_TRANSACTION_PARTITION_RETENTION_ENABLED=true` habilita a mesma
 verificação a cada ciclo do `robinhood-maintenance`; o padrão é `false`.
+Em timeout, o comando imprime `timeout_diagnostic` com a fase, PID da consulta,
+wait amostrado, lock pedido e PIDs bloqueadores quando disponíveis. `sampled=false`
+indica que não houve amostra durante a espera; nesse caso a causa do timeout
+continua desconhecida e não se deve inferir um bloqueador.
 
 Para limitar o preenchimento dos snapshots V3 à faixa já copiada e validada na
 sombra de eventos, use

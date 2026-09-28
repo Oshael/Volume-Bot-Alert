@@ -5,6 +5,8 @@ const { after, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { coverageFloor, decide, run } = require('../src/services/robinhood-chain-transaction-partition-retention');
+const { createTimeoutDiagnostic } = require('../src/services/robinhood-retention-timeout-diagnostic');
+const { timeoutDiagnostic } = require('../src/utils/prune-robinhood-chain-transaction-partition');
 
 after(() => db.pool.end());
 
@@ -54,6 +56,15 @@ it('blocks unfinished consumers, recent raw, and unexpected foreign keys', () =>
     assert.ok(decide({ ...base(), ...change }).blockers.includes(blocker), blocker);
   }
   assert.equal(decide({ ...base(), pending_redistribution: true }).ready, true);
+});
+
+it('labels audit timeouts even when no blocker sample is available', () => {
+  const error = new Error('canceling statement due to statement timeout');
+  error.code = '57014';
+  error.auditPhase = 'wallet-classification';
+  assert.deepEqual(timeoutDiagnostic(error), {
+    phase: 'safety.wallet-classification', sqlState: '57014', sampled: false,
+  });
 });
 
 function fakeMutation(sql, state) {
@@ -223,5 +234,40 @@ it('detaches concurrently and drops only the expired transaction leaf', async ()
     await client.query('DROP TABLE IF EXISTS rh_tx_retention_probe').catch(() => {});
     await client.query('DROP TABLE IF EXISTS rh_tx_retention_probe_old').catch(() => {});
     client.release();
+  }
+});
+
+it('reports the phase and blocking backend when a partition lock times out', async () => {
+  await assertUsingTestDatabase(db);
+  const owner = await db.getClient();
+  const waiter = await db.getClient();
+  try {
+    await owner.query('CREATE TABLE rh_tx_retention_lock_probe (id int)');
+    await owner.query('BEGIN');
+    await owner.query('LOCK TABLE rh_tx_retention_lock_probe IN ACCESS EXCLUSIVE MODE');
+    await waiter.query('BEGIN');
+    await waiter.query("SET LOCAL lock_timeout='350ms'");
+    const diagnostic = createTimeoutDiagnostic(db, waiter, {
+      firstSampleMs: 25, repeatSampleMs: 50,
+    });
+    let failure;
+    try {
+      await diagnostic.run('prepare.lock_event', () => waiter.query(
+        'LOCK TABLE rh_tx_retention_lock_probe IN SHARE MODE'));
+    } catch (error) {
+      failure = error;
+    }
+    assert.equal(failure?.code, '55P03');
+    assert.equal(failure.retentionTimeoutDiagnostic.phase, 'prepare.lock_event');
+    assert.equal(failure.retentionTimeoutDiagnostic.sampled, true);
+    assert.ok(failure.retentionTimeoutDiagnostic.blocking_pids.includes(owner.processID));
+    assert.equal(failure.retentionTimeoutDiagnostic.waiting_locks[0].relation,
+      'rh_tx_retention_lock_probe');
+  } finally {
+    await owner.query('ROLLBACK').catch(() => {});
+    await waiter.query('ROLLBACK').catch(() => {});
+    await owner.query('DROP TABLE IF EXISTS rh_tx_retention_lock_probe').catch(() => {});
+    owner.release();
+    waiter.release();
   }
 });

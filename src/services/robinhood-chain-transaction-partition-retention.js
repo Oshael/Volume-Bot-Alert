@@ -3,6 +3,7 @@
 /** Keep complete transaction partitions for at least 72 hours without dropping events. */
 const db = require('../models/db');
 const { createRobinhoodRetentionSafetyAudit } = require('./robinhood-retention-safety-audit');
+const { createTimeoutDiagnostic } = require('./robinhood-retention-timeout-diagnostic');
 
 const WIDTH = 250000;
 const RETENTION_MS = 72 * 60 * 60 * 1000;
@@ -181,25 +182,30 @@ async function inspect(client, safety, detachedCandidate = null) {
     ...references[0], eventFks });
 }
 
-async function lockAndRecheck(client, safety, report, detachedCandidate = null) {
-  await client.query(`LOCK TABLE ONLY ${PARENT} IN SHARE UPDATE EXCLUSIVE MODE`);
-  await client.query(`LOCK TABLE ${report.eventPartition} IN ${
-    detachedCandidate || !report.dropEventFk ? 'SHARE' : 'ACCESS EXCLUSIVE'} MODE`);
-  await client.query(`LOCK TABLE robinhood_token_deployment_outbox,
-    robinhood_bundle_funding_live_queue IN SHARE MODE`);
-  const checked = await inspect(client, safety, detachedCandidate);
+async function lockAndRecheck(client, safety, report, diagnostic, stage, detachedCandidate = null) {
+  await diagnostic.run(`${stage}.lock_parent`, () => client.query(
+    `LOCK TABLE ONLY ${PARENT} IN SHARE UPDATE EXCLUSIVE MODE`));
+  await diagnostic.run(`${stage}.lock_event`, () => client.query(
+    `LOCK TABLE ${report.eventPartition} IN ${
+      detachedCandidate || !report.dropEventFk ? 'SHARE' : 'ACCESS EXCLUSIVE'} MODE`));
+  await diagnostic.run(`${stage}.lock_queues`, () => client.query(
+    `LOCK TABLE robinhood_token_deployment_outbox,
+      robinhood_bundle_funding_live_queue IN SHARE MODE`));
+  const checked = await diagnostic.run(`${stage}.recheck`,
+    () => inspect(client, safety, detachedCandidate));
   if (!checked.ready || checked.candidate?.name !== report.candidate.name) {
     throw new Error('transaction retention conditions changed under lock');
   }
   return checked;
 }
 
-async function detachAndDrop(client, audit, report) {
+async function detachAndDrop(client, audit, report, diagnostic) {
   // DETACH CONCURRENTLY must run outside a transaction. No queue lock is held here.
   await client.query("SET lock_timeout='500ms'");
   await client.query("SET statement_timeout='5min'");
-  await client.query(`ALTER TABLE ${PARENT} DETACH PARTITION ${report.candidate.name}
-    CONCURRENTLY`);
+  await diagnostic.run('detach.concurrently', () => client.query(
+    `ALTER TABLE ${PARENT} DETACH PARTITION ${report.candidate.name}
+      CONCURRENTLY`));
   let inTransaction = false;
   try {
     const safety = await audit.inspect();
@@ -209,8 +215,9 @@ async function detachAndDrop(client, audit, report) {
     await client.query("SET LOCAL statement_timeout='5s'");
     await client.query("SET LOCAL idle_in_transaction_session_timeout='10s'");
     const candidate = { ...report.candidate, event: report.eventPartition };
-    await lockAndRecheck(client, safety, report, candidate);
-    await client.query(`DROP TABLE ${report.candidate.name} RESTRICT`);
+    await lockAndRecheck(client, safety, report, diagnostic, 'final', candidate);
+    await diagnostic.run('final.drop_partition', () => client.query(
+      `DROP TABLE ${report.candidate.name} RESTRICT`));
     await client.query('COMMIT');
   } catch (error) {
     if (inTransaction) await client.query('ROLLBACK').catch(() => {});
@@ -227,17 +234,18 @@ async function acquirePrunerLock(client, apply) {
   return true;
 }
 
-async function inspectAndPrepare(client, safety, apply) {
+async function inspectAndPrepare(client, safety, apply, diagnostic) {
   await client.query(apply ? 'BEGIN' : 'BEGIN READ ONLY');
   try {
     await client.query("SET LOCAL lock_timeout='500ms'");
     await client.query("SET LOCAL statement_timeout='15s'");
     await client.query("SET LOCAL idle_in_transaction_session_timeout='30s'");
-    const report = await inspect(client, safety);
+    const report = await diagnostic.run('prepare.inspect', () => inspect(client, safety));
     if (apply && report.ready) {
-      const checked = await lockAndRecheck(client, safety, report);
+      const checked = await lockAndRecheck(client, safety, report, diagnostic, 'prepare');
       if (checked.dropEventFk) {
-        await client.query(`ALTER TABLE ${report.eventPartition} DROP CONSTRAINT ${FK}`);
+        await diagnostic.run('prepare.drop_event_fk', () => client.query(
+          `ALTER TABLE ${report.eventPartition} DROP CONSTRAINT ${FK}`));
       }
     }
     await client.query('COMMIT');
@@ -269,13 +277,14 @@ async function run(input = {}, deps = {}) {
     });
     const safety = await audit.inspect();
     client = await database.getClient();
+    const diagnostic = createTimeoutDiagnostic(database, client);
     advisoryLocked = await acquirePrunerLock(client, apply);
-    const report = await inspectAndPrepare(client, safety, apply);
+    const report = await inspectAndPrepare(client, safety, apply, diagnostic);
     if (!apply || !report.ready) {
       return { mode: apply ? 'apply' : 'read-only', action: 'none', ...report };
     }
 
-    await detachAndDrop(client, audit, report);
+    await detachAndDrop(client, audit, report, diagnostic);
     return { mode: apply ? 'apply' : 'read-only',
       action: 'dropped_transaction_partition', ...report };
   } finally {
