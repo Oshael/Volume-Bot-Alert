@@ -26,7 +26,7 @@ function normalizeTargets(observations = []) {
 }
 
 function createRobinhoodWalletSwapOutboxProducer() {
-  async function appendAccepted(client, observations = []) {
+  async function appendAccepted(client, observations = [], options = {}) {
     if (!client || typeof client.query !== 'function') {
       throw new TypeError('wallet-swap outbox producer requires a transaction client');
     }
@@ -172,10 +172,18 @@ function createRobinhoodWalletSwapOutboxProducer() {
     // rejection (for example dead_pool_price) is intentionally not published,
     // while a missing projection or accepted row without canonical context is
     // still a fail-closed integrity error.
-    if (observed !== summary.requested || summary.eligible !== accepted) {
-      const error = new Error('accepted wallet swap is missing committed canonical context');
+    if (observed !== summary.requested
+      || (!options.allowMissingCanonicalContext && summary.eligible !== accepted)) {
+      const error = new Error(
+        `accepted wallet swap is missing committed canonical context `
+        + `(requested=${summary.requested}, observed=${observed}, `
+        + `accepted=${accepted}, eligible=${summary.eligible})`
+      );
       error.code = 'wallet_swap_canonical_context_missing';
       throw error;
+    }
+    if (options.allowMissingCanonicalContext) {
+      summary.missingCanonicalContext = accepted - summary.eligible;
     }
     return summary;
   }

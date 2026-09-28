@@ -396,7 +396,9 @@ async function runReconstruction(options, deps = {}) {
           const rangeFailures = [];
           for (const built of builtChunks) {
             const committed = built.entries.length
-              ? await persistence.commitHeadProcessingBatch({ entries: built.entries })
+              ? await persistence.commitHeadProcessingBatch({
+                entries: built.entries, allowMissingWalletContext: true,
+              })
               : { insertedLogs: 0 };
             summary.repaired += committed.insertedLogs;
             summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;

@@ -1446,6 +1446,31 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.equal(findCall(fake.calls, /INSERT INTO robinhood_market_buckets_1h/), undefined);
   });
 
+  it('commits archive observations and hourly buckets when wallet context is absent', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      walletSwapOutboxProducer: {
+        appendAccepted: async (_client, observations, options) => {
+          assert.equal(options.allowMissingCanonicalContext, true);
+          return {
+            inserted: 0, realtimeInserted: 0, missingCanonicalContext: 1,
+            acceptedTargets: observations.map(({ transactionHash, logIndex }) => ({
+              transactionHash, logIndex,
+            })),
+          };
+        },
+      },
+    });
+
+    const result = await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()], allowMissingWalletContext: true,
+    });
+    assert.equal(result.missingWalletSwapContext, 1);
+    assert.ok(findCall(fake.calls, /INSERT INTO robinhood_market_buckets_1h/));
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
   it('rolls the touched minute buckets up into buckets_1h in the same transaction', async () => {
     const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
     const repository = createRobinhoodPersistenceRepository({ database: fake.database });

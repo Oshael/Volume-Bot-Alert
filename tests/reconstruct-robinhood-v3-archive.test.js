@@ -108,7 +108,8 @@ describe('Robinhood V3 direct archive reconstruction', () => {
         entries: rows.map(() => ({ observation: { accepted: true } })), failures: [], rpc: {},
       }),
       persistence: {
-        commitHeadProcessingBatch: async ({ entries }) => {
+        commitHeadProcessingBatch: async ({ entries, allowMissingWalletContext }) => {
+          assert.equal(allowMissingWalletContext, true);
           committed += entries.length;
           return { insertedLogs: entries.length, insertedObservations: entries.length };
         },

@@ -528,7 +528,8 @@ Capturas V3 antigas já terminalizadas como `v3_pool_balance_unavailable` ou
 `v3_pool_balance_snapshot_unavailable` não são recuperadas pelo catch-up v2.
 Use `npm run robinhood:repair-v3-pruned` para o
 reparo direcionado, com `ROBINHOOD_V3_REPAIR_RPC_URL` apontando para um node
-archive. O comando é dry-run por default, limita o canário por `--max-batches`,
+archive. O comando é dry-run por default e nele a contagem exata pode ser cara;
+em `--mode=write` começa pelo primeiro batch sem COUNT global. Limita o canário por `--max-batches`,
 seleciona apenas essa rejeição dentro de `--from-block`/`--to-block`, reconstrói
 metadata, quote, balances, observação e buckets no bloco exato e só então marca a
 captura como reparada. Enquanto o utilitário detém seu advisory lock, a poda das
@@ -538,8 +539,13 @@ capturas, sem UPDATE global da coorte e sem alterar os watermarks do backfill ge
 Falha não retentável ao montar uma captura (por exemplo, `balanceOf` histórico vazio)
 isola somente essa identidade como `archiveRepair.status='blocked'`, mantém a rejeição
 original para auditoria e permite que as demais capturas do batch sejam persistidas.
-Cada evento de progresso expõe `remaining`, `progressPct`, `blocked` e até dez
+No modo write, `candidates`, `remaining` e `progressPct` são nulos porque não há
+contagem inicial; `complete=true` indica que não restaram candidatos no intervalo.
+Cada evento expõe `repaired`, `blocked`, `missingWalletSwapContext` e até dez
 `lastFailures`; itens isolados contam como tratados, mas nunca como reparados.
+O reparo histórico pode persistir observações aceitas sem journal canônico de bloco
+ou transação. Nesse caso omite o outbox de wallet-swap para essas identidades e
+contabiliza a omissão; o processamento live continua exigindo contexto canônico.
 Depois da ativação da autoridade `state`, o seletor e o settlement do reparo usam
 `robinhood_head_capture_states`; o payload recebe apenas a anotação auditável
 `archiveRepair`, sem devolver autoridade aos campos de lifecycle legados.

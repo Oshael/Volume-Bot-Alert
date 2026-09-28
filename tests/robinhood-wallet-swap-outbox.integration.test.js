@@ -412,6 +412,38 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     );
   });
 
+  it('lets archive repair retain an accepted observation without wallet context', async () => {
+    const historicalTx = `0x${'a'.repeat(64)}`;
+    await client.query(`INSERT INTO robinhood_market_observations VALUES (
+      'robinhood',$1,1,90,'uniswap-v3','robinhood:uniswap-v3:test',$2,$3,
+      'buy','accepted',1000,2000,18,6,1,2,2,2,2000000,1000000
+    )`, [historicalTx, TOKEN, QUOTE]);
+    await client.query(
+      `INSERT INTO robinhood_processed_logs VALUES ('robinhood',$1,1,$2)`,
+      [historicalTx, `0x${'a'.repeat(64)}`]
+    );
+    await assert.rejects(
+      createRobinhoodWalletSwapOutboxProducer().appendAccepted(
+        client, [{ transactionHash: historicalTx, logIndex: '1' }]
+      ),
+      (error) => error.code === 'wallet_swap_canonical_context_missing'
+    );
+    const result = await createRobinhoodWalletSwapOutboxProducer().appendAccepted(
+      client, [{ transactionHash: historicalTx, logIndex: '1' }],
+      { allowMissingCanonicalContext: true }
+    );
+    assert.deepEqual(result, {
+      requested: 1, eligible: 0, inserted: 0, realtimeInserted: 0,
+      acceptedTargets: [{ transactionHash: historicalTx, logIndex: '1' }],
+      missingCanonicalContext: 1,
+    });
+    const stored = await client.query(
+      'SELECT 1 FROM robinhood_wallet_swap_outbox WHERE transaction_hash=$1',
+      [historicalTx]
+    );
+    assert.equal(stored.rowCount, 0);
+  });
+
   it('preserves a stored terminal rejection without publishing an outbox row', async () => {
     await client.query(`INSERT INTO robinhood_market_observations VALUES (
       'robinhood',$1,10,100,'uniswap-v3','robinhood:uniswap-v3:test',$2,$3,

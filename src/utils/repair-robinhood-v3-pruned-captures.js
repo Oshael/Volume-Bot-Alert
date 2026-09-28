@@ -506,25 +506,34 @@ async function enrich(rows, rpcClient, options, adapterOptions = {}) {
   };
 }
 
-async function runRepair(options, deps = {}) {
-  const target = targetConfig(options.target);
-  const database = deps.database || db;
-  const candidates = deps.candidates || createCandidateRepository(database, target.name);
-  const initial = await candidates.summarize(options.fromBlock, options.toBlock);
-  const summary = {
-    mode: options.mode, target: target.name,
-    candidates: Number(initial.candidates || 0),
-    remaining: Number(initial.candidates || 0),
-    progressPct: Number(initial.candidates || 0) === 0 ? 100 : 0,
-    firstBlock: initial.first_block,
-    lastBlock: initial.last_block,
+function createRunSummary(mode, targetName, initial) {
+  return {
+    mode, target: targetName,
+    candidates: initial ? Number(initial.candidates || 0) : null,
+    remaining: initial ? Number(initial.candidates || 0) : null,
+    progressPct: initial ? (Number(initial.candidates || 0) === 0 ? 100 : 0) : null,
+    firstBlock: initial?.first_block || null,
+    lastBlock: initial?.last_block || null,
     batches: 0,
     repaired: 0,
     accepted: 0,
     rejected: 0,
     blocked: 0,
+    missingWalletSwapContext: 0,
+    complete: false,
   };
-  if (options.mode === 'dry-run' || summary.candidates === 0) return summary;
+}
+
+async function runRepair(options, deps = {}) {
+  const target = targetConfig(options.target);
+  const database = deps.database || db;
+  const candidates = deps.candidates || createCandidateRepository(database, target.name);
+  // An exact COUNT over the rejected capture archive can take minutes. Write
+  // mode only needs the next bounded batch; dry-run retains exact counting.
+  const initial = options.mode === 'dry-run'
+    ? await candidates.summarize(options.fromBlock, options.toBlock) : null;
+  const summary = createRunSummary(options.mode, target.name, initial);
+  if (options.mode === 'dry-run') return summary;
   const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl, target.name);
   const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database });
   const adapterOptions = target.stockOnly
@@ -538,12 +547,18 @@ async function runRepair(options, deps = {}) {
     let scanFromBlock = options.fromBlock;
     while (options.maxBatches === 0 || summary.batches < options.maxBatches) {
       const rows = await candidates.list(scanFromBlock, options.toBlock, options.batchSize);
-      if (!rows.length) break;
+      if (!rows.length) {
+        summary.complete = true;
+        break;
+      }
+      summary.firstBlock ||= rows[0].block_number;
       const built = await enrichBatch(rows);
       const repairedRows = built.repairedRows || rows;
       const failures = built.failures || [];
       const committed = built.entries.length
-        ? await persistence.commitHeadProcessingBatch({ entries: built.entries })
+        ? await persistence.commitHeadProcessingBatch({
+          entries: built.entries, allowMissingWalletContext: true,
+        })
         : null;
       if (repairedRows.length) await candidates.markRepaired(repairedRows, authority);
       if (failures.length) await candidates.markBlocked(failures, authority);
@@ -552,10 +567,7 @@ async function runRepair(options, deps = {}) {
       summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;
       summary.rejected += built.entries.filter((entry) => entry.observation?.accepted === false).length;
       summary.blocked += failures.length;
-      summary.remaining = Math.max(0, summary.candidates - summary.repaired - summary.blocked);
-      summary.progressPct = Number((
-        ((summary.repaired + summary.blocked) / summary.candidates) * 100
-      ).toFixed(2));
+      summary.missingWalletSwapContext += committed?.missingWalletSwapContext || 0;
       summary.lastBlock = rows.at(-1).block_number;
       summary.lastCommit = committed;
       summary.lastRpc = built.rpc;

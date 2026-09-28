@@ -2245,12 +2245,15 @@ function createRobinhoodPersistenceRepository(options = {}) {
           );
           const outbox = await walletSwapOutboxProducer.appendAccepted(client, entries
             .filter((entry) => entry.observation?.status === 'accepted')
-            .map((entry) => entry.observation));
+            .map((entry) => entry.observation), {
+              allowMissingCanonicalContext: input.allowMissingWalletContext === true,
+            });
           return {
             ...write,
             insertedWalletSwapOutboxRows: outbox.inserted,
             insertedWalletSwapRealtimeRows: outbox.realtimeInserted,
             acceptedWalletSwapTargets: outbox.acceptedTargets,
+            missingWalletSwapContext: outbox.missingCanonicalContext || 0,
           };
         });
         const acceptedWalletSwapIdentities = new Set(

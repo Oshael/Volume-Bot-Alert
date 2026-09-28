@@ -67,7 +67,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     const scanFromBlocks = [];
     const batches = [[row(100), row(101)], []];
     const candidates = {
-      summarize: async () => ({ candidates: '2', first_block: '100', last_block: '101' }),
+      summarize: async () => { throw new Error('write mode must not count candidates'); },
       list: async (fromBlock) => {
         scanFromBlocks.push(fromBlock);
         return batches.shift();
@@ -84,9 +84,10 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       rpcClient: { request: async () => '0x1237' },
       enrichBatch: async () => { calls.push('archive'); return { entries, rpc: { batches: 1 } }; },
       persistence: {
-        commitHeadProcessingBatch: async ({ entries: committed }) => {
+        commitHeadProcessingBatch: async ({ entries: committed, allowMissingWalletContext }) => {
+          assert.equal(allowMissingWalletContext, true);
           calls.push(`commit:${committed.length}`);
-          return { insertedObservations: 1 };
+          return { insertedObservations: 1, missingWalletSwapContext: 1 };
         },
       },
     });
@@ -97,6 +98,9 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       [result.repaired, result.accepted, result.rejected, result.batches],
       [2, 1, 1, 1]
     );
+    assert.equal(result.candidates, null);
+    assert.equal(result.missingWalletSwapContext, 1);
+    assert.equal(result.complete, true);
   });
 
   it('never marks a capture when persistence fails', async () => {
@@ -147,8 +151,8 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.deepEqual(calls, ['listed', 'commit:1', 'repaired:1', 'blocked:1']);
     assert.deepEqual(
       [result.repaired, result.blocked, result.accepted, result.batches,
-        result.remaining, result.progressPct],
-      [1, 1, 1, 1, 0, 100]
+        result.remaining, result.progressPct, result.complete],
+      [1, 1, 1, 1, null, null, true]
     );
     assert.equal(result.lastFailures[0].error, 'tokenBalance is invalid');
   });
