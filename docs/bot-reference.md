@@ -539,6 +539,11 @@ capturas, sem UPDATE global da coorte e sem alterar os watermarks do backfill ge
 Falha não retentável ao montar uma captura (por exemplo, `balanceOf` histórico vazio)
 isola somente essa identidade como `archiveRepair.status='blocked'`, mantém a rejeição
 original para auditoria e permite que as demais capturas do batch sejam persistidas.
+O alvo `v3-pruned` também fornece o leitor de cotação stock/USD às pools V3 com
+quote em stock. Capturas anteriormente bloqueadas apenas pelo erro
+`Stock quote reader is required for stock markets` voltam à seleção e são
+retentadas; se o leitor faltar novamente, a execução para sem bloquear mais
+capturas. Bloqueios por outros erros continuam fora da seleção.
 No modo write, `candidates`, `remaining` e `progressPct` são nulos porque não há
 contagem inicial; `complete=true` indica que não restaram candidatos no intervalo.
 Cada evento expõe `repaired`, `blocked`, `missingWalletSwapContext` e até dez

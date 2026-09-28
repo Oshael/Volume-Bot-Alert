@@ -121,13 +121,18 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
            ON state.chain = capture.chain
           AND state.transaction_hash = capture.transaction_hash
           AND state.log_index = capture.log_index`;
+  const retryStockReaderBlock = target.name === DEFAULT_TARGET ? `
+      OR (capture.evidence #>> '{archiveRepair,target}' = 'v3-pruned'
+        AND capture.evidence #>> '{archiveRepair,error}' =
+            'Stock quote reader is required for stock markets')` : '';
   const filter = `capture.chain = 'robinhood'
     AND capture.stream = 'market'
     AND capture.protocol = ANY($4::text[])
     AND ((authority.authority = 'legacy' AND capture.processing_status = 'rejected')
       OR (authority.authority = 'state' AND state.processing_status = 'rejected'))
     AND capture.evidence->>'rejected' = ANY($3::text[])
-    AND COALESCE(capture.evidence #>> '{archiveRepair,status}', '') <> 'blocked'
+    AND (COALESCE(capture.evidence #>> '{archiveRepair,status}', '') <> 'blocked'
+      ${retryStockReaderBlock})
     AND capture.block_number BETWEEN $1::bigint AND $2::bigint
     AND ($5::boolean = FALSE OR registry.quote_address = ANY($6::text[]))`;
 
@@ -476,7 +481,9 @@ async function buildPreparedEntries(prepared, results, adapter, concurrency) {
       });
       return { entry, row: item.row };
     } catch (error) {
-      if (error?.retryable === true) throw error;
+      if (error?.retryable === true || error?.code === 'stock_quote_reader_missing') {
+        throw error;
+      }
       return { error, row: item.row };
     }
   });
@@ -639,8 +646,8 @@ async function runRepair(options, deps = {}) {
   if (options.mode === 'dry-run') return summary;
   const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl, target.name);
   const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database });
-  const adapterOptions = target.stockOnly
-    ? (deps.stockAdapterOptions || createStockAdapterOptions(rpcClient, database)) : {};
+  const adapterOptions = deps.stockAdapterOptions
+    || createStockAdapterOptions(rpcClient, database);
   const enrichBatch = deps.enrichBatch
     || ((rows) => enrich(rows, rpcClient, options, adapterOptions));
 
@@ -655,7 +662,7 @@ async function runRepair(options, deps = {}) {
         break;
       }
       summary.firstBlock ||= rows[0].block_number;
-      const built = await enrichBatch(rows);
+      const built = await enrichBatch(rows, adapterOptions);
       const { repairedRows, failures, committed, wallet } = await persistRepairBatch(
         rows, built, { persistence, candidates, authority, database, rpcClient,
           walletAttribution: deps.walletAttribution }

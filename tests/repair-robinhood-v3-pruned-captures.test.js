@@ -113,6 +113,24 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.equal(result.complete, true);
   });
 
+  it('passes the stock quote reader to V3 enrichment', async () => {
+    let receivedReader;
+    await runRepair(options({ maxBatches: 1 }), {
+      candidates: {
+        list: async () => [row(100)],
+        withLock: async (callback) => callback(),
+        markRepaired: async () => 1,
+      },
+      rpcClient: { request: async () => '0x1237' },
+      enrichBatch: async (_rows, adapterOptions) => {
+        receivedReader = adapterOptions.stockQuoteReader;
+        return { entries: [{ observation: { accepted: true } }], rpc: {} };
+      },
+      persistence: { commitHeadProcessingBatch: async () => ({}) },
+    });
+    assert.equal(typeof receivedReader?.getSnapshot, 'function');
+  });
+
   it('does not mark a capture repaired when archive wallet attribution is incomplete', async () => {
     let marked = false;
     await assert.rejects(runRepair(options({ maxBatches: 1 }), {
@@ -248,6 +266,13 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       [prepared[0]], new Map([['good', {}]]),
       { buildEntry: async () => { throw retryable; } }, 1
     ), /archive timeout/);
+    const missingReader = Object.assign(new Error('Stock quote reader is required for stock markets'), {
+      code: 'stock_quote_reader_missing',
+    });
+    await assert.rejects(__private.buildPreparedEntries(
+      [prepared[0]], new Map([['good', {}]]),
+      { buildEntry: async () => { throw missingReader; } }, 1
+    ), /Stock quote reader is required/);
   });
 
   it('persists archive dead letters and excludes them from future candidate scans', async () => {
@@ -276,6 +301,8 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     ]);
     assert.match(calls[1].sql, /archiveRepair,status/);
     assert.match(calls[1].sql, /<> 'blocked'/);
+    assert.match(calls[1].sql, /archiveRepair,error}' =\s*'Stock quote reader is required for stock markets'/);
+    assert.match(calls[1].sql, /archiveRepair,target}' = 'v3-pruned'/);
   });
 
   it('holds the repair lock and exposes state lifecycle authority', async () => {
@@ -335,6 +362,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.deepEqual(calls[0].params[3], ['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
     assert.equal(calls[0].params[4], true);
     assert.ok(calls[0].params[5].length > 1);
+    assert.doesNotMatch(calls[0].sql, /archiveRepair,error/);
   });
 
   it('refuses to silently skip a capture whose pool registry entry is missing', () => {

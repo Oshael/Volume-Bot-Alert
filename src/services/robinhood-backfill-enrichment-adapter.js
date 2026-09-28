@@ -156,7 +156,11 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
     }
     let stockQuote = null;
     if (hasMetadata && context.needsStockQuote) {
-      if (!stockQuoteReader) throw new Error('Stock quote reader is required for stock markets');
+      if (!stockQuoteReader) {
+        const error = new Error('Stock quote reader is required for stock markets');
+        error.code = 'stock_quote_reader_missing';
+        throw error;
+      }
       stockQuote = await stockQuoteReader.getSnapshot({
         stockAddress: event.quoteAddress, blockTag: context.blockTag,
       });
