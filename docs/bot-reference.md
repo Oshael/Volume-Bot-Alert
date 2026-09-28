@@ -5669,7 +5669,9 @@ restará. A partição que cruza o corte temporal permanece inteira; portanto o
 armazenamento pode conter mais de três dias. A operação retira a FK do leaf de
 eventos correspondente, depois separa e descarta apenas o leaf de transações na
 mesma transação; os eventos permanecem. Falhas de lock, timeout ou verificações
-impedem o descarte. Depois de conferir um piloto manual, a flag
+impedem o descarte. Funding pendente usa transações raw e bloqueia sua faixa;
+redistribution usa projeções materializadas e não é uma referência por faixa
+para a tabela de transações. Depois de conferir um piloto manual, a flag
 `ROBINHOOD_CHAIN_TRANSACTION_PARTITION_RETENTION_ENABLED=true` habilita a mesma
 verificação a cada ciclo do `robinhood-maintenance`; o padrão é `false`.
 

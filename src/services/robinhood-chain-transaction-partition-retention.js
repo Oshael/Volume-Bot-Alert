@@ -57,7 +57,8 @@ function coverageBlockers(input, candidate) {
 }
 
 function dependencyBlockers(input, candidate) {
-  const { pendingBundle, pinnedDeployment, pendingRedistribution, eventFks } = input;
+  const { pending_bundle: pendingBundle, pinned_deployment: pinnedDeployment,
+    eventFks } = input;
   const blockers = [];
   const add = (condition, code) => { if (condition) blockers.push(code); };
   const rawPendingHolder = input.oldestUnappliedBlock;
@@ -68,7 +69,6 @@ function dependencyBlockers(input, candidate) {
     && pendingHolder < candidate.end, 'unapplied_holder_event_in_partition');
   add(pendingBundle !== false, 'pending_bundle_funding_in_partition');
   add(pinnedDeployment !== false, 'deployment_mint_in_partition');
-  add(pendingRedistribution !== false, 'redistribution_in_partition');
   add(eventFks?.length > 1 || eventFks?.some((fk) =>
     fk.name !== FK || fk.validated !== true || fk.references_parent !== true),
   'unexpected_event_fk');
@@ -147,11 +147,7 @@ async function inspect(client, safety) {
           AND source_through_block >= $1::bigint) AS pending_bundle,
       EXISTS (SELECT 1 FROM robinhood_token_deployment_outbox
         WHERE chain='robinhood' AND mint_block_number >= $1::bigint
-          AND mint_block_number < $2::bigint) AS pinned_deployment,
-      EXISTS (SELECT 1 FROM robinhood_bundle_redistribution_queue
-        WHERE chain='robinhood' AND status<>'complete'
-          AND observation_from_block < $2::bigint
-          AND event_through_block >= $1::bigint) AS pending_redistribution`,
+          AND mint_block_number < $2::bigint) AS pinned_deployment`,
   [candidate.start, candidate.end]) : { rows: [] };
   const { rows: pendingHolder } = candidate ? await client.query(`SELECT block_number::text
     FROM robinhood_holder_transfer_journal WHERE chain='robinhood' AND applied=FALSE
@@ -171,7 +167,7 @@ async function dropEligiblePartition(client, safety, report) {
   await client.query(`LOCK TABLE ONLY ${PARENT} IN ACCESS EXCLUSIVE MODE`);
   await client.query(`LOCK TABLE ${report.eventPartition} IN ACCESS EXCLUSIVE MODE`);
   await client.query(`LOCK TABLE robinhood_token_deployment_outbox,
-    robinhood_bundle_funding_live_queue, robinhood_bundle_redistribution_queue,
+    robinhood_bundle_funding_live_queue,
     robinhood_holder_transfer_journal
     IN SHARE MODE`);
   const checked = await inspect(client, safety);

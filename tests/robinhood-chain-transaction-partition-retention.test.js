@@ -16,8 +16,8 @@ const base = () => ({
     event: 'public.robinhood_chain_events_shadow_b0', bytes: '100' }],
   remainingFloor: 250000,
   firstRemainingTime: '2026-09-24T20:59:00Z',
-  candidateRecent: false, pendingBundle: false, pinnedDeployment: false,
-  pendingRedistribution: false, oldestUnappliedBlock: '500050',
+  candidateRecent: false, pending_bundle: false, pinned_deployment: false,
+  oldestUnappliedBlock: '500050',
   eventFks: [{ name: 'rh_chain_events_transaction_shadow_fkey', validated: true,
     references_parent: true }],
 });
@@ -37,9 +37,8 @@ it('blocks unfinished consumers, recent raw, and unexpected foreign keys', () =>
     [{ candidateRecent: true }, 'transaction_partition_within_72h'],
     [{ oldestUnappliedBlock: '100' }, 'unapplied_holder_event_in_partition'],
     [{ oldestUnappliedBlock: 'invalid' }, 'invalid_holder_pending_block'],
-    [{ pendingBundle: true }, 'pending_bundle_funding_in_partition'],
-    [{ pinnedDeployment: true }, 'deployment_mint_in_partition'],
-    [{ pendingRedistribution: true }, 'redistribution_in_partition'],
+    [{ pending_bundle: true }, 'pending_bundle_funding_in_partition'],
+    [{ pinned_deployment: true }, 'deployment_mint_in_partition'],
     [{ eventFks: [{ name: 'unexpected', validated: true, references_parent: true }] },
       'unexpected_event_fk'],
     [{ cursor: { ...base().cursor, finalized_head: null } },
@@ -54,6 +53,7 @@ it('blocks unfinished consumers, recent raw, and unexpected foreign keys', () =>
   for (const [change, blocker] of variants) {
     assert.ok(decide({ ...base(), ...change }).blockers.includes(blocker), blocker);
   }
+  assert.equal(decide({ ...base(), pending_redistribution: true }).ready, true);
 });
 
 it('drops only the expired transaction leaf and its event FK in one transaction', async () => {
