@@ -286,5 +286,5 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { captureSnapshot, countCreations, main, parseArgs, phaseDelta,
-  rpcTarget, selectBlocks, summarizeReport, traceBlock };
+module.exports = { captureSnapshot, countCreations, dockerSnapshot, main, numberStats,
+  parseArgs, phaseDelta, phaseSummary, rpcTarget, selectBlocks, summarizeReport, traceBlock };

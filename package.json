@@ -149,6 +149,7 @@
     "robinhood:retention-safety-audit": "node src/utils/audit-robinhood-retention-safety.js",
     "robinhood:deployment-live-window-audit": "node src/utils/audit-robinhood-deployment-live-window.js",
     "robinhood:deployment-trace-impact-probe": "node src/utils/probe-robinhood-deployment-trace-impact.js",
+    "robinhood:v3-balance-impact-probe": "node src/utils/probe-robinhood-v3-balance-impact.js",
     "robinhood:chain-events-prune": "node src/utils/prune-robinhood-chain-events.js",
     "robinhood:chain-event-shadow-copy": "node src/utils/copy-robinhood-chain-event-shadow-page.js",
     "robinhood:chain-transaction-shadow-copy": "node src/utils/copy-robinhood-chain-transaction-shadow-page.js",

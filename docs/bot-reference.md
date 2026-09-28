@@ -4210,6 +4210,24 @@ de CPU/latência, taxa de traces e bloco/transações da primeira falha. Use `--
 somente quando precisar das amostras e traces individuais; não é necessário
 enviar o relatório completo para uma primeira análise.
 
+Para medir o custo da leitura que falta aos snapshots V3, rode
+`RH_NODE_RPC_URL=http://127.0.0.1:8547 npm run robinhood:v3-balance-impact-probe -- --pool=<endereço-da-pool>`
+na VPS. O probe exige uma pool V3 ativa no registry,
+valida chain ID e executa o mesmo Multicall `balanceOf` de token e quote usado pelo
+chain-capture, ancorado no head menos `--age-blocks` (default 2) a cada slot da fase de
+carga. Não depende do cursor atrasado para escolher o bloco; consulta o banco apenas
+para a pool e a telemetria de captura. Por padrão compara 60 segundos sem chamadas
+com 60 segundos de seis chamadas, amostrando CPU, memória, head, lag e latências a
+cada dez segundos. `--phase-seconds=15 --calls=1` é o canário inicial;
+`--age-blocks=80` testa estado mais antigo somente depois de um canário perto do
+head. Os limites são 15–300 segundos por fase, 1–600 chamadas e no máximo duas
+por segundo, idade 0–120 blocos, timeout 1–10 segundos e amostragem 5–30 segundos.
+Se o lag crescer mais de 50 blocos durante baseline, nenhuma chamada de saldo é
+enviada; durante carga, novas chamadas param. Erro ou timeout também interrompem a
+carga. A saída compacta informa a taxa efetiva: poucas chamadas não comprovam
+capacidade de capturar todos os swaps V3. `--full` inclui as amostras individuais.
+O probe não cria fila, cursor, tabela ou dead tuples.
+
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com
 `local_deployment_evidence_pending` e backoff limitado. Este worker não consulta
