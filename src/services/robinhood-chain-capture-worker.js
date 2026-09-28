@@ -12,6 +12,9 @@ const CAPTURE_TOPICS = Object.freeze([...new Set([
   LAUNCHHOOD_TOKEN_LAUNCHED_TOPIC, PONS_TOKEN_LAUNCHED_TOPIC,
   ...PONS_V2_LIFECYCLE_TOPICS,
 ].map((value) => value.toLowerCase()))]);
+const PARTITION_WIDTH = 250000n;
+const PARTITION_LEAD_BLOCKS = 2000n;
+const PARTITION_RETRY_MS = 5000;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -189,6 +192,9 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   if (typeof deps.v3Snapshotter?.captureBlock !== 'function') {
     throw new Error('v3Snapshotter.captureBlock is required');
   }
+  if (options.transactionPartitioned && typeof deps.ensurePartition !== 'function') {
+    throw new Error('partitioned capture requires ensurePartition');
+  }
   const now = deps.now || (() => new Date());
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
@@ -205,6 +211,8 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
     fetchConcurrency };
   let timer = null; let inFlight = null; let requested = false;
+  let preparedPartitionStart = null;
+  let partitionRetry = null;
   const subscription = createHeadSubscription(options.wsUrl, () => {
     status.lastHeadObservedAt = now().toISOString(); void kick();
   }, {
@@ -213,6 +221,25 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   function recordFrontier(nodeHead, nextBlock) {
     status.nextBlock = nextBlock.toString();
     status.lagBlocks = Number(nodeHead >= nextBlock ? nodeHead - nextBlock + 1n : 0n);
+  }
+  async function prepareUpcomingPartition(nextBlock) {
+    if (!options.transactionPartitioned) return;
+    const currentStart = nextBlock - nextBlock % PARTITION_WIDTH;
+    const nextStart = currentStart + PARTITION_WIDTH;
+    const start = nextBlock === currentStart ? currentStart
+      : nextStart - nextBlock <= PARTITION_LEAD_BLOCKS ? nextStart : null;
+    if (start === null || start === preparedPartitionStart) return;
+    if (partitionRetry?.start === start && now().getTime() < partitionRetry.retryAt) {
+      throw partitionRetry.error;
+    }
+    try {
+      await deps.ensurePartition(Number(start));
+    } catch (error) {
+      partitionRetry = { start, error, retryAt: now().getTime() + PARTITION_RETRY_MS };
+      throw error;
+    }
+    partitionRetry = null;
+    preparedPartitionStart = start;
   }
   function applyCursorState(cursor) {
     status.generation = cursor?.generation == null ? null : String(cursor.generation);
@@ -347,6 +374,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       assertNodeHead(cursor, nodeHead, nextBlock);
       const through = captureThrough(nodeHead, nextBlock, options.maxBlocksPerDrain);
       status.nodeHead = nodeHead.toString(); recordFrontier(nodeHead, nextBlock);
+      await prepareUpcomingPartition(nextBlock);
       nextBlock = await drainCapture(
         nextBlock, through, nodeHead, status.generation, cursor?.checkpoint_hash || null
       );

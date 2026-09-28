@@ -134,6 +134,65 @@ test('worker reports failed capture attempts without presenting stale success', 
   assert.equal(Number.isFinite(Date.parse(status.lastError.at)), true);
 });
 
+test('partitioned capture provisions the next range before the boundary commit', async () => {
+  const calls = []; const sample = fixture(74750000);
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async (method) => (
+      method === 'eth_blockNumber' ? '0x4749830'
+        : method === 'eth_getBlockByNumber' ? sample.block : sample.receipts
+    ) },
+    journal: {
+      getCursor: async () => ({ next_block: '74750000', checkpoint_hash: hash('a') }),
+      commitBlocks: async () => {
+        calls.push('commit');
+        return [{ transactions: 1, events: 1 }];
+      },
+    },
+    ensurePartition: async (start) => { calls.push(start); },
+    v3Snapshotter: { captureBlock: async () => ({ snapshots: [], missedPools: 0 }) },
+  }, { transactionPartitioned: true, maxBlocksPerDrain: 1 });
+  await worker.captureOnce();
+  assert.deepEqual(calls, [74750000, 'commit']);
+});
+
+test('partitioned capture prepares the next range once before reaching it', async () => {
+  const starts = []; const sample = fixture(74748000);
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async (method) => (
+      method === 'eth_blockNumber' ? '0x4749060'
+        : method === 'eth_getBlockByNumber' ? sample.block : sample.receipts
+    ) },
+    journal: {
+      getCursor: async () => ({ next_block: '74748000', checkpoint_hash: hash('a') }),
+      commitBlocks: async () => [{ transactions: 1, events: 1 }],
+    },
+    ensurePartition: async (start) => { starts.push(start); },
+    v3Snapshotter: { captureBlock: async () => ({ snapshots: [], missedPools: 0 }) },
+  }, { transactionPartitioned: true, maxBlocksPerDrain: 1 });
+  await worker.captureOnce();
+  await worker.captureOnce();
+  assert.deepEqual(starts, [74750000]);
+});
+
+test('partition creation failure prevents capture commit and remains visible', async () => {
+  const error = Object.assign(new Error('partition lock timeout'), { code: '55P03' });
+  let commits = 0; let attempts = 0;
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async () => '0x4749830' },
+    journal: {
+      getCursor: async () => ({ next_block: '74750000' }),
+      commitBlocks: async () => { commits += 1; return []; },
+    },
+    ensurePartition: async () => { attempts += 1; throw error; },
+    v3Snapshotter: { captureBlock: async () => ({ snapshots: [], missedPools: 0 }) },
+  }, { transactionPartitioned: true });
+  await assert.rejects(worker.captureOnce(), error);
+  await assert.rejects(worker.captureOnce(), error);
+  assert.equal(commits, 0);
+  assert.equal(attempts, 1);
+  assert.equal(worker.getStatus().lastError.code, '55P03');
+});
+
 test('worker persists a bounded recovery plan and halts before projection work', async () => {
   const sample = fixture(101, hash('d')); const plans = []; let snapshots = 0;
   const plan = {
@@ -280,6 +339,31 @@ test('capture process seeds and injects the V3 snapshotter', async () => {
   assert.deepEqual(snapshotOptions.seedPools, seedPools);
   assert.equal(typeof workerDeps.v3Snapshotter.captureBlock, 'function');
   assert.equal(typeof workerDeps.recoveryPlanner.plan, 'function');
+  await process.shutdown();
+});
+
+test('capture process wires the guarded provisioner for partitioned storage', async () => {
+  let workerDeps; const calls = [];
+  const database = {};
+  const process = await captureMain({
+    options: { enabled: true, leaseHeartbeatMs: 1000, leaseTtlMs: 5000 },
+    database,
+    resolveEventShadowEnabled: async () => false,
+    resolveTransactionStorage: async () => ({ partitioned: true, shadowEnabled: false }),
+    rpcOptions: {}, rpcClientFactory: () => ({}),
+    catalog: { listActivePools: async () => [] },
+    v3Snapshotter: { captureBlock: async () => ({}) },
+    partitionProvisioner: { run: async (...args) => { calls.push(args); } },
+    workerFactory: (deps) => {
+      workerDeps = deps;
+      return { start() {}, stop: async () => {}, getStatus: () => ({}) };
+    },
+    leaseManagerFactory: () => ({ start() {}, stop: async () => {} }),
+    close: async () => {},
+  });
+  await workerDeps.ensurePartition(74750000);
+  assert.deepEqual(calls, [[{ start: 74750000, apply: true },
+    { database, closePool: false }]]);
   await process.shutdown();
 });
 

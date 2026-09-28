@@ -10,6 +10,7 @@ const {
   createRobinhoodV3BalanceSnapshotter,
 } = require('../services/robinhood-v3-balance-snapshotter');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
+const partitionProvisioner = require('./provision-robinhood-chain-journal-partition');
 const {
   createRobinhoodRpcClient, validateRobinhoodProviderChainIds,
 } = require('../services/robinhood-ingestion-worker');
@@ -51,6 +52,14 @@ async function resolveTransactionStorage(database, requested) {
 async function resolveTransactionShadowEnabled(database, requested) {
   if (!requested) return false;
   return (await resolveTransactionStorage(database, requested)).shadowEnabled;
+}
+
+function capturePartitionProvisioner(database, storage, provisioner) {
+  if (!storage.partitioned) return {};
+  const runner = provisioner || partitionProvisioner;
+  return { ensurePartition: (start) => runner.run(
+    { start, apply: true }, { database, closePool: false }
+  ) };
 }
 
 function captureRpcOptions(options, base = config.robinhoodIngestionWorker) {
@@ -105,7 +114,10 @@ async function main(deps = {}) {
     );
   }
   const worker = (deps.workerFactory || createRobinhoodChainCaptureWorker)(
-    { rpcClient, journal, recoveryPlanner, v3Snapshotter }, effectiveOptions
+    { rpcClient, journal, recoveryPlanner, v3Snapshotter,
+      ...capturePartitionProvisioner(
+        database, transactionStorage, deps.partitionProvisioner
+      ) }, effectiveOptions
   );
   const leases = (deps.leaseManagerFactory || createWorkerLeaseManager)({
     heartbeatMs: options.leaseHeartbeatMs, ttlMs: options.leaseTtlMs,

@@ -5676,14 +5676,18 @@ de eventos desde `candidate.fromBlock` do plano, incluindo as futuras vazias.
 Partições anteriores a esse bloco preservam seus eventos e não recebem a FK
 nova: ao remover a FK do pai no cutover, elas deixam de referenciar as
 transações antigas. A monolítica aposentada permanece até uma exclusão separada.
-Depois do cutover das transações, provisione cada faixa futura com
-`npm run robinhood:chain-journal-partition -- --partition-start=N`; o padrão
-somente inspeciona. `--apply` cria no máximo um par de partições vazias, de
-transações e eventos, na mesma transação e adiciona FK validada no novo leaf de
-eventos. N deve ser uma fronteira de 250.000 blocos ainda não alcançada pela
+Depois do cutover das transações, a captura provisiona automaticamente a próxima
+faixa até 2.000 blocos antes da fronteira de 250.000 blocos, ou ao iniciar
+exatamente na fronteira. A falha de provisionamento impede o commit da captura,
+permanece em `lastError` e é tentada novamente após 5 segundos. O comando
+`npm run robinhood:chain-journal-partition -- --partition-start=N` permanece
+disponível para inspeção e reparo; o padrão somente inspeciona. `--apply` cria
+no máximo um par de partições vazias (transações e eventos) na mesma transação
+e adiciona FK validada no novo leaf de eventos. N deve ser uma fronteira de
+250.000 blocos ainda não alcançada pela
 captura. O comando exige os dois pais particionados ativos e recusa FK legada
-no pai de eventos ou partição existente sem a FK nova. Prepare a próxima faixa
-antes de a captura alcançá-la; o comando não cria partições históricas podadas.
+no pai de eventos ou partição existente sem a FK nova. O comando não cria
+partições históricas podadas.
 
 Para copiar transações históricas finalizadas, use
 `npm run robinhood:chain-transaction-shadow-copy -- --from-block=N
