@@ -5667,8 +5667,10 @@ partição inteiramente abaixo da fronteira segura, ausência de dependências
 pendentes na faixa e pelo menos 72 horas de blocos na sequência contínua que
 restará. A partição que cruza o corte temporal permanece inteira; portanto o
 armazenamento pode conter mais de três dias. A operação retira a FK do leaf de
-eventos correspondente numa transação curta, depois executa `DETACH PARTITION
-CONCURRENTLY` fora da transação, sem segurar locks nas filas durante o detach.
+eventos correspondente numa transação curta, sem bloquear as filas de deployment
+e funding: remover a FK pede lock exclusivo na tabela pai de transações, enquanto
+a captura grava transações e depois deployment na mesma transação. Depois executa
+`DETACH PARTITION CONCURRENTLY` fora da transação, sem locks nas filas.
 Após uma nova auditoria, revalida as condições sob locks curtos e descarta apenas
 o leaf de transações com `DROP TABLE ... RESTRICT`; os eventos permanecem. A
 inspeção usa timeout de 15 segundos, o detach até cinco minutos e a checagem

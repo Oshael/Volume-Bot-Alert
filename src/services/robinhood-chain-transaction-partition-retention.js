@@ -188,9 +188,14 @@ async function lockAndRecheck(client, safety, report, diagnostic, stage, detache
   await diagnostic.run(`${stage}.lock_event`, () => client.query(
     `LOCK TABLE ${report.eventPartition} IN ${
       detachedCandidate || !report.dropEventFk ? 'SHARE' : 'ACCESS EXCLUSIVE'} MODE`));
-  await diagnostic.run(`${stage}.lock_queues`, () => client.query(
-    `LOCK TABLE robinhood_token_deployment_outbox,
-      robinhood_bundle_funding_live_queue IN SHARE MODE`));
+  // FK removal escalates to an exclusive lock on the transaction parent. The
+  // capture transaction already holds that parent while inserting deployment
+  // hints, so locking its outbox first would create a lock-order cycle.
+  if (detachedCandidate) {
+    await diagnostic.run(`${stage}.lock_queues`, () => client.query(
+      `LOCK TABLE robinhood_token_deployment_outbox,
+        robinhood_bundle_funding_live_queue IN SHARE MODE`));
+  }
   const checked = await diagnostic.run(`${stage}.recheck`,
     () => inspect(client, safety, detachedCandidate));
   if (!checked.ready || checked.candidate?.name !== report.candidate.name) {

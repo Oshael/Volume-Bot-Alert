@@ -75,7 +75,10 @@ function fakeMutation(sql, state) {
   }
   if (sql.includes('LOCK TABLE robinhood_token_deployment_outbox')) state.queueLocked = true;
   if (sql === "SET statement_timeout='5min'") state.timeout = '5min';
-  if (sql.includes('DROP CONSTRAINT')) state.eventFk = false;
+  if (sql.includes('DROP CONSTRAINT')) {
+    assert.equal(state.queueLocked, false, 'capture outbox must stay writable during FK removal');
+    state.eventFk = false;
+  }
   if (sql.includes('DETACH PARTITION')) {
     assert.equal(state.inTransaction, false);
     assert.equal(state.queueLocked, false);
@@ -87,6 +90,7 @@ function fakeMutation(sql, state) {
   if (sql.startsWith('DROP TABLE public.robinhood_chain_transactions_shadow_b0')) {
     assert.equal(state.inTransaction, true);
     assert.equal(state.detached, true);
+    assert.equal(state.queueLocked, true, 'the final destructive gate must lock the queues');
     state.dropped = true;
   }
 }
