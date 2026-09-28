@@ -37,7 +37,10 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     });
     assert.throws(() => __private.parseArgs(['--batch-size=501'], {}), /between 1 and 500/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=9'], {}), /between 1 and 8/);
-    assert.throws(() => __private.parseArgs(['--mode=erase'], {}), /dry-run or write/);
+    assert.throws(() => __private.parseArgs(['--mode=erase'], {}), /dry-run, write or wallet-replay/);
+    assert.throws(() => __private.parseArgs([
+      '--mode=wallet-replay', '--target=stock-quote',
+    ], {}), /only supported for v3-pruned/);
     assert.deepEqual(__private.targetConfig('v3-pruned').rejections, [
       'v3_pool_balance_unavailable',
       'v3_pool_balance_snapshot_unavailable',
@@ -90,9 +93,15 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
           return { insertedObservations: 1, missingWalletSwapContext: 1 };
         },
       },
+      walletAttribution: {
+        attribute: async (rows) => {
+          calls.push(`wallet:${rows.length}`);
+          return { attributed: 1, inserted: 1 };
+        },
+      },
     });
 
-    assert.deepEqual(calls, ['lock', 'archive', 'commit:2', 'mark:2']);
+    assert.deepEqual(calls, ['lock', 'archive', 'commit:2', 'wallet:2', 'mark:2']);
     assert.deepEqual(scanFromBlocks, ['100', '101']);
     assert.deepEqual(
       [result.repaired, result.accepted, result.rejected, result.batches],
@@ -100,7 +109,64 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     );
     assert.equal(result.candidates, null);
     assert.equal(result.missingWalletSwapContext, 1);
+    assert.equal(result.walletInserted, 1);
     assert.equal(result.complete, true);
+  });
+
+  it('does not mark a capture repaired when archive wallet attribution is incomplete', async () => {
+    let marked = false;
+    await assert.rejects(runRepair(options({ maxBatches: 1 }), {
+      candidates: {
+        list: async () => [row(100)],
+        withLock: async (callback) => callback(),
+        markRepaired: async () => { marked = true; },
+      },
+      rpcClient: { request: async () => '0x1237' },
+      enrichBatch: async () => ({ entries: [{ observation: { accepted: true } }], rpc: {} }),
+      persistence: {
+        commitHeadProcessingBatch: async () => ({ missingWalletSwapContext: 1 }),
+      },
+      walletAttribution: {
+        attribute: async () => ({ attributed: 0, inserted: 0 }),
+      },
+    }), /covered fewer swaps/);
+    assert.equal(marked, false);
+  });
+
+  it('replays completed historical repairs without re-enrichment or capture updates', async () => {
+    const calls = [];
+    const result = await runRepair(options({ mode: 'wallet-replay', target: 'v3-pruned' }), {
+      candidates: {
+        listCompleted: async (from) => {
+          calls.push(`list:${from}`);
+          return from === '100' ? [row(100)] : [];
+        },
+        withLock: async (callback) => callback(),
+      },
+      rpcClient: { request: async () => '0x1237' },
+      walletAttribution: {
+        attribute: async () => {
+          calls.push('attribute');
+          return { accepted: 1, attributed: 1, inserted: 1 };
+        },
+      },
+    });
+    assert.deepEqual(calls, ['list:100', 'attribute', 'list:101']);
+    assert.equal(result.walletInserted, 1);
+    assert.equal(result.complete, true);
+  });
+
+  it('selects only completed V3 repairs with accepted observations for wallet replay', async () => {
+    const calls = [];
+    const repository = __private.createCandidateRepository({ query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [] };
+    } });
+    await repository.listCompleted('100', '200', 25);
+    assert.match(calls[0].sql, /archiveRepair,status}' = 'completed'/);
+    assert.match(calls[0].sql, /archiveRepair,target}' = 'v3-pruned'/);
+    assert.match(calls[0].sql, /observation\.status = 'accepted'/);
+    assert.deepEqual(calls[0].params, ['100', '200', 25]);
   });
 
   it('never marks a capture when persistence fails', async () => {

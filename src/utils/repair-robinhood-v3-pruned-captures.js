@@ -29,6 +29,9 @@ const {
 const {
   createRobinhoodWethUsdQuoteReader,
 } = require('../services/robinhood-weth-usd-quote');
+const {
+  createRobinhoodV3ArchiveWalletAttribution,
+} = require('../services/robinhood-v3-archive-wallet-attribution');
 
 const CHAIN_ID = 4663n;
 const DEFAULT_TARGET = 'v3-pruned';
@@ -84,8 +87,13 @@ function parseNamedArgs(argv) {
 function parseArgs(argv = process.argv.slice(2), env = process.env) {
   const args = parseNamedArgs(argv);
   const mode = String(args.mode || 'dry-run').toLowerCase();
-  if (!['dry-run', 'write'].includes(mode)) throw new Error('mode must be dry-run or write');
+  if (!['dry-run', 'write', 'wallet-replay'].includes(mode)) {
+    throw new Error('mode must be dry-run, write or wallet-replay');
+  }
   const target = targetConfig(args.target);
+  if (mode === 'wallet-replay' && target.name !== DEFAULT_TARGET) {
+    throw new Error('wallet-replay is only supported for v3-pruned');
+  }
   return {
     mode, target: target.name,
     rpcUrl: String(args['rpc-url'] || env[target.rpcEnv] || '').trim(),
@@ -95,7 +103,7 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     rpcConcurrency: integer(args['rpc-concurrency'], target.stockOnly ? 1 : 2, 1, 8, 'rpc-concurrency'),
     rpcBatchSize: integer(args['rpc-batch-size'], 100, 1, 100, 'rpc-batch-size'),
     maxBatches: integer(
-      args['max-batches'], mode === 'dry-run' || target.stockOnly ? 1 : 0,
+      args['max-batches'], mode !== 'write' || target.stockOnly ? 1 : 0,
       0, 1_000_000, 'max-batches'
     ),
     sleepMs: integer(args['sleep-ms'], target.stockOnly ? 1000 : 100, 0, 60_000, 'sleep-ms'),
@@ -162,6 +170,43 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
                  capture.log_index, capture.transaction_hash
         LIMIT $7`,
       [...parameters(fromBlock, toBlock), limit]
+    );
+    return result.rows;
+  }
+
+  async function listCompleted(fromBlock, toBlock, maxBlocks) {
+    const result = await database.query(
+      `WITH blocks AS MATERIALIZED (
+         SELECT DISTINCT capture.block_number
+         FROM robinhood_head_captures capture
+         JOIN robinhood_market_observations observation
+           ON observation.chain = capture.chain
+          AND observation.transaction_hash = capture.transaction_hash
+          AND observation.log_index = capture.log_index
+          AND observation.status = 'accepted'
+         WHERE capture.chain = 'robinhood' AND capture.stream = 'market'
+           AND capture.protocol = 'uniswap-v3'
+           AND capture.block_number BETWEEN $1::bigint AND $2::bigint
+           AND capture.evidence #>> '{archiveRepair,status}' = 'completed'
+           AND capture.evidence #>> '{archiveRepair,target}' = 'v3-pruned'
+         ORDER BY capture.block_number LIMIT $3::int
+       )
+       SELECT capture.transaction_hash, capture.log_index::text,
+              capture.block_number::text, capture.block_hash
+       FROM blocks
+       JOIN robinhood_head_captures capture
+         ON capture.chain = 'robinhood' AND capture.block_number = blocks.block_number
+       JOIN robinhood_market_observations observation
+         ON observation.chain = capture.chain
+        AND observation.transaction_hash = capture.transaction_hash
+        AND observation.log_index = capture.log_index
+        AND observation.status = 'accepted'
+       WHERE capture.stream = 'market' AND capture.protocol = 'uniswap-v3'
+         AND capture.evidence #>> '{archiveRepair,status}' = 'completed'
+         AND capture.evidence #>> '{archiveRepair,target}' = 'v3-pruned'
+       ORDER BY capture.block_number, capture.transaction_index,
+                capture.log_index, capture.transaction_hash`,
+      [fromBlock, toBlock, maxBlocks]
     );
     return result.rows;
   }
@@ -366,7 +411,7 @@ function createCandidateRepository(database = db, targetName = DEFAULT_TARGET) {
     }
   }
 
-  return Object.freeze({ summarize, list, markRepaired, markBlocked, withLock });
+  return Object.freeze({ summarize, list, listCompleted, markRepaired, markBlocked, withLock });
 }
 
 function claim(row) {
@@ -520,14 +565,72 @@ function createRunSummary(mode, targetName, initial) {
     rejected: 0,
     blocked: 0,
     missingWalletSwapContext: 0,
+    walletAttributed: 0,
+    walletInserted: 0,
     complete: false,
   };
+}
+
+async function runWalletReplay(options, deps, candidates, database) {
+  const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl);
+  const wallet = deps.walletAttribution || createRobinhoodV3ArchiveWalletAttribution({
+    database, rpcClient,
+  });
+  const summary = createRunSummary(options.mode, options.target, null);
+  return candidates.withLock(async () => {
+    if (BigInt(await rpcClient.request('eth_chainId')) !== CHAIN_ID) {
+      throw new Error('Archive RPC is not on Robinhood Chain');
+    }
+    let scanFromBlock = options.fromBlock;
+    while (options.maxBatches === 0 || summary.batches < options.maxBatches) {
+      const rows = await candidates.listCompleted(scanFromBlock, options.toBlock, options.batchSize);
+      if (!rows.length) { summary.complete = true; break; }
+      const attributed = await wallet.attribute(rows);
+      if (attributed.accepted !== rows.length) {
+        throw new Error('Completed repair wallet replay lost an accepted observation');
+      }
+      summary.firstBlock ||= rows[0].block_number;
+      summary.lastBlock = rows.at(-1).block_number;
+      summary.nextBlock = (BigInt(summary.lastBlock) + 1n).toString();
+      summary.batches += 1;
+      summary.walletAttributed += attributed.attributed;
+      summary.walletInserted += attributed.inserted;
+      console.log(JSON.stringify({ event: 'v3_archive_wallet_replay_progress', ...summary }));
+      scanFromBlock = summary.nextBlock;
+      if (options.sleepMs) await delay(options.sleepMs);
+    }
+    return summary;
+  });
+}
+
+async function persistRepairBatch(rows, built, context) {
+  const repairedRows = built.repairedRows || rows;
+  const failures = built.failures || [];
+  const committed = built.entries.length
+    ? await context.persistence.commitHeadProcessingBatch({
+      entries: built.entries, allowMissingWalletContext: true,
+    })
+    : null;
+  const wallet = committed?.missingWalletSwapContext
+    ? await (context.walletAttribution || createRobinhoodV3ArchiveWalletAttribution({
+      database: context.database, rpcClient: context.rpcClient,
+    })).attribute(repairedRows)
+    : null;
+  if (wallet && wallet.attributed < committed.missingWalletSwapContext) {
+    throw new Error('Archive wallet attribution covered fewer swaps than missing context');
+  }
+  if (repairedRows.length) await context.candidates.markRepaired(repairedRows, context.authority);
+  if (failures.length) await context.candidates.markBlocked(failures, context.authority);
+  return { repairedRows, failures, committed, wallet };
 }
 
 async function runRepair(options, deps = {}) {
   const target = targetConfig(options.target);
   const database = deps.database || db;
   const candidates = deps.candidates || createCandidateRepository(database, target.name);
+  if (options.mode === 'wallet-replay') {
+    return runWalletReplay(options, deps, candidates, database);
+  }
   // An exact COUNT over the rejected capture archive can take minutes. Write
   // mode only needs the next bounded batch; dry-run retains exact counting.
   const initial = options.mode === 'dry-run'
@@ -553,21 +656,18 @@ async function runRepair(options, deps = {}) {
       }
       summary.firstBlock ||= rows[0].block_number;
       const built = await enrichBatch(rows);
-      const repairedRows = built.repairedRows || rows;
-      const failures = built.failures || [];
-      const committed = built.entries.length
-        ? await persistence.commitHeadProcessingBatch({
-          entries: built.entries, allowMissingWalletContext: true,
-        })
-        : null;
-      if (repairedRows.length) await candidates.markRepaired(repairedRows, authority);
-      if (failures.length) await candidates.markBlocked(failures, authority);
+      const { repairedRows, failures, committed, wallet } = await persistRepairBatch(
+        rows, built, { persistence, candidates, authority, database, rpcClient,
+          walletAttribution: deps.walletAttribution }
+      );
       summary.batches += 1;
       summary.repaired += repairedRows.length;
       summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;
       summary.rejected += built.entries.filter((entry) => entry.observation?.accepted === false).length;
       summary.blocked += failures.length;
       summary.missingWalletSwapContext += committed?.missingWalletSwapContext || 0;
+      summary.walletAttributed += wallet?.attributed || 0;
+      summary.walletInserted += wallet?.inserted || 0;
       summary.lastBlock = rows.at(-1).block_number;
       summary.lastCommit = committed;
       summary.lastRpc = built.rpc;

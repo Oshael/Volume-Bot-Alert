@@ -543,9 +543,20 @@ No modo write, `candidates`, `remaining` e `progressPct` são nulos porque não 
 contagem inicial; `complete=true` indica que não restaram candidatos no intervalo.
 Cada evento expõe `repaired`, `blocked`, `missingWalletSwapContext` e até dez
 `lastFailures`; itens isolados contam como tratados, mas nunca como reparados.
-O reparo histórico pode persistir observações aceitas sem journal canônico de bloco
-ou transação. Nesse caso omite o outbox de wallet-swap para essas identidades e
-contabiliza a omissão; o processamento live continua exigindo contexto canônico.
+O reparo histórico pode persistir observações aceitas sem journal canônico de
+transação. Nesse caso omite o outbox live para essas identidades, busca o bloco
+com transações completas no RPC archive, confere seu hash com a captura e grava
+diretamente o swap atribuído à carteira e sua posição. Só marca a captura como
+reparada depois dessa gravação; falha na atribuição interrompe o lote, que pode
+ser repetido de forma idempotente. `walletAttributed` e `walletInserted` medem
+esse caminho; ele não publica eventos live. O processing live continua exigindo
+contexto canônico. Para capturas já marcadas como reparadas antes desse caminho,
+use o mesmo comando com `--mode=wallet-replay --from-block=N --to-block=M` e
+`--batch-size` como limite de blocos por batch. Esse modo relê apenas capturas V3
+marcadas `archiveRepair.status=completed` e observações aceitas no intervalo;
+`nextBlock` permite continuar após um canário limitado por `--max-batches`.
+Execute o replay dos reparos antigos antes da poda das observações, protegidas
+pelo processed-log por três dias a partir de sua gravação.
 Depois da ativação da autoridade `state`, o seletor e o settlement do reparo usam
 `robinhood_head_capture_states`; o payload recebe apenas a anotação auditável
 `archiveRepair`, sem devolver autoridade aos campos de lifecycle legados.
