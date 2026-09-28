@@ -106,3 +106,44 @@ it('selects only archived no-hint tasks and guards their completion', async () =
     client.release();
   }
 });
+
+it('keeps a pending no-hint task when the live worker changes it during recovery', async () => {
+  const client = await db.getClient();
+  await client.query('BEGIN');
+  try {
+    await client.query(`INSERT INTO robinhood_token_deployment_outbox(
+      chain, token_address, status, last_error
+    ) VALUES ('robinhood', $1, 'pending',
+      'canonical_creator_evidence:local_deployment_evidence_pending')`, [TOKEN]);
+    const database = { query: (sql, params) => client.query(sql, params) };
+    const repository = createRobinhoodTokenDeploymentOutboxRepository({ database });
+    const selected = (await listCandidates(database, 1000, { noHint: true }))
+      .find(({ tokenAddress }) => tokenAddress === TOKEN);
+    assert.equal(selected.selectedStatus, 'pending');
+    assert.equal(selected.upperBlock, null);
+
+    await client.query(`UPDATE robinhood_token_deployment_outbox
+      SET attempt_count=attempt_count+1, updated_at=updated_at+INTERVAL '1 millisecond'
+      WHERE chain='robinhood' AND token_address=$1`, [TOKEN]);
+    assert.equal(await repository.completeNoHintRecovered(selected), false);
+
+    const retried = (await listCandidates(database, 1000, { noHint: true }))
+      .find(({ tokenAddress }) => tokenAddress === TOKEN);
+    await client.query(`UPDATE robinhood_token_deployment_outbox
+      SET mint_block_number=101, mint_block_hash=$2, mint_transaction_hash=$3,
+          updated_at=updated_at+INTERVAL '1 millisecond'
+      WHERE chain='robinhood' AND token_address=$1`, [TOKEN, NEW_HASH, TX]);
+    assert.equal(await repository.completeNoHintRecovered(retried), false);
+    await client.query(`UPDATE robinhood_token_deployment_outbox
+      SET mint_block_number=NULL, mint_block_hash=NULL, mint_transaction_hash=NULL,
+          updated_at=updated_at+INTERVAL '1 millisecond'
+      WHERE chain='robinhood' AND token_address=$1`, [TOKEN]);
+
+    const current = (await listCandidates(database, 1000, { noHint: true }))
+      .find(({ tokenAddress }) => tokenAddress === TOKEN);
+    assert.equal(await repository.completeNoHintRecovered(current), true);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});

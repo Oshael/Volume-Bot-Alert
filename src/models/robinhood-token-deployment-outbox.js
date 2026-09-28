@@ -242,6 +242,22 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     return result.rowCount === 1;
   }
 
+  async function completeNoHintRecovered(candidate) {
+    const status = String(candidate.selectedStatus || '');
+    if (!['pending', 'archive_required'].includes(status)) {
+      throw new Error('no-hint recovery status is invalid');
+    }
+    const result = await database.query(
+      `DELETE FROM robinhood_token_deployment_outbox
+        WHERE chain = '${CHAIN}' AND token_address = $1
+          AND status = $2 AND updated_at = $3::timestamptz
+          AND mint_block_number IS NULL`,
+      [normalizeTokenAddress(CHAIN, candidate.tokenAddress), status,
+        candidate.selectedUpdatedAt]
+    );
+    return result.rowCount === 1;
+  }
+
   async function retry(input = {}) {
     const retryMs = Math.max(1000, Math.min(Number(input.retryMs) || 15_000, 3_600_000));
     const result = await database.query(
@@ -259,7 +275,7 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
 
   return Object.freeze({
     archiveExpiredBatch, claim, claimBatch, claimBatchWithStats, complete, completeRecovered,
-    completePinnedRecovered, completeArchiveNoHintRecovered,
+    completePinnedRecovered, completeArchiveNoHintRecovered, completeNoHintRecovered,
     findDiscoveryHint, findMintHint, isExact, retry,
   });
 }

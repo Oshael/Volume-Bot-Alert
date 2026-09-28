@@ -90,10 +90,27 @@ describe('Robinhood holder archive deployment recovery', () => {
     assert.equal(rows[0].archiveRequiredAt, '2026-09-24 10:00:00.123456+00');
   });
 
+  it('selects pending and archived no-hint tasks with a guarded row identity', async () => {
+    let query;
+    const rows = await listCandidates({
+      async query(sql) {
+        query = sql;
+        return { rows: [{ token_address: TOKEN_A, upper_block: null,
+          selected_status: 'pending', selected_updated_at: '2026-09-28 10:00:00+00' }] };
+      },
+    }, 20, { noHint: true, catalogOnly: true });
+    assert.match(query, /outbox\.status IN \('pending', 'archive_required'\)/);
+    assert.match(query, /outbox\.mint_block_number IS NULL/);
+    assert.match(query, /ORDER BY outbox\.created_at, outbox\.token_address/);
+    assert.equal(rows[0].noHint, true);
+    assert.equal(rows[0].selectedStatus, 'pending');
+    assert.equal(rows[0].selectedUpdatedAt, '2026-09-28 10:00:00+00');
+  });
+
   it('is read-only by default and validates bounded options', async () => {
     assert.deepEqual(parseArgs([]), {
       confirm: false, catalogOnly: false, pinnedLiveRpcError: false,
-      archiveNoHint: false,
+      archiveNoHint: false, noHint: false,
       limit: 100, concurrency: 2, timeoutMs: 30000,
     });
     assert.deepEqual(parseArgs([
@@ -101,13 +118,15 @@ describe('Robinhood holder archive deployment recovery', () => {
       '--limit=10', '--concurrency=4', '--timeout-ms=5000',
     ]), {
       confirm: true, catalogOnly: true, pinnedLiveRpcError: false,
-      archiveNoHint: true,
+      archiveNoHint: true, noHint: false,
       limit: 10, concurrency: 4, timeoutMs: 5000,
     });
     assert.throws(() => parseArgs(['--concurrency=9']), /between 1 and 8/);
     assert.throws(() => parseArgs([
       '--archive-no-hint', '--pinned-live-rpc-error',
     ]), /mutually exclusive/);
+    assert.equal(parseArgs(['--no-hint']).noHint, true);
+    assert.throws(() => parseArgs(['--no-hint', '--archive-no-hint']), /mutually exclusive/);
     const report = await main([], {
       logger: { log() {} },
       listCandidates: async () => [candidate(TOKEN_A)],
@@ -219,6 +238,21 @@ describe('Robinhood holder archive deployment recovery', () => {
     }, { ...candidate(TOKEN_A, null), archiveNoHint: true, archiveRequiredAt }),
     /archive no-hint task changed during recovery/);
     assert.deepEqual(calls, ['discover', 'attribute', 'complete']);
+  });
+
+  it('does not remove a pending no-hint task that changed during recovery', async () => {
+    await assert.rejects(recoverCandidate({
+      getArchiveHead: async () => '100',
+      discovery: { async discover() {
+        return { tokenAddress: TOKEN_A, blockNumber: '40', source: 'rpc_code_transition' };
+      } },
+      attributions: { async recordCodeTransitions() { return { attributed: 1 }; } },
+      outbox: { async completeNoHintRecovered(selected) {
+        assert.equal(selected.selectedStatus, 'pending');
+        return false;
+      } },
+    }, { ...candidate(TOKEN_A, null), noHint: true, selectedStatus: 'pending' }),
+    /no-hint task changed during recovery/);
   });
 
   it('searches earlier code for a preexisting contract and keeps uncertain tasks', async () => {

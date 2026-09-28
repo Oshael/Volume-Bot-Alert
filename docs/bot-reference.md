@@ -3616,6 +3616,17 @@ head do Archive como limite superior. A conclusão exige que a tarefa ainda este
 em `archive_required`, sem mint fixado e com o mesmo `archive_required_at` da
 seleção. Pare ao primeiro lote com falhas e investigue antes de repetir.
 
+Para recuperar também tarefas `pending` sem mint fixado antes de vencerem o prazo,
+use `--no-hint --catalog-only`. Esse filtro aceita somente `pending` e
+`archive_required`, prioriza as mais antigas e continua read-only sem a flag de
+confirmação. No apply, a remoção da outbox exige o mesmo status e `updated_at`
+selecionados, além de `mint_block_number` ainda nulo. Se o worker live reclamar,
+atualizar ou ancorar a tarefa durante a busca histórica, a remoção falha e o lote
+reporta a corrida; a atribuição já persistida continua disponível para a próxima
+reconciliação. Execute lotes pequenos, com baixa concorrência, e pare se `failed>0`.
+Esse reparo trata a fila histórica atual; não substitui capturar provas de novos
+deployments antes da poda do estado no node live.
+
 Para o estoque `archive_required` com mint fixado cujo RPC live devolveu
 `eth_getCode RPC error -32000`, use `--pinned-live-rpc-error` no mesmo recovery.
 Esse modo seleciona apenas essas tarefas e usa o bloco/hash/transação persistidos

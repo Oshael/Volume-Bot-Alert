@@ -57,19 +57,26 @@ function parseArgs(argv = []) {
       values.archiveNoHint = true;
       continue;
     }
+    if (argument === '--no-hint') {
+      if (values.noHint) throw new Error('repeated --no-hint');
+      values.noHint = true;
+      continue;
+    }
     const match = argument.match(/^--(limit|concurrency|timeout-ms)=(.+)$/);
     if (!match) throw new Error(`unknown argument: ${argument}`);
     if (values[match[1]] !== undefined) throw new Error(`--${match[1]} cannot be repeated`);
     values[match[1]] = match[2];
   }
-  if (values.pinnedLiveRpcError && values.archiveNoHint) {
-    throw new Error('--archive-no-hint and --pinned-live-rpc-error are mutually exclusive');
+  if ([values.pinnedLiveRpcError, values.archiveNoHint, values.noHint]
+    .filter(Boolean).length > 1) {
+    throw new Error('deployment recovery filters are mutually exclusive');
   }
   return Object.freeze({
     confirm: values.confirm === true,
     catalogOnly: values.catalogOnly === true,
     pinnedLiveRpcError: values.pinnedLiveRpcError === true,
     archiveNoHint: values.archiveNoHint === true,
+    noHint: values.noHint === true,
     limit: bounded(values.limit, 100, 1, 1000, '--limit'),
     concurrency: bounded(values.concurrency, 2, 1, 8, '--concurrency'),
     timeoutMs: bounded(values['timeout-ms'], 30_000, 1000, 60_000, '--timeout-ms'),
@@ -79,6 +86,7 @@ function parseArgs(argv = []) {
 async function listCandidates(database, limit, input = {}) {
   const pinnedOnly = input.pinnedLiveRpcError === true;
   const archiveNoHint = input.archiveNoHint === true;
+  const noHint = input.noHint === true;
   const catalogJoin = input.catalogOnly === true
     ? `INNER JOIN token_catalog catalog
            ON catalog.chain = outbox.chain AND catalog.address = outbox.token_address`
@@ -88,10 +96,13 @@ async function listCandidates(database, limit, input = {}) {
           AND outbox.last_error LIKE
             'rpc_code_transition:rpc_error:eth_getCode RPC error -32000%'` : '';
   const noHintFilter = archiveNoHint ? `AND outbox.status = 'archive_required'
+          AND outbox.mint_block_number IS NULL` : noHint
+    ? `AND outbox.status IN ('pending', 'archive_required')
           AND outbox.mint_block_number IS NULL` : '';
   const { rows } = await database.query(
     `WITH queued AS MATERIALIZED (
        SELECT outbox.token_address, outbox.created_at, outbox.attempt_count,
+              outbox.status AS selected_status, outbox.updated_at::text AS selected_updated_at,
               outbox.archive_required_at::text AS archive_required_at,
               outbox.mint_block_number, outbox.mint_block_hash,
               outbox.mint_transaction_hash,
@@ -112,13 +123,14 @@ async function listCandidates(database, limit, input = {}) {
           AND (attribution.attribution_block IS NULL OR outbox.status = 'archive_required')
           ${pinnedFilter}
           ${noHintFilter}
-        ORDER BY
+        ORDER BY ${noHint ? 'outbox.created_at, outbox.token_address' : `
           CASE WHEN attribution.attribution_block IS NOT NULL THEN 0
                WHEN outbox.created_at >= NOW() - INTERVAL '10 minutes' THEN 1 ELSE 2 END,
-          outbox.created_at DESC, outbox.token_address
+          outbox.created_at DESC, outbox.token_address`}
         LIMIT $1::int
      )
      SELECT queued.token_address, queued.created_at, queued.attempt_count,
+            queued.selected_status, queued.selected_updated_at,
             queued.archive_required_at,
             queued.attribution_block, queued.attribution_source, queued.exact,
             ${pinnedOnly ? 'queued.mint_block_number' : 'mint.block_number'} AS upper_block,
@@ -157,6 +169,9 @@ async function listCandidates(database, limit, input = {}) {
     attemptCount: Number(row.attempt_count) || 0,
     archiveRequiredAt: archiveNoHint ? row.archive_required_at : null,
     archiveNoHint,
+    noHint,
+    selectedStatus: noHint ? row.selected_status : null,
+    selectedUpdatedAt: noHint ? row.selected_updated_at : null,
     pinnedHint: pinnedOnly ? Object.freeze({
       tokenAddress: row.token_address, blockNumber: String(row.upper_block),
       blockHash: row.mint_block_hash, transactionHash: row.mint_transaction_hash,
@@ -220,6 +235,9 @@ async function recoverCandidate(runtime, candidate) {
     } else if (candidate.archiveNoHint) {
       const cleared = await runtime.outbox.completeArchiveNoHintRecovered(candidate);
       if (!cleared) throw new Error('archive no-hint task changed during recovery');
+    } else if (candidate.noHint) {
+      const cleared = await runtime.outbox.completeNoHintRecovered(candidate);
+      if (!cleared) throw new Error('no-hint task changed during recovery');
     } else {
       await runtime.outbox?.completeRecovered?.(candidate.tokenAddress);
     }
@@ -257,7 +275,8 @@ async function recoverCandidate(runtime, candidate) {
   });
   if (discovered.source === 'rpc_code_transition') {
     const result = await runtime.attributions.recordCodeTransitions([discovered]);
-    if ((candidate.pinnedHint || candidate.archiveNoHint) && result.attributed !== 1) {
+    if ((candidate.pinnedHint || candidate.archiveNoHint || candidate.noHint)
+        && result.attributed !== 1) {
       throw new Error('historical attribution was not persisted');
     }
     await complete();
@@ -293,6 +312,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
       catalogOnly: options.catalogOnly,
       pinnedLiveRpcError: options.pinnedLiveRpcError,
       archiveNoHint: options.archiveNoHint,
+      noHint: options.noHint,
     }
   );
   if (!options.confirm) {
