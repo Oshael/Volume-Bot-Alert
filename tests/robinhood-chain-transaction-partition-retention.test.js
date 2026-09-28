@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { after, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
-const { coverageFloor, decide } = require('../src/services/robinhood-chain-transaction-partition-retention');
+const { coverageFloor, decide, run } = require('../src/services/robinhood-chain-transaction-partition-retention');
 
 after(() => db.pool.end());
 
@@ -54,6 +54,58 @@ it('blocks unfinished consumers, recent raw, and unexpected foreign keys', () =>
     assert.ok(decide({ ...base(), ...change }).blockers.includes(blocker), blocker);
   }
   assert.equal(decide({ ...base(), pending_redistribution: true }).ready, true);
+});
+
+it('extends the statement timeout for partition DDL after safety recheck', async () => {
+  let statementTimeout = null;
+  let detached = false;
+  const client = {
+    release() {},
+    async query(sql) {
+      if (sql.startsWith('SET LOCAL statement_timeout')) {
+        statementTimeout = sql;
+      }
+      if (sql.includes('DETACH PARTITION')) {
+        assert.equal(statementTimeout, "SET LOCAL statement_timeout='60s'");
+        detached = true;
+      }
+      if (sql.includes('pg_try_advisory_xact_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('AS transactions')) return {
+        rows: [{ transactions: 'p', events: 'p' }],
+      };
+      if (sql.includes('AS detach_pending')) return {
+        rows: [0, 250000, 500000].map((start) => ({
+          name: `robinhood_chain_transactions_shadow_b${start}`,
+          bound: `FOR VALUES FROM ('${start}') TO ('${start + 250000}')`,
+          bytes: '100', detach_pending: false,
+        })),
+      };
+      if (sql.includes('FROM robinhood_chain_capture_cursor')) return {
+        rows: [{ finalized_head: '500100', recovery_state: 'running',
+          observed_at: '2026-09-27T21:00:00Z' }],
+      };
+      if (sql.includes('SELECT block_timestamp FROM robinhood_chain_blocks')) return {
+        rows: [{ block_timestamp: '2026-09-24T20:59:00Z' }],
+      };
+      if (sql.includes('AS present')) return { rows: [{ present: false }] };
+      if (sql.includes('AS pending_bundle')) return {
+        rows: [{ pending_bundle: false, pinned_deployment: false }],
+      };
+      if (sql.includes('FROM robinhood_holder_transfer_journal')) return {
+        rows: [{ block_number: '500050' }],
+      };
+      if (sql.includes('AS bound') && sql.includes('FROM pg_inherits')) return {
+        rows: [{ bound: "FOR VALUES FROM ('0') TO ('250000')" }],
+      };
+      return { rows: [] };
+    },
+  };
+  const report = await run({ apply: true }, {
+    database: { getClient: async () => client },
+    audit: { inspect: async () => base().safety },
+  });
+  assert.equal(report.action, 'dropped_transaction_partition');
+  assert.equal(detached, true);
 });
 
 it('drops only the expired transaction leaf and its event FK in one transaction', async () => {

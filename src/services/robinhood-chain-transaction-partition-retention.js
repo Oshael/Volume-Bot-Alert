@@ -172,6 +172,7 @@ async function dropEligiblePartition(client, safety, report) {
   if (!checked.ready || checked.candidate?.name !== report.candidate.name) {
     throw new Error('transaction retention conditions changed under lock');
   }
+  await client.query("SET LOCAL statement_timeout='60s'");
   if (checked.dropEventFk) {
     await client.query(`ALTER TABLE ${report.eventPartition} DROP CONSTRAINT ${FK}`);
   }
