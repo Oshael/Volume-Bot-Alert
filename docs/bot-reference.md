@@ -5659,6 +5659,20 @@ só a materialização dos consumidores nem autoriza excluir a monolítica.
 A monolítica fica como `robinhood_chain_transactions_retired`; nenhuma partição
 de eventos é apagada. Provisionar a próxima faixa antes de reiniciar a captura.
 
+Após o corte, `npm run robinhood:chain-transaction-partition-prune` faz a inspeção
+somente leitura da partição de transações mais antiga. `-- --apply` descarta no
+máximo uma partição de transações por execução. Exige captura em execução,
+checkpoints e materialização canônica aprovados pelo retention safety audit,
+partição inteiramente abaixo da fronteira segura, ausência de dependências
+pendentes na faixa e pelo menos 72 horas de blocos na sequência contínua que
+restará. A partição que cruza o corte temporal permanece inteira; portanto o
+armazenamento pode conter mais de três dias. A operação retira a FK do leaf de
+eventos correspondente, depois separa e descarta apenas o leaf de transações na
+mesma transação; os eventos permanecem. Falhas de lock, timeout ou verificações
+impedem o descarte. Depois de conferir um piloto manual, a flag
+`ROBINHOOD_CHAIN_TRANSACTION_PARTITION_RETENTION_ENABLED=true` habilita a mesma
+verificação a cada ciclo do `robinhood-maintenance`; o padrão é `false`.
+
 Para limitar o preenchimento dos snapshots V3 à faixa já copiada e validada na
 sombra de eventos, use
 `npm run robinhood:v3-snapshot-shadow-backfill -- --from-block=N --through-block=M

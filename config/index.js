@@ -1175,6 +1175,10 @@ module.exports = {
       process.env.ROBINHOOD_CHAIN_EVENT_PARTITION_RETENTION_ENABLED,
       false
     ),
+    chainTransactionPartitionRetentionEnabled: parseBoolean(
+      process.env.ROBINHOOD_CHAIN_TRANSACTION_PARTITION_RETENTION_ENABLED,
+      false
+    ),
     canonicalRawRetentionEnabled: parseBoolean(
       process.env.ROBINHOOD_CANONICAL_RAW_RETENTION_ENABLED,
       false

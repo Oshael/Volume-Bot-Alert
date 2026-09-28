@@ -12,6 +12,7 @@ const {
   DEFAULT_RETENTION_MS: DEFAULT_CHAIN_EVENT_RETENTION_MS,
   runPilot: pruneChainEvents,
 } = require('./robinhood-chain-event-pruner');
+const { run: pruneTransactionPartition } = require('./robinhood-chain-transaction-partition-retention');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 2000;
@@ -69,6 +70,7 @@ let status = {
   lastDeletedRealtimeOutboxCycles: 0,
   lastDeletedChainEvents: 0,
   lastDroppedChainEventPartitions: 0,
+  lastDroppedChainTransactionPartition: null,
   lastDeletedChainTransactions: 0,
   lastDeletedChainBlocks: 0,
   lastHeadCapturePruneStatus: 'not_evaluated',
@@ -78,6 +80,7 @@ let status = {
   totalDeletedRealtimeOutboxRows: 0,
   totalDeletedChainEvents: 0,
   totalDroppedChainEventPartitions: 0,
+  totalDroppedChainTransactionPartitions: 0,
   totalDeletedChainTransactions: 0,
   totalDeletedChainBlocks: 0,
   totalDeletedHeadCaptures: 0,
@@ -125,6 +128,8 @@ function normalizeOptions(options = {}) {
     chainEventRetentionEnabled: options.chainEventRetentionEnabled !== false,
     chainEventPartitionRetentionEnabled:
       options.chainEventPartitionRetentionEnabled === true,
+    chainTransactionPartitionRetentionEnabled:
+      options.chainTransactionPartitionRetentionEnabled === true,
     canonicalRawRetentionEnabled: options.canonicalRawRetentionEnabled === true,
     positionPreimagePruneEnabled: options.positionPreimagePruneEnabled === true,
     chainEventRetentionMs: boundedInteger(
@@ -559,6 +564,27 @@ async function maintainChainEvents(database, options, deps) {
   }, { database, pause: deps.pause });
 }
 
+async function maintainChainTransactions(database, options, deps) {
+  if (!options.chainTransactionPartitionRetentionEnabled) {
+    return { action: 'none', reason: 'disabled' };
+  }
+  return (deps.chainTransactionPruner || pruneTransactionPartition)(
+    { apply: true }, { database, closePool: false }
+  );
+}
+
+function droppedTransactionPartitionName(summary) {
+  return summary.chainTransactionPartitions?.action === 'dropped_transaction_partition'
+    ? summary.chainTransactionPartitions.candidate.name : null;
+}
+
+function shouldLogRun(summary) {
+  return summary.examinedProcessedLogs || summary.hourlyBuckets
+    || summary.transferReorgJournal || summary.positionPreimages
+    || summary.realtimeOutboxRows || summary.chainEvents?.totalDeleted
+    || summary.headCaptures?.deleted || droppedTransactionPartitionName(summary);
+}
+
 async function maintainHeadCaptures(database, options, deps) {
   if (!options.capturePruneEnabled) return { status: 'disabled', deleted: 0 };
   const state = deps.headCapturePruneState || headCapturePruneState;
@@ -612,6 +638,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         summary.chainEvents = {
           status: 'paused', reason: admission.reason, totalDeleted: 0, blockers: [],
         };
+        summary.chainTransactionPartitions = { action: 'none', reason: admission.reason };
         summary.headCaptures = { status: 'paused', deleted: 0 };
         status.lastExaminedProcessedLogs = 0;
         status.lastDeletedProcessedLogs = 0;
@@ -628,6 +655,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         status.lastHeadCapturePruneStatus = 'paused';
         status.lastDeletedChainEvents = 0;
         status.lastDroppedChainEventPartitions = 0;
+        status.lastDroppedChainTransactionPartition = null;
         status.lastDeletedChainTransactions = 0;
         status.lastDeletedChainBlocks = 0;
         status.lastChainEventPruneStatus = 'paused';
@@ -656,6 +684,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       summary.realtimeOutboxCycles = realtime.cycles;
       summary.realtimeOutbox = realtime.telemetry;
       summary.chainEvents = await maintainChainEvents(database, normalized, deps);
+      summary.chainTransactionPartitions = await maintainChainTransactions(database, normalized, deps);
       summary.headCaptures = await maintainHeadCaptures(database, normalized, deps);
       status.lastExaminedProcessedLogs = summary.examinedProcessedLogs;
       status.lastDeletedProcessedLogs = summary.processedLogs;
@@ -682,6 +711,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedRealtimeOutboxCycles = summary.realtimeOutboxCycles;
       status.lastDeletedChainEvents = summary.chainEvents.totalDeleted || 0;
       status.lastDroppedChainEventPartitions = summary.chainEvents.droppedPartitions || 0;
+      status.lastDroppedChainTransactionPartition = droppedTransactionPartitionName(summary);
       status.lastDeletedChainTransactions = summary.chainEvents.totalDeletedTransactions || 0;
       status.lastDeletedChainBlocks = summary.chainEvents.totalDeletedBlocks || 0;
       status.lastHeadCapturePruneStatus = summary.headCaptures.status;
@@ -691,6 +721,8 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.totalDeletedRealtimeOutboxRows += summary.realtimeOutboxRows;
       status.totalDeletedChainEvents += summary.chainEvents.totalDeleted || 0;
       status.totalDroppedChainEventPartitions += summary.chainEvents.droppedPartitions || 0;
+      status.totalDroppedChainTransactionPartitions +=
+        Number(Boolean(status.lastDroppedChainTransactionPartition));
       status.totalDeletedChainTransactions += summary.chainEvents.totalDeletedTransactions || 0;
       status.totalDeletedChainBlocks += summary.chainEvents.totalDeletedBlocks || 0;
       status.totalDeletedHeadCaptures += summary.headCaptures.deleted;
@@ -721,10 +753,7 @@ function schedule(options, delayMs) {
   timer = setTimeout(async () => {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
-      if (summary.examinedProcessedLogs || summary.hourlyBuckets
-          || summary.transferReorgJournal || summary.positionPreimages
-          || summary.realtimeOutboxRows
-          || summary.chainEvents?.totalDeleted || summary.headCaptures?.deleted) {
+      if (shouldLogRun(summary)) {
         console.log(
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
@@ -741,6 +770,7 @@ function schedule(options, delayMs) {
           `realtimeOutbox=${summary.realtimeOutboxRows}/${summary.realtimeOutboxCycles}`,
           `chainEvents=${summary.chainEvents.totalDeleted || 0}`,
           `chainTransactions=${summary.chainEvents.totalDeletedTransactions || 0}`,
+          `transactionPartition=${summary.chainTransactionPartitions?.candidate?.name || 'none'}`,
           `chainBlocks=${summary.chainEvents.totalDeletedBlocks || 0}`,
           `chainEventStatus=${summary.chainEvents.status}`,
           `headCaptures=${summary.headCaptures.deleted}`,

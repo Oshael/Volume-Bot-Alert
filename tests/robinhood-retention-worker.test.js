@@ -119,6 +119,7 @@ describe('Robinhood retention worker', () => {
       realtimeOutboxTelemetryIntervalMs: 5 * 60 * 1000,
       chainEventRetentionEnabled: true,
       chainEventPartitionRetentionEnabled: false,
+      chainTransactionPartitionRetentionEnabled: false,
       canonicalRawRetentionEnabled: false,
       positionPreimagePruneEnabled: false,
       chainEventRetentionMs: 3 * 24 * 60 * 60 * 1000,
@@ -258,6 +259,26 @@ describe('Robinhood retention worker', () => {
     ]);
   });
 
+  it('runs transaction partition retention only when explicitly enabled', async () => {
+    const database = createFakeDatabase();
+    const deps = dependencies(database);
+    let calls = 0;
+    deps.chainTransactionPruner = async (options, nestedDeps) => {
+      calls += 1;
+      assert.deepEqual(options, { apply: true });
+      assert.equal(nestedDeps.database, database);
+      return { action: 'dropped_transaction_partition', candidate: { name: 'public.test' } };
+    };
+    await worker.runOnce({}, {}, deps);
+    assert.equal(calls, 0);
+    const summary = await worker.runOnce({
+      chainTransactionPartitionRetentionEnabled: true,
+    }, {}, deps);
+    assert.equal(calls, 1);
+    assert.equal(summary.chainTransactionPartitions.action, 'dropped_transaction_partition');
+    assert.equal(worker.getStatus().lastDroppedChainTransactionPartition, 'public.test');
+  });
+
   it('deletes expired raw rows through the cascading ledger in bounded batches', async () => {
     const database = createFakeDatabase(
       [
@@ -305,6 +326,7 @@ describe('Robinhood retention worker', () => {
         status: 'finished', stopReason: 'prefix_drained',
         retentionMs: 3 * 24 * 60 * 60 * 1000, batches: 1, totalDeleted: 0,
       },
+      chainTransactionPartitions: { action: 'none', reason: 'disabled' },
       headCaptures: { status: 'completed', deleted: 0 },
     });
     assert.equal(database.calls.length, 3);
