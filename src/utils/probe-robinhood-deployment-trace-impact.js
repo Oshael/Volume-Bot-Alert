@@ -22,6 +22,7 @@ function bounded(raw, fallback, min, max, label) {
 function parseArgs(argv = []) {
   const values = {};
   for (const arg of argv) {
+    if (arg === '--full' && values.full == null) { values.full = true; continue; }
     const match = /^--(phase-seconds|traces|sample-seconds|max-transactions|timeout-ms|max-extra-lag-blocks)=(\d+)$/.exec(arg);
     if (!match || values[match[1]] != null) throw new Error(`unknown or repeated argument: ${arg}`);
     values[match[1]] = match[2];
@@ -34,6 +35,7 @@ function parseArgs(argv = []) {
     throw new Error('--sample-seconds must be shorter than --phase-seconds');
   }
   return {
+    full: values.full === true,
     phaseSeconds, traces,
     sampleSeconds,
     maxTransactions: bounded(values['max-transactions'], 25, 1, 50, '--max-transactions'),
@@ -141,12 +143,56 @@ function phaseDelta(start, end) {
     lagChangeBlocks: end.captureLagBlocks - start.captureLagBlocks };
 }
 
+function numberStats(values) {
+  const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  return { min: sorted[0], p50: sorted[Math.ceil(sorted.length * 0.5) - 1],
+    p95: sorted[Math.ceil(sorted.length * 0.95) - 1], max: sorted.at(-1) };
+}
+
+function phaseSummary(phase) {
+  const snapshots = [phase.start, ...phase.samples, phase.end];
+  return { seconds: phase.delta.elapsedSeconds,
+    rpcBlocks: phase.delta.rpcBlocks, capturedBlocks: phase.delta.capturedBlocks,
+    captureLagBlocks: { start: phase.start.captureLagBlocks,
+      end: phase.end.captureLagBlocks,
+      max: Math.max(...snapshots.map((item) => item.captureLagBlocks)) },
+    nodeCpuPct: numberStats(snapshots.map((item) => Number.parseFloat(item.node?.cpu))),
+    nodeMemory: { start: phase.start.node?.memory, end: phase.end.node?.memory },
+    hostLoad1: { start: phase.start.hostLoad?.[0], end: phase.end.hostLoad?.[0] },
+    rpcHeadMs: numberStats(snapshots.map((item) => item.rpcHeadMs)),
+    dbMs: numberStats(snapshots.map((item) => item.queryMs)),
+    samples: snapshots.length };
+}
+
+function summarizeReport(report) {
+  const traces = report.impact.traces;
+  return { mode: report.mode, target: report.target, options: report.options,
+    baseline: phaseSummary(report.baseline),
+    impact: { ...phaseSummary(report.impact), candidates: report.impact.candidateCount,
+      tracesCompleted: traces.length,
+      traceMs: numberStats(traces.map((item) => item.traceMs)),
+      tracedTransactions: traces.reduce((sum, item) => sum + item.tracedTransactions, 0),
+      creations: traces.reduce((sum, item) => sum + item.creations, 0),
+      ratePerSecond: report.impact.attemptedRatePerSecond,
+      fractionOfNewBlocks: report.impact.tracedFractionOfNewBlocks,
+      stoppedReason: report.impact.stoppedReason,
+      failedBlock: report.impact.failedBlock } };
+}
+
+function formatReport(report) {
+  return report.options.full
+    ? JSON.stringify(report, null, 2)
+    : JSON.stringify(summarizeReport(report));
+}
+
 async function runImpact({ candidates, options, snapshot, rpc, now, pause, runTrace }) {
   const start = await snapshot();
   const endAt = Date.parse(start.at) + options.phaseSeconds * 1000;
   const traces = [];
   const samples = [];
   let stoppedReason = null;
+  let failedBlock = null;
   let nextSampleAt = Date.parse(start.at) + options.sampleSeconds * 1000;
   async function sampleUntil(deadline) {
     while (nextSampleAt < endAt && nextSampleAt <= deadline) {
@@ -168,10 +214,13 @@ async function runImpact({ candidates, options, snapshot, rpc, now, pause, runTr
     if (stoppedReason) break;
     await pause(Math.max(0, dueAt - now()));
     if (now() >= endAt) { stoppedReason = 'phase_deadline'; break; }
+    const attemptedAt = now();
     try {
       traces.push(await runTrace(rpc, block, options, now));
     } catch (error) {
       stoppedReason = `trace_error:${String(error.message || error).slice(0, 200)}`;
+      failedBlock = { blockNumber: block.blockNumber,
+        transactions: block.transactions, elapsedMs: Math.max(0, now() - attemptedAt) };
       break;
     }
     await sampleUntil(now());
@@ -183,7 +232,7 @@ async function runImpact({ candidates, options, snapshot, rpc, now, pause, runTr
   }
   const end = await snapshot();
   const delta = phaseDelta(start, end);
-  return { start, samples, end, delta, traces, stoppedReason,
+  return { start, samples, end, delta, traces, stoppedReason, failedBlock,
     candidateCount: candidates.length,
     attemptedRatePerSecond: traces.length / Math.max(1, delta.elapsedSeconds),
     tracedFractionOfNewBlocks: delta.rpcBlocks > 0
@@ -227,7 +276,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     baseline: { start: baselineStart, samples: baselineSamples, end: baselineEnd,
       delta: phaseDelta(baselineStart, baselineEnd) },
     impact };
-  (deps.logger || console).log(JSON.stringify(report, null, 2));
+  (deps.logger || console).log(formatReport(report));
   if (impact.stoppedReason) process.exitCode = 2;
   return report;
 }
@@ -238,4 +287,4 @@ if (require.main === module) main().catch((error) => {
 }).finally(() => db.pool.end().catch(() => {}));
 
 module.exports = { captureSnapshot, countCreations, main, parseArgs, phaseDelta,
-  rpcTarget, selectBlocks, traceBlock };
+  rpcTarget, selectBlocks, summarizeReport, traceBlock };

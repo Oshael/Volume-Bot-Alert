@@ -4205,6 +4205,10 @@ uma amostra curta e abaixo da taxa de blocos não demonstra capacidade para
 trace contínuo. Os blocos são selecionados uma vez, logo após o baseline; num
 teste longo, ficam mais antigos ao longo da fase de carga. Este comando não cria
 tabelas, cursor, filas nem dead tuples.
+Por padrão, a saída é um JSON compacto com comparação das duas fases, estatísticas
+de CPU/latência, taxa de traces e bloco/transações da primeira falha. Use `--full`
+somente quando precisar das amostras e traces individuais; não é necessário
+enviar o relatório completo para uma primeira análise.
 
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com

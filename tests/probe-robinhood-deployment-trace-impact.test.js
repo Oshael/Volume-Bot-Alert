@@ -5,7 +5,8 @@ process.env.NODE_ENV = 'test';
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  captureSnapshot, countCreations, main, parseArgs, rpcTarget, selectBlocks, traceBlock,
+  captureSnapshot, countCreations, main, parseArgs, rpcTarget, selectBlocks,
+  traceBlock,
 } = require('../src/utils/probe-robinhood-deployment-trace-impact');
 
 const HASH = `0x${'a'.repeat(64)}`;
@@ -13,10 +14,11 @@ const BLOCK = { blockNumber: '100', blockHash: HASH, transactions: 2 };
 
 describe('Robinhood deployment trace impact probe', () => {
   it('rejects unbounded options and non-pruned RPC targets', () => {
-    assert.deepEqual(parseArgs([]), { phaseSeconds: 60, traces: 6,
+    assert.deepEqual(parseArgs([]), { full: false, phaseSeconds: 60, traces: 6,
       sampleSeconds: 10, maxTransactions: 25, timeoutMs: 3000,
       maxExtraLagBlocks: 100 });
     assert.equal(parseArgs(['--phase-seconds=300', '--traces=120']).traces, 120);
+    assert.equal(parseArgs(['--full']).full, true);
     assert.throws(() => parseArgs(['--traces=121']), /between/);
     assert.throws(() => parseArgs(['--phase-seconds=10', '--traces=11']), /one trace per second/);
     assert.throws(() => parseArgs(['--phase-seconds=10']), /sample-seconds must be shorter/);
@@ -91,7 +93,8 @@ describe('Robinhood deployment trace impact probe', () => {
           checkpoint: '100', captureLagBlocks: snapshots === 5 ? 20 : 0,
           node: {} };
       },
-      traceBlock: async () => ({ ...BLOCK, traceMs: 20, creations: 1 }),
+      traceBlock: async () => ({ ...BLOCK, traceMs: 20,
+        tracedTransactions: 2, creations: 1 }),
       logger: { log: (value) => outputs.push(JSON.parse(value)) },
     });
     assert.equal(report.mode, 'read-only');
@@ -99,14 +102,18 @@ describe('Robinhood deployment trace impact probe', () => {
     assert.equal(report.baseline.samples.length, 1);
     assert.equal(report.impact.traces.length, 1);
     assert.equal(report.impact.stoppedReason, 'capture_lag_guardrail');
-    assert.deepEqual(outputs[0], report);
+    assert.equal(outputs[0].impact.stoppedReason, 'capture_lag_guardrail');
+    assert.equal(outputs[0].impact.tracesCompleted, 1);
+    assert.equal(outputs[0].impact.samples, 3);
+    assert.equal(outputs[0].impact.tracedTransactions, 2);
     assert.equal(process.exitCode, 2);
     process.exitCode = 0;
   });
 
   it('paces traces across a longer phase and samples independently of trace count', async () => {
     let current = 0;
-    const options = { phaseSeconds: 30, traces: 3, sampleSeconds: 5,
+    const output = [];
+    const options = { full: true, phaseSeconds: 30, traces: 3, sampleSeconds: 5,
       maxTransactions: 10, timeoutMs: 3000, maxExtraLagBlocks: 100 };
     const report = await main([], { options, database: {},
       url: new URL('http://127.0.0.1:8547'),
@@ -119,9 +126,9 @@ describe('Robinhood deployment trace impact probe', () => {
         captureLagBlocks: Math.floor(current / 1000), node: {} }),
       traceBlock: async (_rpc, block) => {
         current += 1000;
-        return { ...block, traceMs: 1000, creations: 0 };
+        return { ...block, traceMs: 1000, tracedTransactions: 2, creations: 0 };
       },
-      logger: { log() {} },
+      logger: { log: (value) => output.push(JSON.parse(value)) },
     });
     assert.equal(report.baseline.delta.elapsedSeconds, 30);
     assert.equal(report.impact.delta.elapsedSeconds, 30);
@@ -130,5 +137,30 @@ describe('Robinhood deployment trace impact probe', () => {
     assert.equal(report.impact.traces.length, 3);
     assert.equal(report.impact.tracedFractionOfNewBlocks, 0.1);
     assert.equal(report.impact.stoppedReason, null);
+    assert.equal(output[0].impact.samples.length, 5);
+  });
+
+  it('reports the failed block without emitting every sample or trace', async () => {
+    let current = 0;
+    const output = [];
+    const report = await main([], { options: { phaseSeconds: 15, traces: 1,
+      sampleSeconds: 5, timeoutMs: 3000, maxExtraLagBlocks: 100 }, database: {},
+    url: new URL('http://127.0.0.1:8547'),
+    rpc: { request: async () => '0x1237' }, nodeStats: async () => ({}),
+    selectBlocks: async () => [BLOCK], now: () => current,
+    pause: async (ms) => { current += ms; },
+    captureSnapshot: async () => ({ at: new Date(current).toISOString(),
+      rpcHead: '200', checkpoint: '190', captureLagBlocks: 10, node: { cpu: '10%' } }),
+    traceBlock: async () => { current += 3000; throw new Error('timeout'); },
+    logger: { log: (value) => output.push(JSON.parse(value)) },
+    });
+    assert.deepEqual(output[0].impact.failedBlock, {
+      blockNumber: '100', transactions: 2, elapsedMs: 3000,
+    });
+    assert.equal(output[0].impact.tracesCompleted, 0);
+    assert.equal(output[0].impact.stoppedReason, 'trace_error:timeout');
+    assert.equal(report.impact.failedBlock.blockNumber, '100');
+    assert.equal(process.exitCode, 2);
+    process.exitCode = 0;
   });
 });
