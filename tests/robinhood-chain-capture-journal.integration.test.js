@@ -109,6 +109,7 @@ const stage239 = require('../src/utils/db-init-stage239');
 const stage240 = require('../src/utils/db-init-stage240');
 const stage247 = require('../src/utils/db-init-stage247');
 const stage253 = require('../src/utils/db-init-stage253');
+const stage254 = require('../src/utils/db-init-stage254');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
 const transactionShadowCopy = require('../src/utils/copy-robinhood-chain-transaction-shadow-page');
 const transactionShadowAudit = require('../src/utils/audit-robinhood-chain-transaction-shadow');
@@ -395,6 +396,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage195.init({ closePool: false });
     await stage247.init({ closePool: false, tablespace: 'pg_default',
       fromBlock: 0, throughBlock: 499999 });
+    await stage254.init({ closePool: false });
     await stage253.init({ database: db, closePool: false,
       heapTablespace: 'pg_default', indexTablespace: 'pg_default',
       fromBlock: 0, throughBlock: 499999 });
@@ -755,6 +757,24 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(cursor.next_block, '101');
     assert.equal(cursor.checkpoint_block, '100');
     assert.equal(cursor.checkpoint_hash, HASH);
+  });
+
+  it('persists a missing V3 balance outcome without passing it as an observed snapshot', async () => {
+    const input = capture();
+    input.v3Snapshots = [{
+      logIndex: 0, poolAddress: LIQUIDITY_POOL, tokenAddress: TOKEN,
+      quoteAddress: RECIPIENT, balanceStatus: 'historical_unavailable',
+    }];
+    const committed = await createRobinhoodChainCaptureJournal().commitBlock(input);
+    assert.equal(committed.v3Snapshots, 0);
+    const { rows } = await db.query(`SELECT balance_status, token_balance_raw, quote_balance_raw
+      FROM robinhood_chain_v3_balance_snapshots`);
+    assert.deepEqual(rows, [{ balance_status: 'historical_unavailable',
+      token_balance_raw: null, quote_balance_raw: null }]);
+    const [claimed] = await createRobinhoodChainDomainOutboxRepository().claimNextBlock({
+      owner: 'v3-unavailable', leaseMs: 60_000, maxBlocks: 1,
+    });
+    assert.equal(claimed.v3_balance_snapshot, null);
   });
 
   it('mirrors the committed event and V3 block number while preserving reorg semantics',

@@ -13,6 +13,7 @@ class EvmRpcError extends Error {
     this.method = details.method || null;
     this.httpStatus = details.httpStatus ?? null;
     this.rpcCode = details.rpcCode ?? null;
+    this.rpcMessage = details.rpcMessage ?? null;
     this.retryable = Boolean(details.retryable);
     this.retryAfterMs = details.retryAfterMs ?? null;
     this.attempt = details.attempt ?? null;
@@ -150,6 +151,7 @@ function decodeRpcBody(rawBody, requestId, method = null) {
         code: logRangeError ? 'log_range_error' : 'rpc_error',
         message: `RPC error ${rpcCode}`,
         rpcCode,
+        rpcMessage: String(body.error.message ?? '').slice(0, 500),
         retryable: !logRangeError && (rpcCode === -32005 || rpcCode === -32603),
       },
     };

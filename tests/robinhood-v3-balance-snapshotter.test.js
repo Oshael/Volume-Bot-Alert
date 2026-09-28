@@ -88,7 +88,9 @@ describe('Robinhood V3 balance snapshotter', () => {
       event(fixture.poolCreated), event(fixture.swap),
     ]));
 
-    assert.deepEqual(result.snapshots, []);
+    assert.equal(result.snapshots[0].balanceStatus, 'balance_failed');
+    assert.equal(result.snapshots[0].tokenBalanceRaw, null);
+    assert.equal(result.snapshots[0].quoteBalanceRaw, null);
     assert.equal(result.pools, 1);
     assert.equal(result.missedPools, 1);
   });
@@ -102,10 +104,27 @@ describe('Robinhood V3 balance snapshotter', () => {
       event(fixture.poolCreated), event(fixture.swap),
     ]), { readBalances: false });
 
-    assert.deepEqual(result.snapshots, []);
+    assert.equal(result.snapshots[0].balanceStatus, 'skipped_window');
     assert.equal(result.skippedPools, 1);
     assert.equal(snapshotter.getTrackedPoolCount(), 1);
     assert.equal(rpcCalls, 0);
+  });
+
+  it('records only confirmed pruned history and retries other RPC failures', async () => {
+    const history = Object.assign(new Error('eth_call RPC error -32000'), {
+      rpcCode: -32000, rpcMessage: 'historical state is not available',
+    });
+    const rpcClient = { request: async () => { throw history; } };
+    const snapshotter = createRobinhoodV3BalanceSnapshotter({ rpcClient });
+    const input = capture([event(fixture.poolCreated), event(fixture.swap)]);
+    const result = await snapshotter.captureBlock(input);
+    assert.equal(result.snapshots[0].balanceStatus, 'historical_unavailable');
+    assert.equal(result.missedPools, 1);
+
+    rpcClient.request = async () => { throw Object.assign(new Error('execution reverted'), {
+      rpcCode: -32000, rpcMessage: 'execution reverted',
+    }); };
+    await assert.rejects(snapshotter.captureBlock(input), /execution reverted/);
   });
 
   it('restores tracked pools from persisted registry rows on startup', async () => {

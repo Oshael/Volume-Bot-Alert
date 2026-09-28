@@ -6354,8 +6354,21 @@ A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do
 journal para os dois `balanceOf` de cada swap V3 no bloco capturado. Aplique com
 `node src/utils/db-init-stage195.js` **antes de reiniciar** o chain-capture versão
 3. O snapshot pertence ao `(block_hash, log_index)` e é removido por cascata em
-reorg; saldos usam `NUMERIC(78,0)` para preservar todo `uint256`. Em cada bloco
-dos últimos `ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS` (default 32,
+reorg; saldos usam `NUMERIC(78,0)` para preservar todo `uint256`. Depois da
+Stage 195, aplique também `node src/utils/db-init-stage254.js` antes
+de reiniciar o chain-capture e o canonical-head. A Stage 254 adiciona
+`balance_status` ao mesmo sidecar: `observed` contém os dois saldos;
+`skipped_window`, `historical_unavailable` e `balance_failed` contêm saldos
+nulos. Os marcadores são gravados no commit do bloco, sem update posterior;
+o claim canônico só entrega snapshots `observed`. O cliente RPC preserva a
+mensagem do erro separadamente em `rpcMessage`; apenas `eth_call` com código
+`-32000` e mensagem `historical state is not available` vira
+`historical_unavailable`. Outros erros RPC continuam segurando o cursor para
+retry. A ausência de um snapshot observado ainda resulta na rejeição canônica
+atual; a mudança para processar preço/volume sem liquidez pertence a um deploy
+posterior.
+
+Em cada bloco dos últimos `ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS` (default 32,
 limites 1–256, incluindo o head observado na drenagem), o capturador agrupa
 todos os pools V3 em um único Multicall
 `eth_call` ancorado no número do bloco; vários swaps do mesmo pool reutilizam o
@@ -6364,8 +6377,9 @@ intermediários que chegam entre notificações/polls. A janela é um limite de
 carga, não uma garantia de retenção de estado do node; não há fallback para
 `latest`. As leituras são sequenciais, no máximo um Multicall por bloco com
 pools V3 elegíveis. Catch-up fora da janela atualiza o tracking de pools sem
-consultar saldos. A telemetria expõe `v3SnapshotWindowBlocks` e os contadores
-cumulativos `v3Snapshots`, `v3MissedPools` (subchamadas de saldo inválidas) e
+consultar saldos e grava `skipped_window` para cada swap V3. A telemetria expõe
+`v3SnapshotWindowBlocks` e os contadores cumulativos `v3Snapshots` (apenas
+saldos observados), `v3MissedPools` (pools com saldo inválido ou histórico indisponível) e
 `v3SkippedPools` (pools fora da janela); zero missed não prova cobertura se
 houve skipped. Reinicie o chain-capture para aplicar alterações na janela.
 Isso não repara snapshots ausentes já persistidos: para validar uma sessão

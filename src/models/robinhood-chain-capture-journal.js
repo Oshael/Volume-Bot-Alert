@@ -172,17 +172,25 @@ function normalizeInput(input) {
     if (!eventIndexes.has(logIndex)) {
       throw new Error(`v3Snapshots[${index}] event is not included`);
     }
+    const balanceStatus = entry.balanceStatus || 'observed';
+    if (!['observed', 'skipped_window', 'historical_unavailable', 'balance_failed']
+      .includes(balanceStatus)) throw new Error(`v3Snapshots[${index}].balanceStatus is invalid`);
+    const observed = balanceStatus === 'observed';
+    if (!observed && (entry.tokenBalanceRaw != null || entry.quoteBalanceRaw != null)) {
+      throw new Error(`v3Snapshots[${index}] unavailable balances must be null`);
+    }
     return {
       log_index: logIndex,
       pool_address: hex(entry.poolAddress, 20, `v3Snapshots[${index}].poolAddress`),
       token_address: hex(entry.tokenAddress, 20, `v3Snapshots[${index}].tokenAddress`),
       quote_address: hex(entry.quoteAddress, 20, `v3Snapshots[${index}].quoteAddress`),
-      token_balance_raw: quantity(
+      ...(observed ? {} : { balance_status: balanceStatus }),
+      token_balance_raw: observed ? quantity(
         entry.tokenBalanceRaw, `v3Snapshots[${index}].tokenBalanceRaw`
-      ).toString(),
-      quote_balance_raw: quantity(
+      ).toString() : null,
+      quote_balance_raw: observed ? quantity(
         entry.quoteBalanceRaw, `v3Snapshots[${index}].quoteBalanceRaw`
-      ).toString(),
+      ).toString() : null,
     };
   });
   if (new Set(v3Snapshots.map((entry) => entry.log_index)).size !== v3Snapshots.length) {
@@ -439,14 +447,14 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(
            chain, block_hash, log_index, pool_address, token_address, quote_address,
-           token_balance_raw, quote_balance_raw, block_number
+           token_balance_raw, quote_balance_raw, block_number, balance_status
          ) SELECT $1, item.block_hash, item.log_index, item.pool_address, item.token_address,
                   item.quote_address, item.token_balance_raw, item.quote_balance_raw,
-                  item.block_number
+                  item.block_number, COALESCE(item.balance_status, 'observed')
              FROM jsonb_to_recordset($2::jsonb) AS item(
                block_hash TEXT, log_index INTEGER, pool_address TEXT, token_address TEXT,
                quote_address TEXT, token_balance_raw NUMERIC, quote_balance_raw NUMERIC,
-               block_number BIGINT
+               block_number BIGINT, balance_status TEXT
              )`, [CHAIN, JSON.stringify(payload.v3Snapshots)]
       );
       await client.query(
@@ -519,7 +527,8 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       await client.query('COMMIT');
       return entries.map((entry) => ({
         status: 'committed', transactions: entry.transactions.length,
-        events: entry.events.length, v3Snapshots: entry.v3Snapshots.length,
+        events: entry.events.length,
+        v3Snapshots: entry.v3Snapshots.filter((snapshot) => !snapshot.balance_status).length,
         workItems: routeCanonicalEvents(entry.events).length,
         ...(shadowEnabled ? { shadowEvents: entry.events.length } : {}),
         ...(transactionShadowEnabled ? { shadowTransactions: entry.transactions.length } : {}),

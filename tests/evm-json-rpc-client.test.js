@@ -342,6 +342,7 @@ describe('provider-agnostic EVM JSON-RPC client', () => {
     await assert.rejects(client.request('eth_getLogs', [{}]), (error) => {
       assert.equal(error.code, 'rpc_error');
       assert.equal(error.rpcCode, -32000);
+      assert.equal(error.rpcMessage, 'execution reverted');
       assert.equal(error.retryable, false);
       return true;
     });

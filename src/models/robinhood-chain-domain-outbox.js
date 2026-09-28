@@ -99,7 +99,8 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
          JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
          JOIN robinhood_chain_blocks block USING (chain, block_hash)
          LEFT JOIN robinhood_chain_v3_balance_snapshots snapshot
-           USING (chain, block_hash, log_index)
+           ON snapshot.chain=leased.chain AND snapshot.block_hash=leased.block_hash
+          AND snapshot.log_index=leased.log_index AND snapshot.balance_status='observed'
         ORDER BY leased.block_number,
                  CASE leased.domain WHEN 'discovery' THEN 0 ELSE 1 END,
                  leased.transaction_index, leased.log_index`,
@@ -143,7 +144,8 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
          JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
          JOIN robinhood_chain_blocks block USING (chain, block_hash)
          LEFT JOIN robinhood_chain_v3_balance_snapshots snapshot
-           USING (chain, block_hash, log_index)
+           ON snapshot.chain=leased.chain AND snapshot.block_hash=leased.block_hash
+          AND snapshot.log_index=leased.log_index AND snapshot.balance_status='observed'
         ORDER BY leased.block_number, leased.transaction_index, leased.log_index`,
       [CHAIN, domain, limit, owner, leaseMs]
     );

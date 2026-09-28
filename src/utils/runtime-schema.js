@@ -5625,6 +5625,17 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage254-robinhood-v3-balance-outcomes',
+    name: 'Stage 254 Robinhood V3 balance outcomes',
+    repair: 'node src/utils/db-init-stage254.js',
+    tables: [{
+      table: 'robinhood_chain_v3_balance_snapshots',
+      columns: ['balance_status'],
+      constraints: [{ name: 'rh_chain_v3_balance_status_check',
+        includes: ['balance_status', 'observed', 'historical_unavailable'] }],
+    }],
+  },
+  {
     key: 'stage196-robinhood-holder-rollback-brin',
     name: 'Stage 196 Robinhood holder rollback BRIN',
     repair: 'node src/utils/db-init-stage196.js',

@@ -48,6 +48,11 @@ function uintResult(result, label) {
   return BigInt(value).toString();
 }
 
+function historicalStateUnavailable(error) {
+  return error?.rpcCode === -32000
+    && /historical state is not available/i.test(String(error.rpcMessage || ''));
+}
+
 function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
   if (typeof deps.rpcClient?.request !== 'function') throw new Error('rpcClient.request is required');
   const tracker = options.tracker || v3.createUniswapV3Tracker({
@@ -75,8 +80,19 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
     const swaps = decodeTrackedSwaps(capture);
     const pools = new Map(swaps.map(({ event }) => [event.poolAddress, event]));
     if (!pools.size) return { snapshots: [], pools: 0, missedPools: 0 };
+    function rowsFor(statuses) {
+      return swaps.map(({ logIndex, event }) => ({
+        logIndex, poolAddress: event.poolAddress,
+        tokenAddress: event.tokenAddress, quoteAddress: event.quoteAddress,
+        balanceStatus: statuses.get(event.poolAddress).status,
+        tokenBalanceRaw: statuses.get(event.poolAddress).tokenBalanceRaw ?? null,
+        quoteBalanceRaw: statuses.get(event.poolAddress).quoteBalanceRaw ?? null,
+      }));
+    }
     if (captureOptions.readBalances === false) {
-      return { snapshots: [], pools: pools.size, missedPools: 0, skippedPools: pools.size };
+      const statuses = new Map([...pools.keys()].map((pool) => [pool, { status: 'skipped_window' }]));
+      return { snapshots: rowsFor(statuses), pools: pools.size,
+        missedPools: 0, skippedPools: pools.size };
     }
     const calls = [...pools.values()].flatMap((event) => [
       { target: event.tokenAddress, allowFailure: true, callData: encodeBalanceOf(event.poolAddress) },
@@ -84,37 +100,37 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
     ]);
     const blockTag = `0x${BigInt(capture.block.number).toString(16)}`;
     const data = encodeAggregate3(calls);
-    const raw = await deps.rpcClient.request('eth_call', [{
-      to: MULTICALL3_ADDRESS, data,
-    }, blockTag]);
+    let raw;
+    try {
+      raw = await deps.rpcClient.request('eth_call', [{
+        to: MULTICALL3_ADDRESS, data,
+      }, blockTag]);
+    } catch (error) {
+      if (!historicalStateUnavailable(error)) throw error;
+      const statuses = new Map([...pools.keys()].map((pool) => [pool,
+        { status: 'historical_unavailable' }]));
+      return { snapshots: rowsFor(statuses), pools: pools.size,
+        missedPools: pools.size, skippedPools: 0 };
+    }
     const results = decodeAggregate3(raw, calls.length);
     const balances = new Map();
     let resultIndex = 0;
     for (const [poolAddress] of pools) {
       try {
-        balances.set(poolAddress, {
+        balances.set(poolAddress, { status: 'observed',
           tokenBalanceRaw: uintResult(results[resultIndex], 'token'),
           quoteBalanceRaw: uintResult(results[resultIndex + 1], 'quote'),
         });
       } catch (_) {
-        balances.set(poolAddress, null);
+        balances.set(poolAddress, { status: 'balance_failed' });
       }
       resultIndex += 2;
     }
-    const snapshots = swaps.flatMap(({ logIndex, event }) => {
-      const balance = balances.get(event.poolAddress);
-      return balance ? [{
-        logIndex,
-        poolAddress: event.poolAddress,
-        tokenAddress: event.tokenAddress,
-        quoteAddress: event.quoteAddress,
-        ...balance,
-      }] : [];
-    });
+    const snapshots = rowsFor(balances);
     return {
       snapshots,
       pools: pools.size,
-      missedPools: [...balances.values()].filter((value) => value == null).length,
+      missedPools: [...balances.values()].filter((value) => value.status !== 'observed').length,
       skippedPools: 0,
     };
   }
@@ -127,5 +143,5 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
 
 module.exports = {
   createRobinhoodV3BalanceSnapshotter,
-  __private: { normalizeSeedPools, uintResult },
+  __private: { normalizeSeedPools, uintResult, historicalStateUnavailable },
 };
