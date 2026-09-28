@@ -5667,11 +5667,18 @@ partição inteiramente abaixo da fronteira segura, ausência de dependências
 pendentes na faixa e pelo menos 72 horas de blocos na sequência contínua que
 restará. A partição que cruza o corte temporal permanece inteira; portanto o
 armazenamento pode conter mais de três dias. A operação retira a FK do leaf de
-eventos correspondente, depois separa e descarta apenas o leaf de transações na
-mesma transação; os eventos permanecem. Falhas de lock, timeout ou verificações
-impedem o descarte. A inspeção usa timeout de 15 segundos; após a segunda
-checagem, o DDL tem até 60 segundos e pode bloquear a captura durante esse
-período. Funding pendente usa transações raw e bloqueia sua faixa;
+eventos correspondente numa transação curta, depois executa `DETACH PARTITION
+CONCURRENTLY` fora da transação, sem segurar locks nas filas durante o detach.
+Após uma nova auditoria, revalida as condições sob locks curtos e descarta apenas
+o leaf de transações com `DROP TABLE ... RESTRICT`; os eventos permanecem. A
+inspeção usa timeout de 15 segundos, o detach até cinco minutos e a checagem
+final até cinco segundos por comando. Se o detach completar mas a checagem final
+falhar, a tabela física permanece destacada e a poda automática recusa outras
+partições até recuperação manual. Se o detach for interrompido, confira
+`pg_inherits.inhdetachpending` antes de repetir; um detach pendente também
+interrompe a poda. A captura pode sofrer pressão de I/O ou waits durante o
+detach: acompanhe seu lag no piloto. Funding pendente usa transações raw e
+bloqueia sua faixa;
 redistribution usa projeções materializadas e não é uma referência por faixa
 para a tabela de transações. Depois de conferir um piloto manual, a flag
 `ROBINHOOD_CHAIN_TRANSACTION_PARTITION_RETENTION_ENABLED=true` habilita a mesma

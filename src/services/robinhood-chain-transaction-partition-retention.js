@@ -107,7 +107,34 @@ async function eventConstraints(client, candidate) {
   return eventFks;
 }
 
-async function inspect(client, safety) {
+async function loadPartitions(client, detachedCandidate) {
+  const { rows: catalog } = await client.query(`SELECT child.relname AS name,
+      pg_get_expr(child.relpartbound, child.oid) AS bound,
+      pg_total_relation_size(child.oid)::text AS bytes,
+      inheritance.inhdetachpending AS detach_pending
+    FROM pg_inherits inheritance JOIN pg_class child ON child.oid=inheritance.inhrelid
+    WHERE inheritance.inhparent=to_regclass($1)`, [PARENT]);
+  const parts = catalog.map(partition);
+  const { rows: detached } = await client.query(`SELECT child.relname
+    FROM pg_class child JOIN pg_namespace namespace ON namespace.oid=child.relnamespace
+    WHERE namespace.nspname='public' AND child.relkind='r'
+      AND child.relname ~ '^robinhood_chain_transactions_shadow_b[0-9]+$'
+      AND NOT EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid=child.oid)
+    ORDER BY child.relname LIMIT 1`);
+  if (detachedCandidate) {
+    if (detached[0]?.relname !== detachedCandidate.name.split('.')[1]
+        || parts.some((item) => item.start === detachedCandidate.start)) {
+      throw new Error('detached transaction partition changed before drop');
+    }
+    parts.push(detachedCandidate);
+  } else if (detached.length) {
+    throw new Error(`detached transaction partition requires recovery: ${detached[0].relname}`);
+  }
+  parts.sort((a, b) => a.start - b.start);
+  return parts;
+}
+
+async function inspect(client, safety, detachedCandidate = null) {
   const { rows: layouts } = await client.query(`SELECT
       (SELECT relkind FROM pg_class WHERE oid=to_regclass($1)) AS transactions,
       (SELECT relkind FROM pg_class WHERE oid=to_regclass($2)) AS events`,
@@ -115,13 +142,7 @@ async function inspect(client, safety) {
   if (layouts[0]?.transactions !== 'p' || layouts[0]?.events !== 'p') {
     throw new Error('active transaction and event parents must be partitioned');
   }
-  const { rows: catalog } = await client.query(`SELECT child.relname AS name,
-      pg_get_expr(child.relpartbound, child.oid) AS bound,
-      pg_total_relation_size(child.oid)::text AS bytes,
-      inheritance.inhdetachpending AS detach_pending
-    FROM pg_inherits inheritance JOIN pg_class child ON child.oid=inheritance.inhrelid
-    WHERE inheritance.inhparent=to_regclass($1)`, [PARENT]);
-  const parts = catalog.map(partition).sort((a, b) => a.start - b.start);
+  const parts = await loadPartitions(client, detachedCandidate);
   const { rows: cursors } = await client.query(`SELECT NOW() AS observed_at,
       finalized_head::text, recovery_state FROM robinhood_chain_capture_cursor
       WHERE chain='robinhood'`);
@@ -160,51 +181,105 @@ async function inspect(client, safety) {
     ...references[0], eventFks });
 }
 
-async function dropEligiblePartition(client, safety, report) {
-  const { rows: locks } = await client.query(`SELECT pg_try_advisory_xact_lock(
-    hashtext('robinhood-chain-event-pruner')) AS locked`);
-  if (!locks[0]?.locked) throw new Error('concurrent chain pruner');
-  await client.query(`LOCK TABLE ONLY ${PARENT} IN ACCESS EXCLUSIVE MODE`);
-  await client.query(`LOCK TABLE ${report.eventPartition} IN ACCESS EXCLUSIVE MODE`);
+async function lockAndRecheck(client, safety, report, detachedCandidate = null) {
+  await client.query(`LOCK TABLE ONLY ${PARENT} IN SHARE UPDATE EXCLUSIVE MODE`);
+  await client.query(`LOCK TABLE ${report.eventPartition} IN ${
+    detachedCandidate || !report.dropEventFk ? 'SHARE' : 'ACCESS EXCLUSIVE'} MODE`);
   await client.query(`LOCK TABLE robinhood_token_deployment_outbox,
     robinhood_bundle_funding_live_queue IN SHARE MODE`);
-  const checked = await inspect(client, safety);
+  const checked = await inspect(client, safety, detachedCandidate);
   if (!checked.ready || checked.candidate?.name !== report.candidate.name) {
     throw new Error('transaction retention conditions changed under lock');
   }
-  await client.query("SET LOCAL statement_timeout='60s'");
-  if (checked.dropEventFk) {
-    await client.query(`ALTER TABLE ${report.eventPartition} DROP CONSTRAINT ${FK}`);
+  return checked;
+}
+
+async function detachAndDrop(client, audit, report) {
+  // DETACH CONCURRENTLY must run outside a transaction. No queue lock is held here.
+  await client.query("SET lock_timeout='500ms'");
+  await client.query("SET statement_timeout='5min'");
+  await client.query(`ALTER TABLE ${PARENT} DETACH PARTITION ${report.candidate.name}
+    CONCURRENTLY`);
+  let inTransaction = false;
+  try {
+    const safety = await audit.inspect();
+    await client.query('BEGIN');
+    inTransaction = true;
+    await client.query("SET LOCAL lock_timeout='500ms'");
+    await client.query("SET LOCAL statement_timeout='5s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout='10s'");
+    const candidate = { ...report.candidate, event: report.eventPartition };
+    await lockAndRecheck(client, safety, report, candidate);
+    await client.query(`DROP TABLE ${report.candidate.name} RESTRICT`);
+    await client.query('COMMIT');
+  } catch (error) {
+    if (inTransaction) await client.query('ROLLBACK').catch(() => {});
+    error.message = `${error.message}; detached partition remains on disk`;
+    throw error;
   }
-  await client.query(`ALTER TABLE ${PARENT} DETACH PARTITION ${report.candidate.name}`);
-  await client.query(`DROP TABLE ${report.candidate.name} RESTRICT`);
+}
+
+async function acquirePrunerLock(client, apply) {
+  if (!apply) return false;
+  const { rows: locks } = await client.query(`SELECT pg_try_advisory_lock(
+    hashtext('robinhood-chain-event-pruner')) AS locked`);
+  if (!locks[0]?.locked) throw new Error('concurrent chain pruner');
+  return true;
+}
+
+async function inspectAndPrepare(client, safety, apply) {
+  await client.query(apply ? 'BEGIN' : 'BEGIN READ ONLY');
+  try {
+    await client.query("SET LOCAL lock_timeout='500ms'");
+    await client.query("SET LOCAL statement_timeout='15s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout='30s'");
+    const report = await inspect(client, safety);
+    if (apply && report.ready) {
+      const checked = await lockAndRecheck(client, safety, report);
+      if (checked.dropEventFk) {
+        await client.query(`ALTER TABLE ${report.eventPartition} DROP CONSTRAINT ${FK}`);
+      }
+    }
+    await client.query('COMMIT');
+    return report;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  }
+}
+
+async function releaseRunClient(client, advisoryLocked) {
+  if (!client) return;
+  if (advisoryLocked) {
+    await client.query(`SELECT pg_advisory_unlock(
+      hashtext('robinhood-chain-event-pruner'))`).catch(() => {});
+  }
+  await client.query('RESET lock_timeout; RESET statement_timeout').catch(() => {});
+  client.release();
 }
 
 async function run(input = {}, deps = {}) {
   const database = deps.database || db;
   const apply = input.apply === true;
   let client;
+  let advisoryLocked = false;
   try {
-    const safety = await (deps.audit || createRobinhoodRetentionSafetyAudit({
+    const audit = deps.audit || createRobinhoodRetentionSafetyAudit({
       database, includeHolderProof: false,
-    })).inspect();
+    });
+    const safety = await audit.inspect();
     client = await database.getClient();
-    await client.query(apply ? 'BEGIN' : 'BEGIN READ ONLY');
-    await client.query("SET LOCAL lock_timeout='500ms'");
-    await client.query("SET LOCAL statement_timeout='15s'");
-    await client.query("SET LOCAL idle_in_transaction_session_timeout='30s'");
-    const report = await inspect(client, safety);
-    if (apply && report.ready) {
-      await dropEligiblePartition(client, safety, report);
+    advisoryLocked = await acquirePrunerLock(client, apply);
+    const report = await inspectAndPrepare(client, safety, apply);
+    if (!apply || !report.ready) {
+      return { mode: apply ? 'apply' : 'read-only', action: 'none', ...report };
     }
-    await client.query('COMMIT');
+
+    await detachAndDrop(client, audit, report);
     return { mode: apply ? 'apply' : 'read-only',
-      action: apply && report.ready ? 'dropped_transaction_partition' : 'none', ...report };
-  } catch (error) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
-    throw error;
+      action: 'dropped_transaction_partition', ...report };
   } finally {
-    client?.release();
+    await releaseRunClient(client, advisoryLocked);
     if (!deps.database && deps.closePool !== false) {
       await database.pool.end().catch(() => {});
     }
