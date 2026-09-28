@@ -8,6 +8,9 @@ const {
   createRobinhoodWalletRankingPriceReadRepository,
 } = require('../models/robinhood-wallet-ranking-price-read');
 const {
+  createRobinhoodWalletRankingPositionFrontierRepository,
+} = require('../models/robinhood-wallet-ranking-position-frontier');
+const {
   readRobinhoodWalletRankingWindowCoverage,
 } = require('./robinhood-wallet-ranking-window-coverage');
 
@@ -30,14 +33,19 @@ function normalizedInput(input) {
   return { window: input.window, asOf };
 }
 
-function mergeCandidates(positions, prices, events) {
+function positionAligned(position, frontier) {
+  return frontier.frontierChecksPassed && position.throughBlock != null
+    && BigInt(position.throughBlock) <= BigInt(frontier.frontierBlock);
+}
+
+function mergeCandidates(positions, prices, events, frontier) {
   const priceByToken = new Map(prices.map((price) => [price.tokenAddress, price]));
   const eventsByPair = new Map(events.map((item) => [pairKey(item), item]));
   return positions.map((position) => ({
     ...position,
     price: priceByToken.get(position.tokenAddress) || null,
     windowEvents: eventsByPair.get(pairKey(position)) || null,
-    projectionAligned: false,
+    projectionAligned: positionAligned(position, frontier),
   }));
 }
 
@@ -53,6 +61,8 @@ function createRobinhoodWalletRankingCandidateSnapshot(options = {}) {
           || createRobinhoodWalletRankingPositionReadRepository(repositoryOptions);
         const pricesRepository = options.pricesRepository
           || createRobinhoodWalletRankingPriceReadRepository(repositoryOptions);
+        const frontierRepository = options.frontierRepository
+          || createRobinhoodWalletRankingPositionFrontierRepository(repositoryOptions);
         const readCoverage = options.readCoverage
           || readRobinhoodWalletRankingWindowCoverage;
         const page = await positionsRepository.getOpenPositions({
@@ -60,6 +70,9 @@ function createRobinhoodWalletRankingCandidateSnapshot(options = {}) {
           limit: MAX_POSITIONS,
         });
         const positions = page.positions;
+        const positionFrontier = await frontierRepository.inspectAsOf({
+          projectionVersion: page.projectionVersion, asOf,
+        });
         const tokens = [...new Set(positions.map((item) => item.tokenAddress))];
         const prices = await pricesRepository.getPrices({
           tokenAddresses: tokens, window, asOf,
@@ -73,16 +86,21 @@ function createRobinhoodWalletRankingCandidateSnapshot(options = {}) {
             })),
             windowStart, asOf, classificationVersion: input.classificationVersion,
           }) : [];
+        const candidates = mergeCandidates(positions, prices, events, positionFrontier);
+        const positionOutsideFrontier = positionFrontier.frontierChecksPassed
+          && candidates.some((candidate) => !candidate.projectionAligned);
         return {
           window, asOf: asOf.toISOString(),
           windowStart: windowStart?.toISOString() ?? null,
           projectionVersion: page.projectionVersion,
-          candidates: mergeCandidates(positions, prices, events),
+          candidates,
+          positionFrontier,
           hasMorePositions: page.hasMore,
           readSnapshotConsistent: true,
           candidateUniverseComplete: false,
           rankingReady: false,
-          reasons: ['candidate_universe_incomplete', 'projection_alignment_unverified'],
+          reasons: ['candidate_universe_incomplete', ...positionFrontier.reasons,
+            ...(positionOutsideFrontier ? ['position_outside_frontier'] : [])],
         };
       });
     },

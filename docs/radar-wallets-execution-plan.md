@@ -313,6 +313,12 @@ posições abertas. Ela confirma esgotamento apenas quando a última página nã
 continuação; ao atingir 1.000 posições com mais dados, retorna cursor e cobertura
 incompleta. Isso não comprova a cobertura histórica da projeção nem libera o
 ranking público.
+O snapshot limitado por tokens agora audita, na mesma transação, os cursores
+seed/live da projeção de posições: seed completo, continuidade, checkpoint
+canônico e horário do frontier igual ao `asOf`. Cada posição só recebe
+`projectionAligned` quando seu `through_block` não ultrapassa esse frontier.
+A auditoria não comprova cobertura de eventos, preços nem universo global;
+`rankingReady` continua falso.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os
