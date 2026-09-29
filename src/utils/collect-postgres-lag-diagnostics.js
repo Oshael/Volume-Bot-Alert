@@ -122,6 +122,14 @@ const VACUUM_SQL = `SELECT COALESCE(jsonb_agg(value), '[]'::jsonb) AS value FROM
   ORDER BY activity.query_start
 ) observed`;
 
+const CAPTURE_SQL = `SELECT clock_timestamp() AS observed_at,
+  cursor.checkpoint_block::text AS checkpoint_block,
+  cursor.node_head::text AS committed_node_head, cursor.updated_at,
+  lease.owner_id, lease.heartbeat_at, lease.lease_until, lease.metadata
+  FROM robinhood_chain_capture_cursor cursor
+  LEFT JOIN worker_leases lease ON lease.lease_key='robinhood-chain-capture-worker'
+ WHERE cursor.chain='robinhood'`;
+
 const TABLE_SQL = `SELECT relname,
   n_live_tup::text, n_dead_tup::text, n_tup_ins::text, n_tup_upd::text, n_tup_del::text,
   vacuum_count::text, autovacuum_count::text, analyze_count::text, autoanalyze_count::text,
@@ -205,14 +213,17 @@ async function collectSample(client, capabilities, previous) {
     client, 'processing', processingSql(capabilities.processing_authority),
     [capabilities.processing_authority], errors
   );
+  const capture = await probe(client, 'capture', CAPTURE_SQL, [], errors);
   const tables = await probe(client, 'tables', TABLE_SQL, [], errors);
   const sampledAt = system.value[0]?.sampled_at || new Date().toISOString();
   const sample = {
     type: 'sample', sampledAt, system: system.value[0] || {},
     activity: activity.value[0]?.value || {}, vacuums: vacuums.value[0]?.value || [],
-    processing: processing.value[0]?.value || {}, tables: tables.value,
+    processing: processing.value[0]?.value || {}, capture: capture.value[0] || null,
+    tables: tables.value,
     probeDurationMs: { system: system.durationMs, activity: activity.durationMs,
-      vacuums: vacuums.durationMs, processing: processing.durationMs, tables: tables.durationMs },
+      vacuums: vacuums.durationMs, processing: processing.durationMs,
+      capture: capture.durationMs, tables: tables.durationMs },
     errors,
   };
   sample.rates = sampleRates(previous, sample);
@@ -366,6 +377,79 @@ function walletTransferSummary(samples) {
   });
 }
 
+function captureNodeHead(capture) {
+  return capture.metadata?.nodeHead == null ? null : number(capture.metadata.nodeHead);
+}
+
+function captureProgress(first, last) {
+  const firstHead = captureNodeHead(first.capture);
+  const lastHead = captureNodeHead(last.capture);
+  const firstBlock = number(first.capture.checkpoint_block);
+  const lastBlock = number(last.capture.checkpoint_block);
+  const seconds = (new Date(last.capture.observed_at || last.sampledAt)
+    - new Date(first.capture.observed_at || first.sampledAt)) / 1000;
+  return {
+    checkpointStart: firstBlock, checkpointEnd: lastBlock,
+    nodeHeadStart: firstHead, nodeHeadEnd: lastHead,
+    capturedBlocks: lastBlock - firstBlock,
+    nodeHeadBlocks: firstHead == null || lastHead == null ? null : lastHead - firstHead,
+    lagStart: firstHead == null ? null : Math.max(0, firstHead - firstBlock),
+    lagEnd: lastHead == null ? null : Math.max(0, lastHead - lastBlock),
+    lagDelta: firstHead == null || lastHead == null ? null
+      : (lastHead - lastBlock) - (firstHead - firstBlock),
+    captureBlocksPerSecond: seconds > 0 ? (lastBlock - firstBlock) / seconds : null,
+    headBlocksPerSecond: seconds > 0 && firstHead != null && lastHead != null
+      ? (lastHead - firstHead) / seconds : null,
+    netCatchupBlocksPerSecond: seconds > 0 && firstHead != null && lastHead != null
+      ? ((lastBlock - firstBlock) - (lastHead - firstHead)) / seconds : null,
+  };
+}
+
+function captureTimingTotals(points) {
+  const totals = { batches: 0, blocks: 0, fetchMs: 0, trackerPrepareMs: 0,
+    snapshotMs: 0, commitMs: 0, totalMs: 0, journal: {} };
+  let timingIntervals = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const before = points[index - 1].capture;
+    const after = points[index].capture;
+    if (!before.owner_id || before.owner_id !== after.owner_id
+        || !before.metadata?.timingTotals || !after.metadata?.timingTotals) continue;
+    const previous = before.metadata.timingTotals;
+    const current = after.metadata.timingTotals;
+    const batches = nonnegativeDelta(previous.batches, current.batches);
+    if (batches == null) continue;
+    timingIntervals += 1;
+    for (const phase of Object.keys(totals).filter((key) => key !== 'journal')) {
+      const change = nonnegativeDelta(previous[phase], current[phase]);
+      if (change != null) totals[phase] += change;
+    }
+    for (const [phase, value] of Object.entries(current.journal || {})) {
+      const change = nonnegativeDelta(previous.journal?.[phase] || 0, value);
+      if (change != null) totals.journal[phase] = (totals.journal[phase] || 0) + change;
+    }
+  }
+  return { timingIntervals, timingTotals: timingIntervals ? totals : null };
+}
+
+function captureSummary(samples) {
+  const points = samples.filter((sample) => sample.capture?.checkpoint_block != null);
+  if (!points.length) return null;
+  const first = points[0];
+  const last = points.at(-1);
+  return {
+    startedAt: first.capture.observed_at || first.sampledAt,
+    completedAt: last.capture.observed_at || last.sampledAt,
+    samples: points.length, ...captureProgress(first, last), ...captureTimingTotals(points),
+    errorsDelta: first.capture.owner_id && first.capture.owner_id === last.capture.owner_id
+      ? nonnegativeDelta(first.capture.metadata?.totalErrors, last.capture.metadata?.totalErrors)
+      : null,
+    lastTiming: last.capture.metadata?.lastTiming || null,
+    lastError: last.capture.metadata?.lastError || null,
+    transport: last.capture.metadata?.transport || null,
+    heartbeatAt: last.capture.heartbeat_at || null,
+  };
+}
+
 function summarize(samples, statementsBefore, statementsAfter) {
   const first = samples[0];
   const last = samples.at(-1);
@@ -383,6 +467,7 @@ function summarize(samples, statementsBefore, statementsAfter) {
     samples: samples.length, sampleErrors: samples.reduce((sum, item) => sum + item.errors.length, 0),
     processingStart: first?.processing, processingEnd: last?.processing,
     walletTransfer: walletTransferSummary(samples),
+    chainCapture: captureSummary(samples),
     averageWalBytesPerSecond: average(samples.map((item) => item.rates.walBytesPerSecond)),
     waitSampleCounts: waitSamples, vacuumSampleCounts: vacuumSamples,
     topTableWriteDeltas: tableDeltas(first?.tables || [], last?.tables || []),
@@ -398,8 +483,9 @@ function compactLog(sample) {
   )).join(',');
   const wal = sample.rates.walBytesPerSecond;
   const walletLag = sample.processing.walletTransfer?.lagBlocks ?? 'n/a';
+  const captureLag = sample.capture?.metadata?.lagBlocks ?? 'n/a';
   return `${sample.sampledAt} lag=[${streams}] walMBps=${wal == null ? 'n/a' : (wal / 1048576).toFixed(2)}`
-    + ` walletTransferLag=${walletLag}`
+    + ` walletTransferLag=${walletLag} chainCaptureLag=${captureLag}`
     + ` active=${sample.activity.active ?? 'n/a'} waiting=${sample.activity.waiting ?? 'n/a'}`
     + ` blocked=${sample.activity.blocked ?? 'n/a'} vacuums=${sample.vacuums.length}`
     + ` errors=${sample.errors.length}`;
@@ -464,5 +550,5 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   collectSample, main, nonnegativeDelta, parseArgs, run, sampleRates,
-  processingSql, statementDeltas, summarize, tableDeltas, walletTransferSummary,
+  captureSummary, processingSql, statementDeltas, summarize, tableDeltas, walletTransferSummary,
 };

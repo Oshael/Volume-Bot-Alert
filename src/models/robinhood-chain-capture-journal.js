@@ -271,6 +271,9 @@ function validateSequence(entries, current) {
     expected += 1n; parentHash = entry.block.hash;
   }
 }
+function publishCaptureTiming(callback, timing) {
+  try { callback?.(timing); } catch (_) { /* telemetry cannot fail a committed batch */ }
+}
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
   const shadowEnabled = options.shadowEnabled === true;
@@ -374,12 +377,23 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       throw new Error('capture batch must not be empty');
     }
     const entries = inputs.map(normalizeInput);
+    const startedAt = performance.now();
+    let phaseStartedAt = startedAt;
+    const timing = {};
+    function mark(phase) {
+      const completedAt = performance.now();
+      timing[phase] = completedAt - phaseStartedAt;
+      phaseStartedAt = completedAt;
+    }
     const client = await database.getClient();
+    mark('connectionMs');
     try {
       await client.query('BEGIN');
+      mark('beginMs');
       const cursor = await client.query(
         'SELECT * FROM robinhood_chain_capture_cursor WHERE chain = $1 FOR UPDATE', [CHAIN]
       );
+      mark('cursorLockMs');
       const current = cursor.rows[0];
       assertCaptureRunning(current);
       assertCaptureGeneration(current, options.expectedGeneration);
@@ -405,6 +419,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       }
       validateSequence(entries, current);
       const payload = batchPayload(entries);
+      mark('prepareMs');
       await client.query(
         `INSERT INTO robinhood_chain_blocks(
            chain, block_number, block_hash, parent_hash, capture_digest, block_timestamp, finality,
@@ -418,12 +433,15 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                receipts_available_at TIMESTAMPTZ, capture_version INTEGER
              )`, [CHAIN, JSON.stringify(payload.blocks)]
       );
+      mark('blocksMs');
       await insertCapturedTransactions(client, payload.transactions, {
         partitioned: transactionPartitioned,
       });
+      mark('transactionsMs');
       await mirrorCapturedTransactions(client, payload.blocks, {
         enabled: transactionShadowEnabled,
       });
+      mark('transactionShadowMs');
       await client.query(
         `INSERT INTO robinhood_chain_events(
            chain, block_hash, block_number, transaction_hash, transaction_index,
@@ -437,13 +455,17 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                topic0 TEXT, topics JSONB, data TEXT
              )`, [CHAIN, JSON.stringify(payload.events)]
       );
+      mark('eventsMs');
       if (shadowEnabled) await mirrorCapturedEvents(client, payload.blocks);
+      mark('eventShadowMs');
       await appendStockUsdReferenceEvents(client, payload.events);
       await advanceStockUsdReferenceCoverage(client, {
         fromBlock: entries[0].block.number,
         throughBlock: entries.at(-1).block.number,
       });
+      mark('stockReferenceMs');
       await appendRobinhoodTokenLifecycleEvidence(client, payload.lifecycleEvidence);
+      mark('lifecycleMs');
       await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(
            chain, block_hash, log_index, pool_address, token_address, quote_address,
@@ -457,6 +479,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                block_number BIGINT, balance_status TEXT
              )`, [CHAIN, JSON.stringify(payload.v3Snapshots)]
       );
+      mark('snapshotsMs');
       await client.query(
         `INSERT INTO robinhood_chain_domain_outbox(
            chain, domain, block_hash, block_number, transaction_index, log_index
@@ -467,6 +490,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                transaction_index INTEGER, log_index INTEGER
              )`, [CHAIN, JSON.stringify(payload.workItems)]
       );
+      mark('outboxMs');
       if (payload.deploymentHints.length > 0) {
         await client.query(
           `INSERT INTO robinhood_token_deployment_outbox(
@@ -495,6 +519,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           [CHAIN, JSON.stringify(payload.deploymentHints)]
         );
       }
+      mark('deploymentMs');
       const last = entries.at(-1);
       const version = current
         ? BigInt(current.version) + BigInt(entries.length) : BigInt(entries.length - 1);
@@ -513,6 +538,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           last.nodeHead.toString(), last.finalizedHead.toString(), last.block.headObservedAt,
           last.block.receiptsAvailableAt, version.toString()]
       );
+      mark('cursorUpdateMs');
       await client.query('SELECT pg_notify($1, $2)', [NOTIFY_CHANNEL, last.block.number.toString()]);
       if (payload.workItems.length > 0) {
         await client.query(
@@ -524,7 +550,11 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           'SELECT pg_notify($1, $2)', [DEPLOYMENT_NOTIFY_CHANNEL, last.block.number.toString()]
         );
       }
+      mark('notifyMs');
       await client.query('COMMIT');
+      mark('commitMs');
+      timing.totalMs = performance.now() - startedAt;
+      publishCaptureTiming(options.onTiming, timing);
       return entries.map((entry) => ({
         status: 'committed', transactions: entry.transactions.length,
         events: entry.events.length,

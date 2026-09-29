@@ -1002,8 +1002,11 @@ lease após sua conclusão e não acrescenta SQL, logs por evento ou flags de at
 Para diagnosticar pressão PostgreSQL junto com o lag, use
 `npm run diagnose:postgres-lag -- --duration=30m --interval=5s
 --output=/var/tmp/postgres-lag.jsonl`. O coletor é read-only, limita cada probe a 1 s
-e grava JSONL incremental com processing, waits/bloqueios, WAL, I/O, autovacuums e
-deltas de tabelas. Se `pg_stat_statements` estiver disponível, o resumo final ordena
+e grava JSONL incremental com processing, cursor e lease do chain-capture,
+waits/bloqueios, WAL, I/O, autovacuums e deltas de tabelas. O resumo do capture
+compara taxas de head e checkpoint e soma os tempos por fase apenas entre amostras
+do mesmo dono da lease; reinícios não misturam contadores. Se `pg_stat_statements`
+estiver disponível, o resumo final ordena
 queries pelo custo apenas da janela observada. Duração aceita `s`, `m` ou `h` (30 s a
 24 h); intervalo aceita 2 a 60 s. Falha isolada fica registrada e não encerra a coleta.
 O relatório contém textos SQL observados e deve ser tratado como arquivo operacional sensível.
@@ -6266,6 +6269,11 @@ prefetched é validado e persistido em uma única transação PostgreSQL, com in
 set-based e um único avanço do frontier; qualquer gap, divergência de parent ou
 falha de escrita reverte o lote inteiro. Um `NOTIFY` por lote acorda os consumidores,
 que continuam usando a outbox durável como fonte e polling apenas para continuidade.
+A lease publica `lastTiming.journal` para o último lote confirmado e
+`timingTotals` acumulados desde o início do processo. Os tempos do journal
+separam espera por conexão, lock do cursor, escritas por grupo, NOTIFY e COMMIT;
+`commitMs` do worker inclui toda a chamada ao journal. Os tempos são de parede
+observados pelo processo, não atribuem causalidade a I/O ou locks por si só.
 Antes de remover o túnel temporário do archive, execute
 `npm run robinhood:chain-capture-live-rpc-probe`. O probe é read-only, escolhe
 `ROBINHOOD_CHAIN_CAPTURE_LIVE_RPC_URL` ou, na ausência, `ROBINHOOD_RPC_URL`,

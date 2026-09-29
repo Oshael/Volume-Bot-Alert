@@ -77,8 +77,9 @@ test('worker prefetches blocks concurrently and commits them sequentially withou
   } };
   const journal = {
     getCursor: async () => null,
-    commitBlocks: async (captures) => {
+    commitBlocks: async (captures, options) => {
       commits.push(...captures);
+      options.onTiming({ notifyMs: 5, totalMs: 10 });
       return captures.map((capture) => ({
         status: 'committed', transactions: capture.transactions.length,
         events: capture.events.length,
@@ -105,6 +106,11 @@ test('worker prefetches blocks concurrently and commits them sequentially withou
   );
   assert.equal(status.fetchConcurrency, 2);
   assert.equal(status.lastTiming.trackerPrepareMs >= 0, true);
+  assert.equal(status.timingTotals.batches, 1);
+  assert.equal(status.timingTotals.blocks, 2);
+  assert.equal(status.timingTotals.commitMs, status.lastTiming.commitMs);
+  assert.deepEqual(status.lastTiming.journal, { notifyMs: 5, totalMs: 10 });
+  assert.equal(status.timingTotals.journal.notifyMs, 5);
   for (const field of [
     'nodeHeadObservedAt', 'lastRunAt', 'lastProgressAt', 'lastCompletedAt',
   ]) assert.equal(Number.isFinite(Date.parse(status[field])), true, field);

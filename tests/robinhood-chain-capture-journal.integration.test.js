@@ -1109,6 +1109,7 @@ describe('Robinhood canonical chain capture journal', () => {
 
   it('commits a contiguous block batch atomically and advances one canonical frontier', async () => {
     const journal = createRobinhoodChainCaptureJournal();
+    let timing;
     const next = capture(101, NEXT_HASH, HASH);
     next.transactions[0].hash = NEXT_TX;
     next.events[0].transactionHash = NEXT_TX;
@@ -1121,11 +1122,17 @@ describe('Robinhood canonical chain capture journal', () => {
       'SELECT COUNT(*)::int AS blocks FROM robinhood_chain_blocks'
     )).rows[0].blocks, 0);
 
-    assert.deepEqual(await journal.commitBlocks([capture(), next]), [{
+    assert.deepEqual(await journal.commitBlocks([capture(), next], {
+      onTiming: (value) => { timing = value; },
+    }), [{
       status: 'committed', transactions: 1, events: 1, v3Snapshots: 0, workItems: 1,
     }, {
       status: 'committed', transactions: 1, events: 1, v3Snapshots: 0, workItems: 1,
     }]);
+    for (const phase of ['connectionMs', 'cursorLockMs', 'blocksMs', 'transactionsMs',
+      'eventsMs', 'outboxMs', 'notifyMs', 'commitMs', 'totalMs']) {
+      assert.equal(Number.isFinite(timing[phase]), true, phase);
+    }
     const counts = await db.query(
       `SELECT (SELECT COUNT(*)::int FROM robinhood_chain_blocks) AS blocks,
               (SELECT COUNT(*)::int FROM robinhood_chain_transactions) AS transactions,

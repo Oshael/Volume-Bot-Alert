@@ -188,6 +188,17 @@ function createHeadSubscription(url, onHead, options = {}) {
   };
 }
 
+function addCaptureTimingTotals(totals, timing) {
+  totals.batches += 1;
+  totals.blocks += timing.blocks;
+  for (const phase of ['fetchMs', 'trackerPrepareMs', 'snapshotMs', 'commitMs', 'totalMs']) {
+    totals[phase] += timing[phase];
+  }
+  for (const [phase, ms] of Object.entries(timing.journal || {})) {
+    totals.journal[phase] = (totals.journal[phase] || 0) + ms;
+  }
+}
+
 function createRobinhoodChainCaptureWorker(deps, options = {}) {
   if (typeof deps.v3Snapshotter?.captureBlock !== 'function') {
     throw new Error('v3Snapshotter.captureBlock is required');
@@ -208,6 +219,8 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     nodeHeadObservedAt: null, lastRunAt: null, lastProgressAt: null,
     lastCompletedAt: null, inFlight: false, totalErrors: 0, consecutiveErrors: 0,
     lastTiming: null, halted: false, recoveryState: null, recoveryPlan: null,
+    timingTotals: { batches: 0, blocks: 0, fetchMs: 0, trackerPrepareMs: 0,
+      snapshotMs: 0, commitMs: 0, totalMs: 0, journal: {} },
     generation: null, blocks: 0, transactions: 0, events: 0,
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
     fetchConcurrency, snapshotConcurrency };
@@ -337,9 +350,11 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     }
     const commitStartedAt = now();
     let results;
+    let journalTiming = null;
     if (typeof deps.journal.commitBlocks === 'function') {
       results = await deps.journal.commitBlocks(
-        prepared.map(({ input }) => input), { expectedGeneration: generation }
+        prepared.map(({ input }) => input), { expectedGeneration: generation,
+          onTiming: (timing) => { journalTiming = timing; } }
       );
     } else {
       results = [];
@@ -364,18 +379,22 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     const commitMs = committedAt - commitStartedAt;
     status.lastProgressAt = committedAt.toISOString();
     recordFrontier(nodeHead, nextBlock);
+    const fetchMs = Math.max(...prepared.map((entry) => entry.receiptsAvailableAt - entry.startedAt));
+    const totalMs = committedAt - prepared[0].startedAt;
     status.lastTiming = {
       blocks: prepared.length,
-      fetchMs: Math.max(...prepared.map((entry) => entry.receiptsAvailableAt - entry.startedAt)),
+      fetchMs,
       trackerPrepareMs,
       snapshotMs,
       commitMs,
       commitPerBlockMs: Number((commitMs / prepared.length).toFixed(2)),
-      totalMs: committedAt - prepared[0].startedAt,
+      totalMs,
+      journal: journalTiming,
       headToCommitMs: Math.max(
         0, committedAt - new Date(status.lastHeadObservedAt || prepared[0].startedAt)
       ),
     };
+    addCaptureTimingTotals(status.timingTotals, status.lastTiming);
     return nextBlock;
   }
   async function drainCapture(nextBlock, through, nodeHead, generation, checkpointHash) {

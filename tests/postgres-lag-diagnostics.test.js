@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  nonnegativeDelta, parseArgs, processingSql, sampleRates, statementDeltas, summarize, tableDeltas,
+  captureSummary, nonnegativeDelta, parseArgs, processingSql, sampleRates,
+  statementDeltas, summarize, tableDeltas,
 } = require('../src/utils/collect-postgres-lag-diagnostics');
 
 function sample(at, overrides = {}) {
@@ -117,6 +118,34 @@ describe('PostgreSQL lag diagnostics', () => {
       average: 30, p50: 20, p95: 40, max: 40,
     });
     assert.equal(result.netCatchupBlocksPerSecond.average, 2);
+  });
+
+  it('summarizes capture progress and phase deltas across a worker restart', () => {
+    const capture = (checkpoint, head, owner, batches, blocks, commitMs) => ({
+      checkpoint_block: String(checkpoint), owner_id: owner,
+      metadata: { nodeHead: String(head), totalErrors: 0, timingTotals: {
+        batches, blocks, fetchMs: 20, trackerPrepareMs: 0, snapshotMs: 10,
+        commitMs, totalMs: commitMs + 30,
+        journal: { notifyMs: commitMs / 2, commitMs: commitMs / 2 },
+      } },
+    });
+    const samples = [
+      sample('2026-09-17T10:00:00Z', { capture: capture(100, 200, 'a', 2, 20, 200) }),
+      sample('2026-09-17T10:00:10Z', { capture: capture(110, 220, 'a', 3, 30, 300) }),
+      sample('2026-09-17T10:00:20Z', { capture: capture(112, 230, 'b', 1, 2, 20) }),
+      sample('2026-09-17T10:00:30Z', { capture: capture(120, 240, 'b', 2, 10, 100) }),
+    ];
+    const result = captureSummary(samples);
+    assert.equal(result.capturedBlocks, 20);
+    assert.equal(result.nodeHeadBlocks, 40);
+    assert.equal(result.lagDelta, 20);
+    assert.equal(result.netCatchupBlocksPerSecond, -2 / 3);
+    assert.equal(result.timingIntervals, 2);
+    assert.equal(result.timingTotals.blocks, 18);
+    assert.equal(result.timingTotals.commitMs, 180);
+    assert.equal(result.timingTotals.journal.notifyMs, 90);
+    assert.equal(result.errorsDelta, null);
+    assert.equal(captureSummary(samples.slice(0, 1)).timingTotals, null);
   });
 
   it('measures reported, active, and immediately claimable processing frontiers', () => {
