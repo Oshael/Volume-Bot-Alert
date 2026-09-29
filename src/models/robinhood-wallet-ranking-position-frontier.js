@@ -2,6 +2,8 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const TIMEOUT_MS = 5000;
+const LATEST_AS_OF_SQL = `SELECT next_block_time FROM robinhood_wallet_position_cursors
+  WHERE chain='${CHAIN}' AND projection_version=$1 AND stream='live'`;
 
 const FRONTIER_SQL = `SELECT cursor.stream, cursor.lifecycle_state,
     cursor.origin_block, cursor.next_block, cursor.safe_head,
@@ -86,6 +88,13 @@ function assess(seed, live, asOf) {
 function createRobinhoodWalletRankingPositionFrontierRepository(options = {}) {
   const database = options.database || db;
   return {
+    async latestAsOf(projectionVersion) {
+      const result = await database.queryWithStatementTimeout(
+        LATEST_AS_OF_SQL, [version(projectionVersion)], TIMEOUT_MS,
+      );
+      const value = result.rows[0]?.next_block_time;
+      return value == null ? null : new Date(value).toISOString();
+    },
     async inspectAsOf(input = {}) {
       const projectionVersion = version(input.projectionVersion);
       const asOf = new Date(input.asOf);

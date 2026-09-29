@@ -35,6 +35,7 @@ const searchRoutes = require('./routes/search');
 const calloutEnrichmentRoutes = require('./routes/callout-enrichment');
 const robinhoodTradesRoutes = require('./routes/robinhood-trades');
 const robinhoodHoldersRoutes = require('./routes/robinhood-holders');
+const robinhoodWalletRankingRoutes = require('./routes/robinhood-wallet-ranking');
 const tokenGateRoutes = require('./routes/token-gate');
 const xProfileRoutes = require('./routes/x-profile');
 const telegramRoutes = require('./routes/telegram');
@@ -320,6 +321,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/callouts', defaultApiLimiter, calloutEnrichmentRoutes);
 app.use('/api/robinhood', defaultApiLimiter, robinhoodTradesRoutes);
 app.use('/api/robinhood', defaultApiLimiter, robinhoodHoldersRoutes);
+app.use('/api/robinhood', defaultApiLimiter, robinhoodWalletRankingRoutes);
 app.use('/api/x-profile', xProfileLimiter, xProfileRoutes);
 app.use('/api/telegram', defaultApiLimiter, telegramRoutes);
 

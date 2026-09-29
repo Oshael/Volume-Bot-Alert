@@ -374,7 +374,9 @@ dependem do seed continuam incompletos. R3 compõe o ranking interno no mesmo
 snapshot, em lotes limitados, e só ordena wallets quando a travessia global
 termina. Decimais ausentes nos swaps duráveis tornam a posição parcial. O limite
 de 1.000 posições não foi ampliado; planos de consulta e dados reais ainda
-precisam ser medidos antes disso. O próximo corte é R4.
+precisam ser medidos antes disso. R4 expõe `/api/robinhood/top-wallets` com
+autenticação, paginação estável até o top 100, cobertura e perfis com vínculo RH
+explícito. O próximo corte é R5.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI. R2c acrescenta uma migration; não há novo worker
 nem polling previstos.

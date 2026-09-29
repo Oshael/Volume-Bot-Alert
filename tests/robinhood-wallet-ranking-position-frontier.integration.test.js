@@ -1,7 +1,7 @@
 process.env.NODE_ENV = 'test';
 
 const assert = require('node:assert/strict');
-const { describe, it } = require('node:test');
+const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -15,6 +15,8 @@ const HASH = `0x${'a'.repeat(64)}`;
 const OTHER_HASH = `0x${'b'.repeat(64)}`;
 
 describe('Robinhood ranking position frontier', () => {
+  after(async () => db.pool.end());
+
   it('requires seed/live continuity, exact time, and the checkpoint hash on the canonical branch', async () => {
     await assertUsingTestDatabase(db);
     const client = await db.getClient();
@@ -44,6 +46,7 @@ describe('Robinhood ranking position frontier', () => {
         database: { queryWithStatementTimeout: (sql, params) => client.query(sql, params) },
       });
       const aligned = await repository.inspectAsOf({ projectionVersion: VERSION, asOf: AS_OF });
+      assert.equal(await repository.latestAsOf(VERSION), AS_OF);
       assert.equal(aligned.frontierChecksPassed, true);
       assert.equal(aligned.frontierBlock, '105');
       assert.equal(aligned.frontierTime, AS_OF);

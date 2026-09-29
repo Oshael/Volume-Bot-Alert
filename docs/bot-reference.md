@@ -4744,6 +4744,15 @@ em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do
 ranking exato. Ao atingir o limite do universo, não publica posições ordenadas
 como ranking global e retorna cobertura parcial.
+`GET /api/robinhood/top-wallets` exige autenticação e rede RH visível. Aceita
+`window` (24h/7d/30d/ALL), `asOf` opcional (checkpoint atual da projeção),
+`limit` até 50 e cursor; responde com cobertura, motivos, exclusões, `asOf`
+e até 100 wallets ranqueadas em páginas;
+`rankingListTruncated` informa se há mais wallets elegíveis fora desse top 100,
+ou é `null` se o universo ficou incompleto. Cada página recompõe o ranking;
+mudanças na ordem ou cobertura invalidam o cursor com 409. Perfis são opcionais
+e só usam vínculos com `chain_key='robinhood'`; falha desse enriquecimento não
+muda o ganho.
 
 A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor histórico
 retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,
