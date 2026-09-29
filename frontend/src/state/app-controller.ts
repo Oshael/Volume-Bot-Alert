@@ -125,6 +125,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent, type MarketLiquidityUpdateEvent, type RobinhoodHolderCountEvent, type RobinhoodHolderInvalidateEvent } from '../services/socket/client';
+import { invalidateRobinhoodTopWalletsSection, recoverRobinhoodTopWalletsSection } from '../ui/sections/robinhood-top-wallets-section';
 import {
   recordAlertApplied,
   recordHolderApplied,
@@ -10174,6 +10175,12 @@ export function createAppController(): AppController {
 
   function connectRealtime() {
     bindSocketLifecycle({
+      onWalletRankingInvalidate(event) {
+        invalidateRobinhoodTopWalletsSection(state, event);
+      },
+      onWalletRankingRecover() {
+        recoverRobinhoodTopWalletsSection(state);
+      },
       onStatus(message) {
         if (Date.now() < suppressSocketStatusNoticeUntil && message.startsWith('Socket disconnected:')) {
           return;
@@ -10271,7 +10278,9 @@ export function createAppController(): AppController {
       startMonitoringTimers();
     }
 
-    if (shouldUseBackendOwnedMonitoredAlerts()) {
+    if (shouldUseBackendOwnedMonitoredAlerts()
+      || (isHistoryWorkspace() && state.data.availableChains.includes('robinhood')
+        && state.data.chainReadiness.robinhood?.capabilities.history === true)) {
       connectRealtime();
     } else {
       suppressSocketStatusNoticeUntil = Date.now() + 2000;

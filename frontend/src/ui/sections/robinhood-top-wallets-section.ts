@@ -8,6 +8,7 @@ import {
   type TopWalletWindow,
 } from '../../services/api/robinhood-top-wallets';
 import { formatRankingGain, rankingIsPartial } from '../../utils/robinhood-top-wallets';
+import { createWalletRankingRefreshGate, type WalletRankingInvalidation } from '../../utils/robinhood-ranking-refresh';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 
 const WINDOWS: TopWalletWindow[] = ['24h', '7d', '30d', 'ALL'];
@@ -24,6 +25,7 @@ interface RankingView {
   token: string | null;
   revision: number;
   section: HTMLElement | null;
+  refreshGate: ReturnType<typeof createWalletRankingRefreshGate>;
 }
 
 const views = new WeakMap<AppState, RankingView>();
@@ -33,10 +35,15 @@ function viewFor(state: AppState): RankingView {
   if (!view) {
     view = { window: '24h', pageIndex: 0, cursors: [null], asOf: null, page: null,
       loading: false, error: null, token: state.session.token, revision: 0,
-      section: null };
+      section: null, refreshGate: null as unknown as RankingView['refreshGate'] };
+    const current = view;
+    current.refreshGate = createWalletRankingRefreshGate(() => {
+      if (current.section?.isConnected && available(state)) return load(state, current);
+    });
     views.set(state, view);
   }
   if (view.token !== state.session.token) {
+    view.refreshGate.clear();
     view.token = state.session.token;
     view.pageIndex = 0;
     view.cursors = [null];
@@ -174,7 +181,7 @@ async function load(state: AppState, view: RankingView) {
         : 'Could not load wallet ranking. Please refresh.';
     }
   } finally {
-    if (revision === view.revision || !view.loading) {
+    if (revision === view.revision) {
       view.loading = false;
       draw(state, view);
     }
@@ -237,4 +244,20 @@ export function renderRobinhoodTopWalletsSection(state: AppState, controller: Ap
   draw(state, view);
   if (!view.page && !view.loading && !view.error) void load(state, view);
   return section;
+}
+
+export function invalidateRobinhoodTopWalletsSection(state: AppState, event: WalletRankingInvalidation) {
+  const view = views.get(state);
+  if (!view || view.token !== state.session.token) return;
+  if (!view.refreshGate.accept(event)) return;
+  reset(view);
+  if (view.section?.isConnected) draw(state, view);
+}
+
+export function recoverRobinhoodTopWalletsSection(state: AppState) {
+  const view = views.get(state);
+  if (!view || view.token !== state.session.token) return;
+  reset(view);
+  if (view.section?.isConnected) draw(state, view);
+  view.refreshGate.recover();
 }

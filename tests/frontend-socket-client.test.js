@@ -219,6 +219,29 @@ describe('frontend socket market subscriptions', () => {
     assert.equal(recoveries, 1);
   });
 
+  it('dispatches valid ranking invalidations and recovers once after socket reconnect', () => {
+    const received = [];
+    let recoveries = 0;
+    client.bindSocketLifecycle({
+      onRevoked() {},
+      onWalletRankingInvalidate: (event) => received.push(event),
+      onWalletRankingRecover: () => { recoveries += 1; },
+    });
+    const event = {
+      type: 'wallet-ranking:invalidate', chain: 'robinhood', version: 1,
+      revisions: { positions: '3' }, publishedAt: '2026-09-29T12:00:00.000Z',
+    };
+    socket.trigger('wallet-ranking:invalidate', event);
+    socket.trigger('wallet-ranking:invalidate', { ...event, chain: 'solana' });
+    assert.deepEqual(received, [event]);
+    socket.trigger('connect');
+    assert.equal(recoveries, 0);
+    socket.trigger('disconnect', 'transport close');
+    socket.trigger('connect');
+    socket.trigger('connect');
+    assert.equal(recoveries, 1);
+  });
+
   it('dispatches ordered holder events and requests REST recovery after reconnect', () => {
     const counts = [];
     const invalidations = [];

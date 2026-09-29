@@ -2734,6 +2734,57 @@ test('renders one globally paginated Robinhood Radar table with age colors and f
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('refreshes the selected Top Wallets period from socket without reusing an old page cursor', async ({ page }) => {
+  const socketScenario = { socket: null, clientFrames: [] };
+  const reads = [];
+  let releaseOldPage;
+  const fixtures = {
+    ...ROBINHOOD_RADAR_API_FIXTURES,
+    'GET /api/robinhood/top-wallets': (request) => {
+      const query = new URL(request.url()).searchParams;
+      reads.push({ window: query.get('window'), asOf: query.get('asOf'), cursor: query.get('cursor') });
+      const secondPage = query.get('cursor') === 'page-2';
+      const address = secondPage ? ROBINHOOD_OLD : ROBINHOOD_DEV;
+      const response = {
+        chainKey: 'robinhood', window: query.get('window'),
+        asOf: '2026-09-29T12:00:00.000Z', coverage: 'complete',
+        rankingIsComplete: true, reasons: [], excludedWalletCount: 0,
+        rankingListTruncated: false, profileStatus: 'available',
+        items: [{ rank: secondPage ? 2 : 1, chainKey: 'robinhood',
+          walletAddress: address, gainUsd: '12.50', openPositionCount: 1,
+          profile: { platform: 'Robinhood', displayName: secondPage ? 'Page Two' : 'Page One',
+            username: null, profilePictureUrl: null } }],
+        hasMore: !secondPage, nextCursor: secondPage ? null : 'page-2',
+      };
+      if (secondPage) return new Promise((resolve) => {
+        releaseOldPage = () => resolve(response);
+      });
+      return response;
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures, '/radar', socketScenario);
+  const ranking = page.locator('.radar-top-wallets');
+  await expect(ranking).toContainText('Page One');
+  await ranking.locator('[data-top-window="7d"]').click();
+  await expect.poll(() => reads.some((read) => read.window === '7d' && !read.cursor)).toBe(true);
+  await ranking.locator('[data-top-next]').click();
+  await expect.poll(() => reads.some((read) => read.cursor === 'page-2')).toBe(true);
+  const countBefore = reads.length;
+  await expect.poll(() => Boolean(socketScenario.socket)).toBe(true);
+  sendSocketEvent(socketScenario, 'wallet-ranking:invalidate', {
+    type: 'wallet-ranking:invalidate', chain: 'robinhood', version: 1,
+    revisions: { positions: '1' }, publishedAt: '2026-09-29T12:00:00.000Z',
+  });
+  await expect.poll(() => reads.length).toBe(countBefore + 1);
+  releaseOldPage();
+  await expect(ranking).toContainText('Page One');
+  await expect(ranking).not.toContainText('Page Two');
+  await expect(ranking.locator('[data-top-window="7d"]')).toHaveAttribute('aria-pressed', 'true');
+  expect(reads.at(-1)).toEqual({ window: '7d', asOf: null, cursor: null });
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+});
+
 test('opens wallet trade history, filters and pages it, then restores Radar filters', async ({ page }) => {
   test.setTimeout(45_000);
   const requests = [];

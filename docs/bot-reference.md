@@ -1944,7 +1944,8 @@ de `radar-bootstrap`. Sem capacidade Robinhood disponível, a tabela informa
 indisponibilidade. O carregamento Solana continua alimentando consumidores
 internos, sem exibir as tabelas Recent/Old.
 Acima da tabela de tokens, o Radar mostra Top Wallets Robinhood com períodos
-24h/7d/30d/ALL, páginas de 25, atualização manual e link direto para a wallet.
+24h/7d/30d/ALL, páginas de 25, atualização automática por invalidação do
+ranking via WebSocket, atualização manual e link direto para a wallet.
 O painel usa o endpoint autenticado; quando a cobertura é parcial, identifica
 os ganhos listados como verificados e avisa que wallets e ordem podem faltar.
 Sem histórico RH pronto, o painel informa indisponibilidade e não consulta a API.
@@ -4762,8 +4763,12 @@ snapshot, não um ranking calculado no socket. Após conexão ou reconexão do
 listener, o relay compara a tabela durável e publica versões perdidas. Falhas
 de consulta ou emissão têm retry limitado a uma tentativa agendada por vez;
 o status `robinhoodWalletRankingRealtime` mostra listener, pendências, revisões,
-duplicatas, coalescência, publicações e falhas. O painel ainda não consome esse
-evento automaticamente; isso pertence ao próximo corte.
+duplicatas, coalescência, publicações e falhas. O painel descarta páginas e
+cursores antigos ao receber revisão nova, reconsulta o período selecionado com
+intervalo mínimo de 250 ms entre consultas automáticas e reconsulta após
+reconexão do socket. O socket permanece conectado no Radar Robinhood com
+histórico pronto. Sinais duplicados ou antigos não disparam nova consulta;
+respostas HTTP anteriores à invalidação são ignoradas.
 O ranking global lê até 1.000 posições abertas num snapshot, enriquece tokens
 em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do

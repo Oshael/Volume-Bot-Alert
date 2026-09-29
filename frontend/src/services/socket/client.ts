@@ -2,6 +2,7 @@ import { io, type Socket } from 'socket.io-client';
 import { resolveApiBase } from '../api/base';
 import type { DashboardAlertEvent } from '../api/catalog';
 import type { TokenChain } from '../../utils/token-chain';
+import { normalizeWalletRankingInvalidation, type WalletRankingInvalidation } from '../../utils/robinhood-ranking-refresh';
 import {
   createMarketEventOrderGate,
   markMarketBucketReceived,
@@ -30,6 +31,7 @@ import {
 export type { MarketBucketUpdateEvent, MarketTradeRealtimeEvent, MarketTradeUpdateEvent } from './market-events';
 export type { RobinhoodHolderCountEvent, RobinhoodHolderInvalidateEvent } from './holder-events';
 export type { MarketLiquidityUpdateEvent } from './liquidity-events';
+export type { WalletRankingInvalidation } from '../../utils/robinhood-ranking-refresh';
 
 let socket: Socket | null = null;
 const chartMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
@@ -55,6 +57,7 @@ let desiredLivePresence: {
 } | null = null;
 let liquidityRecoveryPending = false;
 let readinessRecoveryPending = false;
+let rankingRecoveryPending = false;
 let lastReadinessSignalSignature: string | null = null;
 
 export interface WorkspaceReadinessSignal {
@@ -145,6 +148,8 @@ export function bindSocketLifecycle(options: {
   onWorkspaceReadinessRecover?: () => void;
   onHolderCount?: (payload: RobinhoodHolderCountEvent) => void;
   onHolderInvalidate?: (payload: RobinhoodHolderInvalidateEvent) => void;
+  onWalletRankingInvalidate?: (payload: WalletRankingInvalidation) => void;
+  onWalletRankingRecover?: () => void;
 }) {
   const current = connectSocket();
 
@@ -162,12 +167,15 @@ export function bindSocketLifecycle(options: {
   current.off('market:trade:invalidate');
   current.off('holder:count');
   current.off('holder:invalidate');
+  current.off('wallet-ranking:invalidate');
 
   current.on('connect', () => {
     const shouldRecoverLiquidity = liquidityRecoveryPending;
     const shouldRecoverReadiness = readinessRecoveryPending;
+    const shouldRecoverRanking = rankingRecoveryPending;
     liquidityRecoveryPending = false;
     readinessRecoveryPending = false;
+    rankingRecoveryPending = false;
     if (desiredLivePresence) {
       current.emit('live:presence', desiredLivePresence);
     }
@@ -178,12 +186,14 @@ export function bindSocketLifecycle(options: {
     }
     if (shouldRecoverLiquidity) options.onMarketLiquidityRecover?.();
     if (shouldRecoverReadiness) options.onWorkspaceReadinessRecover?.();
+    if (shouldRecoverRanking) options.onWalletRankingRecover?.();
     options.onStatus?.('Socket connected.');
   });
 
   current.on('disconnect', (reason) => {
     liquidityRecoveryPending = true;
     readinessRecoveryPending = true;
+    rankingRecoveryPending = true;
     options.onStatus?.(`Socket disconnected: ${reason}`);
   });
 
@@ -223,6 +233,11 @@ export function bindSocketLifecycle(options: {
     if (!event || event.signature === lastReadinessSignalSignature) return;
     lastReadinessSignalSignature = event.signature;
     options.onWorkspaceReadiness?.(event);
+  });
+
+  current.on('wallet-ranking:invalidate', (payload: unknown) => {
+    const event = normalizeWalletRankingInvalidation(payload);
+    if (event) options.onWalletRankingInvalidate?.(event);
   });
 
   current.on('market:trade', (payload: unknown) => {
@@ -361,5 +376,6 @@ export function disconnectSocket() {
   socket?.disconnect();
   liquidityRecoveryPending = false;
   readinessRecoveryPending = false;
+  rankingRecoveryPending = false;
   lastReadinessSignalSignature = null;
 }

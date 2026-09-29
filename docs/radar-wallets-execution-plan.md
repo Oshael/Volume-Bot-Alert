@@ -421,8 +421,10 @@ swaps, preço de 1 minuto, agregado de mercado e rollback de reorg antes de
 considerar R5a.1 completo. Nenhuma dessas notificações substitui o snapshot
 autenticado do ranking.
 R5a.2 liga o canal ao processo web com coalescência por fonte, isolamento RH,
-telemetria e reconciliação das revisões após reconexão do listener. A UI ainda
-precisa reconsultar o endpoint no R5a.3.
+telemetria e reconciliação das revisões após reconexão do listener. R5a.3 liga
+o painel ao sinal, preserva o período selecionado, descarta cursores antigos e
+limita consultas automáticas a uma partida a cada 250 ms, inclusive após
+reconexão.
 O endpoint fixa `asOf` pelo cursor de posições. Uma alteração isolada de preço
 posterior a esse frontier pode não mudar o snapshot até o cursor avançar; medir
 e resolver essa dependência antes de afirmar latência de ponta a ponta em
