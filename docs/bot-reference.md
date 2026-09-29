@@ -1009,6 +1009,12 @@ do mesmo dono da lease; reinícios não misturam contadores. Se `pg_stat_stateme
 estiver disponível, o resumo final ordena
 queries pelo custo apenas da janela observada. Duração aceita `s`, `m` ou `h` (30 s a
 24 h); intervalo aceita 2 a 60 s. Falha isolada fica registrada e não encerra a coleta.
+O COMMIT do journal de captura traz um comentário SQL identificador. O coletor
+amostra o backend desse COMMIT e os bloqueadores diretos em `pg_stat_activity`;
+`chainCapture.commitWaits` conta amostras por tipo de espera, inclusive as dos
+bloqueadores sem outros bloqueios. `taggedSamples=0` significa que nenhum COMMIT
+foi observado nas amostras, não que o COMMIT esteve livre de espera. O worker e
+o coletor precisam estar na versão instrumentada durante a mesma janela.
 O relatório contém textos SQL observados e deve ser tratado como arquivo operacional sensível.
 Não transfira o JSONL bruto por padrão. Depois da coleta, rode
 `npm run diagnose:postgres-lag:summary -- --input=/var/tmp/postgres-lag.jsonl`; o comando lê o

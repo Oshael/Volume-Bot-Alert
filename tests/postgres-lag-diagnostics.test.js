@@ -130,8 +130,17 @@ describe('PostgreSQL lag diagnostics', () => {
       } },
     });
     const samples = [
-      sample('2026-09-17T10:00:00Z', { capture: capture(100, 200, 'a', 2, 20, 200) }),
-      sample('2026-09-17T10:00:10Z', { capture: capture(110, 220, 'a', 3, 30, 300) }),
+      sample('2026-09-17T10:00:00Z', {
+        capture: capture(100, 200, 'a', 2, 20, 200),
+        captureCommit: { waitEventType: 'Lock', waitEvent: 'object', queryMs: 8000,
+          blockers: [{ waitEventType: 'LWLock', waitEvent: 'WALWrite', blockedByCount: 0 },
+            { waitEventType: 'Lock', waitEvent: 'object', blockedByCount: 1 }] },
+      }),
+      sample('2026-09-17T10:00:10Z', {
+        capture: capture(110, 220, 'a', 3, 30, 300),
+        captureCommit: { waitEventType: 'LWLock', waitEvent: 'WALWrite',
+          queryMs: 4000, blockers: [] },
+      }),
       sample('2026-09-17T10:00:20Z', { capture: capture(112, 230, 'b', 1, 2, 20) }),
       sample('2026-09-17T10:00:30Z', { capture: capture(120, 240, 'b', 2, 10, 100) }),
     ];
@@ -145,6 +154,11 @@ describe('PostgreSQL lag diagnostics', () => {
     assert.equal(result.timingTotals.commitMs, 180);
     assert.equal(result.timingTotals.journal.notifyMs, 90);
     assert.equal(result.errorsDelta, null);
+    assert.equal(result.commitWaits.taggedSamples, 2);
+    assert.equal(result.commitWaits.waitSampleCounts['Lock:object'], 1);
+    assert.equal(result.commitWaits.waitSampleCounts['LWLock:WALWrite'], 1);
+    assert.equal(result.commitWaits.rootBlockerWaitSampleCounts['LWLock:WALWrite'], 1);
+    assert.equal(result.commitWaits.maxQueryMs, 8000);
     assert.equal(captureSummary(samples.slice(0, 1)).timingTotals, null);
   });
 

@@ -130,6 +130,32 @@ const CAPTURE_SQL = `SELECT clock_timestamp() AS observed_at,
   LEFT JOIN worker_leases lease ON lease.lease_key='robinhood-chain-capture-worker'
  WHERE cursor.chain='robinhood'`;
 
+const CAPTURE_COMMIT_SQL = `WITH captured AS MATERIALIZED (
+  SELECT pid, wait_event_type, wait_event,
+         EXTRACT(EPOCH FROM (clock_timestamp()-query_start))*1000 AS query_ms,
+         pg_blocking_pids(pid) AS blocking_pids
+    FROM pg_stat_activity
+   WHERE datname=current_database() AND state='active'
+     AND query LIKE 'COMMIT /* robinhood-chain-capture */%'
+   ORDER BY query_start LIMIT 1
+)
+SELECT jsonb_build_object(
+  'pid', captured.pid, 'waitEventType', captured.wait_event_type,
+  'waitEvent', captured.wait_event, 'queryMs', captured.query_ms,
+  'blockers', COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'pid', blocker.pid, 'waitEventType', blocker.wait_event_type,
+      'waitEvent', blocker.wait_event, 'blockedByCount', blocker.blocked_by_count
+    )) FROM (
+      SELECT pid, wait_event_type, wait_event,
+             cardinality(pg_blocking_pids(pid)) AS blocked_by_count
+        FROM pg_stat_activity
+       WHERE pid=ANY(captured.blocking_pids)
+       ORDER BY pid LIMIT 20
+    ) blocker
+  ), '[]'::jsonb)
+) AS value FROM captured`;
+
 const TABLE_SQL = `SELECT relname,
   n_live_tup::text, n_dead_tup::text, n_tup_ins::text, n_tup_upd::text, n_tup_del::text,
   vacuum_count::text, autovacuum_count::text, analyze_count::text, autoanalyze_count::text,
@@ -214,16 +240,19 @@ async function collectSample(client, capabilities, previous) {
     [capabilities.processing_authority], errors
   );
   const capture = await probe(client, 'capture', CAPTURE_SQL, [], errors);
+  const captureCommit = await probe(client, 'captureCommit', CAPTURE_COMMIT_SQL, [], errors);
   const tables = await probe(client, 'tables', TABLE_SQL, [], errors);
   const sampledAt = system.value[0]?.sampled_at || new Date().toISOString();
   const sample = {
     type: 'sample', sampledAt, system: system.value[0] || {},
     activity: activity.value[0]?.value || {}, vacuums: vacuums.value[0]?.value || [],
     processing: processing.value[0]?.value || {}, capture: capture.value[0] || null,
+    captureCommit: captureCommit.value[0]?.value || null,
     tables: tables.value,
     probeDurationMs: { system: system.durationMs, activity: activity.durationMs,
       vacuums: vacuums.durationMs, processing: processing.durationMs,
-      capture: capture.durationMs, tables: tables.durationMs },
+      capture: capture.durationMs, captureCommit: captureCommit.durationMs,
+      tables: tables.durationMs },
     errors,
   };
   sample.rates = sampleRates(previous, sample);
@@ -431,6 +460,27 @@ function captureTimingTotals(points) {
   return { timingIntervals, timingTotals: timingIntervals ? totals : null };
 }
 
+function captureWaitName(entry) {
+  return entry.waitEventType && entry.waitEvent
+    ? `${entry.waitEventType}:${entry.waitEvent}` : 'NoWait:unclassified';
+}
+
+function captureCommitWaitSummary(samples) {
+  const observed = samples.map((sample) => sample.captureCommit).filter(Boolean);
+  const blockers = (sample) => sample.blockers || [];
+  return {
+    taggedSamples: observed.length,
+    waitSampleCounts: observedCounts(observed, (sample) => [sample], captureWaitName),
+    blockerWaitSampleCounts: observedCounts(observed, blockers, captureWaitName),
+    rootBlockerWaitSampleCounts: observedCounts(
+      observed, (sample) => blockers(sample).filter((blocker) => blocker.blockedByCount === 0),
+      captureWaitName
+    ),
+    maxQueryMs: observed.length ? Math.max(...observed.map((sample) => number(sample.queryMs)))
+      : null,
+  };
+}
+
 function captureSummary(samples) {
   const points = samples.filter((sample) => sample.capture?.checkpoint_block != null);
   if (!points.length) return null;
@@ -440,6 +490,7 @@ function captureSummary(samples) {
     startedAt: first.capture.observed_at || first.sampledAt,
     completedAt: last.capture.observed_at || last.sampledAt,
     samples: points.length, ...captureProgress(first, last), ...captureTimingTotals(points),
+    commitWaits: captureCommitWaitSummary(samples),
     errorsDelta: first.capture.owner_id && first.capture.owner_id === last.capture.owner_id
       ? nonnegativeDelta(first.capture.metadata?.totalErrors, last.capture.metadata?.totalErrors)
       : null,
@@ -549,6 +600,7 @@ if (require.main === module) main().catch((error) => {
 });
 
 module.exports = {
+  CAPTURE_COMMIT_SQL,
   collectSample, main, nonnegativeDelta, parseArgs, run, sampleRates,
   captureSummary, processingSql, statementDeltas, summarize, tableDeltas, walletTransferSummary,
 };

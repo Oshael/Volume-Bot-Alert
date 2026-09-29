@@ -551,7 +551,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         );
       }
       mark('notifyMs');
-      await client.query('COMMIT');
+      await client.query('COMMIT /* robinhood-chain-capture */');
       mark('commitMs');
       timing.totalMs = performance.now() - startedAt;
       publishCaptureTiming(options.onTiming, timing);
