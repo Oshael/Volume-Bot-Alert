@@ -1942,6 +1942,11 @@ consultado apenas para Solana selecionada e pronta; Robinhood vem exclusivamente
 de `radar-bootstrap`. Sem capacidade Robinhood disponível, a tabela informa
 indisponibilidade. O carregamento Solana continua alimentando consumidores
 internos, sem exibir as tabelas Recent/Old.
+Acima da tabela de tokens, o Radar mostra Top Wallets Robinhood com períodos
+24h/7d/30d/ALL, páginas de 25, atualização manual e link direto para a wallet.
+O painel usa o endpoint autenticado; quando a cobertura é parcial, identifica
+os ganhos listados como verificados e avisa que wallets e ordem podem faltar.
+Sem histórico RH pronto, o painel informa indisponibilidade e não consulta a API.
 Os filtros persistentes do Radar (favoritos, tamanho da página, ordem, idade,
 MCAP e FDV) ficam em `uiPrefs.radar`; busca e página atual são transitórias. Para
 preferências anteriores, o filtro único de favoritos herda Recent ou Old, e

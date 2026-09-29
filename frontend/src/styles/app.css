@@ -10181,6 +10181,37 @@ button,
 .unified-radar-bar .token-table.unified tr.radar-age-recent .token-symbol { color: #00ff88; }
 .unified-radar-bar .token-table.unified tr.radar-age-old .token-symbol { color: #ff8c00; }
 .unified-radar-bar .token-table.unified tr.radar-age-unknown .token-symbol { color: #d8e1ea; }
+.radar-overview { display: grid; gap: 12px; }
+.radar-top-wallets { min-width: 0; }
+.radar-top-head { justify-content: flex-start; }
+.radar-top-head .legacy-bar-title { margin-right: auto; }
+.radar-top-controls { display: flex; gap: 4px; flex-wrap: wrap; }
+.radar-top-controls button, .radar-top-head [data-top-refresh], .radar-top-pages button,
+.radar-top-wallet button { background: var(--surface); color: #edf2f7;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+.radar-top-controls [aria-pressed="true"] { border-color: #00ff88; color: #00ff88; }
+.radar-top-wallets button:disabled { opacity: .5; cursor: default; }
+.radar-top-meta, .radar-top-pages { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; color: #aebbc9; font-size: 11px; }
+.radar-top-coverage { color: #00ff88; font-weight: 700; }
+.radar-top-coverage.is-partial, .radar-top-caveat { color: #ffd15d; }
+.radar-top-caveat, .radar-top-message { margin: 0; padding: 10px 14px; font-size: 12px; }
+.radar-top-scroll { overflow-x: auto; }
+.radar-top-wallets table { width: 100%; border-collapse: collapse; min-width: 440px; }
+.radar-top-wallets th, .radar-top-wallets td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.12); text-align: left; }
+.radar-top-wallets th:last-child, .radar-top-gain { text-align: right; white-space: nowrap; }
+.radar-top-rank { color: #aebbc9; width: 35px; }
+.radar-top-wallet { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.radar-top-wallet-label { display: grid; min-width: 0; }
+.radar-top-wallet-label a { color: #edf2f7; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+.radar-top-wallet-label small { color: #aebbc9; white-space: nowrap; }
+.radar-top-avatar { width: 30px; height: 30px; border-radius: 50%; flex: 0 0 auto;
+  display: grid; place-items: center; background: rgba(0,204,102,.13); color: #00ff88; overflow: hidden; }
+.radar-top-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.radar-top-explorer { color: #aebbc9; text-decoration: none; }
+.radar-top-gain { color: #00ff88; font-variant-numeric: tabular-nums; }
+.radar-top-gain.is-negative { color: #ff6f78; }
+@media (min-width: 880px) { .radar-top-wallets { width: calc(50% - 6px); } }
 .radar-wallet-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .radar-wallet-head code { color: #d8e1ea; font-size: 12px; }
 .radar-wallet-head button, .radar-wallet-head a,

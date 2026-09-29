@@ -1,7 +1,8 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: tabela unificada Robinhood disponível; feed de swaps por wallet na API e
-rota direta de compras/vendas disponíveis; rankings e demais detalhes pendentes.
+Status: tabela unificada Robinhood e painel Top Wallets disponíveis; feed de swaps
+por wallet na API e rota direta de compras/vendas disponíveis. Tabela de maiores
+altas e detalhes completos de wallet/token ainda pendentes.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -376,7 +377,7 @@ termina. Decimais ausentes nos swaps duráveis tornam a posição parcial. O lim
 de 1.000 posições não foi ampliado; planos de consulta e dados reais ainda
 precisam ser medidos antes disso. R4 expõe `/api/robinhood/top-wallets` com
 autenticação, paginação estável até o top 100, cobertura e perfis com vínculo RH
-explícito. O próximo corte é R5.
+explícito. R5 conecta o painel Top Wallets à API e preserva os estados de cobertura.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI. R2c acrescenta uma migration; não há novo worker
 nem polling previstos.
