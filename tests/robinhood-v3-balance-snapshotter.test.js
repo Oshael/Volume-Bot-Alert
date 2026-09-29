@@ -5,6 +5,7 @@ const { describe, it } = require('node:test');
 
 const fixture = require('../data/fixtures/robinhood-uniswap-v3.json');
 const { MULTICALL3_ADDRESS } = require('../src/services/evm-erc20-metadata');
+const { createUniswapV3Tracker } = require('../src/services/uniswap-v3-decoder');
 const {
   createRobinhoodV3BalanceSnapshotter,
 } = require('../src/services/robinhood-v3-balance-snapshotter');
@@ -89,9 +90,11 @@ describe('Robinhood V3 balance snapshotter', () => {
         ]);
       } },
     });
-    const batch = snapshotter.beginBatch();
-    const created = batch.prepareBlock(capture([event(fixture.poolCreated)]));
-    const swapped = batch.prepareBlock(capture([event(fixture.swap)]));
+    const createdCapture = capture([event(fixture.poolCreated)]);
+    const swappedCapture = capture([event(fixture.swap)]);
+    const batch = snapshotter.beginBatch([createdCapture, swappedCapture]);
+    const created = batch.prepareBlock(createdCapture);
+    const swapped = batch.prepareBlock(swappedCapture);
     assert.deepEqual(tags, []);
     assert.equal(snapshotter.getTrackedPoolCount(), 0);
     const result = await swapped();
@@ -99,6 +102,27 @@ describe('Robinhood V3 balance snapshotter', () => {
     assert.equal(result.snapshots[0].poolAddress, fixture.expected.pool);
     assert.deepEqual((await created()).snapshots, []);
     batch.commit();
+    assert.equal(snapshotter.getTrackedPoolCount(), 1);
+  });
+
+  it('reuses the tracked pools without copying them for a swap-only batch', async () => {
+    const tracker = createUniswapV3Tracker({ seedPools: [{
+      poolAddress: fixture.expected.pool, tokenAddress: fixture.expected.token1,
+      quoteAddress: fixture.expected.token0, quoteIndex: 0, fee: fixture.expected.fee,
+    }] });
+    const snapshotter = createRobinhoodV3BalanceSnapshotter({
+      rpcClient: { request: async () => aggregateResult([
+        { success: true, returnData: `0x${word(10n)}` },
+        { success: true, returnData: `0x${word(20n)}` },
+      ]) },
+    }, { tracker: { ...tracker, getTrackedPools: () => {
+      throw new Error('swap-only batch copied the tracker');
+    } } });
+    const input = capture([event(fixture.swap)]);
+    const batch = snapshotter.beginBatch([input]);
+    const result = await batch.prepareBlock(input)();
+    batch.commit();
+    assert.equal(result.snapshots[0].tokenBalanceRaw, '10');
     assert.equal(snapshotter.getTrackedPoolCount(), 1);
   });
 

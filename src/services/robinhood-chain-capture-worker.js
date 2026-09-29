@@ -314,7 +314,9 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     return results;
   }
   async function commitBlockBatch(fetched, nodeHead, generation) {
-    const v3Batch = deps.v3Snapshotter.beginBatch?.();
+    const trackerStartedAt = now();
+    const v3Batch = deps.v3Snapshotter.beginBatch?.(fetched.map(({ capture }) => capture));
+    const trackerPrepareMs = now() - trackerStartedAt;
     const snapshotStartedAt = now();
     const snapshots = await captureSnapshots(fetched, v3Batch);
     const snapshotMs = now() - snapshotStartedAt;
@@ -365,6 +367,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     status.lastTiming = {
       blocks: prepared.length,
       fetchMs: Math.max(...prepared.map((entry) => entry.receiptsAvailableAt - entry.startedAt)),
+      trackerPrepareMs,
       snapshotMs,
       commitMs,
       commitPerBlockMs: Number((commitMs / prepared.length).toFixed(2)),

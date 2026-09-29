@@ -53,6 +53,13 @@ function historicalStateUnavailable(error) {
     && /historical state is not available/i.test(String(error.rpcMessage || ''));
 }
 
+function hasPoolCreation(captures) {
+  return captures.some((capture) => (capture.events || []).some((event) => (
+    String(event.address || '').toLowerCase() === v3.ROBINHOOD_V3_FACTORY
+    && String(event.topics?.[0] || '').toLowerCase() === v3.TOPICS.poolCreated
+  )));
+}
+
 function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
   if (typeof deps.rpcClient?.request !== 'function') throw new Error('rpcClient.request is required');
   let tracker = options.tracker || v3.createUniswapV3Tracker({
@@ -141,13 +148,15 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
     return prepareBlock(capture, captureOptions)();
   }
 
-  function beginBatch() {
-    const stagedTracker = v3.createUniswapV3Tracker({ seedPools: tracker.getTrackedPools() });
+  function beginBatch(captures) {
+    const needsCopy = !Array.isArray(captures) || hasPoolCreation(captures);
+    const stagedTracker = needsCopy
+      ? v3.createUniswapV3Tracker({ seedPools: tracker.getTrackedPools() }) : tracker;
     return Object.freeze({
       prepareBlock: (capture, captureOptions) => (
         prepareBlock(capture, captureOptions, stagedTracker)
       ),
-      commit: () => { tracker = stagedTracker; },
+      commit: () => { if (needsCopy) tracker = stagedTracker; },
     });
   }
 

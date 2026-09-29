@@ -6203,13 +6203,16 @@ worker atual lê o journal e nenhuma projeção ou publicação é alterada. Ele
 por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
 As leituras de bloco e receipts fazem prefetch limitado entre blocos por
 `ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY` (default 8, máximo 32); snapshots V3
-preparam uma cópia do tracker em ordem de bloco e fazem até
+preparam o tracker em ordem de bloco e fazem até
 `ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_CONCURRENCY` leituras históricas simultâneas
 (default 4, máximo 16). Resultados são reunidos na ordem dos blocos antes do
-commit; o tracker preparado só substitui o ativo após commit bem-sucedido no
-journal. Falha em qualquer leitura impede o commit do lote e aguarda as leituras
-já iniciadas terminarem antes do retry. `snapshotMs` mede o tempo de parede dessa
-fase, incluindo leituras simultâneas. Cada lote
+commit. O tracker só é copiado quando o lote contém `PoolCreated`; nessa situação,
+a cópia só substitui o ativo após commit bem-sucedido no journal. Lotes sem
+`PoolCreated` não alteram o registro de pools. Falha em qualquer leitura impede o
+commit do lote e aguarda as leituras já iniciadas terminarem antes do retry.
+`snapshotMs` mede o tempo de parede dessa
+fase, incluindo leituras simultâneas; `trackerPrepareMs` mede a preparação do
+tracker antes dos snapshots. Cada lote
 prefetched é validado e persistido em uma única transação PostgreSQL, com inserts
 set-based e um único avanço do frontier; qualquer gap, divergência de parent ou
 falha de escrita reverte o lote inteiro. Um `NOTIFY` por lote acorda os consumidores,
@@ -6445,7 +6448,8 @@ Multicall por bloco com pools V3 elegíveis. A telemetria expõe os contadores
 cumulativos `v3Snapshots`
 (saldos observados), `v3MissedPools` (pools com saldo inválido ou histórico
 indisponível) e `v3SkippedPools` (somente em versões antigas que pulavam leitura).
-Monitore lag e `snapshotMs` durante catch-up, além de CPU/RPC do node.
+Monitore lag, `snapshotMs` e `trackerPrepareMs` durante catch-up, além de CPU/RPC
+do node.
 Isso não repara snapshots ausentes já persistidos: para validar uma sessão
 nova, drene o outbox antigo com o shadow, pare o shadow e inicie o canário
 após o preflight, preservando as evidências anteriores. O RPC

@@ -104,6 +104,7 @@ test('worker prefetches blocks concurrently and commits them sequentially withou
     ['101', '102', 0, 2, 2, 2]
   );
   assert.equal(status.fetchConcurrency, 2);
+  assert.equal(status.lastTiming.trackerPrepareMs >= 0, true);
   for (const field of [
     'nodeHeadObservedAt', 'lastRunAt', 'lastProgressAt', 'lastCompletedAt',
   ]) assert.equal(Number.isFinite(Date.parse(status[field])), true, field);
