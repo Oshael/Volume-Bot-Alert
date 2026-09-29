@@ -362,7 +362,14 @@ canônico de cada range e a disponibilidade do raw necessário. O manifesto não
 cria cobertura retroativa: ranges anteriores exigem backfill comprovado. A tabela
 de swaps é durável; somente a retenção do raw de transfers limita a prova de
 eventos. Até concluir R2c.3, `eventsComplete` permanece falso.
-R2c.1 foi implementado; o próximo corte é R2c.2.
+R2c.1 e R2c.2 foram implementados. R2c.2 audita apenas ranges `live` como
+prova de raw: o backfill `seed` descarta eventos anteriores ao corte de
+retenção, e seu manifesto, sem proveniência adicional, não comprova
+persistência integral.
+O auditor recebe limites de bloco explícitos e não prova sozinho que eles
+correspondem à janela temporal. R2c.3 fará essa ligação antes de habilitar
+`eventsComplete`; ranges antigos que dependem do seed continuam incompletos.
+O próximo corte é R2c.3.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI. R2c acrescenta uma migration; não há novo worker
 nem polling previstos.
