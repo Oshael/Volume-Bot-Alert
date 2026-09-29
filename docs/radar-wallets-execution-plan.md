@@ -332,17 +332,22 @@ A auditoria não comprova cobertura de eventos, preços nem universo global;
 
 ### Cortes restantes do ranking de wallets
 
-Estimativa revisada de pelo menos sete cortes de até 500 linhas cada, incluindo
+Estimativa revisada de pelo menos nove cortes de até 500 linhas cada, incluindo
 código, testes e documentação. Cada corte exige autorização própria após o
-anterior; mudança de schema, novo subsistema ou aumento material de escopo exige
-redimensionamento.
+anterior. R2c foi redimensionado em três cortes (estimativa conjunta de 900–1.300
+linhas): o scanner global não persiste hoje o escopo dos tokens por range, logo a
+ausência de eventos não comprova uma varredura vazia. A migração aditiva é parte
+do primeiro corte autorizado. Novo subsistema ou aumento material de escopo exige
+novo redimensionamento.
 
 | Corte | Entrega e fronteira | Validação principal |
 | --- | --- | --- |
 | R1 | Auditar o frontier da projeção também na travessia global, no mesmo snapshot; manter posições além do frontier como não alinhadas | Unidade de paginação/alinhamento e integração já existente do cursor |
 | R2a | Auditar partições de swaps e hash canônico dos checkpoints | Integração de partição ausente/destacada e reorg |
 | R2b | Auditar se a origem canônica do seed precede a janela | Integração de âncora ausente, origem tardia e janela válida |
-| R2c | Fechar prova de cobertura por token e janela a partir das fontes duráveis; onde faltar, manter `eventsComplete=false` | Integração de lacuna, classificação e retenção, sem inferir cobertura da ausência de eventos |
+| R2c.1 | Persistir o escopo de tokens de cada range varrido por seed/live com o commit do cursor, inclusive sem eventos | Integração de range vazio, conflito e schema |
+| R2c.2 | Auditar no ranking a continuidade dos ranges por token, checkpoints canônicos e retenção do raw | Integração de lacuna, reorg e partição indisponível |
+| R2c.3 | Integrar a prova de eventos às janelas do ranking, expondo incompletude por token/janela e limites de classificação | Integração de janela completa/incompleta e classificação |
 | R3 | Compor posições globais, preços e eventos em lotes no mesmo snapshot e agregar por wallet; quando o limite de candidatos for atingido, manter ranking parcial | Unidade contábil e integração de universo completo/incompleto, limites e desempates; medir plano de consultas antes de ampliar o limite |
 | R4 | Expor consulta autenticada do ranking e enriquecimento opcional de perfis RH, com `asOf`, cobertura, exclusões e paginação determinística | Integração HTTP de autenticação, isolamento RH, resposta parcial e ordenação |
 | R5 | Interface Top Wallets 24h/7d/30d/ALL, identidade, estados de cobertura e navegação para wallet, sem apresentar parcial como exato | Teste afetado, build frontend e smoke do fluxo visível |
@@ -351,11 +356,16 @@ R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
 `position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
 R1 foi implementado: a travessia global exige `asOf` e devolve o frontier e o
 alinhamento de cada posição, sem mudar a regra de universo completo.
-R2a e R2b foram implementados. Ainda falta R2c, a prova positiva de cobertura
-por token e janela; `eventsComplete` permanece falso mesmo quando as
-pré-condições auditadas passam.
+R2a e R2b foram implementados. R2c só poderá marcar `eventsComplete=true`
+quando a fonte durável comprovar o escopo por token em toda a janela, o hash
+canônico de cada range e a disponibilidade do raw necessário. O manifesto não
+cria cobertura retroativa: ranges anteriores exigem backfill comprovado. A tabela
+de swaps é durável; somente a retenção do raw de transfers limita a prova de
+eventos. Até concluir R2c.3, `eventsComplete` permanece falso.
+R2c.1 foi implementado; o próximo corte é R2c.2.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
-e perfis; R5 conecta API e UI. Não há novo worker, polling ou migração previstos.
+e perfis; R5 conecta API e UI. R2c acrescenta uma migration; não há novo worker
+nem polling previstos.
 Estimar novamente antes de cada corte; testes com dados reais e desempenho em
 escala continuam necessários antes de publicar ganhos exatos.
 

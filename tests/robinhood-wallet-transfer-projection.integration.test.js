@@ -28,12 +28,14 @@ const stage137 = require('../src/utils/db-init-stage137');
 const stage153 = require('../src/utils/db-init-stage153');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage208 = require('../src/utils/db-init-stage208');
+const stage256 = require('../src/utils/db-init-stage256');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
 const ATOMIC_VERSION = 'test_transfer_position_atomic_v1';
 const POSITION_VERSION = 'test_unified_transfer_v1';
 const LIVE_VERSION = 'test_transfer_live_reorg_v1';
+const SCOPE_VERSION = 'test_transfer_scan_scope_v1';
 const TOKEN = `0x${'1'.repeat(40)}`;
 const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
@@ -49,7 +51,8 @@ function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
 }
 
 async function cleanup() {
-  const transferVersions = [VERSION, ATOMIC_VERSION, LIVE_VERSION];
+  const transferVersions = [VERSION, ATOMIC_VERSION, LIVE_VERSION, SCOPE_VERSION];
+  await db.query('DELETE FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
@@ -81,11 +84,44 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage153.init({ closePool: false });
     await stage191.init({ closePool: false });
     await stage208.init({ closePool: false });
+    await stage256.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
     await cleanup();
     await db.pool.end();
+  });
+
+  it('persists scanned token scope for an empty range with the cursor, not for a rejected batch', async () => {
+    const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
+    await repository.initCursor({
+      projectionVersion: SCOPE_VERSION, stream: 'live', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
+    });
+    const input = {
+      projectionVersion: SCOPE_VERSION, stream: 'live', expectedVersion: 0,
+      nextBlock: '102', nextBlockTime: '2099-01-03T00:00:00.000Z', safeHead: '200',
+      checkpointBlock: '101', checkpointHash: `0x${'f'.repeat(64)}`,
+      captureScope: { fromBlock: '100', tokenAddresses: [TOKEN, TOKEN.toUpperCase().replace('0X', '0x')],
+        filterMode: 'address-filtered' },
+      events: [],
+    };
+    assert.equal((await repository.commitBatch(input)).committed, true);
+    assert.deepEqual((await db.query(
+      `SELECT from_block::text, through_block::text, token_addresses, filter_mode
+         FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1`,
+      [SCOPE_VERSION]
+    )).rows, [{
+      from_block: '100', through_block: '101', token_addresses: [TOKEN],
+      filter_mode: 'address-filtered',
+    }]);
+    assert.deepEqual(await repository.commitBatch({ ...input,
+      captureScope: { fromBlock: '100', tokenAddresses: [ALICE], filterMode: 'topics-only' },
+    }), { committed: false, reason: 'cursor_conflict' });
+    assert.equal((await db.query(
+      'SELECT COUNT(*)::integer AS count FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1',
+      [SCOPE_VERSION]
+    )).rows[0].count, 1);
   });
 
   it('commits edges, bounded evidence and cursor atomically', async () => {

@@ -174,6 +174,28 @@ function cursor(row) {
     lifecycleState: row.lifecycle_state, version: Number(row.version),
   } : null;
 }
+function normalizeCaptureScope(scope, checkpointBlock, checkpointHash, next) {
+  if (!Array.isArray(scope.tokenAddresses)) {
+    throw new TypeError('captureScope.tokenAddresses must be a list');
+  }
+  const tokenAddresses = [...new Set(scope.tokenAddresses.map((value) => (
+    address(value, 'captureScope.tokenAddress')
+  )))].sort();
+  const filterMode = String(scope.filterMode ?? '');
+  if (tokenAddresses.length
+    ? !['address-filtered', 'topics-only'].includes(filterMode)
+    : filterMode !== 'empty-scope') {
+    throw new Error('captureScope.filterMode is inconsistent with token scope');
+  }
+  const fromBlock = uint(scope.fromBlock, 'captureScope.fromBlock');
+  if (checkpointBlock === null || checkpointHash === null
+      || BigInt(checkpointBlock) !== BigInt(next.block) - 1n
+      || BigInt(fromBlock) >= BigInt(next.block)
+      || next.transactionIndex !== 0 || next.logIndex !== 0) {
+    throw new Error('captureScope must cover a complete checkpointed block range');
+  }
+  return { fromBlock, tokenAddresses, filterMode };
+}
 function normalizeCommitInput(input) {
   const projectionVersion = identifier(input.projectionVersion, 'projectionVersion');
   const stream = identifier(input.stream, 'stream');
@@ -194,10 +216,13 @@ function normalizeCommitInput(input) {
     throw new Error('summarizedThroughDay must precede nextBlockTime');
   }
   if (input.events != null && !Array.isArray(input.events)) throw new Error('events must be a list');
+  const captureScope = input.captureScope == null ? null
+    : normalizeCaptureScope(input.captureScope, checkpointBlock, checkpointHash, next);
   return {
     projectionVersion, stream, expectedVersion: uint(input.expectedVersion, 'expectedVersion'),
     next, nextBlockTime, safeHead, checkpointBlock, checkpointHash, summarizedThroughDay,
     summary: summarize(Array.isArray(input.events) ? input.events : [], projectionVersion),
+    captureScope,
   };
 }
 function currentPosition(current) {
@@ -232,8 +257,24 @@ function hasEventOutsideRange(current, batch, effectiveSafeHead) {
 }
 function rejectionReason(current, batch, effectiveSafeHead) {
   if (cursorConflict(current, batch, effectiveSafeHead)) return 'cursor_conflict';
+  if (batch.captureScope && (batch.captureScope.fromBlock !== String(current.next_block)
+      || current.next_transaction_index !== 0 || current.next_log_index !== 0)) {
+    return 'capture_scope_cursor_mismatch';
+  }
   return hasEventOutsideRange(current, batch, effectiveSafeHead)
     ? 'event_outside_cursor_range' : null;
+}
+async function persistCaptureScope(client, batch) {
+  if (!batch.captureScope?.tokenAddresses.length) return;
+  await client.query(
+    `INSERT INTO robinhood_wallet_transfer_scan_scopes (
+       chain, projection_version, stream, from_block, through_block,
+       checkpoint_hash, token_addresses, filter_mode
+     ) VALUES ($1, $2, $3, $4::bigint, $5::bigint, $6, $7::text[], $8)`,
+    [CHAIN, batch.projectionVersion, batch.stream, batch.captureScope.fromBlock,
+      batch.checkpointBlock, batch.checkpointHash,
+      batch.captureScope.tokenAddresses, batch.captureScope.filterMode]
+  );
 }
 function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   const database = options.database || db;
@@ -316,6 +357,7 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
           throw error;
         }
       }
+      await persistCaptureScope(client, batch);
       const advanced = await advanceCursor(client, batch, effectiveSafeHead);
       if (!advanced.rows[0]) throw new Error('locked transfer cursor changed unexpectedly');
       await client.query('COMMIT');

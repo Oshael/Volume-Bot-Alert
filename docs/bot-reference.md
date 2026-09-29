@@ -4724,6 +4724,15 @@ mas não reaplica às ranges originais o teto de cinco horas já aprovado na cri
 da campanha; o relatório marca `projectionCapBypassed=existing_campaign`. Campanha
 nova continua recusada quando a projeção integral ultrapassa cinco horas.
 
+A Stage 256 cria `robinhood_wallet_transfer_scan_scopes`. Aplique
+`node src/utils/db-init-stage256.js` antes de atualizar os writers seed/live de
+wallet transfers. Cada commit de range registra, na mesma transação do cursor,
+os tokens efetivamente varridos e o checkpoint do range, inclusive quando não
+houve transferências. O registro é prospectivo e não substitui o raw nem prova
+sozinho a cobertura histórica ou a disponibilidade das partições retidas. Em
+reorg, ranges com hash órfão permanecem no manifesto; leitores precisam exigir
+checkpoint canônico antes de aceitar a cobertura.
+
 A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor histórico
 retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,
 snapshot do escopo aceito por campanha. Aplique

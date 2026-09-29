@@ -29,7 +29,7 @@ function captured() {
       transactionHash: TX, transactionIndex: 1, logIndex: 2,
       tokenAddress: TOKEN, fromWallet: ALICE, toWallet: BOB, amountRaw: '25',
     }],
-    telemetry: { requests: 1, evidenceBatches: 1 },
+    telemetry: { requests: 1, evidenceBatches: 1, filterMode: 'address-filtered' },
   };
 }
 
@@ -87,6 +87,9 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.equal(result.rawInserted, 1);
     assert.equal(deps.calls.raw[0][0].transferKind, 'wallet_transfer');
     assert.equal(deps.calls.projected[0].events.length, 1);
+    assert.deepEqual(deps.calls.projected[0].captureScope, {
+      fromBlock: '100', tokenAddresses: [TOKEN], filterMode: 'address-filtered',
+    });
     assert.deepEqual(result.telemetry.endpointRoles, {
       requested: 2, persisted: 1, unpersisted: 1, probes: 0,
     });

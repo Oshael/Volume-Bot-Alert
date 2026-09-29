@@ -220,7 +220,8 @@ async function prepareBackfillRange(deps, input = {}) {
   const edgeEligible = classified.events.filter(isEdgeEligibleTransfer);
   const summaryOnly = edgeEligible.filter((event) => !isRawEligible(event));
   return {
-    plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, context, hydration,
+    plan, tokenAddresses, captured, classified, rawEligible, edgeEligible, summaryOnly,
+    cutoff, context, hydration,
   };
 }
 
@@ -262,6 +263,9 @@ async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
     safeHead: prepared.plan.throughBlock,
     checkpointBlock: prepared.captured.checkpoint.number,
     checkpointHash: prepared.captured.checkpoint.hash,
+    captureScope: { fromBlock: prepared.captured.fromBlock,
+      tokenAddresses: prepared.tokenAddresses,
+      filterMode: prepared.captured.telemetry.filterMode },
     summarizedThroughDay: summarizeThroughDay(
       cursor.nextBlockTime, prepared.captured.checkpoint.blockTime
     ),

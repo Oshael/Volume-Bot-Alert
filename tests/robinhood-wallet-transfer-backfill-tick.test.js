@@ -40,7 +40,7 @@ function captured() {
       transfer(101, '2026-07-14T12:01:00.000Z', 3),
       transfer(200, '2026-08-14T12:00:00.000Z', 2),
     ],
-    telemetry: { requests: 1, evidenceBatches: 1 },
+    telemetry: { requests: 1, evidenceBatches: 1, filterMode: 'address-filtered' },
   };
 }
 
@@ -239,6 +239,9 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     });
     assert.equal(deps.calls.raw[0][0].logIndex, 2);
     assert.deepEqual(deps.calls.projected[0].events.map(({ logIndex }) => logIndex), [3, 2]);
+    assert.deepEqual(deps.calls.projected[0].captureScope, {
+      fromBlock: '90', tokenAddresses: [TOKEN], filterMode: 'address-filtered',
+    });
     assert.equal(deps.calls.projected[0].summarizedThroughDay, '2026-08-13');
   });
 

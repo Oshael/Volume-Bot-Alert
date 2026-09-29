@@ -6803,6 +6803,33 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage256-robinhood-transfer-scan-scopes',
+    name: 'Stage 256 Robinhood transfer scan scopes',
+    repair: 'node src/utils/db-init-stage256.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_scan_scopes',
+      columns: ['scan_scope_id', 'chain', 'projection_version', 'stream', 'from_block', 'through_block',
+        'checkpoint_hash', 'token_addresses', 'filter_mode', 'captured_at'],
+      constraints: [
+        { name: 'rh_wallet_transfer_scan_scopes_pkey',
+          includes: ['PRIMARY KEY', 'scan_scope_id'] },
+        { name: 'rh_wallet_transfer_scan_scopes_bounds_check',
+          includes: ['CHECK', 'through_block', 'from_block'] },
+        { name: 'rh_wallet_transfer_scan_scopes_stream_check',
+          includes: ['CHECK', 'seed', 'live'] },
+        { name: 'rh_wallet_transfer_scan_scopes_scope_check',
+          includes: ['CHECK', 'token_addresses', 'filter_mode'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_wallet_transfer_scan_scopes_range',
+          includes: ['chain', 'projection_version', 'stream', 'through_block',
+            'from_block', 'checkpoint_hash'] },
+        { name: 'idx_rh_wallet_transfer_scan_scopes_tokens',
+          includes: ['token_addresses'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

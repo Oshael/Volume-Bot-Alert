@@ -240,6 +240,8 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     expectedVersion: cursor.version, nextBlock: captured.nextBlock,
     nextBlockTime: captured.checkpoint.blockTime, safeHead: sourceThrough,
     checkpointBlock: captured.checkpoint.number, checkpointHash: captured.checkpoint.hash,
+    captureScope: { fromBlock: captured.fromBlock, tokenAddresses,
+      filterMode: captured.telemetry.filterMode },
     events: classified.events.filter(isEdgeEligibleTransfer),
     ...(unified.batch ? { positionBatch: unified.batch } : {}),
   });
