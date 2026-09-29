@@ -4754,8 +4754,16 @@ recuperação de reorg incrementam a versão de sua fonte e emitem
 vazio de cursor; conflito ou rollback não publica. PostgreSQL entrega o aviso
 somente após o commit. O aviso contém `chain`, `source` e `version`. O agregado
 de 5 minutos publica após sua atualização, separadamente do preço de 1 minuto.
-Ainda não há relay desse canal para clientes WebSocket; o ranking ao vivo depende
-dos cortes seguintes.
+Com Robinhood visível, o processo web escuta esse canal, agrupa versões por
+fonte em 25 ms e emite `wallet-ranking:invalidate` a sockets autenticados.
+O evento contém `chain='robinhood'`, `version=1`, `revisions` (mapa de
+fonte para versão decimal) e `publishedAt`; é um aviso para reconsultar o
+snapshot, não um ranking calculado no socket. Após conexão ou reconexão do
+listener, o relay compara a tabela durável e publica versões perdidas. Falhas
+de consulta ou emissão têm retry limitado a uma tentativa agendada por vez;
+o status `robinhoodWalletRankingRealtime` mostra listener, pendências, revisões,
+duplicatas, coalescência, publicações e falhas. O painel ainda não consome esse
+evento automaticamente; isso pertence ao próximo corte.
 O ranking global lê até 1.000 posições abertas num snapshot, enriquece tokens
 em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do

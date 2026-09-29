@@ -20,6 +20,7 @@ const {
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
   normalizeWorkspaceReadinessSignal,
+  normalizeWalletRankingInvalidation,
   recordMarketSubscriptionProtocolUsage,
   resolveMarketIdentity,
 } = socketHub.__private;
@@ -36,6 +37,19 @@ describe('chain-aware socket market protocol', () => {
       checkedAt: '2026-09-09T12:00:00.000Z',
     });
     assert.equal(normalizeWorkspaceReadinessSignal({ ...event, signature: 'bad' }), null);
+  });
+
+  it('validates the RH wallet ranking socket contract', () => {
+    const input = { chain: 'robinhood', version: 1,
+      revisions: { positions: '12', prices: '3' },
+      publishedAt: '2026-09-29T12:00:00Z' };
+    assert.deepEqual(normalizeWalletRankingInvalidation(input), {
+      type: 'wallet-ranking:invalidate', ...input,
+      publishedAt: '2026-09-29T12:00:00.000Z',
+    });
+    assert.equal(normalizeWalletRankingInvalidation({ ...input, chain: 'solana' }), null);
+    assert.equal(normalizeWalletRankingInvalidation({ ...input, revisions: { unknown: '1' } }), null);
+    assert.equal(normalizeWalletRankingInvalidation({ ...input, revisions: { prices: 3 } }), null);
   });
 
   it('fits the maximum subscription sync inside the configured transport buffer', () => {

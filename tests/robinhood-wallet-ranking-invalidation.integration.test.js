@@ -8,6 +8,9 @@ const { CHANNEL, publishRankingInvalidation, withRankingInvalidation } = require
   '../src/models/robinhood-wallet-ranking-invalidation'
 );
 const { assertUsingTestDatabase } = require('./helpers/test-db');
+const {
+  createRobinhoodWalletRankingRealtime,
+} = require('../src/services/robinhood-wallet-ranking-realtime');
 
 before(async () => {
   await assertUsingTestDatabase(db);
@@ -37,6 +40,38 @@ it('revises a source only when the guarded cursor update succeeds', async () => 
   }
 });
 after(async () => { await db.pool.end(); });
+
+it('relays a committed PostgreSQL revision through LISTEN', async () => {
+  let resolveEvent;
+  let expectedVersion;
+  const eventReceived = new Promise((resolve) => { resolveEvent = resolve; });
+  const realtime = createRobinhoodWalletRankingRealtime({
+    database: db, pool: db.pool, visible: () => true,
+    emitSignal(event) {
+      if (event.revisions.swaps === expectedVersion) resolveEvent(event);
+      return true;
+    },
+    logger: { log() {}, error() {} },
+  });
+  await realtime.start();
+  realtime.flush();
+  try {
+    const before = await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='swaps'"
+    );
+    expectedVersion = (BigInt(before.rows[0]?.version || 0) + 1n).toString();
+    const version = await publishRankingInvalidation(db, 'swaps');
+    const event = await Promise.race([
+      eventReceived,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('relay timed out')), 1000)),
+    ]);
+    assert.equal(event.chain, 'robinhood');
+    assert.equal(event.revisions.swaps, version);
+    assert.equal(realtime.getStatus().published > 0, true);
+  } finally {
+    await realtime.stop();
+  }
+});
 
 it('delivers a versioned signal only after commit and preserves revision on rollback', async () => {
   const listener = await db.getClient();

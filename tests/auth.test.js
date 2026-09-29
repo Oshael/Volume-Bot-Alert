@@ -1586,6 +1586,34 @@ describe('Volume Alert Server auth flow', () => {
       const me = await request('GET', '/api/auth/me', { token: userToken });
       assert.equal(me.status, 200);
     });
+
+    it('delivers RH ranking invalidations only to authenticated sockets while visible', async () => {
+      const config = require('../config');
+      const connected = await connectSocket('http://127.0.0.1:3099', userToken);
+      assert.equal(connected.connected, true);
+      const rejected = await connectSocket('http://127.0.0.1:3099', 'invalid-token');
+      assert.equal(rejected.connected, false);
+      const previousVisibility = config.robinhoodUserVisibility.enabled;
+      const event = { chain: 'robinhood', version: 1,
+        revisions: { prices: '5' }, publishedAt: '2026-09-29T12:00:00.000Z' };
+      try {
+        config.robinhoodUserVisibility.enabled = true;
+        const received = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('ranking socket event timed out')), 1000);
+          connected.client.once('wallet-ranking:invalidate', (value) => {
+            clearTimeout(timeout);
+            resolve(value);
+          });
+        });
+        assert.equal(socketHub.emitWalletRankingInvalidation(event), true);
+        assert.deepEqual((await received).revisions, { prices: '5' });
+        config.robinhoodUserVisibility.enabled = false;
+        assert.equal(socketHub.emitWalletRankingInvalidation(event), false);
+      } finally {
+        config.robinhoodUserVisibility.enabled = previousVisibility;
+        connected.client.close();
+      }
+    });
   });
 
   describe('404 Handler', () => {

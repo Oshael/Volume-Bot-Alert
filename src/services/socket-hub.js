@@ -11,6 +11,7 @@
  * - holder:count      - sequenced Robinhood holder count for a subscribed token
  * - holder:invalidate - holder count must be refreshed after a reorg
  * - workspace:readiness - versioned signal carrying the durable snapshot signature
+ * - wallet-ranking:invalidate - Robinhood ranking source revisions after durable commits
  *
  * Events received from clients:
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
@@ -902,6 +903,32 @@ function emitWorkspaceReadinessSignal(payload) {
   return true;
 }
 
+function normalizeWalletRankingInvalidation(payload) {
+  const sources = new Set(['positions', 'transfers', 'swaps', 'prices', 'reorg']);
+  if (payload?.chain !== 'robinhood' || payload.version !== 1
+    || !payload.revisions || typeof payload.revisions !== 'object'
+    || Array.isArray(payload.revisions) || typeof payload.publishedAt !== 'string') return null;
+  const revisions = Object.entries(payload.revisions);
+  if (!revisions.length || revisions.some(([source, version]) => (
+    !sources.has(source) || typeof version !== 'string'
+      || !/^[1-9][0-9]{0,18}$/.test(version)
+  ))) return null;
+  const publishedAt = new Date(payload.publishedAt);
+  if (!Number.isFinite(publishedAt.getTime())) return null;
+  return {
+    type: 'wallet-ranking:invalidate', chain: 'robinhood', version: 1,
+    revisions: Object.fromEntries(revisions), publishedAt: publishedAt.toISOString(),
+  };
+}
+
+function emitWalletRankingInvalidation(payload) {
+  if (!io || !isTokenChainUserVisible('robinhood', config)) return false;
+  const event = normalizeWalletRankingInvalidation(payload);
+  if (!event) return false;
+  io.emit(event.type, event);
+  return true;
+}
+
 module.exports = {
   init,
   stop,
@@ -915,6 +942,7 @@ module.exports = {
   emitMarketTradeCanaryUpdate,
   emitHolderUpdate,
   emitWorkspaceReadinessSignal,
+  emitWalletRankingInvalidation,
   revokeSessionSockets,
   revokeUserSockets,
   __private: {
@@ -930,6 +958,7 @@ module.exports = {
     normalizeMarketBucketUpdate,
     normalizeMarketTradeUpdate,
     normalizeWorkspaceReadinessSignal,
+    normalizeWalletRankingInvalidation,
     recordMarketSubscriptionProtocolUsage,
     resolveMarketIdentity,
   },
