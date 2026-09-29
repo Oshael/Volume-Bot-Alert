@@ -1,8 +1,9 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
 Status: tabela unificada Robinhood e painel Top Wallets disponíveis; feed de swaps
-por wallet na API e rota direta de compras/vendas disponíveis. Tabela de maiores
-altas e detalhes completos de wallet/token ainda pendentes.
+por wallet na API e rota direta de compras/vendas disponíveis. Atualização do
+ranking por WebSocket, tabela de maiores altas e detalhes completos de
+wallet/token ainda pendentes.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -85,6 +86,29 @@ Valores sem custo ou preço confiável não viram zero nem ganho presumido. A AP
 deve informar cobertura, instante de referência e exclusões relevantes. Ranking
 parcial deve ser identificado como parcial; não apresentar soma incompleta como
 UPNL total exato. Transferência recebida sem custo conhecido não é compra gratuita.
+
+### Atualização em tempo real do ranking
+
+Requisito confirmado: Top Wallets deve atualizar automaticamente via WebSocket
+conforme novos dados relevantes chegam. O painel não pode depender de refresh
+manual para acompanhar o ranking enquanto estiver aberto. A seleção
+24h/7d/30d/ALL permanece a mesma durante as atualizações.
+
+Usar um sinal de invalidação/versionamento do ranking após o commit durável das
+fontes que alteram posições, preços ou cobertura; o cliente reconsulta o endpoint
+autenticado para obter ordem, ganhos e `asOf` consistentes. Não somar ganhos a
+partir de eventos soltos no navegador. O `market:bucket` atual é assinado por
+token e não constitui, sozinho, uma assinatura do ranking global. O contrato de
+publicação do sinal e os pontos de emissão devem ser definidos antes do código.
+
+Coalescer eventos e limitar recomputações/consultas para que alta frequência de
+preços não sobrecarregue a API. Ignorar sinais duplicados ou antigos, recuperar
+um snapshot atualizado após reconexão e tratar reorg/invalidação de cobertura.
+Durante paginação, preservar a consistência do snapshot e tratar cursor obsoleto
+sem misturar páginas de versões diferentes ou duplicar wallets. Exibir estado de
+conexão/desatualização quando a atualização ao vivo estiver indisponível. Não
+introduzir polling periódico no caminho live; a consulta inicial e a recuperação
+após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
 
@@ -263,6 +287,7 @@ uma etapa funcional quando necessário, sem esconder trabalho parcial.
 | 3 | Tabela de altas e layout 50/50 | Seleção global, preço ausente, ações e responsividade |
 | 4 | Domínio/consulta do ranking e perfis | Cálculos, cobertura, desempates e integração |
 | 5 | Interface Top Wallets e seletor temporal | Filtros, estados e navegação |
+| 5a | Ranking Top Wallets ao vivo por WebSocket | Invalidação após commit, reconexão, coalescência, cursores e cobertura |
 | 6 | Leituras da wallet: posições e swaps | Paginação, autorização existente e histórico incompleto |
 | 7 | Transfers e contrapartes | Corte USD, classificação, deduplicação e evidência |
 | 8 | Tela da wallet | Abertas/fechadas, feeds e retorno ao Radar |
@@ -333,9 +358,10 @@ A auditoria não comprova cobertura de eventos, preços nem universo global;
 
 ### Cortes restantes do ranking de wallets
 
-Estimativa revisada de pelo menos nove cortes de até 500 linhas cada, incluindo
+Estimativa revisada de pelo menos dez cortes de até 500 linhas cada, incluindo
 código, testes e documentação. Cada corte exige autorização própria após o
-anterior. R2c foi redimensionado em três cortes (estimativa conjunta de 900–1.300
+anterior. R5a pode exigir divisão após o mapeamento das fontes de evento.
+R2c foi redimensionado em três cortes (estimativa conjunta de 900–1.300
 linhas): o scanner global não persiste hoje o escopo dos tokens por range, logo a
 ausência de eventos não comprova uma varredura vazia. A migração aditiva é parte
 do primeiro corte autorizado. Novo subsistema ou aumento material de escopo exige
@@ -352,6 +378,7 @@ novo redimensionamento.
 | R3 | Compor posições globais, preços e eventos em lotes no mesmo snapshot e agregar por wallet; quando o limite de candidatos for atingido, manter ranking parcial | Unidade contábil e integração de universo completo/incompleto, limites e desempates; medir plano de consultas antes de ampliar o limite |
 | R4 | Expor consulta autenticada do ranking e enriquecimento opcional de perfis RH, com `asOf`, cobertura, exclusões e paginação determinística | Integração HTTP de autenticação, isolamento RH, resposta parcial e ordenação |
 | R5 | Interface Top Wallets 24h/7d/30d/ALL, identidade, estados de cobertura e navegação para wallet, sem apresentar parcial como exato | Teste afetado, build frontend e smoke do fluxo visível |
+| R5a | Invalidação do ranking por WebSocket após commit durável, atualização automática do período selecionado, recuperação após reconexão e paginação consistente | Integração do evento/fonte, unidade de dedupe/coalescência, build e smoke com eventos simulados |
 
 R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
 `position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
@@ -378,9 +405,13 @@ de 1.000 posições não foi ampliado; planos de consulta e dados reais ainda
 precisam ser medidos antes disso. R4 expõe `/api/robinhood/top-wallets` com
 autenticação, paginação estável até o top 100, cobertura e perfis com vínculo RH
 explícito. R5 conecta o painel Top Wallets à API e preserva os estados de cobertura.
+R5a é necessário para o ranking ao vivo. Antes de implementá-lo, mapear as fontes
+duráveis e os arquivos afetados; o socket de `market:bucket` por token não deve
+ser tratado como prova de que o ranking global já tem uma versão atualizada.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
-e perfis; R5 conecta API e UI. R2c acrescenta uma migration; não há novo worker
-nem polling previstos.
+e perfis; R5 conecta API e UI; R5a conecta a invalidação durável ao socket e à
+consulta do painel. R2c acrescenta uma migration. Dimensionar R5a antes de
+decidir se precisa de novo componente operacional; não usar polling no live.
 Estimar novamente antes de cada corte; testes com dados reais e desempenho em
 escala continuam necessários antes de publicar ganhos exatos.
 
