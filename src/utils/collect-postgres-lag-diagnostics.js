@@ -46,6 +46,7 @@ async function detectCapabilities(client) {
             current_setting('server_version') AS server_version,
             to_regclass('pg_catalog.pg_stat_io') IS NOT NULL AS has_stat_io,
             to_regclass('pg_catalog.pg_stat_checkpointer') IS NOT NULL AS has_checkpointer,
+            current_setting('track_wal_io_timing', true) AS track_wal_io_timing,
             to_regclass('public.pg_stat_statements') IS NOT NULL
               OR to_regclass('pg_catalog.pg_stat_statements') IS NOT NULL
               AS has_stat_statements,

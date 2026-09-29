@@ -125,15 +125,122 @@ function tableReport(rows, top, durationSeconds) {
 function databaseReport(input, summary, top, window) {
   const waits = summary.waitSampleCounts || {};
   const walRate = number(summary.averageWalBytesPerSecond);
+  const walTiming = input.metadata?.capabilities?.track_wal_io_timing;
   return {
     averageWalMBps: divided(walRate, 1048576),
     estimatedWalGB: window.durationSeconds > 0
       ? rounded(walRate * window.durationSeconds / 1073741824) : null,
+    walIoTimingEnabled: walTiming === 'on' ? true : walTiming === 'off' ? false : null,
+    minuteTimeline: minuteTimelineReport(input.minuteTimeline),
     activity: input.activity || {},
     idleClientReadSessionSamples: number(waits['Client:ClientRead']) || 0,
     topResourceWaits: ranked(waits, window.sampleCount, top, new Set(['Client:ClientRead'])),
     vacuumPresence: ranked(summary.vacuumSampleCounts, window.sampleCount, top),
   };
+}
+
+function counterDelta(before, after, key) {
+  if (before?.[key] == null || after?.[key] == null) return null;
+  if (before.statsReset && after.statsReset && before.statsReset !== after.statsReset) return null;
+  if (before.stats_reset && after.stats_reset && before.stats_reset !== after.stats_reset) return null;
+  const change = delta(before[key], after[key]);
+  return change != null && change >= 0 ? change : null;
+}
+
+function addDelta(bucket, field, before, after, key) {
+  const change = counterDelta(before, after, key);
+  if (change != null) bucket[field] = (bucket[field] || 0) + change;
+}
+
+function addWait(counts, type, event, amount = 1) {
+  const name = type && event ? `${type}:${event}` : 'NoWait:unclassified';
+  counts[name] = (counts[name] || 0) + amount;
+}
+
+function checkpointStats(sample) {
+  const checkpointer = sample?.system?.checkpointer || {};
+  return Object.keys(checkpointer).length
+    ? { values: checkpointer, keys: ['buffers_written', 'write_time', 'sync_time'] }
+    : { values: sample?.system?.bgwriter || {},
+      keys: ['buffers_checkpoint', 'checkpoint_write_time', 'checkpoint_sync_time'] };
+}
+
+function recordMinuteWaits(bucket, item) {
+  for (const wait of item.activity?.waits || []) {
+    if (wait.wait_event_type === 'LWLock' && wait.wait_event === 'WALWrite') {
+      bucket.walWriteWaitSessionSamples += number(wait.sessions) || 0;
+    }
+    if (wait.wait_event_type === 'IO' && wait.wait_event === 'DataFileWrite') {
+      bucket.dataFileWriteWaitSessionSamples += number(wait.sessions) || 0;
+    }
+  }
+  if (item.captureCommit) {
+    bucket.captureCommitSamples += 1;
+    addWait(bucket.captureWaitSamples, item.captureCommit.waitEventType,
+      item.captureCommit.waitEvent);
+    for (const blocker of item.captureCommit.blockers || []) {
+      if (blocker.blockedByCount === 0) {
+        addWait(bucket.rootBlockerWaitSamples, blocker.waitEventType, blocker.waitEvent);
+      }
+    }
+  }
+}
+
+function recordMinuteDeltas(bucket, previous, item) {
+  if (!previous) return;
+  const beforeWal = previous.system?.wal;
+  const afterWal = item.system?.wal;
+  for (const [field, key] of Object.entries({ walBytes: 'walBytes', walWrites: 'walWrite',
+    walSyncs: 'walSync', walBuffersFull: 'walBuffersFull',
+    walWriteTimeMs: 'walWriteTimeMs', walSyncTimeMs: 'walSyncTimeMs' })) {
+    addDelta(bucket, field, beforeWal, afterWal, key);
+  }
+  const beforeCheckpoint = checkpointStats(previous);
+  const afterCheckpoint = checkpointStats(item);
+  if (beforeCheckpoint.keys[0] === afterCheckpoint.keys[0]) {
+    ['checkpointBuffersWritten', 'checkpointWriteTimeMs', 'checkpointSyncTimeMs']
+      .forEach((field, index) => addDelta(bucket, field, beforeCheckpoint.values,
+        afterCheckpoint.values, afterCheckpoint.keys[index]));
+  }
+  addDelta(bucket, 'capturedBlocks', previous.capture, item.capture, 'checkpoint_block');
+  addDelta(bucket, 'headBlocks', previous.capture?.metadata, item.capture?.metadata, 'nodeHead');
+}
+
+function recordMinute(state, item) {
+  const minute = new Date(item.sampledAt).toISOString().slice(0, 16) + 'Z';
+  let bucket = state.minuteTimeline.get(minute);
+  if (!bucket) {
+    bucket = { minute, samples: 0, captureCommitSamples: 0,
+      captureWaitSamples: {}, rootBlockerWaitSamples: {},
+      walWriteWaitSessionSamples: 0, dataFileWriteWaitSessionSamples: 0 };
+    state.minuteTimeline.set(minute, bucket);
+  }
+  bucket.samples += 1;
+  recordMinuteWaits(bucket, item);
+  recordMinuteDeltas(bucket, state.last, item);
+}
+
+function minuteTimelineReport(timeline) {
+  return [...(timeline?.values() || [])].map((bucket) => ({
+    minute: bucket.minute, samples: bucket.samples,
+    captureCommitSamples: bucket.captureCommitSamples,
+    captureWaitSamples: bucket.captureWaitSamples,
+    rootBlockerWaitSamples: bucket.rootBlockerWaitSamples,
+    capturedBlocks: bucket.capturedBlocks ?? null, headBlocks: bucket.headBlocks ?? null,
+    lagDeltaBlocks: bucket.capturedBlocks == null || bucket.headBlocks == null
+      ? null : bucket.headBlocks - bucket.capturedBlocks,
+    walMB: divided(bucket.walBytes, 1048576),
+    walWrites: bucket.walWrites ?? null, walSyncs: bucket.walSyncs ?? null,
+    walBuffersFull: bucket.walBuffersFull ?? null,
+    walWriteTimeMs: rounded(bucket.walWriteTimeMs ?? null),
+    walSyncTimeMs: rounded(bucket.walSyncTimeMs ?? null),
+    checkpointBuffersWritten: bucket.checkpointBuffersWritten ?? null,
+    checkpointWriteTimeMs: rounded(bucket.checkpointWriteTimeMs ?? null),
+    checkpointSyncTimeMs: rounded(bucket.checkpointSyncTimeMs ?? null),
+    averageWalWriteWaitingSessions: divided(bucket.walWriteWaitSessionSamples, bucket.samples),
+    averageDataFileWriteWaitingSessions:
+      divided(bucket.dataFileWriteWaitSessionSamples, bucket.samples),
+  }));
 }
 
 function buildReport(input, top = 8) {
@@ -161,6 +268,7 @@ function buildReport(input, top = 8) {
 }
 
 function recordSample(state, item) {
+  recordMinute(state, item);
   state.first ||= item;
   state.last = item;
   state.sampleCount += 1;
@@ -188,7 +296,7 @@ function recordItem(state, item) {
 }
 
 async function readDiagnostic(input) {
-  const state = { source: input, sampleCount: 0, errors: {}, activity: {
+  const state = { source: input, sampleCount: 0, errors: {}, minuteTimeline: new Map(), activity: {
     maxActive: 0, maxWaiting: 0, maxBlocked: 0, samplesWithBlockers: 0,
     maxOldestQueryMs: 0, maxOldestTransactionMs: 0,
   } };

@@ -1015,6 +1015,15 @@ amostra o backend desse COMMIT e os bloqueadores diretos em `pg_stat_activity`;
 bloqueadores sem outros bloqueios. `taggedSamples=0` significa que nenhum COMMIT
 foi observado nas amostras, não que o COMMIT esteve livre de espera. O worker e
 o coletor precisam estar na versão instrumentada durante a mesma janela.
+O sumarizador também produz `database.minuteTimeline` a partir do JSONL já
+coletado: para cada minuto UTC, inclui avanço do capture e do head, waits
+observados durante COMMIT, médias de sessões em `WALWrite` e `DataFileWrite`,
+e deltas dos contadores de WAL e checkpoint. Cada delta pertence ao minuto da
+amostra final do intervalo; ausências e resets ficam como `null`. Tempos de
+WAL iguais a zero não comprovam I/O rápido: confira `walIoTimingEnabled`, que
+vale `null` para coletas antigas sem essa configuração registrada. Os contadores
+globais do banco e as esperas amostradas indicam correlação, não atribuição
+automática de causa ao capture ou a outro worker.
 O relatório contém textos SQL observados e deve ser tratado como arquivo operacional sensível.
 Não transfira o JSONL bruto por padrão. Depois da coleta, rode
 `npm run diagnose:postgres-lag:summary -- --input=/var/tmp/postgres-lag.jsonl`; o comando lê o
