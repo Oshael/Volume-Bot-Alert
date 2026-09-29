@@ -296,8 +296,11 @@ e marcação de descarte das partições brutas de transfers. Ausência de lacun
 auditoria ainda não comprova classificação, avanço dos cursores nem cobertura dos
 swaps; portanto não libera ganhos exatos.
 Uma segunda auditoria lê os cursores seed/live de swaps e transfers, verifica
-continuidade, avanço além do `asOf` e checkpoint canônico. Mesmo com essas
-condições satisfeitas, classificação, completude por token e alinhamento com a
+continuidade, avanço além do `asOf`, checkpoint canônico e se o bloco canônico
+de origem do seed precede o começo da janela. Se esse bloco foi removido do
+journal, o início fica não comprovado; a ausência de âncora não é tratada como
+ausência de eventos. Mesmo com essas condições satisfeitas, classificação,
+completude por token e alinhamento com a
 projeção ainda precisam ser demonstrados antes de publicar o ranking exato.
 Uma leitura limitada por pares `(wallet, token)` identifica transfers brutos da
 janela que continuam `unknown`/`unclassified` ou têm versão de classificação
@@ -329,14 +332,17 @@ A auditoria não comprova cobertura de eventos, preços nem universo global;
 
 ### Cortes restantes do ranking de wallets
 
-Estimativa de cinco cortes de até 500 linhas cada, incluindo código, testes e
-documentação. Cada corte exige autorização própria após o anterior; mudança de
-schema, novo subsistema ou aumento material de escopo exige redimensionamento.
+Estimativa revisada de pelo menos sete cortes de até 500 linhas cada, incluindo
+código, testes e documentação. Cada corte exige autorização própria após o
+anterior; mudança de schema, novo subsistema ou aumento material de escopo exige
+redimensionamento.
 
 | Corte | Entrega e fronteira | Validação principal |
 | --- | --- | --- |
 | R1 | Auditar o frontier da projeção também na travessia global, no mesmo snapshot; manter posições além do frontier como não alinhadas | Unidade de paginação/alinhamento e integração já existente do cursor |
-| R2 | Demonstrar cobertura de eventos por token e janela a partir de fontes duráveis; onde a prova faltar, manter `eventsComplete=false` e explicitar o motivo | Integração de lacuna, classificação, retenção e reorg; sem presumir cobertura a partir de ausência de eventos |
+| R2a | Auditar partições de swaps e hash canônico dos checkpoints | Integração de partição ausente/destacada e reorg |
+| R2b | Auditar se a origem canônica do seed precede a janela | Integração de âncora ausente, origem tardia e janela válida |
+| R2c | Fechar prova de cobertura por token e janela a partir das fontes duráveis; onde faltar, manter `eventsComplete=false` | Integração de lacuna, classificação e retenção, sem inferir cobertura da ausência de eventos |
 | R3 | Compor posições globais, preços e eventos em lotes no mesmo snapshot e agregar por wallet; quando o limite de candidatos for atingido, manter ranking parcial | Unidade contábil e integração de universo completo/incompleto, limites e desempates; medir plano de consultas antes de ampliar o limite |
 | R4 | Expor consulta autenticada do ranking e enriquecimento opcional de perfis RH, com `asOf`, cobertura, exclusões e paginação determinística | Integração HTTP de autenticação, isolamento RH, resposta parcial e ordenação |
 | R5 | Interface Top Wallets 24h/7d/30d/ALL, identidade, estados de cobertura e navegação para wallet, sem apresentar parcial como exato | Teste afetado, build frontend e smoke do fluxo visível |
@@ -345,8 +351,7 @@ R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
 `position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
 R1 foi implementado: a travessia global exige `asOf` e devolve o frontier e o
 alinhamento de cada posição, sem mudar a regra de universo completo.
-R2 está em andamento: a auditoria de partições de swaps e a proteção contra
-reorg do checkpoint foram adicionadas. Ainda falta prova positiva de cobertura
+R2a e R2b foram implementados. Ainda falta R2c, a prova positiva de cobertura
 por token e janela; `eventsComplete` permanece falso mesmo quando as
 pré-condições auditadas passam.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota

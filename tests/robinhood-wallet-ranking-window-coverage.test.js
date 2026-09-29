@@ -64,6 +64,9 @@ describe('Robinhood ranking window coverage composition', () => {
         { tokenAddress: TOKEN, walletAddress: WALLET_B }],
       windowStart: WINDOW_START, asOf: AS_OF, classificationVersion: VERSION,
     });
+    assert.deepEqual(calls.find((call) => call.source === 'frontiers').input, {
+      windowStart: WINDOW_START, asOf: AS_OF, transferVersion: VERSION,
+    });
   });
 
   it('keeps global and pair-specific failures separate', async () => {

@@ -3,6 +3,7 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const TRANSFER_VERSION = 'rh_transfer_v1';
 const TIMEOUT_MS = 5000;
+const MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 const FRONTIERS_SQL = `WITH cursors AS (
     SELECT 'swap'::text AS source, stream, lifecycle_state, origin_block,
@@ -19,9 +20,13 @@ const FRONTIERS_SQL = `WITH cursors AS (
       AND stream IN ('seed', 'live')
   )
   SELECT cursors.*,
+    origin.block_timestamp AS origin_time,
     COALESCE(block.canonical AND block.block_hash = cursors.checkpoint_hash,
       false) AS checkpoint_canonical
   FROM cursors
+  LEFT JOIN robinhood_chain_blocks origin
+    ON origin.chain = '${CHAIN}' AND origin.block_number = cursors.origin_block
+      AND origin.canonical
   LEFT JOIN robinhood_chain_blocks block
     ON block.chain = '${CHAIN}' AND block.block_number = cursors.checkpoint_block
       AND block.block_hash = cursors.checkpoint_hash
@@ -73,22 +78,31 @@ function frontierTime(live) {
   return value && Number.isFinite(value.getTime()) ? value : null;
 }
 
-function sourceReport(source, seed, live, time, reasons) {
+function originTime(seed) {
+  const value = seed?.origin_time == null ? null : new Date(seed.origin_time);
+  return value && Number.isFinite(value.getTime()) ? value : null;
+}
+
+function sourceReport(source, seed, live, time, startTime, reasons) {
   return {
     source,
     seedOriginBlock: seed?.origin_block == null ? null : String(seed.origin_block),
     seedNextBlock: seed?.next_block == null ? null : String(seed.next_block),
     liveOriginBlock: live?.origin_block == null ? null : String(live.origin_block),
     liveNextBlock: live?.next_block == null ? null : String(live.next_block),
+    originTime: startTime?.toISOString() || null,
     frontierTime: time?.toISOString() || null,
     checksPassed: reasons.length === 0,
     reasons,
   };
 }
 
-function assessSource(source, seed, live, asOf) {
+function assessSource(source, seed, live, windowStart, asOf) {
   const reasons = [];
   if (!seedComplete(seed)) reasons.push(`${source}_seed_incomplete`);
+  const startTime = originTime(seed);
+  if (!startTime) reasons.push(`${source}_start_anchor_unavailable`);
+  else if (startTime >= windowStart) reasons.push(`${source}_starts_at_or_after_window`);
   if (!liveAvailable(live)) reasons.push(`${source}_live_unavailable`);
   if (seedLiveGap(seed, live)) reasons.push(`${source}_seed_live_gap`);
   if (!frontierProven(live)) reasons.push(`${source}_frontier_unproven`);
@@ -97,7 +111,7 @@ function assessSource(source, seed, live, asOf) {
   if (!time || time <= asOf) {
     reasons.push(`${source}_behind_as_of`);
   }
-  return sourceReport(source, seed, live, time, reasons);
+  return sourceReport(source, seed, live, time, startTime, reasons);
 }
 
 function createRobinhoodWalletRankingSourceFrontiersRepository(options = {}) {
@@ -106,16 +120,22 @@ function createRobinhoodWalletRankingSourceFrontiersRepository(options = {}) {
     async inspectAsOf(input = {}) {
       const asOf = new Date(input.asOf);
       if (!Number.isFinite(asOf.getTime())) throw new Error('asOf is invalid');
+      const windowStart = new Date(input.windowStart);
+      if (input.windowStart == null || !Number.isFinite(windowStart.getTime())
+        || windowStart >= asOf || asOf.getTime() - windowStart.getTime() > MAX_WINDOW_MS) {
+        throw new Error('windowStart/asOf must define a window of at most 30 days');
+      }
       const version = transferVersion(input.transferVersion);
       const result = await database.queryWithStatementTimeout(
         FRONTIERS_SQL, [version], TIMEOUT_MS,
       );
       const rows = new Map(result.rows.map((row) => [`${row.source}:${row.stream}`, row]));
       const sources = ['swap', 'transfer'].map((source) => assessSource(
-        source, rows.get(`${source}:seed`), rows.get(`${source}:live`), asOf,
+        source, rows.get(`${source}:seed`), rows.get(`${source}:live`), windowStart, asOf,
       ));
       return {
-        chain: CHAIN, transferVersion: version, asOf: asOf.toISOString(), sources,
+        chain: CHAIN, transferVersion: version,
+        windowStart: windowStart.toISOString(), asOf: asOf.toISOString(), sources,
         cursorChecksPassed: sources.every((source) => source.checksPassed),
         sourceCoverageVerified: false,
       };

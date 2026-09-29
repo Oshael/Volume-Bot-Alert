@@ -10,6 +10,8 @@ const {
 } = require('../src/models/robinhood-wallet-ranking-source-frontiers');
 
 const HASH = `0x${'a'.repeat(64)}`;
+const ORIGIN_HASH = `0x${'c'.repeat(64)}`;
+const WINDOW_START = '2026-09-26T12:00:00.000Z';
 const AS_OF = '2026-09-27T12:00:00.000Z';
 
 describe('Robinhood ranking source frontier audit', () => {
@@ -31,7 +33,8 @@ describe('Robinhood ranking source frontier audit', () => {
         next_block_time timestamptz, completed_at timestamptz
       ) ON COMMIT DROP`);
       await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
-        chain varchar, block_number bigint, block_hash varchar, canonical boolean
+        chain varchar, block_number bigint, block_hash varchar, canonical boolean,
+        block_timestamp timestamptz
       ) ON COMMIT DROP`);
       await client.query(`INSERT INTO robinhood_wallet_swap_cursors VALUES
         ('robinhood', 'seed', 'complete', 90, 101, 100, 100, $1,
@@ -44,28 +47,49 @@ describe('Robinhood ranking source frontier audit', () => {
         ('robinhood', 'rh_transfer_v1', 'live', 'running', 100, 201, 200,
          200, $1, '2026-09-28T00:00:00Z', NULL)`, [HASH]);
       await client.query(`INSERT INTO robinhood_chain_blocks VALUES
-        ('robinhood', 200, $1, true)`, [HASH]);
+        ('robinhood', 90, $1, true, '2026-09-26T00:00:00Z'),
+        ('robinhood', 200, $2, true, '2026-09-28T00:00:00Z')`,
+      [ORIGIN_HASH, HASH]);
       const repository = createRobinhoodWalletRankingSourceFrontiersRepository({
         database: { queryWithStatementTimeout: (sql, params) => client.query(sql, params) },
       });
-      const input = { asOf: AS_OF };
+      const input = { windowStart: WINDOW_START, asOf: AS_OF };
       const ready = await repository.inspectAsOf(input);
       assert.equal(ready.cursorChecksPassed, true);
       assert.equal(ready.sourceCoverageVerified, false);
       assert.deepEqual(ready.sources.map((source) => source.source), ['swap', 'transfer']);
+      assert.deepEqual(ready.sources.map((source) => source.originTime),
+        ['2026-09-26T00:00:00.000Z', '2026-09-26T00:00:00.000Z']);
 
-      await client.query(`UPDATE robinhood_chain_blocks SET canonical=false`);
+      await client.query(`UPDATE robinhood_chain_blocks
+        SET block_timestamp=$1 WHERE block_number=90`, [WINDOW_START]);
+      const lateStart = await repository.inspectAsOf(input);
+      assert.deepEqual(lateStart.sources.map((source) => source.reasons),
+        [['swap_starts_at_or_after_window'], ['transfer_starts_at_or_after_window']]);
+      await client.query(`UPDATE robinhood_chain_blocks SET canonical=false
+        WHERE block_number=90`);
+      const missingAnchor = await repository.inspectAsOf(input);
+      assert.deepEqual(missingAnchor.sources.map((source) => source.reasons),
+        [['swap_start_anchor_unavailable'], ['transfer_start_anchor_unavailable']]);
+      await client.query(`UPDATE robinhood_chain_blocks
+        SET canonical=true, block_timestamp='2026-09-26T00:00:00Z'
+        WHERE block_number=90`);
+
+      await client.query(`UPDATE robinhood_chain_blocks SET canonical=false
+        WHERE block_number=200`);
       const reorged = await repository.inspectAsOf(input);
       assert.equal(reorged.cursorChecksPassed, false);
       assert.deepEqual(reorged.sources[0].reasons, ['swap_checkpoint_unproven']);
       await client.query(`INSERT INTO robinhood_chain_blocks VALUES
-        ('robinhood', 200, $1, true)`, [`0x${'b'.repeat(64)}`]);
+        ('robinhood', 200, $1, true, '2026-09-28T00:00:00Z')`,
+      [`0x${'b'.repeat(64)}`]);
       const replaced = await repository.inspectAsOf(input);
       assert.deepEqual(replaced.sources.map((source) => source.reasons),
         [['swap_checkpoint_unproven'], ['transfer_checkpoint_unproven']]);
       await client.query(`DELETE FROM robinhood_chain_blocks
         WHERE block_hash=$1`, [`0x${'b'.repeat(64)}`]);
-      await client.query(`UPDATE robinhood_chain_blocks SET canonical=true`);
+      await client.query(`UPDATE robinhood_chain_blocks SET canonical=true
+        WHERE block_number=200`);
 
       await client.query(`UPDATE robinhood_wallet_transfer_cursors
         SET origin_block=102, next_block_time='2026-09-27T12:00:00Z'
@@ -84,7 +108,9 @@ describe('Robinhood ranking source frontier audit', () => {
       database: { queryWithStatementTimeout() { throw new Error('unexpected query'); } },
     });
     await assert.rejects(repository.inspectAsOf({ asOf: 'invalid' }), /asOf is invalid/);
-    await assert.rejects(repository.inspectAsOf({ asOf: AS_OF, transferVersion: 'bad version' }),
+    await assert.rejects(repository.inspectAsOf({ windowStart: WINDOW_START,
+      asOf: AS_OF, transferVersion: 'bad version' }),
       /transferVersion is invalid/);
+    await assert.rejects(repository.inspectAsOf({ asOf: AS_OF }), /windowStart\/asOf/);
   });
 });

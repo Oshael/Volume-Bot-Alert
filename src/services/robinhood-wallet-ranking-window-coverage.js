@@ -89,7 +89,7 @@ async function readRobinhoodWalletRankingWindowCoverage(database, input = {}, op
   const availability = await availabilityRepository.inspectWindow({ windowStart, asOf });
   const swapAvailability = await swapAvailabilityRepository.inspectWindow({ windowStart, asOf });
   const frontiers = await frontiersRepository.inspectAsOf({
-    asOf, transferVersion: input.classificationVersion,
+    windowStart, asOf, transferVersion: input.classificationVersion,
   });
   const classifications = await classificationRepository.inspectWindow({
     pairs, windowStart, asOf, classificationVersion: input.classificationVersion,
