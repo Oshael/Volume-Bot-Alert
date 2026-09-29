@@ -38,9 +38,18 @@ describe('Robinhood holder live handoff persistence', () => {
       ]) {
         await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
       }
+      const cursorLocks = [];
       const database = {
         query: client.query.bind(client),
-        getClient: async () => ({ query: client.query.bind(client), release() {} }),
+        getClient: async () => ({
+          query: (sql, params) => {
+            if (sql.includes('SELECT next_block, safe_head, checkpoint_block')) {
+              cursorLocks.push(sql);
+            }
+            return client.query(sql, params);
+          },
+          release() {},
+        }),
       };
       const handoff = createRobinhoodHolderHandoffRepository({ database });
       const ledger = createRobinhoodHolderLedgerRepository({ database });
@@ -96,6 +105,7 @@ describe('Robinhood holder live handoff persistence', () => {
         discardedOverlapEvents: 1,
         journalFloorBlock: '100', liveCursorNextBlock: '107',
       });
+      assert.match(cursorLocks[0], /FOR SHARE$/);
       assert.deepEqual(await ledger.applyNextPendingEvent(), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 1,
         appliedEvents: 1, attemptedEvents: 1, tokenDrained: false,

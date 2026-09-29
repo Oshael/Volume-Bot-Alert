@@ -2959,6 +2959,9 @@ admissões e rewinds que exigem `FOR UPDATE`, mas permite que a captura confirme
 lotes com `FOR NO KEY UPDATE` enquanto a limpeza examina ou remove linhas antigas.
 O avanço final do floor ainda serializa com a captura. A limpeza manual mantém
 `FOR UPDATE` e continua exigindo o grupo parado.
+O handoff usa `FOR SHARE` para preservar a posição do cursor durante a promoção;
+ele pode ocorrer durante o prune automático, mas serializa brevemente com
+commits da captura e com o avanço do floor.
 O comando manual com `--before-block` mantém a lógica de prefixo auditado abaixo.
 
 Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js

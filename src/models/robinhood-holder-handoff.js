@@ -40,7 +40,7 @@ async function lockLiveCursor(client) {
     `SELECT next_block, safe_head, checkpoint_block, checkpoint_hash,
             journal_floor_block, version
        FROM robinhood_holder_cursors
-      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+      WHERE chain = 'robinhood' AND stream = 'live' FOR SHARE`
   );
   if (!result.rowCount) throw codedError('holder live cursor is missing', 'holder_cursor_missing');
   const row = result.rows[0];

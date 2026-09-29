@@ -1219,6 +1219,13 @@ it('lets capture lock the cursor during automatic pruning but still fences admis
     await observer.query('ROLLBACK');
 
     await observer.query('BEGIN');
+    const handoffLock = await observer.query(`SELECT next_block
+      FROM robinhood_holder_cursors
+      WHERE chain = 'robinhood' AND stream = 'live' FOR SHARE`);
+    assert.equal(handoffLock.rowCount, 1);
+    await observer.query('ROLLBACK');
+
+    await observer.query('BEGIN');
     await assert.rejects(observer.query(`SELECT next_block
       FROM robinhood_holder_cursors
       WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE NOWAIT`),
