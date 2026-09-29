@@ -1169,6 +1169,73 @@ describe('Robinhood holder ledger persistence', () => {
   });
 });
 
+it('lets capture lock the cursor during automatic pruning but still fences admission', async () => {
+  const schema = `holder_prune_lock_${process.pid}_${Date.now()}`;
+  const owner = await db.getClient();
+  const observer = await db.getClient();
+  let signalLocked;
+  let releaseCommit;
+  const locked = new Promise((resolve) => { signalLocked = resolve; });
+  const commitGate = new Promise((resolve) => { releaseCommit = resolve; });
+  let pruning = null;
+  try {
+    await owner.query('DISCARD TEMP');
+    await observer.query('DISCARD TEMP');
+    await owner.query(`CREATE SCHEMA ${schema}`);
+    await owner.query(`CREATE TABLE ${schema}.robinhood_holder_cursors (
+      chain text NOT NULL, stream text NOT NULL, next_block bigint NOT NULL,
+      journal_floor_block bigint NOT NULL
+    )`);
+    await owner.query(`INSERT INTO ${schema}.robinhood_holder_cursors
+      VALUES ('robinhood', 'live', 20150, 150)`);
+    await owner.query(`SET search_path TO ${schema}, public`);
+    await observer.query(`SET search_path TO ${schema}, public`);
+
+    const retention = createRobinhoodHolderJournalRetention({
+      database: { getClient: async () => ({
+        query: async (sql, params) => {
+          if (sql === 'COMMIT') {
+            signalLocked();
+            await commitGate;
+          }
+          return owner.query(sql, params);
+        },
+        release() {},
+      }) },
+    });
+    pruning = retention.pruneOnce();
+    await locked;
+
+    await observer.query('BEGIN');
+    await observer.query("SET LOCAL lock_timeout = '500ms'");
+    const captureLock = await observer.query(`SELECT next_block
+      FROM robinhood_holder_cursors
+      WHERE chain = 'robinhood' AND stream = 'live' FOR NO KEY UPDATE`);
+    assert.equal(captureLock.rowCount, 1);
+    const captureCommit = await observer.query(`UPDATE robinhood_holder_cursors
+      SET next_block = next_block + 1
+      WHERE chain = 'robinhood' AND stream = 'live'`);
+    assert.equal(captureCommit.rowCount, 1);
+    await observer.query('ROLLBACK');
+
+    await observer.query('BEGIN');
+    await assert.rejects(observer.query(`SELECT next_block
+      FROM robinhood_holder_cursors
+      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE NOWAIT`),
+    (error) => error.code === '55P03');
+    await observer.query('ROLLBACK');
+  } finally {
+    releaseCommit();
+    if (pruning) await pruning;
+    await observer.query('ROLLBACK').catch(() => {});
+    await owner.query('RESET search_path');
+    await observer.query('RESET search_path');
+    await owner.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    owner.release();
+    observer.release();
+  }
+});
+
 describe('Robinhood holder journal automatic prune scan', () => {
   it('bounds each page, persists progress, and revisits formerly protected events', async () => {
     const client = await db.getClient();

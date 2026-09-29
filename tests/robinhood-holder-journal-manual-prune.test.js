@@ -4,8 +4,37 @@ const {
   parseArgs, runBatches, createDiagnosticClient, failureReport,
 } = require('../src/utils/prune-robinhood-holder-journal');
 const db = require('../src/models/db');
+const {
+  createRobinhoodHolderJournalRetention,
+} = require('../src/models/robinhood-holder-journal-retention');
 
 after(() => db.pool.end());
+
+test('automatic prune permits capture commits while manual prune retains its exclusive fence', async () => {
+  for (const [input, expectedLock] of [
+    [{}, 'FOR KEY SHARE'],
+    [{ beforeBlock: '150' }, 'FOR UPDATE'],
+  ]) {
+    const queries = [];
+    const client = {
+      async query(sql) {
+        queries.push(sql);
+        if (sql.includes('holder-prune:lock_cursor')) {
+          return { rowCount: 1, rows: [{ next_block: '20150', journal_floor_block: '150' }] };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+      release() {},
+    };
+    const retention = createRobinhoodHolderJournalRetention({
+      database: { getClient: async () => client },
+    });
+    assert.equal((await retention.pruneOnce(input)).status, 'idle');
+    assert.match(queries.find((sql) => sql.includes('holder-prune:lock_cursor')),
+      new RegExp(expectedLock));
+    assert.equal(queries.at(-1), 'COMMIT');
+  }
+});
 
 test('manual journal cleanup requires an explicit bounded cut and write consent', () => {
   assert.deepEqual(parseArgs(['--before-block=38808102', '--write']), {

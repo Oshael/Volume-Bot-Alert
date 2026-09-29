@@ -58,11 +58,14 @@ async function withTransaction(database, operation) {
   }
 }
 
-async function lockCursor(client) {
+async function lockCursor(client, allowCapture) {
+  // Automatic pruning must fence admissions and rewinds without blocking
+  // forward capture commits while it scans and deletes old journal rows.
+  const lockMode = allowCapture ? 'KEY SHARE' : 'UPDATE';
   const result = await client.query(
     `/* holder-prune:lock_cursor */ SELECT next_block, journal_floor_block
        FROM robinhood_holder_cursors
-      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+      WHERE chain = 'robinhood' AND stream = 'live' FOR ${lockMode}`
   );
   if (!result.rowCount) {
     const error = new Error('holder live cursor is missing');
@@ -287,7 +290,7 @@ function createRobinhoodHolderJournalRetention(options = {}) {
   async function pruneOnce(input = {}) {
     const normalized = normalizeOptions(input);
     return withTransaction(database, async (client) => {
-      const cursor = await lockCursor(client);
+      const cursor = await lockCursor(client, normalized.beforeBlock == null);
       if (cursor.journal_floor_block == null) {
         return Object.freeze({
           status: 'blocked', reason: 'journal_floor_uninitialized', deletedEvents: 0,

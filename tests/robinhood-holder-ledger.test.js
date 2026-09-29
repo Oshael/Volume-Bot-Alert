@@ -145,6 +145,7 @@ describe('Robinhood holder ledger repository', () => {
     assert.deepEqual(fake.calls.map(({ sql }) => sql === 'BEGIN' || sql === 'COMMIT' ? sql : 'query'), [
       'BEGIN', 'query', 'query', 'query', 'query', 'query', 'query', 'COMMIT',
     ]);
+    assert.match(fake.calls[2].sql, /FOR NO KEY UPDATE/);
     assert.match(fake.calls[4].sql, /ON CONFLICT \(chain, transaction_hash, log_index\)/);
     assert.match(fake.calls[5].sql, /robinhood_holder_capture_receipts/);
     assert.match(fake.calls[6].sql, /robinhood_holder_cursors\.version = \$5::bigint/);

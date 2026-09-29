@@ -2954,6 +2954,11 @@ passagem e nunca avança o `journal_floor_block` antes de revalidar pendências;
 reinício, erro ou reorg não pulam eventos. A lease continua única, com até
 `ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES` páginas por tick, intervalo e
 backoff existentes. A telemetria expõe linhas examinadas e buffers descartados.
+O prune automático segura `FOR KEY SHARE` no cursor durante a transação: impede
+admissões e rewinds que exigem `FOR UPDATE`, mas permite que a captura confirme
+lotes com `FOR NO KEY UPDATE` enquanto a limpeza examina ou remove linhas antigas.
+O avanço final do floor ainda serializa com a captura. A limpeza manual mantém
+`FOR UPDATE` e continua exigindo o grupo parado.
 O comando manual com `--before-block` mantém a lógica de prefixo auditado abaixo.
 
 Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js

@@ -299,7 +299,7 @@ async function advanceCursor(client, cursor) {
 async function lockCaptureCommitContext(client, cursor) {
   const locked = await client.query(
     `SELECT next_block, version FROM robinhood_holder_cursors
-      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+      WHERE chain = 'robinhood' AND stream = 'live' FOR NO KEY UPDATE`
   );
   const current = locked.rows[0];
   const cursorMatches = cursor.expectedVersion == null
