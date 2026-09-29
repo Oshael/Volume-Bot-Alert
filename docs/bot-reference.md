@@ -4736,8 +4736,10 @@ A Stage 256 cria `robinhood_wallet_transfer_scan_scopes`. Aplique
 wallet transfers. Cada commit de range registra, na mesma transação do cursor,
 os tokens efetivamente varridos e o checkpoint do range, inclusive quando não
 houve transferências. O registro é prospectivo e não substitui o raw nem prova
-sozinho a cobertura histórica ou a disponibilidade das partições retidas. Em
-reorg, ranges com hash órfão permanecem no manifesto; leitores precisam exigir
+sozinho a cobertura histórica ou a disponibilidade das partições retidas. Com
+fonte `canonical_journal`, o scan por tópico `Transfer` é registrado como
+`topics-only` no manifesto; a telemetria conserva `canonical-journal` como fonte.
+Em reorg, ranges com hash órfão permanecem no manifesto; leitores precisam exigir
 checkpoint canônico antes de aceitar a cobertura.
 No ranking de wallets, `eventsComplete` só fica verdadeiro quando os cursores
 seed/live alcançam a janela, as fronteiras temporais têm blocos canônicos

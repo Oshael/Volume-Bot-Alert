@@ -182,7 +182,11 @@ function normalizeCaptureScope(scope, checkpointBlock, checkpointHash, next) {
   const tokenAddresses = [...new Set(scope.tokenAddresses.map((value) => (
     address(value, 'captureScope.tokenAddress')
   )))].sort();
-  const filterMode = String(scope.filterMode ?? '');
+  const sourceFilterMode = String(scope.filterMode ?? '');
+  const filterMode = ['canonical-journal', 'canonical-journal-buffered']
+    .includes(sourceFilterMode)
+    ? (tokenAddresses.length ? 'topics-only' : 'empty-scope')
+    : sourceFilterMode;
   if (tokenAddresses.length
     ? !['address-filtered', 'topics-only'].includes(filterMode)
     : filterMode !== 'empty-scope') {

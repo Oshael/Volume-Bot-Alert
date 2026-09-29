@@ -134,6 +134,23 @@ describe('Robinhood wallet transfer projection persistence', () => {
       'SELECT COUNT(*)::integer AS count FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1',
       [SCOPE_VERSION]
     )).rows[0].count, 1);
+
+    const canonical = await repository.commitBatch({
+      ...input, expectedVersion: 1,
+      nextBlock: '103', nextBlockTime: '2099-01-04T00:00:00.000Z',
+      checkpointBlock: '102',
+      captureScope: { fromBlock: '102', tokenAddresses: [TOKEN],
+        filterMode: 'canonical-journal' },
+    });
+    assert.equal(canonical.committed, true);
+    assert.deepEqual((await db.query(
+      `SELECT from_block::text, through_block::text, token_addresses, filter_mode
+         FROM robinhood_wallet_transfer_scan_scopes
+        WHERE projection_version=$1 AND from_block=102`, [SCOPE_VERSION]
+    )).rows, [{
+      from_block: '102', through_block: '102', token_addresses: [TOKEN],
+      filter_mode: 'topics-only',
+    }]);
   });
 
   it('commits edges, bounded evidence and cursor atomically', async () => {
