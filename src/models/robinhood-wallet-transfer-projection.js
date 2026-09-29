@@ -1,4 +1,5 @@
 const db = require('./db');
+const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 const {
   captureTransferPreimages,
 } = require('./robinhood-wallet-transfer-reorg-journal');
@@ -360,6 +361,7 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
       await persistCaptureScope(client, batch);
       const advanced = await advanceCursor(client, batch, effectiveSafeHead);
       if (!advanced.rows[0]) throw new Error('locked transfer cursor changed unexpectedly');
+      await publishRankingInvalidation(client, 'transfers');
       await client.query('COMMIT');
       return {
         committed: true, edgeGroups: batch.summary.edges.length,

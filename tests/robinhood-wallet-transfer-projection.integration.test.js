@@ -29,6 +29,7 @@ const stage153 = require('../src/utils/db-init-stage153');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage208 = require('../src/utils/db-init-stage208');
 const stage256 = require('../src/utils/db-init-stage256');
+const stage257 = require('../src/utils/db-init-stage257');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -67,6 +68,13 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_chain_blocks WHERE block_number BETWEEN 100 AND 102');
 }
 
+async function rankingRevision(source) {
+  const result = await db.query(
+    'SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source=$1', [source]
+  );
+  return BigInt(result.rows[0]?.version || 0);
+}
+
 describe('Robinhood wallet transfer projection persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
@@ -85,6 +93,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage191.init({ closePool: false });
     await stage208.init({ closePool: false });
     await stage256.init({ closePool: false });
+    await stage257.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -94,6 +103,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
 
   it('persists scanned token scope for an empty range with the cursor, not for a rejected batch', async () => {
     const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
+    const before = await rankingRevision('transfers');
     await repository.initCursor({
       projectionVersion: SCOPE_VERSION, stream: 'live', nextBlock: '100',
       nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
@@ -107,6 +117,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
       events: [],
     };
     assert.equal((await repository.commitBatch(input)).committed, true);
+    assert.equal(await rankingRevision('transfers'), before + 1n);
     assert.deepEqual((await db.query(
       `SELECT from_block::text, through_block::text, token_addresses, filter_mode
          FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1`,
@@ -118,6 +129,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     assert.deepEqual(await repository.commitBatch({ ...input,
       captureScope: { fromBlock: '100', tokenAddresses: [ALICE], filterMode: 'topics-only' },
     }), { committed: false, reason: 'cursor_conflict' });
+    assert.equal(await rankingRevision('transfers'), before + 1n);
     assert.equal((await db.query(
       'SELECT COUNT(*)::integer AS count FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1',
       [SCOPE_VERSION]
@@ -279,6 +291,8 @@ describe('Robinhood wallet transfer projection persistence', () => {
     });
     assert.equal(first.committed, true);
     assert.equal(first.positionProjection.positions, 1);
+    const positionRevision = await rankingRevision('positions');
+    const transferRevision = await rankingRevision('transfers');
 
     const conflict = await transfers.commitBatch({
       projectionVersion: ATOMIC_VERSION, stream: 'seed', expectedVersion: 1,
@@ -294,6 +308,8 @@ describe('Robinhood wallet transfer projection persistence', () => {
       },
     });
     assert.deepEqual(conflict, { committed: false, reason: 'position_cursor_conflict' });
+    assert.equal(await rankingRevision('positions'), positionRevision);
+    assert.equal(await rankingRevision('transfers'), transferRevision);
 
     const edge = await db.query(
       `SELECT transfer_count::text FROM robinhood_wallet_transfer_edges

@@ -6830,6 +6830,22 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage257-robinhood-wallet-ranking-revisions',
+    name: 'Stage 257 Robinhood wallet ranking revisions',
+    repair: 'node src/utils/db-init-stage257.js',
+    tables: [{
+      table: 'robinhood_wallet_ranking_revisions',
+      columns: ['source', 'version', 'updated_at'],
+      constraints: [
+        { name: 'rh_wallet_ranking_revisions_pkey', includes: ['PRIMARY KEY', 'source'] },
+        { name: 'rh_wallet_ranking_revisions_source_check',
+          includes: ['CHECK', 'positions', 'transfers', 'swaps', 'prices', 'reorg'] },
+        { name: 'rh_wallet_ranking_revisions_version_check',
+          includes: ['CHECK', 'version'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

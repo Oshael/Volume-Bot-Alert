@@ -26,6 +26,7 @@ const stage128 = require('../src/utils/db-init-stage128');
 const stage137 = require('../src/utils/db-init-stage137');
 const stage139 = require('../src/utils/db-init-stage139');
 const stage245 = require('../src/utils/db-init-stage245');
+const stage257 = require('../src/utils/db-init-stage257');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -79,6 +80,13 @@ async function cleanup() {
   );
 }
 
+async function rankingRevision(source) {
+  const result = await db.query(
+    'SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source=$1', [source]
+  );
+  return BigInt(result.rows[0]?.version || 0);
+}
+
 describe('Robinhood wallet position persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
@@ -91,6 +99,7 @@ describe('Robinhood wallet position persistence', () => {
     await stage137.init({ closePool: false });
     await stage139.init({ closePool: false });
     await stage245.init({ closePool: false });
+    await stage257.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -145,6 +154,7 @@ describe('Robinhood wallet position persistence', () => {
     assert.equal(initial.version, 0);
     assert.equal(initial.originBlock, '90');
     assert.equal(initial.nextBlockTime, '2026-08-01T00:00:00.000Z');
+    const before = await rankingRevision('positions');
 
     const first = await repository.commitBatch({
       projectionVersion: VERSION, stream: 'seed', expectedVersion: 0,
@@ -158,12 +168,14 @@ describe('Robinhood wallet position persistence', () => {
     });
     assert.equal(first.committed, true);
     assert.equal(first.cursor.version, 1);
+    assert.equal(await rankingRevision('positions'), before + 1n);
 
     const frontierOnly = await repository.commitBatch({
       projectionVersion: VERSION, stream: 'seed', expectedVersion: 1, nextBlock: '102',
     });
     assert.equal(frontierOnly.cursor.version, 2);
     assert.equal(frontierOnly.cursor.checkpointBlock, '100');
+    assert.equal(await rankingRevision('positions'), before + 2n);
 
     const stale = await repository.commitBatch({
       projectionVersion: VERSION, stream: 'seed', expectedVersion: 1, nextBlock: '103',
@@ -173,6 +185,7 @@ describe('Robinhood wallet position persistence', () => {
       }],
     });
     assert.deepEqual(stale, { committed: false, reason: 'cursor_conflict' });
+    assert.equal(await rankingRevision('positions'), before + 2n);
 
     const completed = await repository.commitBatch({
       projectionVersion: VERSION, stream: 'seed', expectedVersion: 2,

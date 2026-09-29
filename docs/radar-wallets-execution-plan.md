@@ -414,6 +414,12 @@ O socket de `market:bucket` por token não prova que o agregado global já está
 atualizado. Estimativas por corte: R5a.1 350–450 linhas, R5a.2 250–400 linhas,
 R5a.3 300–450 linhas. Se um corte exceder 500 linhas ou exigir migration,
 redimensionar antes de editar.
+R5a.1 foi redimensionado após identificar a necessidade de revisão durável.
+R5a.1a cria a Stage 257 e publica versões independentes para commits de
+posições e transfers, inclusive avanço vazio. R5a.1b deve cobrir cursores de
+swaps, preço de 1 minuto, agregado de mercado e rollback de reorg antes de
+considerar R5a.1 completo. Nenhuma dessas notificações substitui o snapshot
+autenticado do ranking.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI; R5a conecta a invalidação durável ao socket e à
 consulta do painel. R2c acrescenta uma migration. Não há novo worker planejado

@@ -1,5 +1,6 @@
 const db = require('./db');
 const { createWalletPosition } = require('../services/robinhood-wallet-position-domain');
+const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 
 const CHAIN = 'robinhood';
 const STREAMS = new Set(['seed', 'live']);
@@ -464,6 +465,7 @@ function createRobinhoodWalletPositionRepository(options = {}) {
         error.code = 'CURSOR_CONFLICT';
         throw error;
       }
+      await publishRankingInvalidation(client, 'positions');
       await transaction.commit();
       return { committed: true, positions: rows.length, cursor: cursor(advanced.rows[0]) };
     } catch (error) {

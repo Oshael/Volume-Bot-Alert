@@ -4744,6 +4744,14 @@ as partições raw e de swaps estão disponíveis, os eventos lidos pertencem a
 blocos canônicos, a classificação do par está resolvida e a leitura de eventos
 não foi truncada. Escopos apenas seed ou
 anteriores à Stage 256 continuam com cobertura incompleta.
+Antes de atualizar os writers de posições e transfers do ranking, aplique
+`node src/utils/db-init-stage257.js`. A tabela
+`robinhood_wallet_ranking_revisions` mantém versões independentes por fonte.
+Um commit aceito de posições ou transfers, inclusive um avanço de cursor sem
+eventos, incrementa sua versão e emite `robinhood_wallet_ranking_invalidated`
+na mesma transação; PostgreSQL entrega o aviso somente após o commit. O aviso
+contém `chain`, `source` e `version`. As fontes swaps, preços e reorg ainda não
+emitem esse aviso; o ranking ao vivo depende dos cortes seguintes.
 O ranking global lê até 1.000 posições abertas num snapshot, enriquece tokens
 em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do
