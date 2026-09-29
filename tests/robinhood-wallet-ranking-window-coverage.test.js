@@ -29,6 +29,10 @@ function harness(overrides = {}) {
       calls.push({ source: 'availability', input });
       return overrides.availability || { rawTransferAvailable: true, partitions: [] };
     } },
+    swapAvailabilityRepository: { async inspectWindow(input) {
+      calls.push({ source: 'swapAvailability', input });
+      return overrides.swapAvailability || { swapPartitionsAvailable: true, partitions: [] };
+    } },
     frontiersRepository: { async inspectAsOf(input) {
       calls.push({ source: 'frontiers', input });
       return overrides.frontiers || { cursorChecksPassed: true, sources: [] };
@@ -53,6 +57,7 @@ describe('Robinhood ranking window coverage composition', () => {
       assert.equal(pair.eventsComplete, false);
       assert.equal(pair.sourceCoverageVerified, false);
       assert.deepEqual(pair.coverageReasons, ['source_coverage_unverified']);
+      assert.equal(pair.checks.swapPartitionsAvailable, true);
     }
     assert.deepEqual(calls.find((call) => call.source === 'classification').input, {
       pairs: [{ tokenAddress: TOKEN, walletAddress: WALLET_A },
@@ -88,5 +93,16 @@ describe('Robinhood ranking window coverage composition', () => {
     const { service, calls } = harness({ events: [] });
     assert.deepEqual(await service.getWindowEvents({ classificationVersion: VERSION }), []);
     assert.deepEqual(calls, []);
+  });
+
+  it('keeps a missing swap partition explicit and events incomplete', async () => {
+    const { service } = harness({ swapAvailability: {
+      swapPartitionsAvailable: false,
+      partitions: [{ reasons: ['swap_partition_missing'] }],
+    } });
+    const [result] = await service.getWindowEvents({ classificationVersion: VERSION });
+    assert.equal(result.preconditionsSatisfied, false);
+    assert.equal(result.eventsComplete, false);
+    assert.ok(result.coverageReasons.includes('swap_partition_missing'));
   });
 });

@@ -285,6 +285,12 @@ O leitor de eventos de janela consulta swaps e `wallet_transfer` classificados
 em lote limitado por par `(wallet, token)`. Ele informa truncamento e lacunas
 de ordenação; a cobertura da fonte continua não verificada até auditoria de
 partições, classificação e cursores.
+A auditoria também confere se as partições diárias de swaps da janela estão
+anexadas com limites corretos. Como a persistência cria partições sob demanda,
+uma partição ausente pode significar dia sem swaps ou lacuna de retenção: ela
+mantém cobertura não verificada, sem presumir qual caso ocorreu. O checkpoint
+dos cursores de swaps/transfers é conferido por número **e hash** na cadeia
+canônica, inclusive se outra hash ocupar o mesmo número após reorg.
 Uma auditoria limitada por janela verifica a presença, anexação, limites diários
 e marcação de descarte das partições brutas de transfers. Ausência de lacuna nessa
 auditoria ainda não comprova classificação, avanço dos cursores nem cobertura dos
@@ -339,6 +345,10 @@ R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
 `position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
 R1 foi implementado: a travessia global exige `asOf` e devolve o frontier e o
 alinhamento de cada posição, sem mudar a regra de universo completo.
+R2 está em andamento: a auditoria de partições de swaps e a proteção contra
+reorg do checkpoint foram adicionadas. Ainda falta prova positiva de cobertura
+por token e janela; `eventsComplete` permanece falso mesmo quando as
+pré-condições auditadas passam.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI. Não há novo worker, polling ou migração previstos.
 Estimar novamente antes de cada corte; testes com dados reais e desempenho em

@@ -24,6 +24,7 @@ const FRONTIERS_SQL = `WITH cursors AS (
   FROM cursors
   LEFT JOIN robinhood_chain_blocks block
     ON block.chain = '${CHAIN}' AND block.block_number = cursors.checkpoint_block
+      AND block.block_hash = cursors.checkpoint_hash
   ORDER BY source, stream`;
 
 function transferVersion(value) {

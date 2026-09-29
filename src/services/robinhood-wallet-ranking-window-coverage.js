@@ -5,6 +5,9 @@ const {
   createRobinhoodWalletRankingTransferAvailabilityRepository,
 } = require('../models/robinhood-wallet-ranking-transfer-availability');
 const {
+  createRobinhoodWalletRankingSwapAvailabilityRepository,
+} = require('../models/robinhood-wallet-ranking-swap-availability');
+const {
   createRobinhoodWalletRankingSourceFrontiersRepository,
 } = require('../models/robinhood-wallet-ranking-source-frontiers');
 const {
@@ -23,18 +26,21 @@ function failedReasons(ready, values, fallback) {
   return values?.length ? values : [fallback];
 }
 
-function globalReasons(availability, frontiers) {
+function globalReasons(availability, swapAvailability, frontiers) {
   const partitionReasons = availability?.partitions?.flatMap((day) => day.reasons || []);
+  const swapReasons = swapAvailability?.partitions?.flatMap((day) => day.reasons || []);
   const frontierReasons = frontiers?.sources?.flatMap((source) => source.reasons || []);
   return [
     ...failedReasons(availability?.rawTransferAvailable, partitionReasons,
       'raw_transfer_availability_unverified'),
+    ...failedReasons(swapAvailability?.swapPartitionsAvailable, swapReasons,
+      'swap_partition_availability_unverified'),
     ...failedReasons(frontiers?.cursorChecksPassed, frontierReasons,
       'source_frontiers_unverified'),
   ];
 }
 
-function classifyPair(events, classification, availability, frontiers, globals) {
+function classifyPair(events, classification, availability, swapAvailability, frontiers, globals) {
   const reasons = [...globals];
   if (events.truncated) reasons.push('window_events_truncated');
   if (!events.orderingComplete) reasons.push('window_event_order_unverified');
@@ -43,6 +49,7 @@ function classifyPair(events, classification, availability, frontiers, globals) 
   reasons.push('source_coverage_unverified');
   const checks = {
     rawTransferAvailable: availability?.rawTransferAvailable === true,
+    swapPartitionsAvailable: swapAvailability?.swapPartitionsAvailable === true,
     sourceFrontiersReady: frontiers?.cursorChecksPassed === true,
     rawRowsClassified: classification?.rawRowsClassified === true,
     orderingComplete: events.orderingComplete === true,
@@ -51,7 +58,8 @@ function classifyPair(events, classification, availability, frontiers, globals) 
   return {
     ...events,
     checks,
-    preconditionsSatisfied: checks.rawTransferAvailable && checks.sourceFrontiersReady
+    preconditionsSatisfied: checks.rawTransferAvailable && checks.swapPartitionsAvailable
+      && checks.sourceFrontiersReady
       && checks.rawRowsClassified && checks.orderingComplete && !checks.truncated,
     eventsComplete: false,
     sourceCoverageVerified: false,
@@ -65,6 +73,8 @@ async function readRobinhoodWalletRankingWindowCoverage(database, input = {}, op
     || createRobinhoodWalletRankingWindowEventsRepository(repositoryOptions);
   const availabilityRepository = options.availabilityRepository
     || createRobinhoodWalletRankingTransferAvailabilityRepository(repositoryOptions);
+  const swapAvailabilityRepository = options.swapAvailabilityRepository
+    || createRobinhoodWalletRankingSwapAvailabilityRepository(repositoryOptions);
   const frontiersRepository = options.frontiersRepository
     || createRobinhoodWalletRankingSourceFrontiersRepository(repositoryOptions);
   const classificationRepository = options.classificationRepository
@@ -77,16 +87,17 @@ async function readRobinhoodWalletRankingWindowCoverage(database, input = {}, op
     tokenAddress, walletAddress,
   }));
   const availability = await availabilityRepository.inspectWindow({ windowStart, asOf });
+  const swapAvailability = await swapAvailabilityRepository.inspectWindow({ windowStart, asOf });
   const frontiers = await frontiersRepository.inspectAsOf({
     asOf, transferVersion: input.classificationVersion,
   });
   const classifications = await classificationRepository.inspectWindow({
     pairs, windowStart, asOf, classificationVersion: input.classificationVersion,
   });
-  const globals = globalReasons(availability, frontiers);
+  const globals = globalReasons(availability, swapAvailability, frontiers);
   const byPair = new Map(classifications.map((item) => [pairKey(item), item]));
   return events.map((item) => classifyPair(
-    item, byPair.get(pairKey(item)), availability, frontiers, globals,
+    item, byPair.get(pairKey(item)), availability, swapAvailability, frontiers, globals,
   ));
 }
 

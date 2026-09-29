@@ -58,6 +58,13 @@ describe('Robinhood ranking source frontier audit', () => {
       const reorged = await repository.inspectAsOf(input);
       assert.equal(reorged.cursorChecksPassed, false);
       assert.deepEqual(reorged.sources[0].reasons, ['swap_checkpoint_unproven']);
+      await client.query(`INSERT INTO robinhood_chain_blocks VALUES
+        ('robinhood', 200, $1, true)`, [`0x${'b'.repeat(64)}`]);
+      const replaced = await repository.inspectAsOf(input);
+      assert.deepEqual(replaced.sources.map((source) => source.reasons),
+        [['swap_checkpoint_unproven'], ['transfer_checkpoint_unproven']]);
+      await client.query(`DELETE FROM robinhood_chain_blocks
+        WHERE block_hash=$1`, [`0x${'b'.repeat(64)}`]);
       await client.query(`UPDATE robinhood_chain_blocks SET canonical=true`);
 
       await client.query(`UPDATE robinhood_wallet_transfer_cursors
