@@ -271,8 +271,9 @@ uma etapa funcional quando necessário, sem esconder trabalho parcial.
 No corte 4, o domínio temporal, a leitura limitada de preços de referência e a
 agregação por wallet já estão implementados. A agregação exige confirmação de
 universo completo antes de produzir uma ordem global; wallets com cobertura
-parcial não entram na soma exata. Ainda faltam a seleção global de candidatos,
-a reconstrução confiável dos eventos e a consulta pública do ranking.
+parcial não entram na soma exata. A seleção global tem travessia limitada,
+descrita abaixo. Ainda faltam o fechamento da cobertura dos eventos, a composição
+global dos dados e a consulta pública do ranking.
 Há leitura paginada de posições abertas por lote explícito de tokens e versão
 da projeção; páginas independentes não constituem um snapshot consistente nem
 provam que o universo global foi percorrido.
@@ -302,8 +303,8 @@ falhas globais das falhas da wallet/token. Mesmo com pré-condições satisfeita
 Eventos e auditorias agora leem no mesmo snapshot PostgreSQL `REPEATABLE READ`
 somente leitura. Uma leitura de candidatos por conjunto explícito de tokens
 reúne até 20 posições abertas, preços e eventos nesse mesmo snapshot. Ela não
-prova universo global nem alinhamento temporal da projeção; por isso não publica
-ranking ou ganho exato nesse estágio.
+prova universo global; o alinhamento temporal das posições é auditado abaixo,
+mas ainda não publica ranking ou ganho exato nesse estágio.
 O leitor de posições também oferece página global por `(token, wallet)` e versão
 da projeção, limitada e estável. Páginas chamadas separadamente continuam sem
 snapshot comum; só a travessia inteira sob uma leitura consistente poderá provar
@@ -319,6 +320,29 @@ canônico e horário do frontier igual ao `asOf`. Cada posição só recebe
 `projectionAligned` quando seu `through_block` não ultrapassa esse frontier.
 A auditoria não comprova cobertura de eventos, preços nem universo global;
 `rankingReady` continua falso.
+
+### Cortes restantes do ranking de wallets
+
+Estimativa de cinco cortes de até 500 linhas cada, incluindo código, testes e
+documentação. Cada corte exige autorização própria após o anterior; mudança de
+schema, novo subsistema ou aumento material de escopo exige redimensionamento.
+
+| Corte | Entrega e fronteira | Validação principal |
+| --- | --- | --- |
+| R1 | Auditar o frontier da projeção também na travessia global, no mesmo snapshot; manter posições além do frontier como não alinhadas | Unidade de paginação/alinhamento e integração já existente do cursor |
+| R2 | Demonstrar cobertura de eventos por token e janela a partir de fontes duráveis; onde a prova faltar, manter `eventsComplete=false` e explicitar o motivo | Integração de lacuna, classificação, retenção e reorg; sem presumir cobertura a partir de ausência de eventos |
+| R3 | Compor posições globais, preços e eventos em lotes no mesmo snapshot e agregar por wallet; quando o limite de candidatos for atingido, manter ranking parcial | Unidade contábil e integração de universo completo/incompleto, limites e desempates; medir plano de consultas antes de ampliar o limite |
+| R4 | Expor consulta autenticada do ranking e enriquecimento opcional de perfis RH, com `asOf`, cobertura, exclusões e paginação determinística | Integração HTTP de autenticação, isolamento RH, resposta parcial e ordenação |
+| R5 | Interface Top Wallets 24h/7d/30d/ALL, identidade, estados de cobertura e navegação para wallet, sem apresentar parcial como exato | Teste afetado, build frontend e smoke do fluxo visível |
+
+R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
+`position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
+R1 foi implementado: a travessia global exige `asOf` e devolve o frontier e o
+alinhamento de cada posição, sem mudar a regra de universo completo.
+R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
+e perfis; R5 conecta API e UI. Não há novo worker, polling ou migração previstos.
+Estimar novamente antes de cada corte; testes com dados reais e desempenho em
+escala continuam necessários antes de publicar ganhos exatos.
 
 Implementar somente slices autorizados. Commitar cada slice completo por escopo,
 preservando mudanças preexistentes. Este documento não autoriza modificar os

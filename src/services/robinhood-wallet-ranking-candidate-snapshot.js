@@ -9,6 +9,7 @@ const {
 } = require('../models/robinhood-wallet-ranking-price-read');
 const {
   createRobinhoodWalletRankingPositionFrontierRepository,
+  isRobinhoodWalletRankingPositionAligned,
 } = require('../models/robinhood-wallet-ranking-position-frontier');
 const {
   readRobinhoodWalletRankingWindowCoverage,
@@ -33,11 +34,6 @@ function normalizedInput(input) {
   return { window: input.window, asOf };
 }
 
-function positionAligned(position, frontier) {
-  return frontier.frontierChecksPassed && position.throughBlock != null
-    && BigInt(position.throughBlock) <= BigInt(frontier.frontierBlock);
-}
-
 function mergeCandidates(positions, prices, events, frontier) {
   const priceByToken = new Map(prices.map((price) => [price.tokenAddress, price]));
   const eventsByPair = new Map(events.map((item) => [pairKey(item), item]));
@@ -45,7 +41,7 @@ function mergeCandidates(positions, prices, events, frontier) {
     ...position,
     price: priceByToken.get(position.tokenAddress) || null,
     windowEvents: eventsByPair.get(pairKey(position)) || null,
-    projectionAligned: positionAligned(position, frontier),
+    projectionAligned: isRobinhoodWalletRankingPositionAligned(position, frontier),
   }));
 }
 

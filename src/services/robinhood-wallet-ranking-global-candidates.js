@@ -4,6 +4,10 @@ const {
 const {
   createRobinhoodWalletRankingPositionReadRepository,
 } = require('../models/robinhood-wallet-ranking-position-read');
+const {
+  createRobinhoodWalletRankingPositionFrontierRepository,
+  isRobinhoodWalletRankingPositionAligned,
+} = require('../models/robinhood-wallet-ranking-position-frontier');
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
@@ -29,9 +33,15 @@ function createRobinhoodWalletRankingGlobalCandidates(options = {}) {
     || createRobinhoodWalletRankingReadSnapshot({ database: options.database });
   return {
     async read(input = {}) {
+      const asOf = new Date(input.asOf);
+      if (input.asOf == null || !Number.isFinite(asOf.getTime())) {
+        throw new Error('asOf is invalid');
+      }
       return snapshotRunner.run(async (database) => {
         const repository = options.positionsRepository
           || createRobinhoodWalletRankingPositionReadRepository({ database });
+        const frontierRepository = options.frontierRepository
+          || createRobinhoodWalletRankingPositionFrontierRepository({ database });
         const positions = [];
         let after = null;
         let pageCount = 0;
@@ -46,14 +56,29 @@ function createRobinhoodWalletRankingGlobalCandidates(options = {}) {
           hasMore = page.hasMore;
           after = hasMore ? page.nextAfter : null;
         }
+        const positionFrontier = await frontierRepository.inspectAsOf({
+          projectionVersion: input.projectionVersion, asOf,
+        });
+        const alignedPositions = positions.map((position) => ({
+          ...position,
+          projectionAligned: isRobinhoodWalletRankingPositionAligned(
+            position, positionFrontier,
+          ),
+        }));
+        const outsideFrontier = positionFrontier.frontierChecksPassed
+          && alignedPositions.some((position) => !position.projectionAligned);
         return {
           projectionVersion: input.projectionVersion,
-          positions,
+          asOf: asOf.toISOString(),
+          positions: alignedPositions,
+          positionFrontier,
           pageCount,
           nextAfter: after,
           readSnapshotConsistent: true,
           candidateUniverseComplete: !hasMore,
-          reasons: hasMore ? ['candidate_universe_limit_reached'] : [],
+          reasons: [...(hasMore ? ['candidate_universe_limit_reached'] : []),
+            ...positionFrontier.reasons,
+            ...(outsideFrontier ? ['position_outside_frontier'] : [])],
         };
       });
     },

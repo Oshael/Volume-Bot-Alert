@@ -30,6 +30,12 @@ function block(value) {
   return value == null ? null : BigInt(value);
 }
 
+function isRobinhoodWalletRankingPositionAligned(position, frontier) {
+  return frontier.frontierChecksPassed === true && frontier.frontierBlock != null
+    && position.throughBlock != null
+    && block(position.throughBlock) <= block(frontier.frontierBlock);
+}
+
 function seedReady(seed) {
   return !!seed && seed.lifecycle_state === 'complete' && !!seed.completed_at
     && block(seed.origin_block) != null && block(seed.next_block) != null;
@@ -93,4 +99,7 @@ function createRobinhoodWalletRankingPositionFrontierRepository(options = {}) {
   };
 }
 
-module.exports = { createRobinhoodWalletRankingPositionFrontierRepository };
+module.exports = {
+  createRobinhoodWalletRankingPositionFrontierRepository,
+  isRobinhoodWalletRankingPositionAligned,
+};
