@@ -7,6 +7,7 @@
  * each other's progress.
  */
 const db = require('./db');
+const { withRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 
 const CHAIN = 'robinhood';
 const LIVE_NOTIFY_CHANNEL = 'robinhood_wallet_swap_live';
@@ -160,11 +161,11 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
       ? start : nonNegativeInteger(input.originBlock, 'originBlock');
     if (BigInt(origin) > BigInt(start)) throw new Error('originBlock cannot exceed nextBlock');
     const safeHead = optionalNonNegativeInteger(input.safeHead, 'safeHead');
-    await database.query(
+    await database.query(withRankingInvalidation(
       `INSERT INTO robinhood_wallet_swap_cursors (
          chain, stream, origin_block, next_block, safe_head
        ) VALUES ($1, $2, $3::bigint, $4::bigint, $5::bigint)
-       ON CONFLICT (chain, stream) DO NOTHING`,
+       ON CONFLICT (chain, stream) DO NOTHING RETURNING *`, 'swaps'),
       [CHAIN, stream(streamName), origin, start, safeHead]
     );
     return loadCursor(streamName);
@@ -174,7 +175,7 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
   // (another owner advanced it first).
   async function advanceCursor(streamName, input = {}) {
     const { checkpointBlock, checkpointHash } = checkpointPair(input);
-    const result = await database.query(
+    const result = await database.query(withRankingInvalidation(
       `UPDATE robinhood_wallet_swap_cursors
        SET next_block = $3::bigint,
            safe_head = CASE
@@ -192,7 +193,7 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
          AND next_block <= $3::bigint
          AND (safe_head IS NULL OR $4::bigint IS NULL OR safe_head <= $4::bigint)
          AND lifecycle_state IN ('pending', 'running')
-       RETURNING *`,
+       RETURNING *`, 'swaps'),
       [
         CHAIN,
         stream(streamName),
@@ -217,9 +218,8 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
       input,
       nextBlock
     );
-    const result = await database.query(
-      `WITH advanced AS (
-       UPDATE robinhood_wallet_swap_cursors
+    const result = await database.query(withRankingInvalidation(
+      `UPDATE robinhood_wallet_swap_cursors
        SET next_block = $3::bigint,
            safe_head = CASE
              WHEN $4::bigint IS NULL THEN safe_head
@@ -241,9 +241,7 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
            OR $5::bigint IS NULL
            OR checkpoint_block <= $5::bigint
          )
-       RETURNING *
-       ) SELECT advanced.*, pg_notify($9, advanced.next_block::text) AS notified
-           FROM advanced`,
+       RETURNING *`, 'swaps', 'pg_notify($9, changed.next_block::text) AS notified'),
       [
         CHAIN, 'live', nextBlock, safeHead, checkpointBlock, checkpointHash,
         checkpointTimestamp, Number(input.expectedVersion), LIVE_NOTIFY_CHANNEL,
@@ -253,7 +251,7 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
   }
 
   async function completeSeed(input = {}) {
-    const result = await database.query(
+    const result = await database.query(withRankingInvalidation(
       `UPDATE robinhood_wallet_swap_cursors
        SET lifecycle_state = 'complete', state_reason = NULL,
            completed_at = NOW(), abandoned_at = NULL,
@@ -261,7 +259,7 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
        WHERE chain = $1 AND stream = 'seed' AND version = $2
          AND lifecycle_state IN ('pending', 'running')
          AND safe_head IS NOT NULL AND next_block > safe_head
-       RETURNING *`,
+       RETURNING *`, 'swaps'),
       [CHAIN, Number(input.expectedVersion)]
     );
     return normalizeCursor(result.rows[0]);
@@ -272,14 +270,14 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
     if (!reason || reason.length > 500) {
       throw new Error('seed abandonment requires a reason of at most 500 characters');
     }
-    const result = await database.query(
+    const result = await database.query(withRankingInvalidation(
       `UPDATE robinhood_wallet_swap_cursors
        SET lifecycle_state = 'abandoned', state_reason = $3,
            completed_at = NULL, abandoned_at = NOW(),
            version = version + 1, updated_at = NOW()
        WHERE chain = $1 AND stream = 'seed' AND version = $2
          AND lifecycle_state IN ('pending', 'running')
-       RETURNING *`,
+       RETURNING *`, 'swaps'),
       [CHAIN, Number(input.expectedVersion), reason]
     );
     return normalizeCursor(result.rows[0]);

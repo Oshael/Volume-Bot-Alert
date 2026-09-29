@@ -5,6 +5,7 @@ const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('./robinhood-wallet-swap-realtime-outbox');
 const { createRobinhoodMarketReorgRollback } = require('./robinhood-market-reorg-rollback');
+const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 const { createRobinhoodWalletReorgRollback } = require('./robinhood-wallet-reorg-rollback');
 const {
   createRobinhoodWalletTransferReorgRollback,
@@ -537,6 +538,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         [CHAIN, recoveryGeneration, JSON.stringify(payload)]
       );
       await client.query('SELECT pg_notify($1,$2)', [NOTIFY_CHANNEL, recoveryGeneration]);
+      await publishRankingInvalidation(client, 'reorg');
       await client.query('COMMIT');
       return {
         status: 'rewound', generation: recoveryGeneration,

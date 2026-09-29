@@ -208,8 +208,20 @@ function createRobinhoodWalletSwapOutboxRepository(options = {}) {
        WHERE cursor.chain=$1 AND cursor.stream='live'
          AND cursor.next_block < checkpoint.block_number+1
        RETURNING cursor.next_block
+       ), revised AS (
+         INSERT INTO robinhood_wallet_ranking_revisions(source, version)
+         SELECT 'swaps', 1 FROM advanced
+         ON CONFLICT(source) DO UPDATE SET
+           version=robinhood_wallet_ranking_revisions.version+1, updated_at=NOW()
+         RETURNING source, version
+       ), notified AS (
+         SELECT pg_notify('robinhood_wallet_ranking_invalidated', json_build_object(
+           'chain', 'robinhood', 'source', revised.source,
+           'version', revised.version::text
+         )::text) FROM revised
        )
-       SELECT (next_block-1)::text AS complete_through_block FROM advanced
+       SELECT (advanced.next_block-1)::text AS complete_through_block
+       FROM advanced CROSS JOIN notified
        UNION ALL
        SELECT (cursor.next_block-1)::text
        FROM robinhood_wallet_swap_cursors cursor

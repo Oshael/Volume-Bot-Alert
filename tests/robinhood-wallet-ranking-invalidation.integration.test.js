@@ -4,7 +4,7 @@ const { after, before, it } = require('node:test');
 
 const db = require('../src/models/db');
 const stage257 = require('../src/utils/db-init-stage257');
-const { CHANNEL, publishRankingInvalidation } = require(
+const { CHANNEL, publishRankingInvalidation, withRankingInvalidation } = require(
   '../src/models/robinhood-wallet-ranking-invalidation'
 );
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -12,6 +12,29 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 before(async () => {
   await assertUsingTestDatabase(db);
   await stage257.init({ closePool: false });
+});
+
+it('revises a source only when the guarded cursor update succeeds', async () => {
+  const client = await db.getClient();
+  try {
+    await client.query('CREATE TEMP TABLE ranking_cursor_test (version integer NOT NULL)');
+    await client.query('INSERT INTO ranking_cursor_test VALUES (0)');
+    const sql = withRankingInvalidation(
+      'UPDATE ranking_cursor_test SET version=version+1 WHERE version=$1 RETURNING version',
+      'swaps'
+    );
+    const before = await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='swaps'"
+    );
+    assert.equal((await client.query(sql, [0])).rows[0].version, 1);
+    assert.equal((await client.query(sql, [0])).rows.length, 0);
+    const afterUpdate = await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='swaps'"
+    );
+    assert.equal(BigInt(afterUpdate.rows[0].version), BigInt(before.rows[0]?.version || 0) + 1n);
+  } finally {
+    client.release();
+  }
 });
 after(async () => { await db.pool.end(); });
 

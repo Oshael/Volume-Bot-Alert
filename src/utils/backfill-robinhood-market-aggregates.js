@@ -342,7 +342,16 @@ async function refreshBoundsAfterPhaseChange(input) {
 async function runBackfill(options, deps = {}) {
   const database = deps.database || db;
   const execute = queryRunner(database, options.statementTimeoutMs, options.lockTimeoutMs);
-  const repository = deps.repository || createRobinhoodMarketAggregateRepository({ query: execute });
+  const repository = deps.repository || createRobinhoodMarketAggregateRepository({
+    query: execute,
+    getClient: database.getClient?.bind(database),
+    async prepareTransaction(client) {
+      const statementMs = Math.max(0, Math.trunc(Number(options.statementTimeoutMs) || 0));
+      const lockMs = Math.max(0, Math.trunc(Number(options.lockTimeoutMs) || 0));
+      await client.query(`SET LOCAL statement_timeout = '${statementMs}ms'`);
+      await client.query(`SET LOCAL lock_timeout = '${lockMs}ms'`);
+    },
+  });
   const load = deps.readCheckpoint || readCheckpoint;
   const save = deps.writeCheckpoint || writeCheckpoint;
   const checkpoint = await load(options.checkpointFile) || {

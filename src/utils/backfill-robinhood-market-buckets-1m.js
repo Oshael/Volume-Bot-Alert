@@ -1,4 +1,5 @@
 const db = require('../models/db');
+const { publishRankingInvalidation } = require('../models/robinhood-wallet-ranking-invalidation');
 
 // Recovery util: rebuild robinhood_market_buckets_1m for a range of already
 // persisted market observations. Used when the live ingestion cursor halted and
@@ -166,6 +167,9 @@ async function runBackfill(options, deps = {}) {
     await client.query('BEGIN');
     const deleted = await client.query(DELETE_SQL, [window.start, window.end]);
     const inserted = await client.query(INSERT_SQL, [window.start, window.end]);
+    if (deleted.rowCount > 0 || inserted.rowCount > 0) {
+      await publishRankingInvalidation(client, 'prices');
+    }
     await client.query('COMMIT');
     summary.deleted = deleted.rowCount || 0;
     summary.inserted = inserted.rowCount || 0;

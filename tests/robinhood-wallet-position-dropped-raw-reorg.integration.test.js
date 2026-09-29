@@ -28,6 +28,7 @@ const stage205 = require('../src/utils/db-init-stage205');
 const stage206 = require('../src/utils/db-init-stage206');
 const stage222 = require('../src/utils/db-init-stage222');
 const stage245 = require('../src/utils/db-init-stage245');
+const stage257 = require('../src/utils/db-init-stage257');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'unified_transfer_v1';
@@ -242,7 +243,7 @@ describe('Robinhood position reorg after transfer raw was dropped', () => {
     await assertUsingTestDatabase(db);
     for (const stage of [stage90, stage91, stage109, stage126, stage127, stage128,
       stage132, stage137, stage139, stage191, stage203, stage204, stage205,
-      stage206, stage245]) await stage.init({ closePool: false });
+      stage206, stage245, stage257]) await stage.init({ closePool: false });
     await db.query(stage222.STATEMENTS[1]);
   });
   after(async () => { await db.pool.end().catch(() => {}); });

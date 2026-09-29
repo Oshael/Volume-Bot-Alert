@@ -83,6 +83,47 @@ describe('Robinhood aggregate backfill', () => {
     assert.deepEqual(calls[3].params, [1]);
     assert.equal(released, true);
   });
+  it('publishes a changed fine aggregate from the write CLI in the timed transaction', async () => {
+    const transactions = [];
+    const database = {
+      async getClient() {
+        const calls = [];
+        transactions.push(calls);
+        return {
+          async query(sql) {
+            calls.push(sql);
+            if (/MIN\(bucket_ts\)/.test(sql)) return { rows: [{
+              min_ts: '2026-07-18T12:00:00.000Z',
+              max_ts: '2026-07-18T12:59:00.000Z',
+            }] };
+            if (/INSERT INTO robinhood_wallet_ranking_revisions/.test(sql)) {
+              return { rows: [{ version: '1' }] };
+            }
+            if (/WITH requested_tokens AS MATERIALIZED/.test(sql)) return { rows: [{
+              source_buckets: 1, target_buckets: 1, written_buckets: 1,
+              deleted_buckets: 0, has_more_tokens: false,
+            }] };
+            return { rows: [] };
+          },
+          release() {},
+        };
+      },
+    };
+    const summary = await runBackfill(options({
+      mode: 'write', checkpointFile: '/tmp/rh.json',
+    }), {
+      database, readCheckpoint: async () => null, writeCheckpoint: async () => {},
+    });
+    assert.equal(summary.written, 1);
+    const write = transactions.find((calls) => calls.some((sql) => (
+      /INSERT INTO robinhood_wallet_ranking_revisions/.test(sql)
+    )));
+    assert.deepEqual(write.slice(0, 3), [
+      'BEGIN', "SET LOCAL statement_timeout = '5000ms'",
+      "SET LOCAL lock_timeout = '750ms'",
+    ]);
+    assert.equal(write.at(-1), 'COMMIT');
+  });
   it('derives fine and permanent parent buckets without duplicate targets', () => {
     const rows = [
       { token_address: TOKEN, bucket_ts: '2026-07-18T12:01:00.000Z' },

@@ -1,4 +1,5 @@
 const db = require('./db');
+const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 
 const GRANULARITY_SOURCE = Object.freeze(new Map([
   [5, { minutes: 1, table: 'robinhood_market_buckets_1m' }],
@@ -537,6 +538,24 @@ function foldMarketRows(rows, input) {
 }
 
 function createRobinhoodMarketAggregateRepository(database = db) {
+  async function priceWrite(enabled, run) {
+    if (!enabled || typeof database.getClient !== 'function') return (await run(database)).value;
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      if (database.prepareTransaction) await database.prepareTransaction(client);
+      const { value, changed } = await run(client);
+      if (changed) await publishRankingInvalidation(client, 'prices');
+      await client.query('COMMIT');
+      return value;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function listRecentSourceBuckets(input = {}) {
     const since = new Date(input.since);
     const limit = Math.max(1, Math.min(1000, Math.trunc(Number(input.limit)) || 500));
@@ -555,7 +574,8 @@ function createRobinhoodMarketAggregateRepository(database = db) {
 
   async function refreshBucket(rawInput) {
     const input = normalizeRefreshInput(rawInput);
-    const sourceResult = await database.query(
+    return priceWrite(input.granularityMinutes === 5, async (client) => {
+    const sourceResult = await client.query(
       `WITH source_rows AS MATERIALIZED (
          SELECT protocol, market_key, open_price_usd, high_price_usd, low_price_usd,
                 close_price_usd, open_fdv_usd, high_fdv_usd, low_fdv_usd,
@@ -597,21 +617,23 @@ function createRobinhoodMarketAggregateRepository(database = db) {
     );
     const aggregate = foldMarketRows(sourceResult.rows, input);
     if (!aggregate) {
-      await database.query(
+      const deleted = await client.query(
         `DELETE FROM robinhood_market_buckets_agg
          WHERE chain = 'robinhood' AND token_address = $1
            AND granularity_minutes = $2 AND bucket_ts = $3::timestamptz`,
         [input.tokenAddress, input.granularityMinutes, input.bucketTs]
       );
-      return null;
+      return { value: null, changed: deleted.rowCount > 0 };
     }
-    const result = await database.query(UPSERT_SQL, [JSON.stringify(aggregate)]);
-    return result.rows[0] || aggregate;
+    const result = await client.query(UPSERT_SQL, [JSON.stringify(aggregate)]);
+    return { value: result.rows[0] || aggregate, changed: result.rowCount > 0 };
+    });
   }
 
   async function refreshHourlyRange(rawInput) {
     const input = normalizeHourlyRange(rawInput);
-    const result = await database.query(HOURLY_REFRESH_SQL, [
+    return priceWrite(true, async (client) => {
+    const result = await client.query(HOURLY_REFRESH_SQL, [
       input.from, input.to, input.afterToken, input.tokenLimit, input.tokenAddresses,
     ]);
     const counts = result.rows[0] || {};
@@ -619,24 +641,26 @@ function createRobinhoodMarketAggregateRepository(database = db) {
     if (identityConflicts > 0) {
       throw new Error('Robinhood hourly range has conflicting token dimensions');
     }
-    return {
+    return { value: {
       sourceBuckets: Number(counts.source_buckets || 0),
       writtenBuckets: Number(counts.written_buckets || 0),
       tokenCount: Number(counts.token_count || 0),
       lastToken: counts.last_token || null,
       hasMoreTokens: counts.has_more_tokens === true,
-    };
+    }, changed: Number(counts.written_buckets || 0) > 0 };
+    });
   }
 
   async function refreshAggregateRange(rawInput) {
     const input = normalizeAggregateRange(rawInput);
     const sql = buildAggregateRangeSql(input.source);
-    const result = await database.query(sql, [
+    return priceWrite(input.granularities.includes(5), async (client) => {
+    const result = await client.query(sql, [
       input.from, input.to, input.granularities, input.afterToken, input.tokenLimit,
       input.tokenAddresses,
     ]);
     const counts = result.rows[0] || {};
-    return {
+    return { value: {
       sourceBuckets: Number(counts.source_buckets || 0),
       targetBuckets: Number(counts.target_buckets || 0),
       writtenBuckets: Number(counts.written_buckets || 0),
@@ -644,7 +668,9 @@ function createRobinhoodMarketAggregateRepository(database = db) {
       tokenCount: Number(counts.token_count || 0),
       lastToken: counts.last_token || null,
       hasMoreTokens: counts.has_more_tokens === true,
-    };
+    }, changed: Number(counts.written_buckets || 0) > 0
+      || Number(counts.deleted_buckets || 0) > 0 };
+    });
   }
 
   return Object.freeze({

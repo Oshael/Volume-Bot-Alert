@@ -10,6 +10,7 @@ const { STATEMENTS: REALTIME_STATEMENTS } = require('../src/utils/db-init-stage2
 const { STATEMENTS: AUDIT_STATEMENTS } = require('../src/utils/db-init-stage209');
 const { STATEMENTS: RETENTION_STATEMENTS } = require('../src/utils/db-init-stage210');
 const { STATEMENTS: TERMINALIZATION_STATEMENTS } = require('../src/utils/db-init-stage211');
+const stage257 = require('../src/utils/db-init-stage257');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('../src/models/robinhood-wallet-swap-outbox-producer');
@@ -35,6 +36,7 @@ let client;
 describe('Robinhood wallet-swap outbox producer integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage257.init({ closePool: false });
     client = await db.getClient();
     await client.query(`CREATE TEMP TABLE robinhood_market_observations (
       chain text, transaction_hash text, log_index bigint, block_number bigint,
@@ -184,6 +186,9 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       }),
     };
     const outbox = createRobinhoodWalletSwapOutboxRepository({ database });
+    const before = await client.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='swaps'"
+    );
     assert.equal(await outbox.discardLegacyCovered(), 0);
     const claimed = await outbox.claimFinalized({
       owner: 'integration', limit: 10, leaseMs: 60000, throughBlock: '100',
@@ -192,6 +197,15 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.equal(claimed[0].transactionHash, TX);
     assert.equal((await outbox.settle({ owner: 'integration', delivered: claimed })).delivered, 1);
     assert.equal(await outbox.advanceCompatibilityWatermark('100'), '100');
+    const afterAdvance = await client.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='swaps'"
+    );
+    assert.equal(BigInt(afterAdvance.rows[0].version), BigInt(before.rows[0]?.version || 0) + 1n);
+    assert.equal(await outbox.advanceCompatibilityWatermark('100'), '100');
+    const afterRetry = await client.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='swaps'"
+    );
+    assert.equal(afterRetry.rows[0].version, afterAdvance.rows[0].version);
     assert.equal((await client.query(
       'SELECT COUNT(*)::int AS count FROM robinhood_wallet_swap_outbox'
     )).rows[0].count, 0);

@@ -420,6 +420,10 @@ posições e transfers, inclusive avanço vazio. R5a.1b deve cobrir cursores de
 swaps, preço de 1 minuto, agregado de mercado e rollback de reorg antes de
 considerar R5a.1 completo. Nenhuma dessas notificações substitui o snapshot
 autenticado do ranking.
+O endpoint fixa `asOf` pelo cursor de posições. Uma alteração isolada de preço
+posterior a esse frontier pode não mudar o snapshot até o cursor avançar; medir
+e resolver essa dependência antes de afirmar latência de ponta a ponta em
+milissegundos.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI; R5a conecta a invalidação durável ao socket e à
 consulta do painel. R2c acrescenta uma migration. Não há novo worker planejado

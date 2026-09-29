@@ -116,7 +116,8 @@ describe('robinhood wallet swap cursor repository', () => {
     assert.match(database.calls[0].sql, /GREATEST\(COALESCE\(safe_head/);
     assert.match(database.calls[0].sql, /checkpoint_block = COALESCE/);
     assert.match(database.calls[0].sql, /next_block <= \$3::bigint/);
-    assert.match(database.calls[0].sql, /pg_notify\(\$9, advanced.next_block::text\)/);
+    assert.match(database.calls[0].sql, /pg_notify\(\$9, changed.next_block::text\)/);
+    assert.match(database.calls[0].sql, /robinhood_wallet_ranking_revisions/);
     assert.deepEqual(database.calls[0].params, [
       'robinhood', 'live', '102', '120', null, null, null, 3, LIVE_NOTIFY_CHANNEL,
     ]);

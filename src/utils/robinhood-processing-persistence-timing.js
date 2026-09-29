@@ -4,7 +4,8 @@ function createProcessingPersistenceTiming({ now = () => performance.now() } = {
   const totals = {
     attempts: 0, commits: 0, failures: 0, totalMs: 0,
     connectionMs: 0, beginMs: 0, logsMs: 0, v4DeltasMs: 0,
-    observationsMs: 0, hourlyMs: 0, outboxMs: 0, commitMs: 0, rollbackMs: 0,
+    observationsMs: 0, hourlyMs: 0, outboxMs: 0, invalidationMs: 0,
+    commitMs: 0, rollbackMs: 0,
   };
 
   async function measure(phase, operation) {

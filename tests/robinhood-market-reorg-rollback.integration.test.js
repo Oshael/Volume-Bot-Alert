@@ -23,6 +23,7 @@ const stage104 = require('../src/utils/db-init-stage104');
 const stage105 = require('../src/utils/db-init-stage105');
 const stage106 = require('../src/utils/db-init-stage106');
 const stage191 = require('../src/utils/db-init-stage191');
+const stage257 = require('../src/utils/db-init-stage257');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK = 912345678;
@@ -117,10 +118,28 @@ describe('Robinhood market reorg rollback', () => {
       stage78, stage79, stage96, stage104, stage105, stage106, stage191]) {
       await stage.init({ closePool: false });
     }
+    await stage257.init({ closePool: false });
   });
   beforeEach(async () => { await clear(); await seed(); });
   after(async () => { await clear().catch(() => {}); await db.pool.end().catch(() => {}); });
 
+  it('revises ranking prices only after a five-minute aggregate changes', async () => {
+    const aggregate = createRobinhoodMarketAggregateRepository();
+    const input = { tokenAddress: TOKEN, granularityMinutes: 5, bucketTs: MINUTE };
+    const before = await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='prices'"
+    );
+    await aggregate.refreshBucket(input);
+    const first = await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='prices'"
+    );
+    assert.equal(BigInt(first.rows[0].version), BigInt(before.rows[0]?.version || 0) + 1n);
+    await aggregate.refreshBucket(input);
+    const second = await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='prices'"
+    );
+    assert.equal(second.rows[0].version, first.rows[0].version);
+  });
   it('removes only orphan evidence and exactly rebuilds every market tier', async () => {
     const client = await db.getClient();
     let summary;

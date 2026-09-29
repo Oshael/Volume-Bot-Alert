@@ -1,6 +1,7 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { OUTBOX_NOTIFY_CHANNEL } = require('./robinhood-derived-outbox');
+const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('./robinhood-wallet-swap-outbox-producer');
@@ -2126,6 +2127,9 @@ function createRobinhoodPersistenceRepository(options = {}) {
         ? 0
         : await refreshHourlyBuckets(client, observations);
       await upsertCursor(client, cursor);
+      if (marketWrite.touchedBuckets > 0 || touchedHourlyBuckets > 0) {
+        await publishRankingInvalidation(client, 'prices');
+      }
       await client.query('COMMIT');
       emitRobinhoodMarketBucketUpdates(marketWrite.liveBuckets, cursor, emitMarketBucketUpdate);
       await emitRobinhoodStandardAlertSignals(
@@ -2176,6 +2180,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
       );
       const aggregationTargets = await insertBackfillAggregationTargets(client, allObservations);
       await settleBackfillClaims(client, batch);
+      if (marketWrite.touchedBuckets > 0) await publishRankingInvalidation(client, 'prices');
       await client.query('COMMIT');
       return {
         insertedLogs: insertedIdentities.size,
@@ -2281,6 +2286,11 @@ function createRobinhoodPersistenceRepository(options = {}) {
             insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
           ))
           : 0;
+        if (marketWrite.touchedBuckets > 0 || replayHourlyObservations.length > 0) {
+          await timing.measure('invalidationMs', () => (
+            publishRankingInvalidation(client, 'prices')
+          ));
+        }
         await timing.measure('commitMs', () => client.query('COMMIT'));
         const {
           liveBuckets: _ignored,

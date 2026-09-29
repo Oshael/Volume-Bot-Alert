@@ -110,6 +110,7 @@ const stage240 = require('../src/utils/db-init-stage240');
 const stage247 = require('../src/utils/db-init-stage247');
 const stage253 = require('../src/utils/db-init-stage253');
 const stage254 = require('../src/utils/db-init-stage254');
+const stage257 = require('../src/utils/db-init-stage257');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
 const transactionShadowCopy = require('../src/utils/copy-robinhood-chain-transaction-shadow-page');
 const transactionShadowAudit = require('../src/utils/audit-robinhood-chain-transaction-shadow');
@@ -456,6 +457,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage179.init({ closePool: false });
     await stage187.init({ closePool: false });
     await stage180.init({ closePool: false });
+    await stage257.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -1615,11 +1617,16 @@ describe('Robinhood canonical chain capture journal', () => {
     );
     const token = await createHttpSession();
     const server = await startTradesHttpServer();
+    const reorgVersion = async () => BigInt((await db.query(
+      "SELECT version::text FROM robinhood_wallet_ranking_revisions WHERE source='reorg'"
+    )).rows[0]?.version || 0);
+    const beforeReorgVersion = await reorgVersion();
     let rewindResult;
     try {
       assert.deepEqual(tradeHashes(await fetchTrades(server, token)), [LEGACY_TX, NEXT_TX, TX].sort());
       await journal.markRecoveryRequired({ plan });
       rewindResult = await journal.rewindCanonicalRecovery({ generation: '0' });
+      assert.equal(await reorgVersion(), beforeReorgVersion + 1n);
       assert.deepEqual(tradeHashes(await fetchTrades(server, token)), [TX]);
     } finally {
       await stopTradesHttpServer(server);
@@ -1721,6 +1728,7 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',
     });
+    assert.equal(await reorgVersion(), beforeReorgVersion + 1n);
     const blocks = await db.query(
       `SELECT block_number::text, block_hash, canonical
          FROM robinhood_chain_blocks ORDER BY block_number, block_hash`

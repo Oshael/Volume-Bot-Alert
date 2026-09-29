@@ -275,6 +275,9 @@ function createFakeDatabase(options = {}) {
     // eslint-disable-next-line complexity
     async query(sql, params) {
       calls.push({ sql, params });
+      if (/INSERT INTO robinhood_wallet_ranking_revisions/.test(sql)) {
+        return { rows: [{ version: '1' }], rowCount: 1 };
+      }
       if (/SELECT recovery_state FROM robinhood_chain_capture_cursor/.test(sql)) {
         const recoveryState = options.recoveryState || 'running';
         return { rows: [{ recovery_state: recoveryState }], rowCount: 1 };
@@ -820,7 +823,8 @@ describe('Robinhood persistence repository', () => {
     assert.match(fake.calls[3].sql, /minute\.close_liquidity_usd/);
     assert.match(fake.calls[3].sql, /close_liquidity_status = EXCLUDED\.close_liquidity_status/);
     assert.match(fake.calls[4].sql, /INSERT INTO robinhood_ingestion_cursors/);
-    assert.equal(fake.calls[5].sql, 'COMMIT');
+    assert.match(fake.calls[5].sql, /robinhood_wallet_ranking_revisions/);
+    assert.equal(fake.calls[6].sql, 'COMMIT');
     assert.equal(emitted.length, 1);
     assert.equal(emitted[0].lastDatabaseCall, 'COMMIT');
     assert.equal(emitted[0].payload.chain, 'robinhood');
@@ -884,7 +888,8 @@ describe('Robinhood persistence repository', () => {
     assert.match(fake.calls[1].sql, /FOR UPDATE OF staging/);
     assert.match(fake.calls[4].sql, /INSERT INTO robinhood_backfill_aggregation_outbox/);
     assert.match(fake.calls[5].sql, /UPDATE robinhood_market_log_staging staging/);
-    assert.equal(fake.calls[6].sql, 'COMMIT');
+    assert.match(fake.calls[6].sql, /robinhood_wallet_ranking_revisions/);
+    assert.equal(fake.calls[7].sql, 'COMMIT');
     assert.equal(fake.calls.some((call) => (
       /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)
     )), false);
@@ -1030,7 +1035,8 @@ describe('Robinhood persistence repository', () => {
     assert.equal(fake.calls.some((call) => (
       /INSERT INTO robinhood_market_buckets_1h/.test(call.sql)
     )), false);
-    assert.match(fake.calls.at(-2).sql, /INSERT INTO robinhood_ingestion_cursors/);
+    assert.match(fake.calls.at(-3).sql, /INSERT INTO robinhood_ingestion_cursors/);
+    assert.match(fake.calls.at(-2).sql, /INSERT INTO robinhood_wallet_ranking_revisions/);
     assert.equal(fake.calls.at(-1).sql, 'COMMIT');
     assert.equal(emitted.length, 1);
   });
@@ -1346,9 +1352,10 @@ describe('commitHeadProcessingBatch derived outbox', () => {
       assert.equal(fake.calls.at(-1).sql, failObservation ? 'ROLLBACK' : 'COMMIT');
     }
     assert.deepEqual(persistenceTiming.snapshot(), {
-      attempts: 2, commits: 1, failures: 1, totalMs: 30,
+      attempts: 2, commits: 1, failures: 1, totalMs: 32,
       connectionMs: 6, beginMs: 4, logsMs: 4, v4DeltasMs: 0,
-      observationsMs: 6, hourlyMs: 2, outboxMs: 4, commitMs: 2, rollbackMs: 2,
+      observationsMs: 6, hourlyMs: 2, outboxMs: 4, invalidationMs: 2,
+      commitMs: 2, rollbackMs: 2,
     });
   });
 

@@ -991,7 +991,8 @@ do claim legado além desses componentes. Compare os campos no mesmo tick e o la
 da fila antes de atribuir uma causa a I/O, consulta ou espera no pool.
 `lastTiming.persistence` detalha a persistência com `connectionMs` (espera por conexão),
 `beginMs`, `logsMs`, `v4DeltasMs`, `observationsMs` (observations e buckets de minuto),
-`hourlyMs`, `outboxMs` (inclui NOTIFY), `commitMs` e `rollbackMs`. São tempos locais
+`hourlyMs`, `outboxMs` (inclui NOTIFY), `invalidationMs` (revisão e NOTIFY do ranking),
+`commitMs` e `rollbackMs`. São tempos locais
 monotônicos, em ms, somados para todas as rodadas, partes de até 2000 entradas e
 tentativas de isolamento, inclusive as que falham; não são tempo exclusivo de disco
 nem uma única query. `attempts`, `commits` e `failures` contam chamadas de persistência,
@@ -4744,14 +4745,17 @@ as partições raw e de swaps estão disponíveis, os eventos lidos pertencem a
 blocos canônicos, a classificação do par está resolvida e a leitura de eventos
 não foi truncada. Escopos apenas seed ou
 anteriores à Stage 256 continuam com cobertura incompleta.
-Antes de atualizar os writers de posições e transfers do ranking, aplique
+Antes de atualizar os writers que publicam revisões do ranking, aplique
 `node src/utils/db-init-stage257.js`. A tabela
 `robinhood_wallet_ranking_revisions` mantém versões independentes por fonte.
-Um commit aceito de posições ou transfers, inclusive um avanço de cursor sem
-eventos, incrementa sua versão e emite `robinhood_wallet_ranking_invalidated`
-na mesma transação; PostgreSQL entrega o aviso somente após o commit. O aviso
-contém `chain`, `source` e `version`. As fontes swaps, preços e reorg ainda não
-emitem esse aviso; o ranking ao vivo depende dos cortes seguintes.
+Commits aceitos de posições, transfers, cursores de swaps, buckets de preço e
+recuperação de reorg incrementam a versão de sua fonte e emitem
+`robinhood_wallet_ranking_invalidated` na mesma transação. Isso inclui avanço
+vazio de cursor; conflito ou rollback não publica. PostgreSQL entrega o aviso
+somente após o commit. O aviso contém `chain`, `source` e `version`. O agregado
+de 5 minutos publica após sua atualização, separadamente do preço de 1 minuto.
+Ainda não há relay desse canal para clientes WebSocket; o ranking ao vivo depende
+dos cortes seguintes.
 O ranking global lê até 1.000 posições abertas num snapshot, enriquece tokens
 em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do

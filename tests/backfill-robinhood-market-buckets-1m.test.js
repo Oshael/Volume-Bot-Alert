@@ -13,7 +13,8 @@ function fakeDatabase({ withWindow = true } = {}) {
     released: false,
     async query(sql, params) {
       this.queries.push({ sql: String(sql), params });
-      return { rowCount: 3 };
+      return /INSERT INTO robinhood_wallet_ranking_revisions/.test(sql)
+        ? { rows: [{ version: '1' }], rowCount: 1 } : { rowCount: 3 };
     },
     release() { this.released = true; },
   };
@@ -79,10 +80,11 @@ describe('backfill-robinhood-market-buckets-1m execution', () => {
     const summary = await runBackfill({ mode: 'write', fromBlock: 26738684, toBlock: null }, { database });
 
     const steps = database.client.queries.map((entry) => entry.sql.trim().split(/\s+/).slice(0, 2).join(' '));
-    assert.deepEqual(steps, ['BEGIN', 'DELETE FROM', 'INSERT INTO', 'COMMIT']);
+    assert.deepEqual(steps, ['BEGIN', 'DELETE FROM', 'INSERT INTO', 'WITH revised', 'COMMIT']);
     // DELETE and INSERT both run over the resolved [start, end) window.
     for (const entry of database.client.queries) {
-      if (entry.sql.startsWith('BEGIN') || entry.sql.startsWith('COMMIT')) continue;
+      if (entry.sql.startsWith('BEGIN') || entry.sql.startsWith('COMMIT')
+        || entry.sql.startsWith('WITH revised')) continue;
       assert.deepEqual(entry.params, [WINDOW.start_ts, WINDOW.end_ts]);
     }
     assert.equal(database.client.released, true);
