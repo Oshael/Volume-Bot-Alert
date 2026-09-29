@@ -287,7 +287,7 @@ uma etapa funcional quando necessário, sem esconder trabalho parcial.
 | 3 | Tabela de altas e layout 50/50 | Seleção global, preço ausente, ações e responsividade |
 | 4 | Domínio/consulta do ranking e perfis | Cálculos, cobertura, desempates e integração |
 | 5 | Interface Top Wallets e seletor temporal | Filtros, estados e navegação |
-| 5a | Ranking Top Wallets ao vivo por WebSocket | Invalidação após commit, reconexão, coalescência, cursores e cobertura |
+| 5a.1–5a.3 | Ranking Top Wallets ao vivo por WebSocket | Fontes duráveis, distribuição, reconexão, coalescência, cursores e cobertura |
 | 6 | Leituras da wallet: posições e swaps | Paginação, autorização existente e histórico incompleto |
 | 7 | Transfers e contrapartes | Corte USD, classificação, deduplicação e evidência |
 | 8 | Tela da wallet | Abertas/fechadas, feeds e retorno ao Radar |
@@ -358,9 +358,9 @@ A auditoria não comprova cobertura de eventos, preços nem universo global;
 
 ### Cortes restantes do ranking de wallets
 
-Estimativa revisada de pelo menos dez cortes de até 500 linhas cada, incluindo
+Estimativa revisada de pelo menos doze cortes de até 500 linhas cada, incluindo
 código, testes e documentação. Cada corte exige autorização própria após o
-anterior. R5a pode exigir divisão após o mapeamento das fontes de evento.
+anterior. R5a foi dividido em três cortes, estimados juntos em 900–1.300 linhas.
 R2c foi redimensionado em três cortes (estimativa conjunta de 900–1.300
 linhas): o scanner global não persiste hoje o escopo dos tokens por range, logo a
 ausência de eventos não comprova uma varredura vazia. A migração aditiva é parte
@@ -378,7 +378,9 @@ novo redimensionamento.
 | R3 | Compor posições globais, preços e eventos em lotes no mesmo snapshot e agregar por wallet; quando o limite de candidatos for atingido, manter ranking parcial | Unidade contábil e integração de universo completo/incompleto, limites e desempates; medir plano de consultas antes de ampliar o limite |
 | R4 | Expor consulta autenticada do ranking e enriquecimento opcional de perfis RH, com `asOf`, cobertura, exclusões e paginação determinística | Integração HTTP de autenticação, isolamento RH, resposta parcial e ordenação |
 | R5 | Interface Top Wallets 24h/7d/30d/ALL, identidade, estados de cobertura e navegação para wallet, sem apresentar parcial como exato | Teste afetado, build frontend e smoke do fluxo visível |
-| R5a | Invalidação do ranking por WebSocket após commit durável, atualização automática do período selecionado, recuperação após reconexão e paginação consistente | Integração do evento/fonte, unidade de dedupe/coalescência, build e smoke com eventos simulados |
+| R5a.1 | Publicar invalidação versionada após commits que alteram posições, cobertura e preço agregado usado pelo ranking; incluir avanço vazio do cursor e rollback de reorg | Integração de notificação somente após commit, rollback sem publicação e fonte de preço agregado atualizada |
+| R5a.2 | Distribuir a invalidação durável aos clientes autenticados por WebSocket, com isolamento RH, coalescência e telemetria de publicação | Integração do listener/relay, autenticação/visibilidade, duplicatas e recuperação do listener |
+| R5a.3 | Atualizar automaticamente o painel no período selecionado; reconsultar snapshot após reconexão e descartar páginas de versão obsoleta sem misturar cursores | Unidade de dedupe/limite de consultas, build frontend e smoke com eventos simulados |
 
 R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
 `position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
@@ -405,13 +407,17 @@ de 1.000 posições não foi ampliado; planos de consulta e dados reais ainda
 precisam ser medidos antes disso. R4 expõe `/api/robinhood/top-wallets` com
 autenticação, paginação estável até o top 100, cobertura e perfis com vínculo RH
 explícito. R5 conecta o painel Top Wallets à API e preserva os estados de cobertura.
-R5a é necessário para o ranking ao vivo. Antes de implementá-lo, mapear as fontes
-duráveis e os arquivos afetados; o socket de `market:bucket` por token não deve
-ser tratado como prova de que o ranking global já tem uma versão atualizada.
+R5a.1–R5a.3 são necessários para o ranking ao vivo. O mapeamento inicial aponta
+os commits da projeção de posições, dos escopos de transfers e do agregado de
+mercado como fontes; verificar os pontos de emissão e o rollback antes de editar.
+O socket de `market:bucket` por token não prova que o agregado global já está
+atualizado. Estimativas por corte: R5a.1 350–450 linhas, R5a.2 250–400 linhas,
+R5a.3 300–450 linhas. Se um corte exceder 500 linhas ou exigir migration,
+redimensionar antes de editar.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI; R5a conecta a invalidação durável ao socket e à
-consulta do painel. R2c acrescenta uma migration. Dimensionar R5a antes de
-decidir se precisa de novo componente operacional; não usar polling no live.
+consulta do painel. R2c acrescenta uma migration. Não há novo worker planejado
+para R5a; não usar polling no live.
 Estimar novamente antes de cada corte; testes com dados reais e desempenho em
 escala continuam necessários antes de publicar ganhos exatos.
 
