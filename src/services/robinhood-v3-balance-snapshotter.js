@@ -55,11 +55,11 @@ function historicalStateUnavailable(error) {
 
 function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
   if (typeof deps.rpcClient?.request !== 'function') throw new Error('rpcClient.request is required');
-  const tracker = options.tracker || v3.createUniswapV3Tracker({
+  let tracker = options.tracker || v3.createUniswapV3Tracker({
     seedPools: normalizeSeedPools(options.seedPools),
   });
 
-  function decodeTrackedSwaps(capture) {
+  function decodeTrackedSwaps(capture, activeTracker) {
     const swaps = [];
     const events = [...(capture.events || [])]
       .sort((left, right) => Number(BigInt(left.logIndex) - BigInt(right.logIndex)));
@@ -68,18 +68,18 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
       const address = String(event.address || '').toLowerCase();
       const log = rpcLog(event, capture.block);
       if (address === v3.ROBINHOOD_V3_FACTORY && topic0 === v3.TOPICS.poolCreated) {
-        tracker.processLog(log);
-      } else if (topic0 === v3.TOPICS.swap && tracker.getPool(address)) {
-        swaps.push({ logIndex: event.logIndex, event: tracker.processLog(log) });
+        activeTracker.processLog(log);
+      } else if (topic0 === v3.TOPICS.swap && activeTracker.getPool(address)) {
+        swaps.push({ logIndex: event.logIndex, event: activeTracker.processLog(log) });
       }
     }
     return swaps;
   }
 
-  async function captureBlock(capture, captureOptions = {}) {
-    const swaps = decodeTrackedSwaps(capture);
+  function prepareBlock(capture, captureOptions = {}, activeTracker = tracker) {
+    const swaps = decodeTrackedSwaps(capture, activeTracker);
     const pools = new Map(swaps.map(({ event }) => [event.poolAddress, event]));
-    if (!pools.size) return { snapshots: [], pools: 0, missedPools: 0 };
+    if (!pools.size) return async () => ({ snapshots: [], pools: 0, missedPools: 0 });
     function rowsFor(statuses) {
       return swaps.map(({ logIndex, event }) => ({
         logIndex, poolAddress: event.poolAddress,
@@ -91,8 +91,8 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
     }
     if (captureOptions.readBalances === false) {
       const statuses = new Map([...pools.keys()].map((pool) => [pool, { status: 'skipped_window' }]));
-      return { snapshots: rowsFor(statuses), pools: pools.size,
-        missedPools: 0, skippedPools: pools.size };
+      return async () => ({ snapshots: rowsFor(statuses), pools: pools.size,
+        missedPools: 0, skippedPools: pools.size });
     }
     const calls = [...pools.values()].flatMap((event) => [
       { target: event.tokenAddress, allowFailure: true, callData: encodeBalanceOf(event.poolAddress) },
@@ -100,44 +100,60 @@ function createRobinhoodV3BalanceSnapshotter(deps = {}, options = {}) {
     ]);
     const blockTag = `0x${BigInt(capture.block.number).toString(16)}`;
     const data = encodeAggregate3(calls);
-    let raw;
-    try {
-      raw = await deps.rpcClient.request('eth_call', [{
-        to: MULTICALL3_ADDRESS, data,
-      }, blockTag]);
-    } catch (error) {
-      if (!historicalStateUnavailable(error)) throw error;
-      const statuses = new Map([...pools.keys()].map((pool) => [pool,
-        { status: 'historical_unavailable' }]));
-      return { snapshots: rowsFor(statuses), pools: pools.size,
-        missedPools: pools.size, skippedPools: 0 };
-    }
-    const results = decodeAggregate3(raw, calls.length);
-    const balances = new Map();
-    let resultIndex = 0;
-    for (const [poolAddress] of pools) {
+    return async () => {
+      let raw;
       try {
-        balances.set(poolAddress, { status: 'observed',
-          tokenBalanceRaw: uintResult(results[resultIndex], 'token'),
-          quoteBalanceRaw: uintResult(results[resultIndex + 1], 'quote'),
-        });
-      } catch (_) {
-        balances.set(poolAddress, { status: 'balance_failed' });
+        raw = await deps.rpcClient.request('eth_call', [{
+          to: MULTICALL3_ADDRESS, data,
+        }, blockTag]);
+      } catch (error) {
+        if (!historicalStateUnavailable(error)) throw error;
+        const statuses = new Map([...pools.keys()].map((pool) => [pool,
+          { status: 'historical_unavailable' }]));
+        return { snapshots: rowsFor(statuses), pools: pools.size,
+          missedPools: pools.size, skippedPools: 0 };
       }
-      resultIndex += 2;
-    }
-    const snapshots = rowsFor(balances);
-    return {
-      snapshots,
-      pools: pools.size,
-      missedPools: [...balances.values()].filter((value) => value.status !== 'observed').length,
-      skippedPools: 0,
+      const results = decodeAggregate3(raw, calls.length);
+      const balances = new Map();
+      let resultIndex = 0;
+      for (const [poolAddress] of pools) {
+        try {
+          balances.set(poolAddress, { status: 'observed',
+            tokenBalanceRaw: uintResult(results[resultIndex], 'token'),
+            quoteBalanceRaw: uintResult(results[resultIndex + 1], 'quote'),
+          });
+        } catch (_) {
+          balances.set(poolAddress, { status: 'balance_failed' });
+        }
+        resultIndex += 2;
+      }
+      const snapshots = rowsFor(balances);
+      return {
+        snapshots,
+        pools: pools.size,
+        missedPools: [...balances.values()].filter((value) => value.status !== 'observed').length,
+        skippedPools: 0,
+      };
     };
   }
 
+  async function captureBlock(capture, captureOptions = {}) {
+    return prepareBlock(capture, captureOptions)();
+  }
+
+  function beginBatch() {
+    const stagedTracker = v3.createUniswapV3Tracker({ seedPools: tracker.getTrackedPools() });
+    return Object.freeze({
+      prepareBlock: (capture, captureOptions) => (
+        prepareBlock(capture, captureOptions, stagedTracker)
+      ),
+      commit: () => { tracker = stagedTracker; },
+    });
+  }
+
   return Object.freeze({
-    captureBlock,
-    getTrackedPoolCount: tracker.getTrackedPoolCount,
+    captureBlock, beginBatch,
+    getTrackedPoolCount: () => tracker.getTrackedPoolCount(),
   });
 }
 

@@ -1750,6 +1750,9 @@ module.exports = {
     fetchConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY, 8, 1, 32
     ),
+    snapshotConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_CONCURRENCY, 4, 1, 16
+    ),
     rpcTimeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_RPC_TIMEOUT_MS, 2000, 1000, 15_000
     ),

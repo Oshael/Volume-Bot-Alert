@@ -136,6 +136,16 @@ describe('runtime worker groups config', () => {
     }
   });
 
+  it('bounds chain capture V3 snapshot concurrency', () => {
+    for (const [value, expected] of [
+      ['', 4], ['invalid', 4], ['0', 1], ['8', 8], ['99', 16],
+    ]) {
+      withEnv({ ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_CONCURRENCY: value }, (config) => {
+        assert.equal(config.robinhoodChainCaptureWorker.snapshotConcurrency, expected);
+      });
+    }
+  });
+
   it('bounds canonical capture reorg planning depth', () => {
     for (const [value, expected] of [
       ['', 64], ['invalid', 64], ['0', 1], ['96', 96], ['9999', 1000],

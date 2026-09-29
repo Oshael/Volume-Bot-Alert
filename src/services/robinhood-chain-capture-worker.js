@@ -199,6 +199,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
   const fetchConcurrency = Math.max(1, Math.min(32, Number(options.fetchConcurrency) || 8));
+  const snapshotConcurrency = Math.max(1, Math.min(16, Number(options.snapshotConcurrency) || 4));
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     eventShadowEnabled: options.eventShadowEnabled === true, shadowEvents: 0,
     transactionShadowEnabled: options.transactionShadowEnabled === true,
@@ -209,7 +210,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     lastTiming: null, halted: false, recoveryState: null, recoveryPlan: null,
     generation: null, blocks: 0, transactions: 0, events: 0,
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
-    fetchConcurrency };
+    fetchConcurrency, snapshotConcurrency };
   let timer = null; let inFlight = null; let requested = false;
   let preparedPartitionStart = null;
   let partitionRetry = null;
@@ -293,14 +294,35 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     const persisted = await deps.journal.markRecoveryRequired({ plan: result.plan });
     throw recoveryRequiredError(persisted?.plan || result.plan);
   }
+  async function captureSnapshots(fetched, v3Batch) {
+    const tasks = fetched.map(({ capture }) => v3Batch
+      ? v3Batch.prepareBlock(capture, { readBalances: true })
+      : () => deps.v3Snapshotter.captureBlock(capture, { readBalances: true }));
+    const results = new Array(tasks.length);
+    let nextIndex = 0; let failure = null; let failed = false;
+    async function run() {
+      while (!failed && nextIndex < tasks.length) {
+        const index = nextIndex++;
+        try { results[index] = await tasks[index](); } catch (error) {
+          if (!failed) { failed = true; failure = error; }
+        }
+      }
+    }
+    const concurrency = v3Batch ? snapshotConcurrency : 1;
+    await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, run));
+    if (failed) throw failure;
+    return results;
+  }
   async function commitBlockBatch(fetched, nodeHead, generation) {
-    const prepared = []; let snapshotMs = 0;
-    for (const entry of fetched) {
+    const v3Batch = deps.v3Snapshotter.beginBatch?.();
+    const snapshotStartedAt = now();
+    const snapshots = await captureSnapshots(fetched, v3Batch);
+    const snapshotMs = now() - snapshotStartedAt;
+    const prepared = [];
+    for (const [index, entry] of fetched.entries()) {
       const { blockNumber, capture, startedAt, receiptsAvailableAt } = entry;
       const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
-      const snapshotStartedAt = now();
-      const v3State = await deps.v3Snapshotter.captureBlock(capture, { readBalances: true });
-      snapshotMs += now() - snapshotStartedAt;
+      const v3State = snapshots[index];
       const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
         ? nodeHead - BigInt(options.confirmations || 0) : 0n;
       prepared.push({ ...entry, v3State, input: {
@@ -323,6 +345,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
         results.push(await deps.journal.commitBlock(input, { expectedGeneration: generation }));
       }
     }
+    v3Batch?.commit();
     const committedAt = now();
     for (const [index, entry] of prepared.entries()) {
       const { blockNumber, v3State } = entry;

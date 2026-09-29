@@ -113,6 +113,115 @@ test('worker prefetches blocks concurrently and commits them sequentially withou
   );
 });
 
+test('worker bounds V3 reads and commits snapshots in block order after all complete', async () => {
+  const samples = new Map([[100, fixture(100)], [101, fixture(101, hash('b'))]]);
+  const prepared = []; const released = new Map(); const commits = [];
+  let active = 0; let maxActive = 0;
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async (method, params) => {
+      if (method === 'eth_blockNumber') return '0x65';
+      const sample = samples.get(Number(BigInt(params[0])));
+      return method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
+    } },
+    journal: {
+      getCursor: async () => null,
+      commitBlocks: async (captures) => {
+        commits.push(...captures);
+        return captures.map(() => ({ transactions: 1, events: 1, v3Snapshots: 1 }));
+      },
+    },
+    v3Snapshotter: {
+      captureBlock: async () => { throw new Error('prepared path required'); },
+      beginBatch: () => ({ commit: () => { assert.equal(commits.length, 2); },
+        prepareBlock: (capture) => {
+          const block = Number(capture.block.number);
+          prepared.push(block);
+          return () => new Promise((resolve) => {
+            active += 1; maxActive = Math.max(maxActive, active);
+            released.set(block, () => { active -= 1; resolve({
+              snapshots: [{ block }], missedPools: 0,
+            }); });
+          });
+        } }),
+    },
+  }, { startBlock: '100', maxBlocksPerDrain: 2, fetchConcurrency: 2,
+    snapshotConcurrency: 2 });
+  const pending = worker.captureOnce();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(prepared, [100, 101]);
+  assert.equal(maxActive, 2);
+  released.get(101)();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(commits.length, 0);
+  released.get(100)();
+  await pending;
+  assert.deepEqual(commits.map((capture) => capture.block.number), [100n, 101n]);
+  assert.deepEqual(commits.map((capture) => capture.v3Snapshots[0].block), [100, 101]);
+  assert.equal(worker.getStatus().snapshotConcurrency, 2);
+});
+
+test('worker waits for started V3 reads and leaves the batch uncommitted on failure', async () => {
+  const samples = new Map([[100, fixture(100)], [101, fixture(101, hash('b'))]]);
+  const error = new Error('V3 RPC failed');
+  let releaseSecond; let committed = false; let trackerCommitted = false;
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async (method, params) => {
+      if (method === 'eth_blockNumber') return '0x65';
+      const sample = samples.get(Number(BigInt(params[0])));
+      return method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
+    } },
+    journal: {
+      getCursor: async () => null,
+      commitBlocks: async () => { committed = true; return []; },
+    },
+    v3Snapshotter: {
+      captureBlock: async () => { throw new Error('prepared path required'); },
+      beginBatch: () => ({
+        commit: () => { trackerCommitted = true; },
+        prepareBlock: (capture) => Number(capture.block.number) === 100
+          ? async () => { throw error; }
+          : () => new Promise((resolve) => { releaseSecond = resolve; }),
+      }),
+    },
+  }, { startBlock: '100', maxBlocksPerDrain: 2, fetchConcurrency: 2,
+    snapshotConcurrency: 2 });
+  const pending = worker.captureOnce();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof releaseSecond, 'function');
+  assert.equal(worker.getStatus().inFlight, true);
+  releaseSecond({ snapshots: [], missedPools: 0 });
+  await assert.rejects(pending, error);
+  assert.equal(committed, false);
+  assert.equal(trackerCommitted, false);
+  assert.equal(worker.getStatus().totalErrors, 1);
+});
+
+test('worker does not publish staged V3 pools when the journal rejects a batch', async () => {
+  const sample = fixture(100);
+  const error = new Error('journal failed');
+  let trackerCommitted = false;
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async (method) => (
+      method === 'eth_blockNumber' ? '0x64'
+        : method === 'eth_getBlockByNumber' ? sample.block : sample.receipts
+    ) },
+    journal: {
+      getCursor: async () => null,
+      commitBlocks: async () => { throw error; },
+    },
+    v3Snapshotter: {
+      captureBlock: async () => { throw new Error('prepared path required'); },
+      beginBatch: () => ({
+        prepareBlock: () => async () => ({ snapshots: [], missedPools: 0 }),
+        commit: () => { trackerCommitted = true; },
+      }),
+    },
+  }, { startBlock: '100', maxBlocksPerDrain: 1 });
+  await assert.rejects(worker.captureOnce(), error);
+  assert.equal(trackerCommitted, false);
+  assert.equal(worker.getStatus().blocks, 0);
+});
+
 test('worker reports failed capture attempts without presenting stale success', async () => {
   const error = Object.assign(new Error('node unavailable'), { code: 'rpc_timeout' });
   const worker = createRobinhoodChainCaptureWorker({

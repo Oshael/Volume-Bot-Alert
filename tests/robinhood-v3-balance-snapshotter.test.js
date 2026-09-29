@@ -78,6 +78,30 @@ describe('Robinhood V3 balance snapshotter', () => {
     ]), [['123', '456'], ['123', '456']]);
   });
 
+  it('tracks pool creation before deferred balance reads from later blocks', async () => {
+    const tags = [];
+    const snapshotter = createRobinhoodV3BalanceSnapshotter({
+      rpcClient: { request: async (_method, params) => {
+        tags.push(params[1]);
+        return aggregateResult([
+          { success: true, returnData: `0x${word(123n)}` },
+          { success: true, returnData: `0x${word(456n)}` },
+        ]);
+      } },
+    });
+    const batch = snapshotter.beginBatch();
+    const created = batch.prepareBlock(capture([event(fixture.poolCreated)]));
+    const swapped = batch.prepareBlock(capture([event(fixture.swap)]));
+    assert.deepEqual(tags, []);
+    assert.equal(snapshotter.getTrackedPoolCount(), 0);
+    const result = await swapped();
+    assert.deepEqual(tags, [fixture.swap.blockNumber]);
+    assert.equal(result.snapshots[0].poolAddress, fixture.expected.pool);
+    assert.deepEqual((await created()).snapshots, []);
+    batch.commit();
+    assert.equal(snapshotter.getTrackedPoolCount(), 1);
+  });
+
   it('omits a pool when either balance subcall fails', async () => {
     const rpcClient = { request: async () => aggregateResult([
       { success: true, returnData: `0x${word(123n)}` },
