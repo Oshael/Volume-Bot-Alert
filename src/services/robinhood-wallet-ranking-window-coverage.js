@@ -16,6 +16,12 @@ const {
 const {
   createRobinhoodWalletRankingReadSnapshot,
 } = require('../models/robinhood-wallet-ranking-read-snapshot');
+const {
+  createRobinhoodWalletRankingWindowBlockBoundsRepository,
+} = require('../models/robinhood-wallet-ranking-window-block-bounds');
+const {
+  createRobinhoodWalletRankingTransferScanCoverageRepository,
+} = require('../models/robinhood-wallet-ranking-transfer-scan-coverage');
 
 function pairKey(item) {
   return `${item.tokenAddress}:${item.walletAddress}`;
@@ -40,31 +46,85 @@ function globalReasons(availability, swapAvailability, frontiers) {
   ];
 }
 
-function classifyPair(events, classification, availability, swapAvailability, frontiers, globals) {
+function sourceReasons(bounds, scan) {
+  if (bounds.verified !== true) {
+    return bounds.reasons?.length ? bounds.reasons : ['transfer_window_bounds_unverified'];
+  }
+  return failedReasons(scan?.scanProofReady, scan?.coverageReasons,
+    'transfer_scan_coverage_unverified');
+}
+
+function allChecksPassed(checks, sourceCoverageVerified) {
+  return checks.rawTransferAvailable && checks.swapPartitionsAvailable
+    && checks.sourceFrontiersReady && checks.rawRowsClassified
+    && sourceCoverageVerified && checks.orderingComplete
+    && checks.canonicalEventsVerified && !checks.truncated;
+}
+
+function classifyPair(events, classification, availability, swapAvailability,
+  frontiers, bounds, scan, globals) {
   const reasons = [...globals];
   if (events.truncated) reasons.push('window_events_truncated');
   if (!events.orderingComplete) reasons.push('window_event_order_unverified');
+  if (events.canonicalEventsVerified !== true) reasons.push('window_event_canonicality_unverified');
   reasons.push(...failedReasons(classification?.rawRowsClassified,
     classification?.reasons, 'transfer_classification_unverified'));
-  reasons.push('source_coverage_unverified');
+  reasons.push(...sourceReasons(bounds, scan));
+  const sourceCoverageVerified = bounds.verified === true
+    && scan?.scanProofReady === true && frontiers?.cursorChecksPassed === true;
   const checks = {
     rawTransferAvailable: availability?.rawTransferAvailable === true,
     swapPartitionsAvailable: swapAvailability?.swapPartitionsAvailable === true,
     sourceFrontiersReady: frontiers?.cursorChecksPassed === true,
     rawRowsClassified: classification?.rawRowsClassified === true,
+    transferWindowBoundsVerified: bounds.verified === true,
+    transferScanReady: scan?.scanProofReady === true,
     orderingComplete: events.orderingComplete === true,
+    canonicalEventsVerified: events.canonicalEventsVerified === true,
     truncated: events.truncated === true,
   };
+  const preconditionsSatisfied = allChecksPassed(checks, sourceCoverageVerified);
   return {
     ...events,
     checks,
-    preconditionsSatisfied: checks.rawTransferAvailable && checks.swapPartitionsAvailable
-      && checks.sourceFrontiersReady
-      && checks.rawRowsClassified && checks.orderingComplete && !checks.truncated,
-    eventsComplete: false,
-    sourceCoverageVerified: false,
+    preconditionsSatisfied,
+    eventsComplete: preconditionsSatisfied,
+    sourceCoverageVerified,
     coverageReasons: [...new Set(reasons)].sort(),
   };
+}
+
+function transferBlockBounds(frontiers) {
+  if (frontiers?.cursorChecksPassed !== true) return null;
+  const transfer = frontiers.sources?.find((source) => source.source === 'transfer');
+  const origin = String(transfer?.seedOriginBlock ?? '');
+  const next = String(transfer?.liveNextBlock ?? '');
+  if (!/^\d+$/.test(origin) || !/^\d+$/.test(next)
+      || BigInt(next) <= BigInt(origin) + 1n) {
+    return null;
+  }
+  return { originBlock: origin, throughBlock: (BigInt(next) - 1n).toString() };
+}
+
+async function inspectSourceCoverage(database, options, events, frontiers, availability,
+  windowStart, asOf, classificationVersion) {
+  const limits = transferBlockBounds(frontiers);
+  if (!limits) return { bounds: { verified: false,
+    reasons: ['transfer_window_frontier_unverified'] }, scans: [] };
+  const boundsRepository = options.boundsRepository
+    || createRobinhoodWalletRankingWindowBlockBoundsRepository({ database });
+  const bounds = await boundsRepository.resolveWindow({ windowStart, asOf, ...limits });
+  if (bounds.verified !== true) return { bounds, scans: [] };
+  const scanRepository = options.scanCoverageRepository
+    || createRobinhoodWalletRankingTransferScanCoverageRepository({
+      database, availabilityRepository: { inspectWindow: async () => availability },
+    });
+  const scans = await scanRepository.inspectBlockRange({
+    tokenAddresses: [...new Set(events.map((item) => item.tokenAddress))],
+    fromBlock: bounds.fromBlock, throughBlock: bounds.throughBlock,
+    windowStart, asOf, classificationVersion,
+  });
+  return { bounds, scans };
 }
 
 async function readRobinhoodWalletRankingWindowCoverage(database, input = {}, options = {}) {
@@ -94,10 +154,14 @@ async function readRobinhoodWalletRankingWindowCoverage(database, input = {}, op
   const classifications = await classificationRepository.inspectWindow({
     pairs, windowStart, asOf, classificationVersion: input.classificationVersion,
   });
+  const { bounds, scans } = await inspectSourceCoverage(database, options, events,
+    frontiers, availability, windowStart, asOf, input.classificationVersion);
   const globals = globalReasons(availability, swapAvailability, frontiers);
   const byPair = new Map(classifications.map((item) => [pairKey(item), item]));
+  const byToken = new Map(scans.map((item) => [item.tokenAddress, item]));
   return events.map((item) => classifyPair(
-    item, byPair.get(pairKey(item)), availability, swapAvailability, frontiers, globals,
+    item, byPair.get(pairKey(item)), availability, swapAvailability, frontiers,
+    bounds, byToken.get(item.tokenAddress), globals,
   ));
 }
 

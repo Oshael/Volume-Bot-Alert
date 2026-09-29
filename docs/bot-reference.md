@@ -4732,6 +4732,13 @@ houve transferências. O registro é prospectivo e não substitui o raw nem prov
 sozinho a cobertura histórica ou a disponibilidade das partições retidas. Em
 reorg, ranges com hash órfão permanecem no manifesto; leitores precisam exigir
 checkpoint canônico antes de aceitar a cobertura.
+No ranking de wallets, `eventsComplete` só fica verdadeiro quando os cursores
+seed/live alcançam a janela, as fronteiras temporais têm blocos canônicos
+adjacentes, os ranges live do token são contínuos com checkpoints canônicos,
+as partições raw e de swaps estão disponíveis, os eventos lidos pertencem a
+blocos canônicos, a classificação do par está resolvida e a leitura de eventos
+não foi truncada. Escopos apenas seed ou
+anteriores à Stage 256 continuam com cobertura incompleta.
 
 A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor histórico
 retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,

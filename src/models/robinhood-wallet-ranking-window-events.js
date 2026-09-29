@@ -11,16 +11,20 @@ const TIMEOUT_MS = 5000;
 const SWAPS_SQL = `SELECT requested.token_address, requested.wallet_address,
     swap.transaction_hash, swap.action_index AS log_index, swap.block_number,
     swap.block_time, swap.side, swap.token_amount_raw AS amount_raw,
-    swap.volume_usd, swap.transaction_index
+    swap.volume_usd, swap.transaction_index, swap.canonical_verified
   FROM jsonb_to_recordset($1::jsonb)
     AS requested(token_address text, wallet_address text)
   CROSS JOIN LATERAL (
-    SELECT swap.*, position.transaction_index
+    SELECT swap.*, position.transaction_index,
+      (block.canonical IS TRUE) AS canonical_verified
       FROM robinhood_wallet_swaps swap
       LEFT JOIN robinhood_transaction_positions position
         ON position.chain = swap.chain
        AND position.transaction_hash = swap.transaction_hash
        AND position.block_number = swap.block_number
+      LEFT JOIN robinhood_chain_blocks block
+        ON block.chain = position.chain AND block.block_number = position.block_number
+       AND block.block_hash = position.block_hash
      WHERE swap.chain = '${CHAIN}'
        AND swap.token_address = requested.token_address
        AND swap.wallet_address = requested.wallet_address
@@ -36,11 +40,15 @@ const SWAPS_SQL = `SELECT requested.token_address, requested.wallet_address,
 const TRANSFERS_SQL = `SELECT requested.token_address, requested.wallet_address,
     transfer.transaction_hash, transfer.log_index, transfer.block_number,
     transfer.block_time, transfer.transaction_index, transfer.amount_raw,
-    transfer.from_wallet, transfer.to_wallet
+    transfer.from_wallet, transfer.to_wallet, transfer.canonical_verified
   FROM jsonb_to_recordset($1::jsonb)
     AS requested(token_address text, wallet_address text)
   CROSS JOIN LATERAL (
-    SELECT transfer.* FROM robinhood_token_transfer_events transfer
+    SELECT transfer.*, (block.canonical IS TRUE) AS canonical_verified
+     FROM robinhood_token_transfer_events transfer
+     LEFT JOIN robinhood_chain_blocks block
+       ON block.chain = transfer.chain AND block.block_number = transfer.block_number
+      AND block.block_hash = transfer.block_hash
      WHERE transfer.chain = '${CHAIN}'
        AND transfer.token_address = requested.token_address
        AND (transfer.from_wallet = requested.wallet_address
@@ -115,6 +123,7 @@ function swapEvent(row) {
     blockNumber: String(row.block_number),
     transactionIndex: row.transaction_index == null ? null : String(row.transaction_index),
     logIndex: String(row.log_index), transactionHash: row.transaction_hash,
+    canonicalVerified: row.canonical_verified === true,
     eventOrder: 0,
   };
 }
@@ -128,6 +137,7 @@ function transferEvent(row) {
     volumeUsd: null, blockNumber: String(row.block_number),
     transactionIndex: String(row.transaction_index), logIndex: String(row.log_index),
     transactionHash: row.transaction_hash,
+    canonicalVerified: row.canonical_verified === true,
     eventOrder: row.from_wallet === row.wallet_address ? 1 : 2,
   };
 }
@@ -162,6 +172,7 @@ function createRobinhoodWalletRankingWindowEventsRepository(options = {}) {
           windowStart: start.toISOString(), asOf: end.toISOString(),
           events, truncated,
           orderingComplete: events.every((event) => event.transactionIndex != null),
+          canonicalEventsVerified: events.every((event) => event.canonicalVerified),
           sourceCoverageVerified: false,
         };
       });

@@ -1,7 +1,7 @@
 process.env.NODE_ENV = 'test';
 
 const assert = require('node:assert/strict');
-const { describe, it } = require('node:test');
+const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -15,6 +15,7 @@ const WALLET_B = `0x${'2'.repeat(40)}`;
 const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
 const HASH_C = `0x${'c'.repeat(64)}`;
+const BLOCK_HASH = `0x${'d'.repeat(64)}`;
 const START = '2026-09-26T12:00:00.000Z';
 const END = '2026-09-27T12:00:00.000Z';
 
@@ -26,11 +27,14 @@ async function seed(client) {
   ) ON COMMIT DROP`);
   await client.query(`CREATE TEMP TABLE robinhood_transaction_positions (
     chain varchar, transaction_hash varchar, block_number bigint,
-    transaction_index int
+    block_hash varchar, transaction_index int
+  ) ON COMMIT DROP`);
+  await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
+    chain varchar, block_number bigint, block_hash varchar, canonical boolean
   ) ON COMMIT DROP`);
   await client.query(`CREATE TEMP TABLE robinhood_token_transfer_events (
     chain varchar, token_address varchar, from_wallet varchar, to_wallet varchar,
-    transaction_hash varchar, log_index int, block_number bigint,
+    transaction_hash varchar, log_index int, block_number bigint, block_hash varchar,
     block_time timestamptz, transaction_index int, amount_raw numeric,
     transfer_kind varchar, classification_version varchar
   ) ON COMMIT DROP`);
@@ -43,19 +47,27 @@ async function seed(client) {
   );
   await client.query(
     `INSERT INTO robinhood_transaction_positions VALUES
-     ('robinhood', $1, 100, 0), ('robinhood', $2, 102, 0)`, [HASH_A, HASH_C]
+     ('robinhood', $1, 100, $3, 0), ('robinhood', $2, 102, $3, 0)`,
+    [HASH_A, HASH_C, BLOCK_HASH]
+  );
+  await client.query(
+    `INSERT INTO robinhood_chain_blocks VALUES
+     ('robinhood', 100, $1, true), ('robinhood', 101, $1, true),
+     ('robinhood', 102, $1, true)`, [BLOCK_HASH]
   );
   await client.query(
     `INSERT INTO robinhood_token_transfer_events VALUES
-     ('robinhood', $1, $2, $3, $4, 3, 100, '2026-09-27 00:00+00',
+     ('robinhood', $1, $2, $3, $4, 3, 100, $6, '2026-09-27 00:00+00',
       0, 3, 'wallet_transfer', 'rh_transfer_v1'),
-     ('robinhood', $1, $2, $3, $5, 4, 101, '2026-09-27 00:30+00',
+     ('robinhood', $1, $2, $3, $5, 4, 101, $6, '2026-09-27 00:30+00',
       0, 2, 'dex_flow', 'rh_transfer_v1')`,
-    [TOKEN, WALLET_A, WALLET_B, HASH_A, HASH_B]
+    [TOKEN, WALLET_A, WALLET_B, HASH_A, HASH_B, BLOCK_HASH]
   );
 }
 
 describe('Robinhood ranking in-window event read', () => {
+  after(async () => db.pool.end());
+
   it('merges bounded swaps and wallet transfers in canonical order', async () => {
     await assertUsingTestDatabase(db);
     const client = await db.getClient();
@@ -75,6 +87,7 @@ describe('Robinhood ranking in-window event read', () => {
       assert.equal(a.events[0].volumeUsd, '10');
       assert.equal(a.truncated, false);
       assert.equal(a.orderingComplete, true);
+      assert.equal(a.canonicalEventsVerified, true);
       assert.equal(a.sourceCoverageVerified, false);
       assert.deepEqual(b.events.map(({ type }) => type), ['transfer_in']);
 
@@ -86,6 +99,16 @@ describe('Robinhood ranking in-window event read', () => {
         [HASH_C]);
       const [missingIndex] = await repository.getWindowEvents(input);
       assert.equal(missingIndex.orderingComplete, false);
+      assert.equal(missingIndex.canonicalEventsVerified, false);
+
+      await client.query(`INSERT INTO robinhood_transaction_positions VALUES
+        ('robinhood', $1, 102, $2, 0)`, [HASH_C, BLOCK_HASH]);
+      await client.query(`UPDATE robinhood_chain_blocks SET canonical=false
+        WHERE block_number=100`);
+      const [orphaned] = await repository.getWindowEvents(input);
+      assert.equal(orphaned.canonicalEventsVerified, false);
+      assert.deepEqual(orphaned.events.filter((event) => !event.canonicalVerified)
+        .map(({ type }) => type), ['buy', 'transfer_out']);
     } finally {
       await client.query('ROLLBACK');
       client.release();

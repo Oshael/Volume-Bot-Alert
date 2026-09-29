@@ -15,6 +15,7 @@ const VERSION = 'rh_transfer_v1';
 function event(walletAddress, overrides = {}) {
   return { tokenAddress: TOKEN, walletAddress, windowStart: WINDOW_START,
     asOf: AS_OF, events: [], truncated: false, orderingComplete: true,
+    canonicalEventsVerified: true,
     sourceCoverageVerified: false, ...overrides };
 }
 
@@ -35,7 +36,8 @@ function harness(overrides = {}) {
     } },
     frontiersRepository: { async inspectAsOf(input) {
       calls.push({ source: 'frontiers', input });
-      return overrides.frontiers || { cursorChecksPassed: true, sources: [] };
+      return overrides.frontiers || { cursorChecksPassed: true,
+        sources: [{ source: 'transfer', seedOriginBlock: '90', liveNextBlock: '111' }] };
     } },
     classificationRepository: { async inspectWindow(input) {
       calls.push({ source: 'classification', input });
@@ -43,21 +45,32 @@ function harness(overrides = {}) {
         tokenAddress: TOKEN, walletAddress, rawRowsClassified: true, reasons: [],
       }));
     } },
+    boundsRepository: { async resolveWindow(input) {
+      calls.push({ source: 'bounds', input });
+      return overrides.bounds || { verified: true,
+        fromBlock: '100', throughBlock: '109', reasons: [] };
+    } },
+    scanCoverageRepository: { async inspectBlockRange(input) {
+      calls.push({ source: 'scan', input });
+      return overrides.scans || [{ tokenAddress: TOKEN, scanProofReady: true,
+        coverageReasons: [] }];
+    } },
   });
   return { service, calls };
 }
 
 describe('Robinhood ranking window coverage composition', () => {
-  it('keeps exact-event coverage closed even when available checks pass', async () => {
+  it('marks event coverage complete only when canonical scan proof also passes', async () => {
     const { service, calls } = harness();
     const result = await service.getWindowEvents({ classificationVersion: VERSION });
     assert.equal(result.length, 2);
     for (const pair of result) {
       assert.equal(pair.preconditionsSatisfied, true);
-      assert.equal(pair.eventsComplete, false);
-      assert.equal(pair.sourceCoverageVerified, false);
-      assert.deepEqual(pair.coverageReasons, ['source_coverage_unverified']);
+      assert.equal(pair.eventsComplete, true);
+      assert.equal(pair.sourceCoverageVerified, true);
+      assert.deepEqual(pair.coverageReasons, []);
       assert.equal(pair.checks.swapPartitionsAvailable, true);
+      assert.equal(pair.checks.transferWindowBoundsVerified, true);
     }
     assert.deepEqual(calls.find((call) => call.source === 'classification').input, {
       pairs: [{ tokenAddress: TOKEN, walletAddress: WALLET_A },
@@ -66,6 +79,14 @@ describe('Robinhood ranking window coverage composition', () => {
     });
     assert.deepEqual(calls.find((call) => call.source === 'frontiers').input, {
       windowStart: WINDOW_START, asOf: AS_OF, transferVersion: VERSION,
+    });
+    assert.deepEqual(calls.find((call) => call.source === 'bounds').input, {
+      windowStart: WINDOW_START, asOf: AS_OF,
+      originBlock: '90', throughBlock: '110',
+    });
+    assert.deepEqual(calls.find((call) => call.source === 'scan').input, {
+      tokenAddresses: [TOKEN], fromBlock: '100', throughBlock: '109',
+      windowStart: WINDOW_START, asOf: AS_OF, classificationVersion: VERSION,
     });
   });
 
@@ -83,8 +104,8 @@ describe('Robinhood ranking window coverage composition', () => {
     const [a, b] = await service.getWindowEvents({ classificationVersion: VERSION });
     assert.equal(a.preconditionsSatisfied, false);
     assert.deepEqual(a.coverageReasons, [
-      'raw_transfer_partition_missing', 'source_coverage_unverified',
-      'swap_behind_as_of', 'transfer_classification_unresolved',
+      'raw_transfer_partition_missing', 'swap_behind_as_of',
+      'transfer_classification_unresolved', 'transfer_window_frontier_unverified',
       'window_event_order_unverified', 'window_events_truncated',
     ]);
     assert.equal(b.preconditionsSatisfied, false);
@@ -107,5 +128,45 @@ describe('Robinhood ranking window coverage composition', () => {
     assert.equal(result.preconditionsSatisfied, false);
     assert.equal(result.eventsComplete, false);
     assert.ok(result.coverageReasons.includes('swap_partition_missing'));
+  });
+
+  it('keeps a scan gap or unanchored time window incomplete', async () => {
+    const gap = harness({ scans: [{ tokenAddress: TOKEN, scanProofReady: false,
+      coverageReasons: ['transfer_scan_scope_gap'] }] });
+    const [missing] = await gap.service.getWindowEvents({ classificationVersion: VERSION });
+    assert.equal(missing.eventsComplete, false);
+    assert.equal(missing.sourceCoverageVerified, false);
+    assert.deepEqual(missing.coverageReasons, ['transfer_scan_scope_gap']);
+
+    const bounds = harness({ bounds: { verified: false,
+      reasons: ['transfer_window_boundary_unproven'] } });
+    const [unanchored] = await bounds.service.getWindowEvents({ classificationVersion: VERSION });
+    assert.equal(unanchored.eventsComplete, false);
+    assert.deepEqual(unanchored.coverageReasons, ['transfer_window_boundary_unproven']);
+    assert.equal(bounds.calls.some((call) => call.source === 'scan'), false);
+  });
+
+  it('does not certify events with unresolved transfer classifications', async () => {
+    const { service } = harness({ classifications: [
+      { tokenAddress: TOKEN, walletAddress: WALLET_A,
+        rawRowsClassified: false, reasons: ['transfer_classification_unresolved'] },
+      { tokenAddress: TOKEN, walletAddress: WALLET_B,
+        rawRowsClassified: true, reasons: [] },
+    ] });
+    const [a, b] = await service.getWindowEvents({ classificationVersion: VERSION });
+    assert.equal(a.sourceCoverageVerified, true);
+    assert.equal(a.eventsComplete, false);
+    assert.deepEqual(a.coverageReasons, ['transfer_classification_unresolved']);
+    assert.equal(b.eventsComplete, true);
+  });
+
+  it('does not certify an orphaned event even with complete scan coverage', async () => {
+    const { service } = harness({ events: [event(WALLET_A, {
+      canonicalEventsVerified: false,
+    })] });
+    const [result] = await service.getWindowEvents({ classificationVersion: VERSION });
+    assert.equal(result.sourceCoverageVerified, true);
+    assert.equal(result.eventsComplete, false);
+    assert.deepEqual(result.coverageReasons, ['window_event_canonicality_unverified']);
   });
 });
