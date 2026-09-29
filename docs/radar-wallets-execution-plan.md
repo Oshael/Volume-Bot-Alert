@@ -370,7 +370,11 @@ retenção, e seu manifesto, sem proveniência adicional, não comprova
 persistência integral.
 R2c.3 liga `windowStart`/`asOf` aos blocos canônicos por busca de fronteiras
 e verifica os blocos adjacentes antes de usar o manifesto. Ranges antigos que
-dependem do seed continuam incompletos. O próximo corte é R3.
+dependem do seed continuam incompletos. R3 compõe o ranking interno no mesmo
+snapshot, em lotes limitados, e só ordena wallets quando a travessia global
+termina. Decimais ausentes nos swaps duráveis tornam a posição parcial. O limite
+de 1.000 posições não foi ampliado; planos de consulta e dados reais ainda
+precisam ser medidos antes disso. O próximo corte é R4.
 R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
 e perfis; R5 conecta API e UI. R2c acrescenta uma migration; não há novo worker
 nem polling previstos.

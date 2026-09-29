@@ -4739,6 +4739,11 @@ as partições raw e de swaps estão disponíveis, os eventos lidos pertencem a
 blocos canônicos, a classificação do par está resolvida e a leitura de eventos
 não foi truncada. Escopos apenas seed ou
 anteriores à Stage 256 continuam com cobertura incompleta.
+O ranking global lê até 1.000 posições abertas num snapshot, enriquece tokens
+em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
+Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do
+ranking exato. Ao atingir o limite do universo, não publica posições ordenadas
+como ranking global e retorna cobertura parcial.
 
 A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor histórico
 retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,

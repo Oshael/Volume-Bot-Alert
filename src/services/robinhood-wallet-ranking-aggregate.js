@@ -56,8 +56,11 @@ function rankOpenWalletPositions(input = {}) {
     const pair = `${walletAddress}:${tokenAddress}`;
     if (seenPairs.has(pair)) throw new Error('duplicate wallet/token position');
     seenPairs.add(pair);
-    const score = input.positionSource === 'snapshot'
-      ? scoreOpenWalletPositionSnapshot({ ...position, asOf, window: input.window })
+    const score = input.positionSource === 'snapshot' && position.tokenDecimals == null
+      ? { eligible: true, gainUsd: null, coverage: 'partial',
+        reasons: ['token_decimals_unavailable'] }
+      : input.positionSource === 'snapshot'
+        ? scoreOpenWalletPositionSnapshot({ ...position, asOf, window: input.window })
       : scoreOpenWalletPosition({
         asOf, windowStart,
         tokenDecimals: position.tokenDecimals,
