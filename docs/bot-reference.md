@@ -545,6 +545,18 @@ captura como reparada. Enquanto o utilitário detém seu advisory lock, a poda d
 capturas se suspende automaticamente, mas head e processing continuam. O reparo
 usa JSON-RPC concorrente (até 8 batches simultâneos) e commits limitados a 500
 capturas, sem UPDATE global da coorte e sem alterar os watermarks do backfill geral.
+`--batch-size` conta capturas, não blocos. A atribuição histórica às carteiras
+prefetcha blocos completos com concorrência limitada por `--wallet-concurrency`
+(1–8), que por padrão acompanha `--rpc-concurrency`; o mesmo limite vale para
+`wallet-replay`. As leituras podem terminar fora de ordem, mas os hashes são
+validados e as posições/swaps são persistidos na ordem dos blocos, sem commits
+concorrentes. `--wallet-concurrency=1` restaura a leitura sequencial dessa etapa.
+O progresso do modo write publica `lastTiming`: `selectMs`, `enrichMs`, `walletMs`,
+`persistMs`, `totalMs` e `repairedPerSecond`. `walletMs` inclui leitura, validação e
+persistência da atribuição; `persistMs` mede as demais gravações e o settlement.
+O total exclui a pausa entre lotes. Compare a taxa em vários lotes e o lag da
+captura live antes/depois de elevar a concorrência; esse ajuste não demonstra
+por si só que o limite de lote era o gargalo.
 Falha não retentável ao montar uma captura (por exemplo, `balanceOf` histórico vazio)
 isola somente essa identidade como `archiveRepair.status='blocked'`, mantém a rejeição
 original para auditoria e permite que as demais capturas do batch sejam persistidas.

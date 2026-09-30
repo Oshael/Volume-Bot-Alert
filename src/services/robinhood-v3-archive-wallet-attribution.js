@@ -79,6 +79,7 @@ function createRobinhoodV3ArchiveWalletAttribution(deps = {}) {
     const attributor = (deps.attributorFactory || createRobinhoodWalletSwapAttributor)({
       repository: walletRepository,
       transactionPositionRepository,
+      fetchConcurrency: deps.fetchConcurrency,
       fetchBlock: async (blockNumber) => {
         const block = await rpcClient.request('eth_getBlockByNumber', [
           `0x${BigInt(blockNumber).toString(16)}`, true,

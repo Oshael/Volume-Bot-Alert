@@ -1,4 +1,5 @@
 const { setTimeout: delay } = require('node:timers/promises');
+const { performance } = require('node:perf_hooks');
 const db = require('../models/db');
 const {
   loadHeadProcessingAuthority,
@@ -91,6 +92,8 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     throw new Error('mode must be dry-run, write or wallet-replay');
   }
   const target = targetConfig(args.target);
+  const rpcConcurrency = integer(args['rpc-concurrency'], target.stockOnly ? 1 : 2, 1, 8,
+    'rpc-concurrency');
   if (mode === 'wallet-replay' && target.name !== DEFAULT_TARGET) {
     throw new Error('wallet-replay is only supported for v3-pruned');
   }
@@ -100,7 +103,8 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     fromBlock: block(args['from-block'], '0', 'from-block'),
     toBlock: block(args['to-block'], '9223372036854775807', 'to-block'),
     batchSize: integer(args['batch-size'], target.stockOnly ? 50 : 100, 1, 500, 'batch-size'),
-    rpcConcurrency: integer(args['rpc-concurrency'], target.stockOnly ? 1 : 2, 1, 8, 'rpc-concurrency'),
+    rpcConcurrency,
+    walletConcurrency: integer(args['wallet-concurrency'], rpcConcurrency, 1, 8, 'wallet-concurrency'),
     rpcBatchSize: integer(args['rpc-batch-size'], 100, 1, 100, 'rpc-batch-size'),
     maxBatches: integer(
       args['max-batches'], mode !== 'write' || target.stockOnly ? 1 : 0,
@@ -578,11 +582,17 @@ function createRunSummary(mode, targetName, initial) {
   };
 }
 
+function createWalletAttribution(options, deps, database, rpcClient) {
+  return deps.walletAttribution
+    || (deps.walletAttributionFactory || createRobinhoodV3ArchiveWalletAttribution)({
+      database, rpcClient,
+      fetchConcurrency: options.walletConcurrency ?? options.rpcConcurrency,
+    });
+}
+
 async function runWalletReplay(options, deps, candidates, database) {
   const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl);
-  const wallet = deps.walletAttribution || createRobinhoodV3ArchiveWalletAttribution({
-    database, rpcClient,
-  });
+  const wallet = createWalletAttribution(options, deps, database, rpcClient);
   const summary = createRunSummary(options.mode, options.target, null);
   return candidates.withLock(async () => {
     if (BigInt(await rpcClient.request('eth_chainId')) !== CHAIN_ID) {
@@ -618,17 +628,17 @@ async function persistRepairBatch(rows, built, context) {
       entries: built.entries, allowMissingWalletContext: true,
     })
     : null;
+  const walletStartedAt = performance.now();
   const wallet = committed?.missingWalletSwapContext
-    ? await (context.walletAttribution || createRobinhoodV3ArchiveWalletAttribution({
-      database: context.database, rpcClient: context.rpcClient,
-    })).attribute(repairedRows)
+    ? await context.walletAttribution.attribute(repairedRows)
     : null;
+  const walletMs = wallet ? performance.now() - walletStartedAt : 0;
   if (wallet && wallet.attributed < committed.missingWalletSwapContext) {
     throw new Error('Archive wallet attribution covered fewer swaps than missing context');
   }
   if (repairedRows.length) await context.candidates.markRepaired(repairedRows, context.authority);
   if (failures.length) await context.candidates.markBlocked(failures, context.authority);
-  return { repairedRows, failures, committed, wallet };
+  return { repairedRows, failures, committed, wallet, walletMs };
 }
 
 async function runRepair(options, deps = {}) {
@@ -650,23 +660,36 @@ async function runRepair(options, deps = {}) {
     || createStockAdapterOptions(rpcClient, database);
   const enrichBatch = deps.enrichBatch
     || ((rows) => enrich(rows, rpcClient, options, adapterOptions));
+  const walletAttribution = createWalletAttribution(options, deps, database, rpcClient);
 
   return candidates.withLock(async (authority = 'legacy') => {
     const chainId = await rpcClient.request('eth_chainId');
     if (BigInt(chainId) !== CHAIN_ID) throw new Error('Archive RPC is not on Robinhood Chain');
     let scanFromBlock = options.fromBlock;
     while (options.maxBatches === 0 || summary.batches < options.maxBatches) {
+      const startedAt = performance.now();
       const rows = await candidates.list(scanFromBlock, options.toBlock, options.batchSize);
       if (!rows.length) {
         summary.complete = true;
         break;
       }
+      const selectedAt = performance.now();
       summary.firstBlock ||= rows[0].block_number;
       const built = await enrichBatch(rows, adapterOptions);
-      const { repairedRows, failures, committed, wallet } = await persistRepairBatch(
-        rows, built, { persistence, candidates, authority, database, rpcClient,
-          walletAttribution: deps.walletAttribution }
+      const enrichedAt = performance.now();
+      const { repairedRows, failures, committed, wallet, walletMs } = await persistRepairBatch(
+        rows, built, { persistence, candidates, authority, walletAttribution }
       );
+      const persistedAt = performance.now();
+      const totalMs = persistedAt - startedAt;
+      summary.lastTiming = {
+        selectMs: Math.round(selectedAt - startedAt),
+        enrichMs: Math.round(enrichedAt - selectedAt),
+        walletMs: Math.round(walletMs),
+        persistMs: Math.round(persistedAt - enrichedAt - walletMs),
+        totalMs: Math.round(totalMs),
+        repairedPerSecond: totalMs > 0 ? Number((repairedRows.length * 1000 / totalMs).toFixed(2)) : 0,
+      };
       summary.batches += 1;
       summary.repaired += repairedRows.length;
       summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;

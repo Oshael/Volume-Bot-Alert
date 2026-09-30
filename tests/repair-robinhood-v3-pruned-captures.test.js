@@ -33,10 +33,18 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.deepEqual(__private.parseArgs([], {}), {
       mode: 'dry-run', target: 'v3-pruned', rpcUrl: '',
       fromBlock: '0', toBlock: '9223372036854775807',
-      batchSize: 100, rpcConcurrency: 2, rpcBatchSize: 100, maxBatches: 1, sleepMs: 100,
+      batchSize: 100, rpcConcurrency: 2, walletConcurrency: 2,
+      rpcBatchSize: 100, maxBatches: 1, sleepMs: 100,
     });
     assert.throws(() => __private.parseArgs(['--batch-size=501'], {}), /between 1 and 500/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=9'], {}), /between 1 and 8/);
+    for (const value of ['0', '9']) {
+      assert.throws(() => __private.parseArgs([`--wallet-concurrency=${value}`], {}), /between 1 and 8/);
+    }
+    assert.equal(__private.parseArgs(['--rpc-concurrency=5'], {}).walletConcurrency, 5);
+    assert.equal(__private.parseArgs([
+      '--rpc-concurrency=5', '--wallet-concurrency=1',
+    ], {}).walletConcurrency, 1);
     assert.throws(() => __private.parseArgs(['--mode=erase'], {}), /dry-run, write or wallet-replay/);
     assert.throws(() => __private.parseArgs([
       '--mode=wallet-replay', '--target=stock-quote',
@@ -53,7 +61,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     }), {
       mode: 'write', target: 'stock-quote', rpcUrl: 'http://archive',
       fromBlock: '0', toBlock: '9223372036854775807', batchSize: 50,
-      rpcConcurrency: 1, rpcBatchSize: 100, maxBatches: 1, sleepMs: 1000,
+      rpcConcurrency: 1, walletConcurrency: 1, rpcBatchSize: 100, maxBatches: 1, sleepMs: 1000,
     });
     assert.deepEqual(__private.targetConfig('stock-quote').protocols, [
       'uniswap-v2', 'uniswap-v3', 'uniswap-v4',
@@ -82,7 +90,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       { observation: { accepted: true } },
       { observation: { accepted: false } },
     ];
-    const result = await runRepair(options(), {
+    const result = await runRepair(options({ rpcConcurrency: 5, walletConcurrency: 3 }), {
       candidates,
       rpcClient: { request: async () => '0x1237' },
       enrichBatch: async () => { calls.push('archive'); return { entries, rpc: { batches: 1 } }; },
@@ -93,11 +101,14 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
           return { insertedObservations: 1, missingWalletSwapContext: 1 };
         },
       },
-      walletAttribution: {
-        attribute: async (rows) => {
-          calls.push(`wallet:${rows.length}`);
-          return { attributed: 1, inserted: 1 };
-        },
+      walletAttributionFactory: ({ fetchConcurrency }) => {
+        assert.equal(fetchConcurrency, 3);
+        return {
+          attribute: async (rows) => {
+            calls.push(`wallet:${rows.length}`);
+            return { attributed: 1, inserted: 1 };
+          },
+        };
       },
     });
 
