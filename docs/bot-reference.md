@@ -4767,6 +4767,26 @@ fonte `canonical_journal`, o scan por tópico `Transfer` é registrado como
 `topics-only` no manifesto; a telemetria conserva `canonical-journal` como fonte.
 Em reorg, ranges com hash órfão permanecem no manifesto; leitores precisam exigir
 checkpoint canônico antes de aceitar a cobertura.
+Antes de atualizar o writer ou o leitor de cobertura, aplique
+`node src/utils/db-init-stage258.js` e execute `npm run db:schema-check`.
+A Stage 258 mantém os arrays históricos e acrescenta conjuntos imutáveis em
+`robinhood_wallet_transfer_token_scopes`, identificados pelo SHA-256 dos endereços
+normalizados, únicos e ordenados. Cada conjunto é armazenado e indexado uma vez;
+ranges novos gravam somente `token_scope_hash`, intervalo e checkpoint, na mesma
+transação do cursor. A consulta por hash evita reenviar o array em lotes que
+reutilizam o conjunto, inclusive após restart. Mudança de tokens cria outro hash;
+rollback desfaz conjunto novo e range juntos. Não há cache de referências não
+commitadas nem inferência de cobertura retroativa para tokens adicionados depois.
+O leitor une manifestos históricos e referências novas, preservando os gates de
+continuidade, checkpoint canônico e retenção. Atualize os leitores antes de
+retomar writers com o formato novo; leitores antigos não reconhecem essas ranges.
+Os novos CHECK/FK são adicionados como `NOT VALID` para evitar uma varredura dos
+arrays históricos durante o deploy, mas são aplicados a novas gravações. O GIN
+histórico permanece para as leituras antigas; não execute conversão ou limpeza
+massiva no caminho LIVE. O primeiro lote de um conjunto novo ainda precisa
+persistir/indexar esse conjunto. Após retomar transfers, compare na mesma janela
+o avanço e lag de capture/transfers, `lastResult.timing` e taxas de WAL/I/O;
+reduzir custo do manifesto sozinho não confirma resolução de um incidente.
 No ranking de wallets, `eventsComplete` só fica verdadeiro quando os cursores
 seed/live alcançam a janela, as fronteiras temporais têm blocos canônicos
 adjacentes, os ranges live do token são contínuos com checkpoints canônicos,

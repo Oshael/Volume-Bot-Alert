@@ -55,7 +55,8 @@ test('canonical transfer scans commit using the existing topic-only scope contra
   });
   assert.equal(result.committed, true);
   assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0].slice(-2), [[TOKEN], 'topics-only']);
+  assert.match(writes[0][6], /^[0-9a-f]{64}$/);
+  assert.equal(writes[0][7], 'topics-only');
 });
 
 test('canonical scan with no tracked tokens advances without a scope row', async () => {

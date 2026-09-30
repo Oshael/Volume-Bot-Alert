@@ -1,6 +1,7 @@
 process.env.NODE_ENV = 'test';
 const assert = require('node:assert/strict');
-const { after, before, describe, it } = require('node:test');
+const { after, before, beforeEach, describe, it } = require('node:test');
+const { createHash, randomBytes } = require('node:crypto');
 
 const db = require('../src/models/db');
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
@@ -30,6 +31,7 @@ const stage191 = require('../src/utils/db-init-stage191');
 const stage208 = require('../src/utils/db-init-stage208');
 const stage256 = require('../src/utils/db-init-stage256');
 const stage257 = require('../src/utils/db-init-stage257');
+const stage258 = require('../src/utils/db-init-stage258');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -37,6 +39,8 @@ const ATOMIC_VERSION = 'test_transfer_position_atomic_v1';
 const POSITION_VERSION = 'test_unified_transfer_v1';
 const LIVE_VERSION = 'test_transfer_live_reorg_v1';
 const SCOPE_VERSION = 'test_transfer_scan_scope_v1';
+const REUSE_VERSION = 'test_transfer_scope_reuse_v1';
+const scopeHashes = new Set();
 const TOKEN = `0x${'1'.repeat(40)}`;
 const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
@@ -52,8 +56,17 @@ function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
 }
 
 async function cleanup() {
-  const transferVersions = [VERSION, ATOMIC_VERSION, LIVE_VERSION, SCOPE_VERSION];
+  const transferVersions = [VERSION, ATOMIC_VERSION, LIVE_VERSION, SCOPE_VERSION, REUSE_VERSION];
+  const referenced = await db.query(`SELECT DISTINCT token_scope_hash
+    FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=ANY($1::varchar[])
+      AND token_scope_hash IS NOT NULL`, [transferVersions]);
+  for (const row of referenced.rows) scopeHashes.add(row.token_scope_hash);
   await db.query('DELETE FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query(`DELETE FROM robinhood_wallet_transfer_token_scopes tokens
+    WHERE chain='robinhood' AND scope_hash=ANY($1::varchar[])
+      AND NOT EXISTS (SELECT 1 FROM robinhood_wallet_transfer_scan_scopes scans
+        WHERE scans.chain=tokens.chain AND scans.token_scope_hash=tokens.scope_hash)`,
+  [[...scopeHashes]]);
   await db.query('DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
@@ -94,12 +107,15 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage208.init({ closePool: false });
     await stage256.init({ closePool: false });
     await stage257.init({ closePool: false });
+    await stage258.init({ closePool: false });
+    await stage258.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
     await cleanup();
     await db.pool.end();
   });
+  beforeEach(cleanup);
 
   it('persists scanned token scope for an empty range with the cursor, not for a rejected batch', async () => {
     const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
@@ -119,8 +135,11 @@ describe('Robinhood wallet transfer projection persistence', () => {
     assert.equal((await repository.commitBatch(input)).committed, true);
     assert.equal(await rankingRevision('transfers'), before + 1n);
     assert.deepEqual((await db.query(
-      `SELECT from_block::text, through_block::text, token_addresses, filter_mode
-         FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1`,
+      `SELECT from_block::text, through_block::text, tokens.token_addresses, filter_mode
+         FROM robinhood_wallet_transfer_scan_scopes scans
+         JOIN robinhood_wallet_transfer_token_scopes tokens
+           ON tokens.chain=scans.chain AND tokens.scope_hash=scans.token_scope_hash
+        WHERE projection_version=$1`,
       [SCOPE_VERSION]
     )).rows, [{
       from_block: '100', through_block: '101', token_addresses: [TOKEN],
@@ -144,13 +163,82 @@ describe('Robinhood wallet transfer projection persistence', () => {
     });
     assert.equal(canonical.committed, true);
     assert.deepEqual((await db.query(
-      `SELECT from_block::text, through_block::text, token_addresses, filter_mode
-         FROM robinhood_wallet_transfer_scan_scopes
+      `SELECT from_block::text, through_block::text, tokens.token_addresses, filter_mode
+         FROM robinhood_wallet_transfer_scan_scopes scans
+         JOIN robinhood_wallet_transfer_token_scopes tokens
+           ON tokens.chain=scans.chain AND tokens.scope_hash=scans.token_scope_hash
         WHERE projection_version=$1 AND from_block=102`, [SCOPE_VERSION]
     )).rows, [{
       from_block: '102', through_block: '102', token_addresses: [TOKEN],
       filter_mode: 'topics-only',
     }]);
+    await assert.rejects(db.query(`INSERT INTO robinhood_wallet_transfer_scan_scopes (
+      chain, projection_version, stream, from_block, through_block, checkpoint_hash, filter_mode
+    ) VALUES ('robinhood', $1, 'live', 103, 103, $2, 'topics-only')`,
+    [SCOPE_VERSION, `0x${'f'.repeat(64)}`]), /rh_transfer_scan_token_scope_check/);
+  });
+
+  it('reuses 414065 tokens after restart and rolls back a changed scope with the range', async (t) => {
+    const tokens = Array.from({ length: 414064 }, (_, index) => (
+      `0x${createHash('sha1').update(String(index + 1)).digest('hex')}`
+    )).concat(`0x${randomBytes(20).toString('hex')}`);
+    const payloadSizes = [];
+    const createdHashes = new Set();
+    let failRange = false;
+    const database = { query: db.query, getClient: async () => {
+      const client = await db.getClient();
+      return { release: () => client.release(), query: async (sql, params) => {
+        if (sql.includes('INSERT INTO robinhood_wallet_transfer_token_scopes')) {
+          scopeHashes.add(params[1]);
+          createdHashes.add(params[1]);
+          payloadSizes.push(params[2].length);
+        }
+        if (sql.includes('INSERT INTO robinhood_wallet_transfer_scan_scopes') && failRange) {
+          failRange = false;
+          throw new Error('injected range persistence failure');
+        }
+        return client.query(sql, params);
+      } };
+    } };
+    const createRepository = () => createRobinhoodWalletTransferProjectionRepository({ database });
+    const repository = createRepository();
+    await repository.initCursor({ projectionVersion: REUSE_VERSION, stream: 'live',
+      nextBlock: '100', nextBlockTime: '2099-01-01T00:00:00Z', safeHead: '200' });
+    const batch = (version, addresses = tokens) => ({
+      projectionVersion: REUSE_VERSION, stream: 'live', expectedVersion: version,
+      nextBlock: String(101 + version), nextBlockTime: '2099-01-04T00:00:00Z', safeHead: '200',
+      checkpointBlock: String(100 + version), checkpointHash: `0x${'f'.repeat(64)}`,
+      captureScope: { fromBlock: String(100 + version), tokenAddresses: addresses,
+        filterMode: 'canonical-journal' }, events: [],
+    });
+    const started = Date.now();
+    assert.equal((await repository.commitBatch(batch(0))).committed, true);
+    const firstMs = Date.now() - started;
+    const reusedAt = Date.now();
+    assert.equal((await createRepository().commitBatch(batch(1, tokens.toReversed()))).committed, true);
+    const reusedMs = Date.now() - reusedAt;
+    assert.deepEqual(payloadSizes, [414065]);
+    const rows = () => db.query(`SELECT token_scope_hash, token_addresses
+      FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=$1 ORDER BY from_block`,
+    [REUSE_VERSION]);
+    const reused = (await rows()).rows;
+    assert.equal(reused.length, 2);
+    assert.equal(reused[0].token_scope_hash, reused[1].token_scope_hash);
+    assert.equal(reused[0].token_addresses, null);
+    assert.equal(reused[1].token_addresses, null);
+    failRange = true;
+    await assert.rejects(createRepository().commitBatch(batch(2, tokens.concat(ALICE))),
+      /injected range persistence failure/);
+    assert.equal((await repository.loadCursor(REUSE_VERSION, 'live')).nextBlock, '102');
+    assert.equal((await rows()).rows.length, 2);
+    assert.equal((await db.query(`SELECT COUNT(*)::integer AS count
+      FROM robinhood_wallet_transfer_token_scopes WHERE scope_hash=ANY($1::varchar[])`,
+    [[...createdHashes]])).rows[0].count, 1);
+    assert.equal((await createRepository().commitBatch(batch(2, tokens.concat(ALICE)))).committed, true);
+    const changed = (await rows()).rows;
+    assert.notEqual(changed[2].token_scope_hash, changed[0].token_scope_hash);
+    assert.deepEqual(payloadSizes, [414065, 414066, 414066]);
+    t.diagnostic(`414065-token scope: first=${firstMs}ms, reused=${reusedMs}ms; no array resent on reuse`);
   });
 
   it('commits edges, bounded evidence and cursor atomically', async () => {
@@ -346,6 +434,12 @@ describe('Robinhood wallet transfer projection persistence', () => {
 
   it('journals exact LIVE preimages per batch before replacing aggregates', async () => {
     const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
+    await repository.initCursor({ projectionVersion: VERSION, stream: 'seed', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00Z', safeHead: '200' });
+    await repository.commitBatch({ projectionVersion: VERSION, stream: 'seed', expectedVersion: 0,
+      nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00Z', safeHead: '200',
+      checkpointBlock: '100', checkpointHash: event(100, 1, 10).blockHash,
+      events: [event(100, 1, 10)] });
     await repository.initCursor({
       projectionVersion: LIVE_VERSION, stream: 'live', nextBlock: '100',
       nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
@@ -484,7 +578,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
       `SELECT transfer_count::text FROM robinhood_wallet_transfer_edges
         WHERE classification_version=$1`, [VERSION]
     );
-    assert.deepEqual(parallelVersion.rows, [{ transfer_count: '5' }]);
+    assert.deepEqual(parallelVersion.rows, [{ transfer_count: '1' }]);
     const remainingRaw = await db.query(
       `SELECT block_number::text FROM robinhood_token_transfer_events
         WHERE classification_version=$1 ORDER BY block_number`, [LIVE_VERSION]

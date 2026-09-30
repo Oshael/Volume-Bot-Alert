@@ -6831,6 +6831,30 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage258-robinhood-transfer-token-scopes',
+    name: 'Stage 258 Robinhood reusable transfer token scopes',
+    repair: 'node src/utils/db-init-stage258.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_token_scopes',
+      columns: ['chain', 'scope_hash', 'token_addresses', 'created_at'],
+      constraints: [
+        { name: 'rh_transfer_token_scopes_pkey', includes: ['PRIMARY KEY', 'chain', 'scope_hash'] },
+        { name: 'rh_transfer_token_scopes_hash_check', includes: ['CHECK', 'scope_hash'] },
+        { name: 'rh_transfer_token_scopes_tokens_check', includes: ['CHECK', 'cardinality'] },
+      ],
+      indexes: [{ name: 'idx_rh_transfer_token_scopes_tokens', includes: ['gin', 'token_addresses'] }],
+    }, {
+      table: 'robinhood_wallet_transfer_scan_scopes',
+      columns: ['token_scope_hash'],
+      constraints: [
+        { name: 'rh_transfer_scan_token_scope_check', includes: ['CHECK', 'token_scope_hash', 'token_addresses'] },
+        { name: 'rh_transfer_scan_token_scope_fkey', includes: ['FOREIGN KEY', 'chain', 'token_scope_hash', 'robinhood_wallet_transfer_token_scopes'] },
+      ],
+      indexes: [{ name: 'idx_rh_transfer_scan_token_scope_range',
+        includes: ['chain', 'token_scope_hash', 'through_block', 'from_block'] }],
+    }],
+  },
+  {
     key: 'stage257-robinhood-wallet-ranking-revisions',
     name: 'Stage 257 Robinhood wallet ranking revisions',
     repair: 'node src/utils/db-init-stage257.js',

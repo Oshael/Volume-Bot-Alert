@@ -1,5 +1,6 @@
 const db = require('./db');
 const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
+const { persistCaptureScope } = require('./robinhood-wallet-transfer-scan-scope');
 const {
   captureTransferPreimages,
 } = require('./robinhood-wallet-transfer-reorg-journal');
@@ -268,18 +269,6 @@ function rejectionReason(current, batch, effectiveSafeHead) {
   }
   return hasEventOutsideRange(current, batch, effectiveSafeHead)
     ? 'event_outside_cursor_range' : null;
-}
-async function persistCaptureScope(client, batch) {
-  if (!batch.captureScope?.tokenAddresses.length) return;
-  await client.query(
-    `INSERT INTO robinhood_wallet_transfer_scan_scopes (
-       chain, projection_version, stream, from_block, through_block,
-       checkpoint_hash, token_addresses, filter_mode
-     ) VALUES ($1, $2, $3, $4::bigint, $5::bigint, $6, $7::text[], $8)`,
-    [CHAIN, batch.projectionVersion, batch.stream, batch.captureScope.fromBlock,
-      batch.checkpointBlock, batch.checkpointHash,
-      batch.captureScope.tokenAddresses, batch.captureScope.filterMode]
-  );
 }
 function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   const database = options.database || db;

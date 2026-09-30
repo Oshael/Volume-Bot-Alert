@@ -32,7 +32,10 @@ describe('Robinhood ranking transfer scan coverage', () => {
       await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_scan_scopes (
         scan_scope_id bigint GENERATED ALWAYS AS IDENTITY,
         chain text, projection_version text, stream text, from_block bigint,
-        through_block bigint, checkpoint_hash text, token_addresses text[]
+        through_block bigint, checkpoint_hash text, token_addresses text[], token_scope_hash text
+      ) ON COMMIT DROP`);
+      await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_token_scopes (
+        chain text, scope_hash text, token_addresses text[]
       ) ON COMMIT DROP`);
       await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
         chain text, block_number bigint, block_hash text, canonical boolean
@@ -50,6 +53,12 @@ describe('Robinhood ranking transfer scan coverage', () => {
         ('robinhood', 'rh_transfer_v1', 'live', 100, 109, $3, ARRAY[$8]),
         ('robinhood', 'rh_transfer_v1', 'live', 105, 109, $4, ARRAY[$6])`,
       [HASH_A, HASH_B, HASH_C, HASH_D, COMPLETE, GAP, SEED_ONLY, ORPHAN]);
+      // Mix legacy arrays and reusable scopes in the same canonical window.
+      await client.query(`INSERT INTO robinhood_wallet_transfer_token_scopes
+        VALUES ('robinhood', $1, ARRAY[$2])`, [HASH_A.slice(2), COMPLETE]);
+      await client.query(`UPDATE robinhood_wallet_transfer_scan_scopes
+        SET token_addresses=NULL, token_scope_hash=$1
+        WHERE from_block=105 AND checkpoint_hash=$2`, [HASH_A.slice(2), HASH_B]);
       let availability = { rawTransferAvailable: true, partitions: [] };
       const repository = createRobinhoodWalletRankingTransferScanCoverageRepository({
         database: { queryWithStatementTimeout: (sql, params) => client.query(sql, params) },
@@ -72,9 +81,9 @@ describe('Robinhood ranking transfer scan coverage', () => {
         ('robinhood', 109, $1, true)`, [HASH_D]);
       await client.query(`INSERT INTO robinhood_wallet_transfer_scan_scopes (
         chain, projection_version, stream, from_block, through_block,
-        checkpoint_hash, token_addresses
-      ) VALUES ('robinhood', 'rh_transfer_v1', 'live', 105, 109, $1, ARRAY[$2])`,
-      [HASH_D, COMPLETE]);
+        checkpoint_hash, token_scope_hash
+      ) VALUES ('robinhood', 'rh_transfer_v1', 'live', 105, 109, $1, $2)`,
+      [HASH_D, HASH_A.slice(2)]);
       const replayed = await repository.inspectBlockRange(input([COMPLETE]));
       assert.equal(replayed[0].scanProofReady, true);
 

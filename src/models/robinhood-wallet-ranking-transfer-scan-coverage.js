@@ -13,17 +13,34 @@ const TIMEOUT_MS = 5000;
 
 const SCOPES_SQL = `WITH requested AS (
     SELECT unnest($1::text[]) AS token_address
+  ), scanned AS (
+    SELECT requested.token_address, scope.scan_scope_id, scope.stream,
+      scope.from_block, scope.through_block, scope.checkpoint_hash
+    FROM requested
+    JOIN robinhood_wallet_transfer_scan_scopes scope
+      ON scope.chain = '${CHAIN}' AND scope.projection_version = $2
+     AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
+     AND scope.token_scope_hash IS NULL
+     AND scope.token_addresses @> ARRAY[requested.token_address]
+    UNION ALL
+    SELECT requested.token_address, scope.scan_scope_id, scope.stream,
+      scope.from_block, scope.through_block, scope.checkpoint_hash
+    FROM requested
+    JOIN robinhood_wallet_transfer_token_scopes tokens
+      ON tokens.chain = '${CHAIN}'
+     AND tokens.token_addresses @> ARRAY[requested.token_address]
+    JOIN robinhood_wallet_transfer_scan_scopes scope
+      ON scope.chain = tokens.chain AND scope.token_scope_hash = tokens.scope_hash
+     AND scope.projection_version = $2
+     AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
   ), matching AS (
     SELECT requested.token_address, scope.scan_scope_id, scope.stream,
       scope.from_block, scope.through_block,
       (block.canonical IS TRUE) AS checkpoint_canonical
     FROM requested
-    LEFT JOIN robinhood_wallet_transfer_scan_scopes scope
-      ON scope.chain = '${CHAIN}' AND scope.projection_version = $2
-     AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
-     AND scope.token_addresses @> ARRAY[requested.token_address]
+    LEFT JOIN scanned scope ON scope.token_address = requested.token_address
     LEFT JOIN robinhood_chain_blocks block
-      ON block.chain = scope.chain AND block.block_number = scope.through_block
+      ON block.chain = '${CHAIN}' AND block.block_number = scope.through_block
      AND block.block_hash = scope.checkpoint_hash
   )
   SELECT token_address,
