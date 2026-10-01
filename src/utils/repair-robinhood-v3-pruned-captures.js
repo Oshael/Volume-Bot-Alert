@@ -31,6 +31,9 @@ const {
   createRobinhoodWethUsdQuoteReader,
 } = require('../services/robinhood-weth-usd-quote');
 const {
+  createRobinhoodArchiveWethQuotePrefetch,
+} = require('../services/robinhood-archive-weth-quote-prefetch');
+const {
   createRobinhoodV3ArchiveWalletAttribution,
 } = require('../services/robinhood-v3-archive-wallet-attribution');
 
@@ -92,6 +95,8 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     throw new Error('mode must be dry-run, write or wallet-replay');
   }
   const target = targetConfig(args.target);
+  const quotePrefetch = args['quote-prefetch'] ?? (target.name === DEFAULT_TARGET ? 'on' : 'off');
+  if (!['on', 'off'].includes(quotePrefetch)) throw new Error('quote-prefetch must be on or off');
   const rpcConcurrency = integer(args['rpc-concurrency'], target.stockOnly ? 1 : 2, 1, 8,
     'rpc-concurrency');
   if (mode === 'wallet-replay' && target.name !== DEFAULT_TARGET) {
@@ -104,6 +109,7 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     toBlock: block(args['to-block'], '9223372036854775807', 'to-block'),
     batchSize: integer(args['batch-size'], target.stockOnly ? 50 : 100, 1, 500, 'batch-size'),
     rpcConcurrency,
+    quotePrefetch: quotePrefetch === 'on',
     walletConcurrency: integer(args['wallet-concurrency'], rpcConcurrency, 1, 8, 'wallet-concurrency'),
     rpcBatchSize: integer(args['rpc-batch-size'], 100, 1, 100, 'rpc-batch-size'),
     maxBatches: integer(
@@ -511,11 +517,16 @@ function createArchiveClient(rpcUrl, targetName = DEFAULT_TARGET) {
   });
 }
 
-function createStockAdapterOptions(rpcClient, database) {
+function createStockAdapterOptions(rpcClient, database, options = {}) {
   const metadataReader = createErc20MetadataReader({ rpcClient });
-  const wethQuoteReader = createRobinhoodWethUsdQuoteReader({ rpcClient });
+  const quotes = options.quotePrefetch === false ? null : createRobinhoodArchiveWethQuotePrefetch({
+    rpcClient, batchSize: options.rpcBatchSize || 100, concurrency: options.rpcConcurrency || 2,
+  });
+  const wethQuoteReader = quotes?.reader || createRobinhoodWethUsdQuoteReader({ rpcClient });
   const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database });
   return {
+    quoteReader: wethQuoteReader,
+    prefetchWethQuotes: quotes?.prefetch,
     v4LiquidityReader: createLiquidityHistoricalRangeRepository({
       database,
       maxPositionCachePools: MAX_POSITION_CACHE_POOLS,
@@ -558,6 +569,11 @@ async function enrich(rows, rpcClient, options, adapterOptions = {}, deps = {}) 
     concurrency: options.rpcConcurrency,
   });
   const executedAt = now();
+  const quoteTags = prepared.filter(({ context }) => (
+    context.needsWethQuote && context.event?.accepted === true && context.eligibility?.eligible
+  )).map(({ context }) => context.blockTag);
+  const quotePrefetch = await adapterOptions.prefetchWethQuotes?.(quoteTags);
+  const quotesAt = now();
   const results = new Map(executed.items.map((item) => [item.id, item.results]));
   const built = await buildPreparedEntries(
     prepared, results, adapter, options.rpcConcurrency
@@ -565,12 +581,14 @@ async function enrich(rows, rpcClient, options, adapterOptions = {}, deps = {}) 
   return {
     ...built,
     rpc: executed.metrics,
+    quotePrefetch: quotePrefetch || null,
     timing: {
       prepareMs: Math.round(preparedAt - startedAt),
       primeMs: Math.round(primedAt - preparedAt),
       planMs: Math.round(plannedAt - primedAt),
       rpcMs: Math.round(executedAt - plannedAt),
-      buildMs: Math.round(now() - executedAt),
+      quoteMs: Math.round(quotesAt - executedAt),
+      buildMs: Math.round(now() - quotesAt),
     },
   };
 }
@@ -662,6 +680,19 @@ async function persistRepairBatch(rows, built, context) {
   };
 }
 
+function recordRepairDiagnostics(summary, built, committed, failures) {
+  summary.lastCommit = committed;
+  summary.lastRpc = built.rpc;
+  summary.lastQuotePrefetch = built.quotePrefetch || null;
+  summary.lastFailures = failures.slice(0, 10).map(({ row, error }) => ({
+    transactionHash: row.transaction_hash,
+    logIndex: row.log_index,
+    blockNumber: row.block_number,
+    marketKey: row.market_key,
+    error: String(error?.message || error).slice(0, 500),
+  }));
+}
+
 async function runRepair(options, deps = {}) {
   const now = deps.now || (() => performance.now());
   const target = targetConfig(options.target);
@@ -679,7 +710,7 @@ async function runRepair(options, deps = {}) {
   const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl, target.name);
   const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database });
   const adapterOptions = deps.stockAdapterOptions
-    || createStockAdapterOptions(rpcClient, database);
+    || createStockAdapterOptions(rpcClient, database, options);
   const enrichBatch = deps.enrichBatch
     || ((rows) => enrich(rows, rpcClient, options, adapterOptions, { now }));
   const walletAttribution = createWalletAttribution(options, deps, database, rpcClient);
@@ -725,15 +756,7 @@ async function runRepair(options, deps = {}) {
       summary.walletAttributed += wallet?.attributed || 0;
       summary.walletInserted += wallet?.inserted || 0;
       summary.lastBlock = rows.at(-1).block_number;
-      summary.lastCommit = committed;
-      summary.lastRpc = built.rpc;
-      summary.lastFailures = failures.slice(0, 10).map(({ row, error }) => ({
-        transactionHash: row.transaction_hash,
-        logIndex: row.log_index,
-        blockNumber: row.block_number,
-        marketKey: row.market_key,
-        error: String(error?.message || error).slice(0, 500),
-      }));
+      recordRepairDiagnostics(summary, built, committed, failures);
       scanFromBlock = summary.lastBlock;
       console.log(JSON.stringify({ event: target.event, ...summary }));
       if (options.sleepMs) await delay(options.sleepMs);

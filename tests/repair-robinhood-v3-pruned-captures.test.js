@@ -34,10 +34,13 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       mode: 'dry-run', target: 'v3-pruned', rpcUrl: '',
       fromBlock: '0', toBlock: '9223372036854775807',
       batchSize: 100, rpcConcurrency: 2, walletConcurrency: 2,
+      quotePrefetch: true,
       rpcBatchSize: 100, maxBatches: 1, sleepMs: 100,
     });
     assert.throws(() => __private.parseArgs(['--batch-size=501'], {}), /between 1 and 500/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=9'], {}), /between 1 and 8/);
+    assert.throws(() => __private.parseArgs(['--quote-prefetch=yes'], {}), /on or off/);
+    assert.equal(__private.parseArgs(['--quote-prefetch=off'], {}).quotePrefetch, false);
     for (const value of ['0', '9']) {
       assert.throws(() => __private.parseArgs([`--wallet-concurrency=${value}`], {}), /between 1 and 8/);
     }
@@ -62,6 +65,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       mode: 'write', target: 'stock-quote', rpcUrl: 'http://archive',
       fromBlock: '0', toBlock: '9223372036854775807', batchSize: 50,
       rpcConcurrency: 1, walletConcurrency: 1, rpcBatchSize: 100, maxBatches: 1, sleepMs: 1000,
+      quotePrefetch: false,
     });
     assert.deepEqual(__private.targetConfig('stock-quote').protocols, [
       'uniswap-v2', 'uniswap-v3', 'uniswap-v4',
@@ -148,12 +152,17 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     const entry = { observation: { accepted: true } };
     const result = await __private.enrich([capture], {
       request: async () => { elapsed += 30; return '0xabc'; },
-    }, options(), {}, {
+    }, options(), { prefetchWethQuotes: async (tags) => {
+      assert.deepEqual(tags, ['0x64']);
+      elapsed += 7;
+      return { blocks: 1, batches: 1 };
+    } }, {
       now: () => elapsed,
       adapterFactory: () => ({
         prepareClaim: () => {
           elapsed += 2;
-          return { context: {}, tokenAddress: capture.token_address,
+          return { context: { needsWethQuote: true, blockTag: '0x64',
+            event: { accepted: true }, eligibility: { eligible: true } }, tokenAddress: capture.token_address,
             requests: [{ slot: 'test', method: 'eth_call', params: [] }] };
         },
         primeEntries: async () => { elapsed += 5; },
@@ -167,8 +176,9 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.deepEqual(result.entries, [entry]);
     assert.deepEqual(result.repairedRows, [capture]);
     assert.deepEqual(result.timing, {
-      prepareMs: 2, primeMs: 5, planMs: 0, rpcMs: 30, buildMs: 11,
+      prepareMs: 2, primeMs: 5, planMs: 0, rpcMs: 30, quoteMs: 7, buildMs: 11,
     });
+    assert.deepEqual(result.quotePrefetch, { blocks: 1, batches: 1 });
   });
 
   it('reports nested timings without double-counting wallet writes in the repair rate', async () => {

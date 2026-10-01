@@ -566,6 +566,19 @@ ao total. Todos medem tempo de parede; chamadas concorrentes não têm suas
 durações somadas. Tempos de banco incluem espera por conexão/locks e roundtrip,
 portanto um valor alto sozinho não identifica a causa. As subdivisões são
 arredondadas em milissegundos e podem diferir ligeiramente dos totais.
+No alvo `v3-pruned`, `--quote-prefetch=on` é o default: antes da montagem,
+pré-carrega `slot0`/`liquidity` das referências WETH/USDG nos blocos exatos dos
+swaps elegíveis com quote WETH. Deduplica blocos, respeita a implantação das pools
+e usa `--rpc-batch-size` (até 100 chamadas) e `--rpc-concurrency` (até 8 batches).
+O leitor continua escolhendo a referência mais líquida e compartilha sua instância
+com o leitor stock. Nenhuma query adicional nem gravação de banco é introduzida.
+Um batch malsucedido não alimenta o cache; as leituras individuais e fallbacks
+existentes continuam responsáveis por essas cotações. `--quote-prefetch=off`
+desliga o pré-carregamento para comparação; o alvo `stock-quote` começa desligado.
+`lastTiming.enrichment.quoteMs` mede essa etapa, e `lastQuotePrefetch` informa
+blocos, chamadas, batches bem-sucedidos/falhos e chamadas em cache. Compare
+`quoteMs + buildMs`, `enrichMs`, `repairedPerSecond` e o lag live: reduzir só
+`buildMs` não demonstra ganho se o custo apenas mudar de etapa.
 O total exclui a pausa entre lotes. Compare a taxa em vários lotes e o lag da
 captura live antes/depois de elevar a concorrência; esse ajuste não demonstra
 por si só que o limite de lote era o gargalo.

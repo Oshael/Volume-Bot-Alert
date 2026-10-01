@@ -14,6 +14,9 @@ const {
   priceFromSqrtPriceX96,
 } = require('../src/services/robinhood-weth-usd-quote');
 const { formatDecimal } = require('../src/services/evm-market-metrics');
+const {
+  createRobinhoodArchiveWethQuotePrefetch,
+} = require('../src/services/robinhood-archive-weth-quote-prefetch');
 
 const POOL = '0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca';
 const POOL_500 = '0x69bfaf19c9f377bb306a89aed9f6b07e2c1a8d9a';
@@ -63,6 +66,89 @@ function createRpc(overrides = {}) {
     },
   };
 }
+
+function batchingRpc(overrides = {}) {
+  const rpc = createRpc(overrides);
+  const individual = rpc.request;
+  const metrics = { individual: 0, batches: [], active: 0, maxActive: 0 };
+  rpc.request = (...args) => { metrics.individual += 1; return individual(...args); };
+  rpc.requestBatch = async (requests) => {
+    metrics.batches.push(requests);
+    metrics.active += 1;
+    metrics.maxActive = Math.max(metrics.active, metrics.maxActive);
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (overrides.failBatch?.(requests)) throw Object.assign(new Error('layer stale'), { code: 'rpc_error' });
+      return await Promise.all(requests.map(({ method, params }) => individual(method, params)));
+    } finally {
+      metrics.active -= 1;
+    }
+  };
+  return { rpc, metrics };
+}
+
+describe('archive repair WETH quote prefetch', () => {
+  it('replaces individual quote round trips with bounded batches and identical historical snapshots', async () => {
+    const poolsByFee = { 100: POOL, 500: POOL_500, 3000: POOL_3000 };
+    const tags = Array.from({ length: 20 }, (_, index) => `0x${(2_000_000 + index).toString(16)}`);
+    const baselineRpc = createRpc({ poolsByFee });
+    const baseline = createRobinhoodWethUsdQuoteReader({ rpcClient: baselineRpc, now: () => 0 });
+    const expected = await Promise.all(tags.map((blockTag) => baseline.getSnapshot({ blockTag })));
+    const { rpc, metrics } = batchingRpc({ poolsByFee });
+    const quotes = createRobinhoodArchiveWethQuotePrefetch({ rpcClient: rpc, batchSize: 100, concurrency: 2 });
+    const prefetched = await quotes.prefetch([...tags, tags[0]]);
+    const resolutionCalls = metrics.individual;
+    const actual = await Promise.all(tags.map((blockTag) => quotes.reader.getSnapshot({ blockTag })));
+    const comparable = ({ observedAtMs: _observedAtMs, cached: _cached, ...snapshot }) => snapshot;
+    assert.deepEqual(actual.map(comparable), expected.map(comparable));
+    assert.equal(baselineRpc.calls.length - resolutionCalls, 120);
+    assert.equal(metrics.individual, resolutionCalls);
+    assert.equal(metrics.batches.length, 2);
+    assert.equal(metrics.maxActive, 2);
+    assert.ok(metrics.batches.every((batch) => batch.length <= 100));
+    assert.deepEqual(prefetched, { blocks: 20, calls: 120, batches: 2, failedBatches: 0, cachedCalls: 120 });
+  });
+
+  it('keeps the most-liquid pool selection and respects pool deployment blocks', async () => {
+    const pools = { 100: POOL, 500: POOL_500, 3000: POOL_3000 };
+    const { rpc, metrics } = batchingRpc({ handler: async (method, params) => {
+      if (method === 'eth_getCode') return '0x6000';
+      if (params[0].to === ROBINHOOD_V3_FACTORY) {
+        return addressResult(pools[feeFromFactoryCall(params[0].data)] || ZERO_ADDRESS);
+      }
+      if (params[0].data === SLOT0_SELECTOR) return `0x${word(SQRT_PRICE_X96)}${word(0)}`;
+      return `0x${word(params[0].to === POOL_500 ? 30 : 10)}`;
+    } });
+    const quotes = createRobinhoodArchiveWethQuotePrefetch({ rpcClient: rpc });
+    await quotes.prefetch([CASHCAT_LAUNCH_BLOCK, FEE_100_HISTORY_BLOCK]);
+    assert.equal((await quotes.reader.getSnapshot({ blockTag: CASHCAT_LAUNCH_BLOCK })).fee, 3000);
+    assert.equal((await quotes.reader.getSnapshot({ blockTag: FEE_100_HISTORY_BLOCK })).fee, 500);
+    const early = metrics.batches.flat().filter(({ params }) => params[1] === CASHCAT_LAUNCH_BLOCK);
+    assert.deepEqual([...new Set(early.map(({ params }) => params[0].to))], [POOL_3000]);
+  });
+
+  it('retains individual reads and pool fallbacks when a quote batch fails', async () => {
+    const { rpc, metrics } = batchingRpc({ failBatch: (batch) => batch[0].params[1] === '0x200001' });
+    const quotes = createRobinhoodArchiveWethQuotePrefetch({ rpcClient: rpc, batchSize: 2, concurrency: 1 });
+    const report = await quotes.prefetch(['0x200000', '0x200001']);
+    const before = metrics.individual;
+    assert.equal(report.failedBatches, 1);
+    assert.equal(report.cachedCalls, 2);
+    assert.equal((await quotes.reader.getSnapshot({ blockTag: '0x200000' })).blockTag, '0x200000');
+    assert.equal(metrics.individual, before);
+    assert.equal((await quotes.reader.getSnapshot({ blockTag: '0x200001' })).blockTag, '0x200001');
+    assert.equal(metrics.individual - before, 2);
+  });
+
+  it('skips prefetch without batch support and rejects unbounded input', async () => {
+    const rpc = createRpc();
+    const quotes = createRobinhoodArchiveWethQuotePrefetch({ rpcClient: rpc });
+    assert.equal((await quotes.prefetch([FEE_100_HISTORY_BLOCK])).cachedCalls, 0);
+    assert.equal((await quotes.reader.getSnapshot({ blockTag: FEE_100_HISTORY_BLOCK })).priceUsd, '1804.567604374506');
+    await assert.rejects(quotes.prefetch(Array.from({ length: 501 }, (_, index) => String(index))), /at most 500/);
+    assert.throws(() => createRobinhoodArchiveWethQuotePrefetch({ rpcClient: rpc, batchSize: 101 }), /1..100/);
+  });
+});
 
 describe('Robinhood canonical WETH/USD quote reader', () => {
   it('derives the pool through the official factory instead of hardcoding it', () => {
