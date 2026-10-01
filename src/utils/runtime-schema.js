@@ -6911,6 +6911,22 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage260-robinhood-wallet-ranking-publications',
+    name: 'Stage 260 Robinhood wallet ranking publications',
+    repair: 'node src/utils/db-init-stage260.js',
+    tables: [{
+      table: 'robinhood_wallet_ranking_publications',
+      columns: ['chain', 'projection_version', 'ranking_window', 'generation', 'as_of',
+        'checkpoint_block', 'checkpoint_hash', 'source_revisions', 'payload', 'published_at'],
+      constraints: [
+        { name: 'rh_wallet_ranking_publications_pkey', includes: ['PRIMARY KEY', 'chain', 'projection_version', 'ranking_window'] },
+        { name: 'rh_wallet_ranking_publication_window', includes: ['CHECK', '24h', '7d', '30d', 'ALL'] },
+        { name: 'rh_wallet_ranking_publication_revisions', includes: ['CHECK', 'source_revisions', 'reorg'] },
+        { name: 'rh_wallet_ranking_publication_payload', includes: ['CHECK', 'candidateUniverseComplete', 'ranked', '100'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

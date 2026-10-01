@@ -5002,6 +5002,21 @@ em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do
 ranking exato. Ao atingir o limite do universo, não publica posições ordenadas
 como ranking global e retorna cobertura parcial.
+O armazenamento de resultados publicados exige a Stage 260
+(`node src/utils/db-init-stage260.js`), depois da Stage 257, e `npm run db:schema-check`
+antes de atualizar processos que verificam o schema de runtime. A tabela
+`robinhood_wallet_ranking_publications` mantém somente a geração atual por
+projeção/janela, com checkpoint, revisões e até 100 wallets; o repositório limita
+o payload enviado a 64 KiB. A publicação exige universo de candidatos completo
+e corte financeiro canônico já alcançado pela projeção. Revisões não podem ser
+futuras nem regredir em relação à geração substituída; a revisão de reorg precisa
+continuar atual. O LIVE pode avançar durante o cálculo sem impedir a publicação
+do corte anterior. Qualidade parcial das wallets continua explícita no resultado.
+A geração esperada protege contra sobrescrita concorrente e retries; resultado
+idêntico não cria outra geração. A leitura informa `isFresh=false` quando fontes
+avançam, e recusa a geração após mudança da revisão de reorg ou checkpoint órfão.
+O armazenamento não inicia cálculo automático nem altera a fonte da API:
+o endpoint continua recompondo o ranking pelo leitor global.
 `GET /api/robinhood/top-wallets` exige autenticação e rede RH visível. Aceita
 `window` (24h/7d/30d/ALL), `asOf` opcional (checkpoint atual da projeção),
 `limit` até 50 e cursor; responde com cobertura, motivos, exclusões, `asOf`
