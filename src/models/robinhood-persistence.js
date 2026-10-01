@@ -2591,5 +2591,7 @@ module.exports = {
     normalizeSignalCandidateQuery,
     normalizeSignalCandidateRow,
     rebuildReplayMinuteBuckets,
+    refreshHourlyBuckets,
+    PENDING_ENRICHMENT_REASONS,
   },
 };

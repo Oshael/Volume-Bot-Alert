@@ -26,6 +26,7 @@ const INTEGRATION_TESTS = [
   'robinhood-pool-liquidity-event-cursor.integration.test.js',
   'robinhood-pool-liquidity-snapshot.integration.test.js',
   'robinhood-pool-recovery.integration.test.js',
+  'robinhood-persistence-replay.integration.test.js',
   'robinhood-holder-global-backfill-commit.integration.test.js',
   'robinhood-holder-global-backfill.integration.test.js',
   'robinhood-token-holder-summary.integration.test.js',

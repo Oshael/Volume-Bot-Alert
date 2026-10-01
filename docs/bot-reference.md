@@ -663,9 +663,30 @@ Passe `--checkpoint-file=/var/tmp/robinhood-stock-reconstruction.json` para reto
 o arquivo de versão 2 congela o alvo, a seleção/orientação das pools e o hash do bloco M.
 Mudança de seleção ou branch recusa a retomada; mudança de branch durante a execução
 interrompe o avanço e exige revisar a recuperação canônica antes de repetir o replay.
-Uma falha de commit ou de gravação do arquivo permite repetir o range com persistência
-idempotente. Esse comando preenche observações e buckets pelo writer existente;
-o rebuild final de agregados e a seleção dos candles seguem os contratos próprios.
+Uma falha de commit ou de gravação do arquivo permite repetir as identidades retidas.
+O scanner de blocos isolado não conclui a recuperação dos buckets: após a poda dos
+processed-logs/observações, o `_1m` durável pode já conter esses swaps, e o writer
+incremental pode somar o volume novamente. Não use esse scanner sozinho como recovery
+completo de volume histórico. O rebuild final de agregados e a seleção dos candles
+seguem os contratos próprios.
+
+O motor `runStockMinuteReplay` recupera por minutos completos para corrigir esse caso.
+Ele usa o mesmo scanner/enriquecimento, mas só avança o checkpoint após verificar todas
+as identidades do minuto e substituir seus buckets `_1m`, com refresh `_1h` na mesma
+transação. Corrige apenas os mercados token/Stock observados no archive naquele minuto;
+os demais mercados permanecem intactos. Swaps já gravados também entram na verificação
+e no rebuild, permitindo retomar uma interrupção depois dos commits de swaps.
+Write exige `maintenancePaused=true` e arquivo de checkpoint; essa declaração não
+desliga maintenance automaticamente. Maintenance/retention deve permanecer parado
+durante a recuperação para preservar observações entre os commits e o rebuild.
+O bloco inicial deve ser o primeiro de seu minuto (ou zero); o minuto que contém o
+bloco final é excluído. O checkpoint fixa modo, intervalo, catálogo e hash final.
+`maxRanges` limita minutos, `rangeSize` limita blocos por consulta e cada minuto
+aceita no máximo 100 mil logs Swap do archive; commits continuam limitados a 500 swaps.
+Capturas sem observação, enriquecimento pendente, identidades/dimensões divergentes,
+observações aceitas ausentes no archive ou bucket existente sem nenhuma observação
+aceita interrompem a recuperação para reparo/revisão, sem avançar o checkpoint.
+O motor ainda precisa do comando coordenador para descoberta e rebuild dos agregados.
 
 Antes de habilitar ativos tokenizados oficiais como cotação V3, use
 `npm run robinhood:audit-v3-stock-pairs -- --from-block=<início> --to-block=<fim>
