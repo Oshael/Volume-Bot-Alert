@@ -221,7 +221,9 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
   });
 
   it('writes only recent raw events and advances summaries from an exact seed origin', async () => {
-    const deps = dependencies({ classifierFactory: () => ({
+    const scopeManifest = { format: 'versioned', scopeId: '1', version: '2', added: 1, removed: 0 };
+    const deps = dependencies({ projected: { committed: true, edgeGroups: 1, evidenceCandidates: 3,
+      cursor: { lifecycleState: 'complete' }, captureScope: scopeManifest }, classifierFactory: () => ({
       classify: (event) => ({
         kind: event.logIndex === 1 ? 'unknown' : 'wallet_transfer',
         classificationVersion: 'rh_transfer_v1',
@@ -231,6 +233,7 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
       now: '2026-08-14T18:00:00Z',
     });
     assert.equal(result.status, 'complete');
+    assert.deepEqual(result.scopeManifest, scopeManifest);
     assert.equal(result.rawInserted, 1);
     assert.equal(deps.calls.hydration[0].commit, true);
     assert.deepEqual(deps.calls.initialized[0], {

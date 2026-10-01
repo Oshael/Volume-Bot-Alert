@@ -79,10 +79,13 @@ function dependencies(overrides = {}) {
 
 describe('Robinhood wallet transfer LIVE tick', () => {
   it('classifies, persists raw evidence and atomically advances edge projection', async () => {
-    const deps = dependencies();
+    const scopeManifest = { format: 'versioned', scopeId: '1', version: '2', added: 1, removed: 0 };
+    const deps = dependencies({ projected: { committed: true, edgeGroups: 1,
+      evidenceCandidates: 3, captureScope: scopeManifest } });
     const result = await runRobinhoodWalletTransferLiveTick(deps, { maxBlocks: 25 });
 
     assert.equal(result.status, 'projected');
+    assert.deepEqual(result.telemetry.scopeManifest, scopeManifest);
     assert.deepEqual(result.classifications, { wallet_transfer: 1 });
     assert.equal(result.rawInserted, 1);
     assert.equal(deps.calls.raw[0][0].transferKind, 'wallet_transfer');

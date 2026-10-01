@@ -54,6 +54,7 @@ test('canonical transfer scans commit using the existing topic-only scope contra
     events: [],
   });
   assert.equal(result.committed, true);
+  assert.deepEqual(result.captureScope, { format: 'legacy', reason: 'baseline-missing' });
   assert.equal(writes.length, 1);
   assert.match(writes[0][6], /^[0-9a-f]{64}$/);
   assert.equal(writes[0][7], 'topics-only');

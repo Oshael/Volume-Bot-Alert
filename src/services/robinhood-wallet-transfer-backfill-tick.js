@@ -276,6 +276,7 @@ async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
       ? (projected.cursor.lifecycleState === 'complete' ? 'complete' : 'projected')
       : 'cursor-conflict',
     rawInserted: raw.inserted, edgeGroups: projected.edgeGroups || 0,
+    ...(projected.captureScope ? { scopeManifest: projected.captureScope } : {}),
     evidenceCandidates: projected.evidenceCandidates || 0,
   });
 }

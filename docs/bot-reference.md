@@ -4894,7 +4894,7 @@ Antes de atualizar o writer ou o leitor de cobertura, aplique
 A Stage 258 mantém os arrays históricos e acrescenta conjuntos imutáveis em
 `robinhood_wallet_transfer_token_scopes`, identificados pelo SHA-256 dos endereços
 normalizados, únicos e ordenados. Cada conjunto é armazenado e indexado uma vez;
-ranges novos gravam somente `token_scope_hash`, intervalo e checkpoint, na mesma
+no formato legado, ranges gravam `token_scope_hash`, intervalo e checkpoint, na mesma
 transação do cursor. A consulta por hash evita reenviar o array em lotes que
 reutilizam o conjunto, inclusive após restart. Mudança de tokens cria outro hash;
 rollback desfaz conjunto novo e range juntos. Não há cache de referências não
@@ -4925,7 +4925,30 @@ de holders. Normalização e hash são verificados; o estado só fica ready apó
 o hash dos membros copiados. O bootstrap lê o array original completo na abertura
 e os membros completos na conferência final, com escritas limitadas por lote.
 Não retome o writer antigo após preparar a base: isso torna o ponto preparado stale.
-Essa preparação não habilita a escrita versionada. O leitor de cobertura aceita
+O writer seleciona automaticamente o formato versionado para uma base ready.
+Base preparing recusa o commit; sem base, mantém o formato legado para permitir
+o primeiro manifesto e o bootstrap de coortes novas. Prepare cada identidade
+seed/live em uso antes de retomar os workers para evitar novas cópias completas.
+Conjunto inalterado reutiliza a versão sem ler ou escrever membros. Em mudança,
+o writer lê os membros ativos e calcula o delta; persiste somente entradas/saídas,
+em comandos de até 5.000 tokens, e acrescenta uma versão e um manifesto pequeno.
+Não há cache de referências: restart relê o head durável, e rollback desfaz delta,
+versão, manifesto, cursor e invalidação juntos. A leitura do conjunto ativo completo
+em mudanças ainda tem custo de memória/I/O; essa mudança elimina sua regravação
+integral no formato versionado, não o custo de todas as etapas de transfers.
+Os resultados expõem `scopeManifest`: em LIVE fica em `telemetry.scopeManifest`;
+em seed, no resultado do commit. `format=versioned` informa `scopeId`, `version`,
+`added` e `removed`; `format=legacy` informa `baseline-missing` ou `before-baseline`.
+Em reorg, as versões de participação não são rebobinadas: o replay calcula outro
+delta para o conjunto efetivamente varrido e conserva manifestos/versões antigos
+para a checagem canônica. Recuperação anterior a `baseline_next_block` usa prova
+legada até alcançar a base, podendo voltar a escrever arrays nessa exceção.
+Após aplicar a Stage 259, atualizar o leitor e completar o bootstrap offline,
+atualize o writer e retome os workers. Confira `scopeManifest.format=versioned`
+e compare taxas de WAL, lag/avanço de capture e transfers, tempos de commit e
+readiness do ranking na mesma janela. O schema legado/GIN permanece para leitura
+histórica e recuperação; sua limpeza é uma operação separada.
+O leitor de cobertura aceita
 arrays inline, referências por hash e ranges com `scope_id`/`scope_version` na mesma
 janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,
 versão já confirmada e não superior à versão atual, e início do range a partir de

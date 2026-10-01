@@ -3,7 +3,21 @@ const assert = require('node:assert/strict');
 const { after, before, beforeEach, describe, it } = require('node:test');
 const { createHash, randomBytes } = require('node:crypto');
 
-const db = require('../src/models/db');
+const baseDb = require('../src/models/db');
+const schema = `test_projection_${randomBytes(8).toString('hex')}`;
+const db = {
+  pool: baseDb.pool,
+  async getClient() {
+    const client = await baseDb.getClient();
+    await client.query(`SET search_path TO ${schema}`);
+    return client;
+  },
+  async query(sql, params) {
+    const client = await db.getClient();
+    try { return await client.query(sql, params); } finally { client.release(); }
+  },
+};
+let schemaCreated = false;
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
 const {
   createRobinhoodWalletTransferProjectionRepository,
@@ -32,6 +46,7 @@ const stage208 = require('../src/utils/db-init-stage208');
 const stage256 = require('../src/utils/db-init-stage256');
 const stage257 = require('../src/utils/db-init-stage257');
 const stage258 = require('../src/utils/db-init-stage258');
+const stage259 = require('../src/utils/db-init-stage259');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -90,29 +105,18 @@ async function rankingRevision(source) {
 
 describe('Robinhood wallet transfer projection persistence', () => {
   before(async () => {
-    await assertUsingTestDatabase(db);
-    await stage126.init({ closePool: false });
-    await stage127.init({ closePool: false });
-    await stage128.init({ closePool: false });
-    await stage243.init({ closePool: false });
-    await stage244.init({ closePool: false });
-    await stage129.init({ closePool: false });
-    await stage130.init({ closePool: false });
-    await stage131.init({ closePool: false });
-    await stage132.init({ closePool: false });
-    await stage134.init({ closePool: false });
-    await stage137.init({ closePool: false });
-    await stage153.init({ closePool: false });
-    await stage191.init({ closePool: false });
-    await stage208.init({ closePool: false });
-    await stage256.init({ closePool: false });
-    await stage257.init({ closePool: false });
-    await stage258.init({ closePool: false });
-    await stage258.init({ closePool: false });
+    await assertUsingTestDatabase(baseDb);
+    await baseDb.query(`CREATE SCHEMA ${schema}`);
+    schemaCreated = true;
+    for (const stage of [stage126, stage127, stage128, stage243, stage244, stage129,
+      stage130, stage131, stage132, stage134, stage137, stage153, stage191, stage208,
+      stage256, stage257, stage258, stage259]) {
+      for (const sql of stage.STATEMENTS) await db.query(sql);
+    }
     await cleanup();
   });
   after(async () => {
-    await cleanup();
+    if (schemaCreated) await baseDb.query(`DROP SCHEMA ${schema} CASCADE`);
     await db.pool.end();
   });
   beforeEach(cleanup);

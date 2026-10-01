@@ -1,12 +1,15 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
+const { persistVersionedScope } = require('./robinhood-wallet-transfer-scope-writer');
 
 // The caller supplies the sorted, unique, normalized set actually scanned.
 async function persistCaptureScope(client, batch) {
   const scope = batch.captureScope;
   if (!scope?.tokenAddresses.length) return;
   const scopeHash = createHash('sha256').update(scope.tokenAddresses.join('\n')).digest('hex');
+  const manifest = await persistVersionedScope(client, batch, scopeHash);
+  if (manifest.format === 'versioned') return manifest;
   const existing = await client.query(
     `SELECT scope_hash FROM robinhood_wallet_transfer_token_scopes
       WHERE chain=$1 AND scope_hash=$2`, ['robinhood', scopeHash]
@@ -27,6 +30,7 @@ async function persistCaptureScope(client, batch) {
     ['robinhood', batch.projectionVersion, batch.stream, scope.fromBlock,
       batch.checkpointBlock, batch.checkpointHash, scopeHash, scope.filterMode]
   );
+  return manifest;
 }
 
 module.exports = { persistCaptureScope };

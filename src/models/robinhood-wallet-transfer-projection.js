@@ -351,7 +351,7 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
           throw error;
         }
       }
-      await persistCaptureScope(client, batch);
+      const captureScope = await persistCaptureScope(client, batch);
       const advanced = await advanceCursor(client, batch, effectiveSafeHead);
       if (!advanced.rows[0]) throw new Error('locked transfer cursor changed unexpectedly');
       await publishRankingInvalidation(client, 'transfers');
@@ -361,6 +361,7 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
         dailySummaryGroups: batch.summary.dailySummaries.length,
         evidenceCandidates: batch.summary.relationships.length * 3,
         reorgJournalEntries,
+        ...(captureScope ? { captureScope } : {}),
         ...(positionResult ? { positionProjection: positionResult } : {}),
         cursor: cursor(advanced.rows[0]),
       };
