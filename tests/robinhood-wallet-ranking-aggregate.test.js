@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { rankOpenWalletPositions } = require('../src/services/robinhood-wallet-ranking-aggregate');
+const { rankOpenWalletPositions, createOpenWalletRankingAccumulator } = require(
+  '../src/services/robinhood-wallet-ranking-aggregate',
+);
 
 const AS_OF = '2026-09-27T12:00:00.000Z';
 const OLD = '2026-08-01T12:00:00.000Z';
@@ -24,6 +26,20 @@ function rank(positions, overrides = {}) {
   return rankOpenWalletPositions({
     positions, window: '24h', asOf: AS_OF, universeComplete: true, ...overrides,
   });
+}
+
+function accumulator(overrides = {}) {
+  return createOpenWalletRankingAccumulator({ window: '24h', asOf: AS_OF, ...overrides });
+}
+
+function address(index) {
+  return `0x${index.toString(16).padStart(40, '0')}`;
+}
+
+function addBatches(stream, positions, size = 100) {
+  for (let index = 0; index < positions.length; index += size) {
+    stream.addBatch(positions.slice(index, index + size));
+  }
 }
 
 describe('Robinhood Top Wallets aggregation', () => {
@@ -107,5 +123,135 @@ describe('Robinhood Top Wallets aggregation', () => {
       position(A, TOKEN_ONE), position(`0x${'A'.repeat(40)}`, TOKEN_ONE),
     ]), /duplicate wallet\/token/);
     assert.throws(() => rank([], { limit: 101 }), /limit must be between/);
+  });
+});
+
+describe('Robinhood wallet ranking ordered batches', () => {
+  it('ranks the complete universe above 1,000 positions with exactly the best 100 wallets', () => {
+    const stream = accumulator({ window: 'ALL', positionSource: 'snapshot', limit: 100 });
+    const positions = Array.from({ length: 1105 }, (_, index) => [
+      position(address(index + 1), TOKEN_ONE, {
+        quantityRaw: String(index + 1), costBasisUsd: String(index + 1),
+        quality: 'exact_swap_only', projectionAligned: true,
+      }),
+      position(address(index + 1), TOKEN_TWO, {
+        quantityRaw: '1', costBasisUsd: '1',
+        quality: 'transfer_adjusted', projectionAligned: true,
+      }),
+    ]).flat();
+    addBatches(stream, positions, 83);
+    const result = stream.finish({ universeComplete: true });
+    assert.equal(result.candidateWalletCount, 1105);
+    assert.equal(result.coverage, 'complete');
+    assert.equal(result.excludedWalletCount, 0);
+    assert.deepEqual(result.ranked, Array.from({ length: 100 }, (_, index) => ({
+      rank: index + 1, walletAddress: address(1105 - index),
+      gainUsd: String(2 * (1105 - index) + 2), openPositionCount: 2,
+    })));
+  });
+
+  it('keeps one wallet across many batches and excludes it if its last position is partial', () => {
+    const positions = Array.from({ length: 1201 }, (_, index) => (
+      position(A, address(index + 1))
+    ));
+    const complete = accumulator();
+    addBatches(complete, positions);
+    assert.deepEqual(complete.finish({ universeComplete: true }).ranked, [{
+      rank: 1, walletAddress: A, gainUsd: '12010', openPositionCount: 1201,
+    }]);
+
+    const partial = accumulator({ limit: 1 });
+    addBatches(partial, positions.slice(0, -1));
+    partial.addBatch([position(A, address(1201), { windowStartPriceUsd: null })]);
+    partial.addBatch([position(B, TOKEN_ONE)]);
+    const result = partial.finish({ universeComplete: true });
+    assert.equal(result.candidateWalletCount, 2);
+    assert.equal(result.excludedWalletCount, 1);
+    assert.deepEqual(result.reasons, ['basis_unavailable']);
+    assert.deepEqual(result.ranked, [{
+      rank: 1, walletAddress: B, gainUsd: '10', openPositionCount: 1,
+    }]);
+  });
+
+  it('preserves open-position gains for each window and both position sources', () => {
+    for (const window of ['24h', '7d', '30d', 'ALL']) {
+      for (const positionSource of ['event_history', 'snapshot']) {
+        const stream = accumulator({ window, positionSource });
+        const values = {
+          quantityRaw: '10', costBasisUsd: '10', quality: 'exact_swap_only',
+          projectionAligned: true, eventsComplete: true,
+          events: positionSource === 'snapshot' ? [] : position(A, TOKEN_ONE).events,
+        };
+        stream.addBatch([position(A, TOKEN_ONE, values)]);
+        stream.addBatch([position(A, TOKEN_TWO, values), position(B, TOKEN_ONE, values)]);
+        const result = stream.finish({ universeComplete: true });
+        assert.deepEqual(result.ranked.map(({ gainUsd }) => gainUsd),
+          window === 'ALL' ? ['40', '20'] : ['20', '10'], `${window}/${positionSource}`);
+        assert.equal(result.rankingIsComplete, true);
+      }
+    }
+  });
+
+  it('orders negative and tiny gains exactly and breaks ties across batch boundaries', () => {
+    const stream = accumulator({ limit: 3 });
+    stream.addBatch([position(A, TOKEN_ONE, { currentPriceUsd: '1' })]);
+    stream.addBatch([position(B, TOKEN_ONE, { currentPriceUsd: `2.${'0'.repeat(35)}1` })]);
+    stream.addBatch([position(C, TOKEN_ONE, { currentPriceUsd: `2.${'0'.repeat(35)}2` })]);
+    stream.addBatch([position(D, TOKEN_ONE, { currentPriceUsd: `2.${'0'.repeat(35)}2` })]);
+    const result = stream.finish({ universeComplete: true });
+    assert.deepEqual(result.ranked.map(({ walletAddress }) => walletAddress), [C, D, B]);
+    assert.deepEqual(result.ranked.map(({ gainUsd }) => gainUsd),
+      [`0.${'0'.repeat(34)}2`, `0.${'0'.repeat(34)}2`, `0.${'0'.repeat(34)}1`]);
+  });
+
+  it('rejects duplicate pairs and backwards input across batches and cannot finalize failures', () => {
+    const cases = [
+      [position(A, TOKEN_ONE), position(`0x${'A'.repeat(40)}`, TOKEN_ONE), /duplicate/],
+      [position(B, TOKEN_ONE), position(A, TOKEN_ONE), /ordered/],
+      [position(A, TOKEN_TWO), position(A, TOKEN_ONE), /ordered/],
+      [position(A, TOKEN_ONE), position(A, TOKEN_TWO, { currentPriceUsd: 'bad' }), /decimal/],
+    ];
+    for (const [first, invalid, error] of cases) {
+      const stream = accumulator();
+      stream.addBatch([first]);
+      assert.throws(() => stream.addBatch([invalid]), error);
+      assert.throws(() => stream.finish({ universeComplete: true }), /failed/);
+      assert.throws(() => stream.addBatch([]), /failed/);
+    }
+  });
+
+  it('bounds each batch and requires explicit complete-universe confirmation', () => {
+    const tooLarge = accumulator();
+    assert.throws(() => tooLarge.addBatch(Array(101).fill(position(A, TOKEN_ONE))), /at most 100/);
+    assert.throws(() => tooLarge.finish({ universeComplete: true }), /failed/);
+    const stream = accumulator();
+    stream.addBatch([]);
+    stream.addBatch([position(A, TOKEN_ONE)]);
+    const result = stream.finish();
+    assert.deepEqual(result.ranked, []);
+    assert.equal(result.candidateWalletCount, 1);
+    assert.deepEqual(result.reasons, ['candidate_universe_incomplete']);
+    assert.throws(() => stream.addBatch([]), /finished/);
+    assert.throws(() => stream.finish({ universeComplete: true }), /finished/);
+    assert.deepEqual(accumulator().finish({ universeComplete: true }).ranked, []);
+  });
+
+  it('fixes calculation settings at creation and does not mutate input positions', () => {
+    const input = { window: '24h', asOf: AS_OF, limit: 1 };
+    const stream = createOpenWalletRankingAccumulator(input);
+    input.window = 'ALL';
+    input.asOf = OLD;
+    input.limit = 100;
+    const positions = [position(B, TOKEN_ONE), position(A, TOKEN_ONE), position(A, TOKEN_TWO)];
+    const original = structuredClone(positions);
+    rank(positions);
+    assert.deepEqual(positions, original);
+    stream.addBatch([positions[1], positions[2], positions[0]]);
+    const result = stream.finish({ universeComplete: true });
+    assert.equal(result.window, '24h');
+    assert.equal(result.asOf, AS_OF);
+    assert.deepEqual(result.ranked, [{
+      rank: 1, walletAddress: A, gainUsd: '20', openPositionCount: 2,
+    }]);
   });
 });

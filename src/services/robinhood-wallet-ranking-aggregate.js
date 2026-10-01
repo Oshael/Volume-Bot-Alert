@@ -11,6 +11,7 @@ const WINDOW_MS = Object.freeze({
 });
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
+const MAX_BATCH_SIZE = 100;
 
 function add(left, right) {
   return rational(
@@ -28,7 +29,6 @@ function compareGain(left, right) {
 
 function normalizeInput(input) {
   if (!Object.hasOwn(WINDOW_MS, input.window)) throw new Error('window is invalid');
-  if (!Array.isArray(input.positions)) throw new Error('positions must be a list');
   if (input.positionSource != null && !['event_history', 'snapshot'].includes(input.positionSource)) {
     throw new Error('positionSource is invalid');
   }
@@ -43,35 +43,72 @@ function normalizeInput(input) {
   return { asOf, windowStart, limit };
 }
 
-function rankOpenWalletPositions(input = {}) {
-  const { asOf, windowStart, limit } = normalizeInput(input);
-  const wallets = new Map();
-  const seenPairs = new Set();
-  const reasons = new Set();
-  if (input.universeComplete !== true) reasons.add('candidate_universe_incomplete');
+function scorePosition(position, { asOf, windowStart, window, positionSource }) {
+  if (positionSource === 'snapshot' && position.tokenDecimals == null) {
+    return { eligible: true, gainUsd: null, coverage: 'partial',
+      reasons: ['token_decimals_unavailable'] };
+  }
+  if (positionSource === 'snapshot') {
+    return scoreOpenWalletPositionSnapshot({ ...position, asOf, window });
+  }
+  return scoreOpenWalletPosition({
+    asOf, windowStart,
+    tokenDecimals: position.tokenDecimals,
+    currentPriceUsd: position.currentPriceUsd,
+    windowStartPriceUsd: position.windowStartPriceUsd,
+    historyComplete: position.historyComplete,
+    events: position.events,
+  });
+}
 
-  for (const position of input.positions) {
-    const walletAddress = normalizeTokenAddress('robinhood', position.walletAddress);
-    const tokenAddress = normalizeTokenAddress('robinhood', position.tokenAddress);
-    const pair = `${walletAddress}:${tokenAddress}`;
-    if (seenPairs.has(pair)) throw new Error('duplicate wallet/token position');
-    seenPairs.add(pair);
-    const score = input.positionSource === 'snapshot' && position.tokenDecimals == null
-      ? { eligible: true, gainUsd: null, coverage: 'partial',
-        reasons: ['token_decimals_unavailable'] }
-      : input.positionSource === 'snapshot'
-        ? scoreOpenWalletPositionSnapshot({ ...position, asOf, window: input.window })
-      : scoreOpenWalletPosition({
-        asOf, windowStart,
-        tokenDecimals: position.tokenDecimals,
-        currentPriceUsd: position.currentPriceUsd,
-        windowStartPriceUsd: position.windowStartPriceUsd,
-        historyComplete: position.historyComplete,
-        events: position.events,
-      });
-    const wallet = wallets.get(walletAddress) || {
-      walletAddress, gain: rational(0n), openPositionCount: 0, partial: false,
-    };
+function normalizedPosition(position) {
+  return {
+    ...position,
+    walletAddress: normalizeTokenAddress('robinhood', position.walletAddress),
+    tokenAddress: normalizeTokenAddress('robinhood', position.tokenAddress),
+  };
+}
+
+// The caller owns source consistency and must stream a fixed cut in wallet/token order.
+function createOpenWalletRankingAccumulator(input = {}) {
+  const { asOf, windowStart, limit } = normalizeInput(input);
+  const { window, positionSource } = input;
+  const best = [];
+  const reasons = new Set();
+  let wallet = null;
+  let lastPair = null;
+  let candidateWalletCount = 0;
+  let excludedWalletCount = 0;
+  let state = 'open';
+
+  function ensureOpen() {
+    if (state !== 'open') throw new Error(`ranking accumulator is ${state}`);
+  }
+
+  function completeWallet() {
+    if (!wallet) return;
+    if (wallet.partial) excludedWalletCount += 1;
+    else if (wallet.openPositionCount) {
+      const index = best.findIndex((entry) => compareGain(wallet, entry) < 0);
+      best.splice(index < 0 ? best.length : index, 0, wallet);
+      if (best.length > limit) best.pop();
+    }
+    wallet = null;
+  }
+
+  function consume(position) {
+    const pair = `${position.walletAddress}:${position.tokenAddress}`;
+    if (pair === lastPair) throw new Error('duplicate wallet/token position');
+    if (lastPair != null && pair < lastPair) {
+      throw new Error('positions must be ordered by wallet/token');
+    }
+    const score = scorePosition(position, { asOf, windowStart, window, positionSource });
+    if (wallet?.walletAddress !== position.walletAddress) {
+      completeWallet();
+      candidateWalletCount += 1;
+      wallet = { walletAddress: position.walletAddress,
+        gain: rational(0n), openPositionCount: 0, partial: false };
+    }
     if (score.coverage !== 'complete') {
       wallet.partial = true;
       for (const reason of score.reasons) reasons.add(reason);
@@ -80,29 +117,59 @@ function rankOpenWalletPositions(input = {}) {
       wallet.openPositionCount += 1;
       if (score.gainUsd != null) wallet.gain = add(wallet.gain, parseDecimal(score.gainUsd));
     }
-    wallets.set(walletAddress, wallet);
+    lastPair = pair;
   }
 
-  const excludedWalletCount = [...wallets.values()].filter((wallet) => wallet.partial).length;
-  const ranked = input.universeComplete === true
-    ? [...wallets.values()].filter((wallet) => wallet.openPositionCount && !wallet.partial)
-      .sort(compareGain).slice(0, limit).map((wallet, index) => ({
+  function addBatch(positions) {
+    ensureOpen();
+    try {
+      if (!Array.isArray(positions) || positions.length > MAX_BATCH_SIZE) {
+        throw new Error(`positions must be a list of at most ${MAX_BATCH_SIZE}`);
+      }
+      for (const position of positions) consume(normalizedPosition(position));
+    } catch (error) {
+      state = 'failed';
+      throw error;
+    }
+  }
+
+  function finish({ universeComplete = false } = {}) {
+    ensureOpen();
+    completeWallet();
+    state = 'finished';
+    if (universeComplete !== true) reasons.add('candidate_universe_incomplete');
+    return {
+      window,
+      asOf: asOf.toISOString(),
+      windowStart: windowStart?.toISOString() ?? null,
+      coverage: reasons.size ? 'partial' : 'complete',
+      rankingIsComplete: reasons.size === 0,
+      reasons: [...reasons].sort(),
+      excludedWalletCount,
+      candidateWalletCount,
+      ranked: universeComplete === true ? best.map((entry, index) => ({
         rank: index + 1,
-        walletAddress: wallet.walletAddress,
-        gainUsd: formatDecimal(wallet.gain, 36),
-        openPositionCount: wallet.openPositionCount,
-      })) : [];
-  return {
-    window: input.window,
-    asOf: asOf.toISOString(),
-    windowStart: windowStart?.toISOString() ?? null,
-    coverage: reasons.size ? 'partial' : 'complete',
-    rankingIsComplete: reasons.size === 0,
-    reasons: [...reasons].sort(),
-    excludedWalletCount,
-    candidateWalletCount: wallets.size,
-    ranked,
-  };
+        walletAddress: entry.walletAddress,
+        gainUsd: formatDecimal(entry.gain, 36),
+        openPositionCount: entry.openPositionCount,
+      })) : [],
+    };
+  }
+
+  return { addBatch, finish };
 }
 
-module.exports = { rankOpenWalletPositions };
+function rankOpenWalletPositions(input = {}) {
+  const accumulator = createOpenWalletRankingAccumulator(input);
+  if (!Array.isArray(input.positions)) throw new Error('positions must be a list');
+  const positions = input.positions.map(normalizedPosition).sort((left, right) => (
+    left.walletAddress.localeCompare(right.walletAddress)
+    || left.tokenAddress.localeCompare(right.tokenAddress)
+  ));
+  for (let index = 0; index < positions.length; index += MAX_BATCH_SIZE) {
+    accumulator.addBatch(positions.slice(index, index + MAX_BATCH_SIZE));
+  }
+  return accumulator.finish({ universeComplete: input.universeComplete });
+}
+
+module.exports = { rankOpenWalletPositions, createOpenWalletRankingAccumulator };

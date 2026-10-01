@@ -5002,6 +5002,16 @@ em lotes de 100 e eventos em lotes de 20 pares, e agrega ganho por wallet.
 Decimais vêm dos swaps duráveis até `asOf`; ausência deles exclui a wallet do
 ranking exato. Ao atingir o limite do universo, não publica posições ordenadas
 como ranking global e retorna cobertura parcial.
+O agregador também oferece `createOpenWalletRankingAccumulator`: recebe lotes
+de até 100 posições, estritamente ordenadas por wallet/token normalizados,
+mantém somente a wallet em processamento e até 100 melhores wallets concluídas.
+Uma wallet pode atravessar vários lotes; qualquer posição parcial a exclui por
+inteiro. Somas e comparação de ganhos usam aritmética racional. Duplicatas,
+ordem regressiva ou erro de cálculo invalidam o acumulador; `finish` só retorna
+wallets ranqueadas com `universeComplete=true` explícito. O chamador deve garantir
+um único corte consistente das fontes: essa interface não congela leituras do
+banco nem permite remover o limite do leitor atual atravessando snapshots
+distintos. O agregador de listas usa o mesmo cálculo, ordenando uma cópia da lista.
 O armazenamento de resultados publicados exige a Stage 260
 (`node src/utils/db-init-stage260.js`), depois da Stage 257, e `npm run db:schema-check`
 antes de atualizar processos que verificam o schema de runtime. A tabela
