@@ -6,6 +6,7 @@ const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { isAdaptiveRangeError, toQuantity } = require('../services/evm-log-poller');
 const v3 = require('../services/uniswap-v3-decoder');
+const scope = require('../services/robinhood-archive-replay-scope');
 const repair = require('./repair-robinhood-v3-pruned-captures').__private;
 
 const CHAIN_ID = 4663n;
@@ -41,6 +42,9 @@ function parseNamedArgs(argv) {
 
 function parseArgs(argv = process.argv.slice(2), env = process.env) {
   const args = parseNamedArgs(argv);
+  const target = String(args.target || 'v3');
+  if (!['v3', 'stock-quote'].includes(target)) throw new Error('target must be v3 or stock-quote');
+  const stocks = target === 'stock-quote';
   const mode = String(args.mode || 'dry-run').toLowerCase();
   if (!['dry-run', 'write'].includes(mode)) throw new Error('mode must be dry-run or write');
   const fromBlock = requiredBlock(args['from-block'], 'from-block');
@@ -48,21 +52,23 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
   if (BigInt(toBlock) < BigInt(fromBlock)) throw new Error('to-block must not precede from-block');
   return {
     mode,
-    rpcUrl: String(args['rpc-url'] || env.ROBINHOOD_V3_REPAIR_RPC_URL || '').trim(),
+    target,
+    rpcUrl: String(args['rpc-url'] || (stocks
+      ? env.ROBINHOOD_ARCHIVE_RPC_URL : env.ROBINHOOD_V3_REPAIR_RPC_URL) || '').trim(),
     fromBlock,
     toBlock,
-    rangeSize: integer(args['range-size'], 500, 1, 10_000, 'range-size'),
+    rangeSize: integer(args['range-size'], stocks ? 100 : 500, 1, 10_000, 'range-size'),
     minRangeSize: integer(args['min-range-size'], 1, 1, 10_000, 'min-range-size'),
     batchSize: integer(args['batch-size'], 500, 1, 500, 'batch-size'),
-    rpcConcurrency: integer(args['rpc-concurrency'], 8, 1, 8, 'rpc-concurrency'),
+    rpcConcurrency: integer(args['rpc-concurrency'], stocks ? 2 : 8, 1, 8, 'rpc-concurrency'),
     rpcBatchSize: integer(args['rpc-batch-size'], 25, 1, 100, 'rpc-batch-size'),
     enrichmentConcurrency: integer(
-      args['enrichment-concurrency'], 2, 1, 4, 'enrichment-concurrency'
+      args['enrichment-concurrency'], stocks ? 1 : 2, 1, 4, 'enrichment-concurrency'
     ),
     maxRanges: integer(args['max-ranges'], 0, 0, 10_000_000, 'max-ranges'),
     sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
     checkpointFile: String(
-      args['checkpoint-file'] || env.ROBINHOOD_V3_RECONSTRUCTION_CHECKPOINT_FILE || ''
+      args['checkpoint-file'] || (!stocks && env.ROBINHOOD_V3_RECONSTRUCTION_CHECKPOINT_FILE) || ''
     ).trim() || null,
   };
 }
@@ -75,9 +81,21 @@ function emptySummary(mode) {
   };
 }
 
+function checkpointVersion(options) {
+  return options.target === 'stock-quote' ? 2 : CHECKPOINT_VERSION;
+}
+
 function restoreCheckpoint(saved, options) {
-  if (!saved || saved.version !== CHECKPOINT_VERSION) {
+  if (!saved || saved.version !== checkpointVersion(options)) {
     throw new Error('Checkpoint version is invalid');
+  }
+  if ((saved.target || 'v3') !== (options.target || 'v3')) {
+    throw new Error('Checkpoint target does not match this execution');
+  }
+  if (options.target === 'stock-quote') {
+    for (const key of ['poolDigest', 'anchorHash']) {
+      if (saved[key] !== options[key]) throw new Error(`Checkpoint ${key} changed`);
+    }
   }
   for (const key of ['mode', 'fromBlock', 'toBlock']) {
     if (String(saved[key]) !== String(options[key])) {
@@ -130,7 +148,10 @@ function createCheckpointStore(filename) {
 
 function checkpointState(options, cursor, summary) {
   return {
-    version: CHECKPOINT_VERSION,
+    version: checkpointVersion(options),
+    target: options.target || 'v3',
+    poolDigest: options.poolDigest || null,
+    anchorHash: options.anchorHash || null,
     mode: options.mode,
     fromBlock: options.fromBlock,
     toBlock: options.toBlock,
@@ -149,15 +170,16 @@ async function resumeState(checkpoint, options) {
   return restoreCheckpoint(saved, options);
 }
 
-function createRepository(database = db) {
+function createRepository(database = db, target = 'v3') {
   async function listPools() {
     const result = await database.query(
       `SELECT protocol, market_key, pool_address, pool_id, origin_address,
               token_address, quote_address, currency0, currency1, fee,
-              tick_spacing, metadata
+              tick_spacing, metadata, discovery_block
          FROM robinhood_pool_registry
-        WHERE chain = 'robinhood' AND protocol = 'uniswap-v3'
-          AND pool_address IS NOT NULL`
+        WHERE chain = 'robinhood' AND protocol = ANY($1::text[])
+          AND ($2::text[] IS NULL OR quote_address = ANY($2::text[]))`,
+      [scope.protocols(target), target === 'stock-quote' ? scope.STOCKS : null]
     );
     return result.rows;
   }
@@ -188,13 +210,19 @@ function createRepository(database = db) {
             WHERE capture.chain = 'robinhood'
               AND capture.transaction_hash = input.transaction_hash
               AND capture.log_index = input.log_index
-         ) AS captured
+         ) AS captured,
+         EXISTS (
+           SELECT 1 FROM robinhood_market_observations observation
+            WHERE observation.chain = 'robinhood'
+              AND observation.transaction_hash = input.transaction_hash
+              AND observation.log_index = input.log_index
+         ) AS observed
        FROM input`,
       [JSON.stringify(identities)]
     );
     return new Map(result.rows.map((row) => [
       `${row.transaction_hash}:${row.log_index}`,
-      { processed: row.processed, captured: row.captured },
+      { processed: row.processed, captured: row.captured, observed: row.observed },
     ]));
   }
 
@@ -212,15 +240,13 @@ function createRepository(database = db) {
   return Object.freeze({ classify, listPools, withLock });
 }
 
-function poolIndex(rows) {
-  return new Map(rows.map((row) => [String(row.pool_address).toLowerCase(), row]));
-}
+const poolIndex = scope.poolIndex;
 
 function trackedRows(logs, pools) {
   const unique = new Map();
   for (const log of logs) {
     if (log?.removed === true) continue;
-    const registry = pools.get(String(log?.address || '').toLowerCase());
+    const registry = scope.findPool(log, pools);
     if (!registry) continue;
     const row = {
       transaction_hash: String(log.transactionHash).toLowerCase(),
@@ -231,12 +257,16 @@ function trackedRows(logs, pools) {
       address: String(log.address).toLowerCase(),
       topics: log.topics,
       data: log.data,
-      protocol: 'uniswap-v3',
+      protocol: registry.protocol,
       market_key: registry.market_key,
       registry_market_key: registry.market_key,
       ...registry,
     };
-    unique.set(`${row.transaction_hash}:${row.log_index}`, row);
+    const identity = `${row.transaction_hash}:${row.log_index}`;
+    if (unique.has(identity) && unique.get(identity).block_hash !== row.block_hash) {
+      throw new Error('Archive returned conflicting block hashes for a swap identity');
+    }
+    unique.set(identity, row);
   }
   return [...unique.values()].sort((left, right) => (
     Number(BigInt(left.block_number) - BigInt(right.block_number))
@@ -244,13 +274,14 @@ function trackedRows(logs, pools) {
   ));
 }
 
-async function fetchRanges(rpcClient, fromBlock, toBlock, minRangeSize, maxLogs = 10_000) {
+async function fetchRanges(rpcClient, fromBlock, toBlock, minRangeSize, maxLogs = 10_000,
+  topics = [v3.TOPICS.swap]) {
   let logs;
   try {
     logs = await rpcClient.request('eth_getLogs', [{
       fromBlock: toQuantity(fromBlock),
       toBlock: toQuantity(toBlock),
-      topics: [v3.TOPICS.swap],
+      topics: topics.length === 1 ? topics : [topics],
     }]);
     if (!Array.isArray(logs)) throw new Error('eth_getLogs did not return an array');
   } catch (error) {
@@ -258,14 +289,14 @@ async function fetchRanges(rpcClient, fromBlock, toBlock, minRangeSize, maxLogs 
     if (!splittable || toBlock - fromBlock + 1n <= BigInt(minRangeSize)) throw error;
     logs = null;
   }
-  if (logs && logs.length <= maxLogs) return [{ fromBlock, toBlock, logs }];
+  if (logs && logs.length < maxLogs) return [{ fromBlock, toBlock, logs }];
   if (toBlock - fromBlock + 1n <= BigInt(minRangeSize)) {
     throw new Error('Dense archive range cannot be split below min-range-size');
   }
   const midpoint = fromBlock + ((toBlock - fromBlock) / 2n);
   return [
-    ...await fetchRanges(rpcClient, fromBlock, midpoint, minRangeSize, maxLogs),
-    ...await fetchRanges(rpcClient, midpoint + 1n, toBlock, minRangeSize, maxLogs),
+    ...await fetchRanges(rpcClient, fromBlock, midpoint, minRangeSize, maxLogs, topics),
+    ...await fetchRanges(rpcClient, midpoint + 1n, toBlock, minRangeSize, maxLogs, topics),
   ];
 }
 
@@ -344,27 +375,43 @@ async function enrichResilient(rows, enrichBatch) {
   }
 }
 
+function rangeBudgetAvailable(limit, completed) {
+  return limit === 0 || completed < limit;
+}
+
 async function runReconstruction(options, deps = {}) {
   if (!options.rpcUrl && !deps.rpcClient) throw new Error('Archive RPC URL is required');
-  const repository = deps.repository || createRepository(deps.database || db);
+  const target = options.target || 'v3';
+  const repository = deps.repository || createRepository(deps.database || db, target);
   const rpcClient = deps.rpcClient || repair.createArchiveClient(options.rpcUrl);
-  const persistence = deps.persistence || createRobinhoodPersistenceRepository();
-  const enrichBatch = deps.enrichBatch || ((rows) => repair.enrich(rows, rpcClient, options));
+  const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database: deps.database || db });
+  const enrichBatch = (rows) => {
+    const adapterOptions = repair.createStockAdapterOptions(rpcClient, deps.database || db, {
+      ...options, quotePrefetch: false,
+    });
+    return deps.enrichBatch ? deps.enrichBatch(rows, adapterOptions)
+      : repair.enrich(rows, rpcClient, options, adapterOptions);
+  };
   const checkpoint = deps.checkpoint || createCheckpointStore(options.checkpointFile);
-  const pools = poolIndex(await repository.listPools());
   return repository.withLock(async () => {
     if (BigInt(await rpcClient.request('eth_chainId')) !== CHAIN_ID) {
       throw new Error('Archive RPC is not on Robinhood Chain');
+    }
+    const pools = poolIndex(await repository.listPools(), target, options.toBlock);
+    if (target === 'stock-quote') {
+      options = { ...options, poolDigest: scope.poolDigest(pools),
+        anchorHash: await scope.anchorHash(rpcClient, options.toBlock) };
     }
     const resumed = await resumeState(checkpoint, options);
     const summary = resumed.summary;
     let cursor = BigInt(resumed.nextBlock);
     const end = BigInt(options.toBlock);
     let runRanges = 0;
-    while (cursor <= end && (options.maxRanges === 0 || runRanges < options.maxRanges)) {
+    while (cursor <= end && rangeBudgetAvailable(options.maxRanges, runRanges)) {
       const requestedEnd = cursor + BigInt(options.rangeSize) - 1n;
       const ranges = await fetchRanges(
-        rpcClient, cursor, requestedEnd < end ? requestedEnd : end, options.minRangeSize
+        rpcClient, cursor, requestedEnd < end ? requestedEnd : end, options.minRangeSize,
+        10_000, scope.swapTopics(target)
       );
       for (const range of ranges) {
         const workStarted = performance.now();
@@ -376,7 +423,7 @@ async function runReconstruction(options, deps = {}) {
           const status = entryStatus(row, classified);
           if (status.processed) summary.existingProcessed += 1;
           else if (status.captured) summary.existingCaptures += 1;
-          return !status.processed && !status.captured;
+          return !(target === 'stock-quote' ? status.observed : status.processed) && !status.captured;
         });
         summary.scannedBlocks += Number(range.toBlock - range.fromBlock + 1n);
         summary.archiveSwapLogs += range.logs.length;
@@ -392,6 +439,7 @@ async function runReconstruction(options, deps = {}) {
             (chunk) => enrichResilient(chunk, enrichBatch)
           );
           enrichMs = performance.now() - enrichmentStarted;
+          scope.assertComplete(target, builtChunks, missing.length);
           const persistenceStarted = performance.now();
           const rangeFailures = [];
           for (const built of builtChunks) {
@@ -400,7 +448,7 @@ async function runReconstruction(options, deps = {}) {
                 entries: built.entries, allowMissingWalletContext: true,
               })
               : { insertedLogs: 0 };
-            summary.repaired += committed.insertedLogs;
+            summary.repaired += scope.repairedCount(target, committed);
             summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;
             summary.rejected += built.entries.filter(
               (entry) => entry.observation?.accepted === false
@@ -432,12 +480,15 @@ async function runReconstruction(options, deps = {}) {
         summary.ranges += 1;
         runRanges += 1;
         cursor = range.toBlock + 1n;
+        await scope.assertAnchor(target, rpcClient, options);
         await checkpoint.save(checkpointState(options, cursor, summary));
         console.log(JSON.stringify({
-          event: 'v3_archive_reconstruction_progress',
+          event: target === 'stock-quote'
+            ? 'stock_archive_reconstruction_progress' : 'v3_archive_reconstruction_progress',
           ...progress(summary, range.toBlock, options),
         }));
         if (options.sleepMs) await delay(options.sleepMs);
+        if (!rangeBudgetAvailable(options.maxRanges, runRanges)) break;
       }
     }
     return progress(summary, cursor - 1n, options);
@@ -448,7 +499,7 @@ async function run() {
   try {
     console.log(JSON.stringify(await runReconstruction(parseArgs()), null, 2));
   } catch (error) {
-    console.error('[RobinhoodV3ArchiveReconstruction]', error.message);
+    console.error('[RobinhoodArchiveReconstruction]', error.message);
     process.exitCode = 1;
   } finally {
     await db.pool.end().catch(() => {});

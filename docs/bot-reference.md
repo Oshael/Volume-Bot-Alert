@@ -645,6 +645,28 @@ Por padrão, até dois chunks de enriquecimento executam simultaneamente, cada u
 camada com `--enrichment-concurrency=1..4`. O progresso expõe em `lastRange` os tempos de
 classificação, enriquecimento e persistência para que o gargalo seja mensurável por range.
 
+Para reconstruir swaps de pares token/Stock nos três protocolos, use
+`npm run robinhood:reconstruct-stock-archive -- --from-block=N --to-block=M`.
+O alvo `stock-quote` usa `ROBINHOOD_ARCHIVE_RPC_URL`, é `dry-run` por default e exige
+`--mode=write` para persistir. O registry deve estar preenchido antes do replay;
+a seleção inclui pools inativas, mas exclui referências Stock/WETH-USDG, Stock/Stock
+e pools descobertas depois de M. O scanner combina os tópicos Swap V2/V3/V4,
+identifica V4 por manager e poolId e deduplica por transação/logIndex.
+Observações existentes, inclusive rejeições, e capturas ainda retidas são preservadas;
+um processed-log sem observação nem captura pode ser reconstruído. Rejeições retidas
+por falta de Stock/USD continuam sendo responsabilidade de `robinhood:repair-stock-captures`.
+Os defaults são ranges de 100 blocos, dois batches RPC e um chunk de enriquecimento
+simultâneo, com até 500 swaps por commit; `--max-ranges` limita inclusive ranges
+subdivididos. O adapter recebe Stock/USD e liquidez V4 pelo contrato histórico existente.
+Falha ou identidade perdida no enriquecimento interrompe o range sem avançar checkpoint.
+Passe `--checkpoint-file=/var/tmp/robinhood-stock-reconstruction.json` para retomada;
+o arquivo de versão 2 congela o alvo, a seleção/orientação das pools e o hash do bloco M.
+Mudança de seleção ou branch recusa a retomada; mudança de branch durante a execução
+interrompe o avanço e exige revisar a recuperação canônica antes de repetir o replay.
+Uma falha de commit ou de gravação do arquivo permite repetir o range com persistência
+idempotente. Esse comando preenche observações e buckets pelo writer existente;
+o rebuild final de agregados e a seleção dos candles seguem os contratos próprios.
+
 Antes de habilitar ativos tokenizados oficiais como cotação V3, use
 `npm run robinhood:audit-v3-stock-pairs -- --from-block=<início> --to-block=<fim>
 --discovery-from-block=0`, com `ROBINHOOD_V3_REPAIR_RPC_URL` apontando para o archive.

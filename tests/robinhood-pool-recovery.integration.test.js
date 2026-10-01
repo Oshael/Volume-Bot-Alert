@@ -7,6 +7,8 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { createRobinhoodPersistenceRepository, __private } = require('../src/models/robinhood-persistence');
 const { upsertPool } = require('../src/models/robinhood-pool-registry-write');
+const { __private: { createRepository: createArchiveRepository } } = require('../src/utils/reconstruct-robinhood-v3-archive');
+const { CANONICAL_CONTRACTS } = require('../src/services/robinhood-market-policy');
 const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -97,5 +99,30 @@ describe('Robinhood historical pool recovery', () => {
     assert.deepEqual(row.metadata, {
       quoteIndex: 1, quoteKind: 'erc20', dynamicFee: null, pairIndex: null,
     });
+  });
+
+  it('selects Stock pools across protocols and distinguishes markers, observations and captures in PostgreSQL', async () => {
+    const reference = { ...discovery('uniswap-v3', '6'), quoteAddress: CANONICAL_CONTRACTS.USDG,
+      currency1: CANONICAL_CONTRACTS.USDG };
+    await repository.upsertRecoveredPools([reference]);
+    await client.query("UPDATE robinhood_pool_registry SET active=false WHERE protocol='uniswap-v3'");
+    const archive = createArchiveRepository(client, 'stock-quote');
+    const pools = await archive.listPools();
+    assert.deepEqual(pools.map((pool) => pool.protocol).sort(), ['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
+    await client.query(`CREATE TEMP TABLE robinhood_processed_logs
+      (chain text, transaction_hash text, log_index bigint);
+      CREATE TEMP TABLE robinhood_market_observations
+      (chain text, transaction_hash text, log_index bigint, status text);
+      CREATE TEMP TABLE robinhood_head_captures
+      (chain text, transaction_hash text, log_index bigint)`);
+    const rows = [1, 2, 3].map((index) => ({ transaction_hash: `0x${String(index).repeat(64)}`, log_index: '1' }));
+    await client.query("INSERT INTO robinhood_processed_logs VALUES ('robinhood',$1,1)", [rows[0].transaction_hash]);
+    await client.query("INSERT INTO robinhood_market_observations VALUES ('robinhood',$1,1,'rejected')", [rows[1].transaction_hash]);
+    await client.query("INSERT INTO robinhood_head_captures VALUES ('robinhood',$1,1)", [rows[2].transaction_hash]);
+    assert.deepEqual([...(await archive.classify(rows)).values()], [
+      { processed: true, captured: false, observed: false },
+      { processed: false, captured: false, observed: true },
+      { processed: false, captured: true, observed: false },
+    ]);
   });
 });
