@@ -526,8 +526,10 @@ function createStockAdapterOptions(rpcClient, database) {
   };
 }
 
-async function enrich(rows, rpcClient, options, adapterOptions = {}) {
-  const adapter = createRobinhoodBackfillEnrichmentAdapter({
+async function enrich(rows, rpcClient, options, adapterOptions = {}, deps = {}) {
+  const now = deps.now || (() => performance.now());
+  const startedAt = now();
+  const adapter = (deps.adapterFactory || createRobinhoodBackfillEnrichmentAdapter)({
     seedPools: poolSeeds(rows),
     rpcClient,
     rpcProvider: 'archive',
@@ -539,9 +541,11 @@ async function enrich(rows, rpcClient, options, adapterOptions = {}) {
     const item = adapter.prepareClaim(claimed);
     return { row, claim: claimed, ...item, id: `${row.transaction_hash}:${row.log_index}` };
   });
+  const preparedAt = now();
   await adapter.primeEntries(prepared.map((item) => ({
     item: { id: item.id }, claim: item.claim, context: item.context,
   })));
+  const primedAt = now();
   const plan = planRobinhoodBackfillEnrichment(prepared.map((item) => ({
     id: item.id,
     tokenAddress: item.tokenAddress,
@@ -549,9 +553,11 @@ async function enrich(rows, rpcClient, options, adapterOptions = {}) {
     logIndex: item.row.log_index,
     requests: item.requests,
   })), { providerBatchSizes: { archive: options.rpcBatchSize || 100 } });
+  const plannedAt = now();
   const executed = await executeRobinhoodBackfillEnrichmentPlan(plan, rpcClient, {
     concurrency: options.rpcConcurrency,
   });
+  const executedAt = now();
   const results = new Map(executed.items.map((item) => [item.id, item.results]));
   const built = await buildPreparedEntries(
     prepared, results, adapter, options.rpcConcurrency
@@ -559,6 +565,13 @@ async function enrich(rows, rpcClient, options, adapterOptions = {}) {
   return {
     ...built,
     rpc: executed.metrics,
+    timing: {
+      prepareMs: Math.round(preparedAt - startedAt),
+      primeMs: Math.round(primedAt - preparedAt),
+      planMs: Math.round(plannedAt - primedAt),
+      rpcMs: Math.round(executedAt - plannedAt),
+      buildMs: Math.round(now() - executedAt),
+    },
   };
 }
 
@@ -587,6 +600,7 @@ function createWalletAttribution(options, deps, database, rpcClient) {
     || (deps.walletAttributionFactory || createRobinhoodV3ArchiveWalletAttribution)({
       database, rpcClient,
       fetchConcurrency: options.walletConcurrency ?? options.rpcConcurrency,
+      collectTiming: true, now: deps.now,
     });
 }
 
@@ -621,27 +635,35 @@ async function runWalletReplay(options, deps, candidates, database) {
 }
 
 async function persistRepairBatch(rows, built, context) {
+  const now = context.now;
   const repairedRows = built.repairedRows || rows;
   const failures = built.failures || [];
+  const startedAt = now();
   const committed = built.entries.length
     ? await context.persistence.commitHeadProcessingBatch({
       entries: built.entries, allowMissingWalletContext: true,
     })
     : null;
-  const walletStartedAt = performance.now();
+  const walletStartedAt = now();
   const wallet = committed?.missingWalletSwapContext
     ? await context.walletAttribution.attribute(repairedRows)
     : null;
-  const walletMs = wallet ? performance.now() - walletStartedAt : 0;
+  const walletMs = wallet ? now() - walletStartedAt : 0;
   if (wallet && wallet.attributed < committed.missingWalletSwapContext) {
     throw new Error('Archive wallet attribution covered fewer swaps than missing context');
   }
+  const settleStartedAt = now();
   if (repairedRows.length) await context.candidates.markRepaired(repairedRows, context.authority);
   if (failures.length) await context.candidates.markBlocked(failures, context.authority);
-  return { repairedRows, failures, committed, wallet, walletMs };
+  return {
+    repairedRows, failures, committed, wallet, walletMs,
+    commitMs: Math.round(walletStartedAt - startedAt),
+    settleMs: Math.round(now() - settleStartedAt),
+  };
 }
 
 async function runRepair(options, deps = {}) {
+  const now = deps.now || (() => performance.now());
   const target = targetConfig(options.target);
   const database = deps.database || db;
   const candidates = deps.candidates || createCandidateRepository(database, target.name);
@@ -659,7 +681,7 @@ async function runRepair(options, deps = {}) {
   const adapterOptions = deps.stockAdapterOptions
     || createStockAdapterOptions(rpcClient, database);
   const enrichBatch = deps.enrichBatch
-    || ((rows) => enrich(rows, rpcClient, options, adapterOptions));
+    || ((rows) => enrich(rows, rpcClient, options, adapterOptions, { now }));
   const walletAttribution = createWalletAttribution(options, deps, database, rpcClient);
 
   return candidates.withLock(async (authority = 'legacy') => {
@@ -667,20 +689,20 @@ async function runRepair(options, deps = {}) {
     if (BigInt(chainId) !== CHAIN_ID) throw new Error('Archive RPC is not on Robinhood Chain');
     let scanFromBlock = options.fromBlock;
     while (options.maxBatches === 0 || summary.batches < options.maxBatches) {
-      const startedAt = performance.now();
+      const startedAt = now();
       const rows = await candidates.list(scanFromBlock, options.toBlock, options.batchSize);
       if (!rows.length) {
         summary.complete = true;
         break;
       }
-      const selectedAt = performance.now();
+      const selectedAt = now();
       summary.firstBlock ||= rows[0].block_number;
       const built = await enrichBatch(rows, adapterOptions);
-      const enrichedAt = performance.now();
-      const { repairedRows, failures, committed, wallet, walletMs } = await persistRepairBatch(
-        rows, built, { persistence, candidates, authority, walletAttribution }
+      const enrichedAt = now();
+      const { repairedRows, failures, committed, wallet, walletMs, commitMs, settleMs } = await persistRepairBatch(
+        rows, built, { persistence, candidates, authority, walletAttribution, now }
       );
-      const persistedAt = performance.now();
+      const persistedAt = now();
       const totalMs = persistedAt - startedAt;
       summary.lastTiming = {
         selectMs: Math.round(selectedAt - startedAt),
@@ -689,6 +711,10 @@ async function runRepair(options, deps = {}) {
         persistMs: Math.round(persistedAt - enrichedAt - walletMs),
         totalMs: Math.round(totalMs),
         repairedPerSecond: totalMs > 0 ? Number((repairedRows.length * 1000 / totalMs).toFixed(2)) : 0,
+        enrichment: built.timing || null,
+        wallet: wallet?.timing || null,
+        commitMs,
+        settleMs,
       };
       summary.batches += 1;
       summary.repaired += repairedRows.length;

@@ -24,10 +24,13 @@ function fixture(blockHash = HASH, options = {}) {
   }));
   const database = { query: async (sql) => {
     assert.match(sql, /observation\.status = 'accepted'/);
+    await options.onQuery?.();
     return { rows: observations };
   } };
   const replay = createRobinhoodV3ArchiveWalletAttribution({
     database,
+    collectTiming: options.collectTiming,
+    now: options.now,
     fetchConcurrency: options.fetchConcurrency,
     rpcClient: { request: async (_method, [tag]) => {
       const number = Number(BigInt(tag));
@@ -40,10 +43,13 @@ function fixture(blockHash = HASH, options = {}) {
       };
     } },
     walletRepository: {
-      insertWalletSwaps: async (rows) => { writes.push(...rows); return { inserted: rows.length }; },
+      insertWalletSwaps: async (rows) => {
+        await options.onSwaps?.();
+        writes.push(...rows); return { inserted: rows.length };
+      },
     },
     transactionPositionRepository: {
-      upsertPositions: async (rows) => { writes.push(...rows); },
+      upsertPositions: async (rows) => { await options.onPositions?.(); writes.push(...rows); },
     },
   });
   const captures = observations.map((row) => ({ ...row, block_hash: HASH }));
@@ -101,4 +107,29 @@ it('writes nothing when one of the concurrent archive blocks has a divergent has
   });
   await assert.rejects(replay.attribute(captures), /archive block hash differs/);
   assert.equal(writes.length, 0);
+});
+
+it('measures concurrent archive reads as wall time and separates sequential writes', async () => {
+  let elapsed = 0; let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const started = [];
+  const { replay, writes, captures } = fixture(HASH, {
+    blocks: 3, fetchConcurrency: 3, collectTiming: true, now: () => elapsed,
+    onQuery: () => { elapsed += 5; },
+    onFetch: async (number) => { started.push(number); await gate; },
+    onPositions: () => { elapsed += 7; },
+    onSwaps: () => { elapsed += 11; },
+  });
+  const pending = replay.attribute(captures);
+  await setImmediate();
+  assert.equal(started.length, 3);
+  assert.equal(writes.length, 0);
+  elapsed += 30;
+  release();
+  const result = await pending;
+  assert.deepEqual(result.timing, {
+    observationsMs: 5, fetchResolveMs: 30, positionsMs: 7, swapsMs: 11,
+  });
+  assert.equal(result.attributed, 3);
+  assert.deepEqual(writes.slice(3).map((item) => item.blockNumber), ['100', '101', '102']);
 });

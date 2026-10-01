@@ -554,6 +554,18 @@ concorrentes. `--wallet-concurrency=1` restaura a leitura sequencial dessa etapa
 O progresso do modo write publica `lastTiming`: `selectMs`, `enrichMs`, `walletMs`,
 `persistMs`, `totalMs` e `repairedPerSecond`. `walletMs` inclui leitura, validação e
 persistência da atribuição; `persistMs` mede as demais gravações e o settlement.
+Os detalhes em `lastTiming.enrichment` separam `prepareMs` (adapter/capturas),
+`primeMs` (pré-carregamento), `planMs` (plano RPC), `rpcMs` (execução do plano,
+incluindo retries) e `buildMs` (montagem/validação das entradas, incluindo leituras
+de cotação feitas nessa etapa). `lastTiming.wallet` separa `observationsMs`
+(consulta de observações aceitas), `fetchResolveMs` (leitura concorrente dos blocos
+e resolução/validação), `positionsMs` e `swapsMs` (gravações sequenciais).
+`commitMs` mede o commit de observações/buckets; `settleMs`, a marcação de capturas
+reparadas/bloqueadas. Os detalhes são subdivisões, não tempos a somar novamente
+ao total. Todos medem tempo de parede; chamadas concorrentes não têm suas
+durações somadas. Tempos de banco incluem espera por conexão/locks e roundtrip,
+portanto um valor alto sozinho não identifica a causa. As subdivisões são
+arredondadas em milissegundos e podem diferir ligeiramente dos totais.
 O total exclui a pausa entre lotes. Compare a taxa em vários lotes e o lag da
 captura live antes/depois de elevar a concorrência; esse ajuste não demonstra
 por si só que o limite de lote era o gargalo.

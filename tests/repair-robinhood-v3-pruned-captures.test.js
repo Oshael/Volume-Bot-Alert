@@ -142,6 +142,66 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.equal(typeof receivedReader?.getSnapshot, 'function');
   });
 
+  it('separates enrichment RPC time from entry building without changing results', async () => {
+    let elapsed = 0;
+    const capture = row(100);
+    const entry = { observation: { accepted: true } };
+    const result = await __private.enrich([capture], {
+      request: async () => { elapsed += 30; return '0xabc'; },
+    }, options(), {}, {
+      now: () => elapsed,
+      adapterFactory: () => ({
+        prepareClaim: () => {
+          elapsed += 2;
+          return { context: {}, tokenAddress: capture.token_address,
+            requests: [{ slot: 'test', method: 'eth_call', params: [] }] };
+        },
+        primeEntries: async () => { elapsed += 5; },
+        buildEntry: async ({ results }) => {
+          assert.equal(results.test, '0xabc');
+          elapsed += 11;
+          return entry;
+        },
+      }),
+    });
+    assert.deepEqual(result.entries, [entry]);
+    assert.deepEqual(result.repairedRows, [capture]);
+    assert.deepEqual(result.timing, {
+      prepareMs: 2, primeMs: 5, planMs: 0, rpcMs: 30, buildMs: 11,
+    });
+  });
+
+  it('reports nested timings without double-counting wallet writes in the repair rate', async () => {
+    let elapsed = 0;
+    const enrichment = { prepareMs: 1, primeMs: 2, planMs: 0, rpcMs: 12, buildMs: 5 };
+    const walletTiming = { observationsMs: 3, fetchResolveMs: 20, positionsMs: 5, swapsMs: 7 };
+    const result = await runRepair(options({ maxBatches: 1 }), {
+      now: () => elapsed,
+      candidates: {
+        list: async () => { elapsed += 5; return [row(100), row(101)]; },
+        withLock: async (callback) => callback(),
+        markRepaired: async () => { elapsed += 3; },
+      },
+      rpcClient: { request: async () => '0x1237' },
+      enrichBatch: async () => {
+        elapsed += 20;
+        return { entries: [{ observation: { accepted: true } }], timing: enrichment };
+      },
+      persistence: { commitHeadProcessingBatch: async () => {
+        elapsed += 7; return { missingWalletSwapContext: 1 };
+      } },
+      walletAttribution: { attribute: async () => {
+        elapsed += 35; return { attributed: 1, inserted: 1, timing: walletTiming };
+      } },
+    });
+    assert.deepEqual(result.lastTiming, {
+      selectMs: 5, enrichMs: 20, walletMs: 35, persistMs: 10,
+      totalMs: 70, repairedPerSecond: 28.57,
+      enrichment, wallet: walletTiming, commitMs: 7, settleMs: 3,
+    });
+    assert.equal(result.repaired, 2);
+  });
+
   it('does not mark a capture repaired when archive wallet attribution is incomplete', async () => {
     let marked = false;
     await assert.rejects(runRepair(options({ maxBatches: 1 }), {

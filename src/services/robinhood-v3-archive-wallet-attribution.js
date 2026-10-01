@@ -1,5 +1,6 @@
 'use strict';
 
+const { performance } = require('node:perf_hooks');
 const db = require('../models/db');
 const {
   createRobinhoodTransactionPositionRepository,
@@ -32,7 +33,21 @@ function groupObservations(rows) {
   return groups;
 }
 
+function timedRepository(repository, method, timing, key, now) {
+  return {
+    [method]: async (...args) => {
+      const startedAt = now();
+      try {
+        return await repository[method](...args);
+      } finally {
+        timing[key] += now() - startedAt;
+      }
+    },
+  };
+}
+
 function createRobinhoodV3ArchiveWalletAttribution(deps = {}) {
+  const now = deps.now || (() => performance.now());
   const database = deps.database || db;
   const rpcClient = deps.rpcClient;
   if (typeof rpcClient?.request !== 'function') throw new Error('archive RPC is required');
@@ -58,6 +73,7 @@ function createRobinhoodV3ArchiveWalletAttribution(deps = {}) {
       logIndex: String(capture.log_index),
       blockNumber: String(capture.block_number),
     }));
+    const queryStartedAt = now();
     const result = await database.query(
       `WITH requested AS MATERIALIZED (
          SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
@@ -75,10 +91,17 @@ function createRobinhoodV3ArchiveWalletAttribution(deps = {}) {
        ORDER BY observation.block_number, observation.log_index`,
       [JSON.stringify(requested)]
     );
+    const observationsMs = now() - queryStartedAt;
+    const attributionStartedAt = now();
+    const timing = { positionsMs: 0, swapsMs: 0 };
     const groups = groupObservations(result.rows);
     const attributor = (deps.attributorFactory || createRobinhoodWalletSwapAttributor)({
-      repository: walletRepository,
-      transactionPositionRepository,
+      repository: deps.collectTiming
+        ? timedRepository(walletRepository, 'insertWalletSwaps', timing, 'swapsMs', now)
+        : walletRepository,
+      transactionPositionRepository: deps.collectTiming
+        ? timedRepository(transactionPositionRepository, 'upsertPositions', timing, 'positionsMs', now)
+        : transactionPositionRepository,
       fetchConcurrency: deps.fetchConcurrency,
       fetchBlock: async (blockNumber) => {
         const block = await rpcClient.request('eth_getBlockByNumber', [
@@ -91,6 +114,7 @@ function createRobinhoodV3ArchiveWalletAttribution(deps = {}) {
       },
     });
     const attributed = await attributor.attributeGroups(groups);
+    const attributionMs = now() - attributionStartedAt;
     if (attributed.unresolved || attributed.missing || attributed.blocks !== groups.length) {
       throw new Error('archive wallet attribution is incomplete');
     }
@@ -99,6 +123,13 @@ function createRobinhoodV3ArchiveWalletAttribution(deps = {}) {
       attributed: attributed.attributed,
       inserted: attributed.inserted,
       blocks: attributed.blocks,
+      ...(deps.collectTiming ? { timing: {
+        observationsMs: Math.round(observationsMs),
+        // Reads run concurrently; use elapsed wall time, not summed RPC times.
+        fetchResolveMs: Math.round(attributionMs - timing.positionsMs - timing.swapsMs),
+        positionsMs: Math.round(timing.positionsMs),
+        swapsMs: Math.round(timing.swapsMs),
+      } } : {}),
     };
   }
 
