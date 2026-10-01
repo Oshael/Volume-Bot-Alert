@@ -4955,6 +4955,11 @@ O [runbook de auditoria histórica](robinhood-wallet-transfer-scope-history-audi
 descreve limites e retomada. O relatório mede linhas lógicas de participação e
 mudanças entre conjuntos; não certifica hashes canônicos nem estima espaço físico
 recuperável. Não converte ranges ou instala schema.
+Para comparar a regra atual com seleção limitada aos contratos de um lote,
+use `node src/utils/audit-robinhood-wallet-transfer-selection.js` com
+`--from-block=INICIO --to-block=FIM`. O [runbook de seleção por lote](robinhood-wallet-transfer-selection-audit.md)
+descreve limites e o snapshot somente leitura. O LIVE ainda usa o conjunto completo;
+paridade dessa seleção não substitui a prova de cobertura ou comprova redução de lag.
 O leitor de cobertura aceita
 arrays inline, referências por hash e ranges com `scope_id`/`scope_version` na mesma
 janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,

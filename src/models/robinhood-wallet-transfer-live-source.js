@@ -1,4 +1,5 @@
 const db = require('./db');
+const { listTrackedCandidates, listTrackedTokens } = require('./robinhood-wallet-transfer-token-selection');
 
 const CHAIN = 'robinhood';
 const MAX_IDENTITIES = 10_000;
@@ -297,19 +298,11 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
   }
 
   async function listTrackedTokenAddresses() {
-    const result = await database.query(
-      `SELECT token_address FROM robinhood_holder_token_states
-       WHERE chain = $1 AND ledger_status IN ('backfilling', 'shadow', 'live')
-       UNION
-       SELECT token.token_address FROM robinhood_holder_global_backfill_tokens token
-       INNER JOIN robinhood_holder_global_backfill_runs run
-         ON run.id = token.run_id AND run.chain = token.chain
-       WHERE token.chain = $1 AND token.status = 'active'
-         AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
-       ORDER BY token_address`,
-      [CHAIN]
-    );
-    return Object.freeze(result.rows.map((row) => row.token_address));
+    return listTrackedTokens(database);
+  }
+
+  async function listTrackedTokenAddressesForCandidates(candidates) {
+    return listTrackedCandidates(database, candidates);
   }
 
   async function readRangeContext(input, frontier) {
@@ -439,7 +432,8 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
   }
 
   return Object.freeze({
-    listTrackedTokenAddresses, loadBackfillFrontier, loadBackfillPlan, loadBackfillRangeContext,
+    listTrackedTokenAddresses, listTrackedTokenAddressesForCandidates,
+    loadBackfillFrontier, loadBackfillPlan, loadBackfillRangeContext,
     loadRangeContext, loadSwapFrontier,
   });
 }
