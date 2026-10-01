@@ -21,6 +21,7 @@ const FRONTIERS_SQL = `WITH cursors AS (
   )
   SELECT cursors.*,
     origin.block_timestamp AS origin_time,
+    block.block_timestamp AS checkpoint_time,
     COALESCE(block.canonical AND block.block_hash = cursors.checkpoint_hash,
       false) AS checkpoint_canonical
   FROM cursors
@@ -67,10 +68,13 @@ function frontierProven(live) {
 }
 
 function checkpointProven(live) {
+  const time = frontierTime(live);
   return !!live && live.checkpoint_canonical === true
     && block(live.checkpoint_block) != null
     && block(live.next_block) != null
-    && block(live.checkpoint_block) < block(live.next_block);
+    && block(live.checkpoint_block) < block(live.next_block)
+    && time != null && live.checkpoint_time != null
+    && time.getTime() === new Date(live.checkpoint_time).getTime();
 }
 
 function frontierTime(live) {
@@ -108,7 +112,7 @@ function assessSource(source, seed, live, windowStart, asOf) {
   if (!frontierProven(live)) reasons.push(`${source}_frontier_unproven`);
   if (!checkpointProven(live)) reasons.push(`${source}_checkpoint_unproven`);
   const time = frontierTime(live);
-  if (!time || time <= asOf) {
+  if (!time || time < asOf) {
     reasons.push(`${source}_behind_as_of`);
   }
   return sourceReport(source, seed, live, time, startTime, reasons);

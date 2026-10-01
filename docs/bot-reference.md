@@ -4965,6 +4965,15 @@ as partições raw e de swaps estão disponíveis, os eventos lidos pertencem a
 blocos canônicos, a classificação do par está resolvida e a leitura de eventos
 não foi truncada. Escopos apenas seed ou
 anteriores à Stage 256 continuam com cobertura incompleta.
+As fontes podem alcançar exatamente `asOf`, desde que o timestamp declarado
+confira com o checkpoint canônico. Quando o último bloco projetado de transfers
+tem timestamp igual a `asOf`, o leitor consulta somente o header canônico do
+bloco seguinte para provar o fim inclusivo da janela; os eventos desse bloco
+não precisam estar projetados e não entram na janela. Header ausente, órfão ou
+com timestamp ainda igual a `asOf` mantém a cobertura incompleta até a fronteira
+provar todos os blocos daquele instante. Uma fonte anterior a `asOf` permanece
+atrasada. Essa regra permite posições e transfers no mesmo checkpoint, sem
+presumir cobertura de blocos futuros ou dispensar os demais gates.
 Antes de atualizar os writers que publicam revisões do ranking, aplique
 `node src/utils/db-init-stage257.js`. A tabela
 `robinhood_wallet_ranking_revisions` mantém versões independentes por fonte.

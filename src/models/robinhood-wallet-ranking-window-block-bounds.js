@@ -59,17 +59,26 @@ function createRobinhoodWalletRankingWindowBlockBoundsRepository(options = {}) {
     return low;
   }
 
+  async function searchUpperBound(tip, asOf) {
+    if (tip.time > asOf) return tip.number;
+    // Only the adjacent header is needed; its transfers need not be projected.
+    const after = tip.number < MAX_BLOCK ? await load(tip.number + 1n) : null;
+    return after && after.time > asOf ? after.number : null;
+  }
+
   return {
     async resolveWindow(input = {}) {
       const { windowStart, asOf, originBlock, throughBlock } = normalizeInput(input);
       const origin = await load(originBlock);
       const tip = await load(throughBlock);
       if (!origin || !tip) return unavailable('transfer_window_anchor_missing');
-      if (origin.time >= windowStart || tip.time <= asOf) {
+      if (origin.time >= windowStart || tip.time < asOf) {
         return unavailable('transfer_window_outside_frontier');
       }
+      const upperBlock = await searchUpperBound(tip, asOf);
+      if (upperBlock === null) return unavailable('transfer_window_boundary_unproven');
       const firstNumber = await firstMatching(originBlock, throughBlock, windowStart, true);
-      const afterNumber = await firstMatching(originBlock, throughBlock, asOf, false);
+      const afterNumber = await firstMatching(originBlock, upperBlock, asOf, false);
       if (firstNumber === null || afterNumber === null) {
         return unavailable('transfer_window_block_gap');
       }

@@ -1,7 +1,7 @@
 process.env.NODE_ENV = 'test';
 
 const assert = require('node:assert/strict');
-const { describe, it } = require('node:test');
+const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -15,6 +15,8 @@ const WINDOW_START = '2026-09-26T12:00:00.000Z';
 const AS_OF = '2026-09-27T12:00:00.000Z';
 
 describe('Robinhood ranking source frontier audit', () => {
+  after(async () => db.pool.end());
+
   it('checks cursor continuity, time frontier and canonical checkpoints', async () => {
     await assertUsingTestDatabase(db);
     const client = await db.getClient();
@@ -61,6 +63,35 @@ describe('Robinhood ranking source frontier audit', () => {
       assert.deepEqual(ready.sources.map((source) => source.originTime),
         ['2026-09-26T00:00:00.000Z', '2026-09-26T00:00:00.000Z']);
 
+      await client.query(`UPDATE robinhood_chain_blocks SET block_timestamp=$1
+        WHERE block_number=200`, [AS_OF]);
+      await client.query(`UPDATE robinhood_wallet_swap_cursors
+        SET checkpoint_timestamp=$1 WHERE stream='live'`, [AS_OF]);
+      await client.query(`UPDATE robinhood_wallet_transfer_cursors
+        SET next_block_time=$1 WHERE stream='live'`, [AS_OF]);
+      const sameCheckpoint = await repository.inspectAsOf(input);
+      assert.equal(sameCheckpoint.cursorChecksPassed, true);
+      assert.deepEqual(sameCheckpoint.sources.map((source) => source.reasons), [[], []]);
+
+      await client.query(`UPDATE robinhood_wallet_transfer_cursors
+        SET next_block_time='2026-09-27T11:59:59Z' WHERE stream='live'`);
+      const behind = await repository.inspectAsOf(input);
+      assert.ok(behind.sources[1].reasons.includes('transfer_behind_as_of'));
+      await client.query(`UPDATE robinhood_wallet_transfer_cursors
+        SET next_block_time=$1 WHERE stream='live'`, [AS_OF]);
+      await client.query(`UPDATE robinhood_chain_blocks
+        SET block_timestamp='2026-09-27T11:59:59Z' WHERE block_number=200`);
+      const wrongTime = await repository.inspectAsOf(input);
+      assert.deepEqual(wrongTime.sources.map((source) => source.reasons),
+        [['swap_checkpoint_unproven'], ['transfer_checkpoint_unproven']]);
+
+      await client.query(`UPDATE robinhood_chain_blocks
+        SET block_timestamp='2026-09-28T00:00:00Z' WHERE block_number=200`);
+      await client.query(`UPDATE robinhood_wallet_swap_cursors
+        SET checkpoint_timestamp='2026-09-28T00:00:00Z' WHERE stream='live'`);
+      await client.query(`UPDATE robinhood_wallet_transfer_cursors
+        SET next_block_time='2026-09-28T00:00:00Z' WHERE stream='live'`);
+
       await client.query(`UPDATE robinhood_chain_blocks
         SET block_timestamp=$1 WHERE block_number=90`, [WINDOW_START]);
       const lateStart = await repository.inspectAsOf(input);
@@ -92,11 +123,11 @@ describe('Robinhood ranking source frontier audit', () => {
         WHERE block_number=200`);
 
       await client.query(`UPDATE robinhood_wallet_transfer_cursors
-        SET origin_block=102, next_block_time='2026-09-27T12:00:00Z'
+        SET origin_block=102, next_block_time='2026-09-27T11:59:59Z'
         WHERE stream='live'`);
       const lagged = await repository.inspectAsOf(input);
       assert.deepEqual(lagged.sources[1].reasons,
-        ['transfer_seed_live_gap', 'transfer_behind_as_of']);
+        ['transfer_seed_live_gap', 'transfer_checkpoint_unproven', 'transfer_behind_as_of']);
     } finally {
       await client.query('ROLLBACK');
       client.release();

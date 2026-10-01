@@ -40,6 +40,31 @@ describe('Robinhood ranking window block bounds', () => {
         asOf: '2026-09-27T12:05:30Z' }), {
         verified: true, fromBlock: '100', throughBlock: '105', reasons: [],
       });
+      const atFrontier = { ...INPUT, throughBlock: '105' };
+      assert.deepEqual(await repository.resolveWindow(atFrontier), {
+        verified: true, fromBlock: '100', throughBlock: '105', reasons: [],
+      });
+      for (const [canonical, timestamp] of [
+        [false, '2026-09-27T12:06:00Z'],
+        [true, AS_OF],
+      ]) {
+        await client.query(`UPDATE robinhood_chain_blocks
+          SET canonical=$1, block_timestamp=$2 WHERE block_number=106`,
+        [canonical, timestamp]);
+        assert.deepEqual((await repository.resolveWindow(atFrontier)).reasons,
+          ['transfer_window_boundary_unproven']);
+      }
+      assert.deepEqual(await repository.resolveWindow({ ...INPUT, throughBlock: '106' }), {
+        verified: true, fromBlock: '100', throughBlock: '106', reasons: [],
+      });
+      await client.query('DELETE FROM robinhood_chain_blocks WHERE block_number=106');
+      assert.deepEqual((await repository.resolveWindow(atFrontier)).reasons,
+        ['transfer_window_boundary_unproven']);
+      await client.query(`INSERT INTO robinhood_chain_blocks VALUES
+        ('robinhood', 106, true, '2026-09-27T12:06:00Z')`);
+      assert.deepEqual((await repository.resolveWindow({ ...INPUT,
+        asOf: '2026-09-27T12:05:01Z', throughBlock: '105' })).reasons,
+      ['transfer_window_outside_frontier']);
       await client.query('UPDATE robinhood_chain_blocks SET canonical=false WHERE block_number=100');
       assert.deepEqual((await repository.resolveWindow(INPUT)).reasons,
         ['transfer_window_block_gap']);
@@ -49,7 +74,7 @@ describe('Robinhood ranking window block bounds', () => {
         ['transfer_window_block_gap']);
       assert.deepEqual((await repository.resolveWindow({ ...INPUT,
         asOf: '2026-09-27T12:10:00Z' })).reasons,
-      ['transfer_window_outside_frontier']);
+      ['transfer_window_boundary_unproven']);
     } finally {
       await client.query('ROLLBACK');
       client.release();
