@@ -6855,6 +6855,47 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage259-robinhood-transfer-scope-membership',
+    name: 'Stage 259 Robinhood versioned transfer scope membership',
+    repair: 'node src/utils/db-init-stage259.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_scope_heads',
+      columns: ['scope_id', 'chain', 'projection_version', 'stream', 'baseline_scan_scope_id',
+        'baseline_cursor_version', 'baseline_next_block', 'baseline_checkpoint_hash', 'scope_hash',
+        'current_version', 'token_count', 'loaded_tokens', 'state'],
+      constraints: [
+        { name: 'robinhood_wallet_transfer_scope_heads_pkey', includes: ['PRIMARY KEY', 'scope_id'] },
+        { name: 'rh_transfer_scope_head_identity', includes: ['UNIQUE', 'chain', 'projection_version', 'stream'] },
+        { name: 'rh_transfer_scope_head_reference', includes: ['UNIQUE', 'scope_id'] },
+        { name: 'rh_transfer_scope_head_progress', includes: ['CHECK', 'loaded_tokens', 'ready', 'token_count'] },
+        { name: 'rh_transfer_scope_baseline_fkey', includes: ['FOREIGN KEY', 'baseline_scan_scope_id'] },
+        { name: 'rh_transfer_scope_current_version_fkey', includes: ['FOREIGN KEY', 'scope_id', 'current_version', 'DEFERRABLE'] },
+      ],
+    }, {
+      table: 'robinhood_wallet_transfer_scope_versions', columns: ['scope_id', 'scope_version', 'scope_hash'],
+      constraints: [
+        { name: 'robinhood_wallet_transfer_scope_versions_pkey', includes: ['PRIMARY KEY', 'scope_id', 'scope_version'] },
+        { name: 'rh_transfer_scope_version_head_fkey', includes: ['FOREIGN KEY', 'scope_id'] },
+      ],
+    }, {
+      table: 'robinhood_wallet_transfer_scope_members',
+      columns: ['scope_id', 'token_address', 'valid_from_version', 'valid_to_version'],
+      constraints: [
+        { name: 'robinhood_wallet_transfer_scope_members_pkey', includes: ['PRIMARY KEY', 'scope_id', 'token_address', 'valid_from_version'] },
+        { name: 'rh_transfer_scope_member_bounds', includes: ['CHECK', 'valid_from_version', 'valid_to_version'] },
+        { name: 'rh_transfer_scope_member_from_fkey', includes: ['FOREIGN KEY', 'scope_id', 'valid_from_version'] },
+        { name: 'rh_transfer_scope_member_to_fkey', includes: ['FOREIGN KEY', 'scope_id', 'valid_to_version'] },
+      ],
+      indexes: [{ name: 'idx_rh_transfer_scope_member_open', includes: ['UNIQUE', 'scope_id', 'token_address', 'valid_to_version IS NULL'] }],
+    }, {
+      table: 'robinhood_wallet_transfer_scan_scopes', columns: ['scope_id', 'scope_version'],
+      constraints: [
+        { name: 'rh_transfer_scan_scope_version_fkey', includes: ['FOREIGN KEY', 'scope_id', 'scope_version'] },
+        { name: 'rh_transfer_scan_scope_identity_fkey', includes: ['FOREIGN KEY', 'chain', 'projection_version', 'stream', 'scope_id'] },
+      ],
+    }],
+  },
+  {
     key: 'stage257-robinhood-wallet-ranking-revisions',
     name: 'Stage 257 Robinhood wallet ranking revisions',
     repair: 'node src/utils/db-init-stage257.js',

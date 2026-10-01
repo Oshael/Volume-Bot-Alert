@@ -4909,6 +4909,23 @@ massiva no caminho LIVE. O primeiro lote de um conjunto novo ainda precisa
 persistir/indexar esse conjunto. Após retomar transfers, compare na mesma janela
 o avanço e lag de capture/transfers, `lastResult.timing` e taxas de WAL/I/O;
 reduzir custo do manifesto sozinho não confirma resolução de um incidente.
+A preparação de participação versionada exige `node src/utils/db-init-stage259.js`
+e `npm run db:schema-check`. O schema acrescenta heads, versões e intervalos de
+participação por token, sem converter manifestos antigos nem preencher membros
+durante a migration. O bootstrap operacional é isolado do LIVE: com as leases de
+transfers LIVE/backfill expiradas, inspecione com
+`node src/utils/bootstrap-robinhood-wallet-transfer-scope-membership.js`; use
+`--commit` para copiar um único lote de até 5.000 tokens (`--batch-size=5000`).
+`--stream=seed|live` e `--projection-version=rh_transfer_v1` selecionam a identidade.
+Repita manualmente até `state=ready`; erros encerram o comando, sem retry automático.
+O offset confirmado retoma após restart. Cada lote trava e revalida cursor/leases;
+versão, próximo bloco, hash ou manifesto alterados recusam a continuação. O conjunto
+inicial vem do manifesto confirmado exatamente no checkpoint, não da lista atual
+de holders. Normalização e hash são verificados; o estado só fica ready após conferir
+o hash dos membros copiados. O bootstrap lê o array original completo na abertura
+e os membros completos na conferência final, com escritas limitadas por lote.
+Não retome o writer antigo após preparar a base: isso torna o ponto preparado stale.
+Essa preparação não habilita a escrita versionada nem altera a prova de cobertura.
 No ranking de wallets, `eventsComplete` só fica verdadeiro quando os cursores
 seed/live alcançam a janela, as fronteiras temporais têm blocos canônicos
 adjacentes, os ranges live do token são contínuos com checkpoints canônicos,
