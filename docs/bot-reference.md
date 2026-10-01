@@ -686,7 +686,40 @@ aceita no máximo 100 mil logs Swap do archive; commits continuam limitados a 50
 Capturas sem observação, enriquecimento pendente, identidades/dimensões divergentes,
 observações aceitas ausentes no archive ou bucket existente sem nenhuma observação
 aceita interrompem a recuperação para reparo/revisão, sem avançar o checkpoint.
-O motor ainda precisa do comando coordenador para descoberta e rebuild dos agregados.
+O comando único é `npm run robinhood:backfill-stock-history -- --to-block=M
+--checkpoint-dir=/var/tmp/robinhood-stock-history`. Por default faz preview; para
+persistir, acrescente `--mode=write --maintenance-paused`. Esse flag declara que
+maintenance/retention foi parado pelo operador; não controla serviços. O archive
+precisa oferecer logs e estado histórico em `ROBINHOOD_ARCHIVE_RPC_URL`, e as pools
+de referência Stock/USDG-WETH precisam estar disponíveis no registry para a cotação.
+O comando executa descoberta V2/V3/V4 desde zero até M, reparo das capturas de Stock
+retidas, replay de swaps desde `--from-block` (default zero) por minutos completos e
+rebuild dos agregados 5/15/30m, `_1h` e agregados 1h/4h/1d dos tokens afetados.
+Ele usa apenas a descoberta de pares do onboarding, sem acionar recovery de holders.
+A descoberta usa consultas de 10 mil blocos e concorrência RPC 2; espera todos os
+protocolos terminarem antes de propagar uma falha. Os demais limites do replay são
+os mesmos do scanner de Stock. `--max-minutes=N` pausa após N minutos do replay,
+antes dos agregados, para canário; zero, o default, executa até concluir. Esse limite
+não restringe descoberta ou reparo de capturas. Erros interrompem o processo e
+preservam checkpoints; corrija a causa e repita o mesmo comando para retomar.
+
+Os arquivos ficam separados em `dry-run/` e `write/` dentro do diretório informado.
+`campaign.json` fixa banco, intervalo, branch, etapa e catálogo; cada etapa conserva
+seu checkpoint, e cada token tem arquivo de agregados próprio. O lock PostgreSQL
+exclui campanhas simultâneas. Retomada recusa mudanças de banco, intervalo, branch
+ou catálogo e recusa arquivos órfãos sem o manifest; restaure o `campaign.json`
+original, sem remover checkpoints para forçar avanço. Interrupção do processo pode
+ser retomada pelo mesmo comando. Preview varre discovery sem cadastrar pools e
+audita swaps/agregados apenas do catálogo já registrado; use o diretório de write
+separado para persistir as novas pools encontradas.
+
+O rebuild dos candles considera todas as pools dos tokens afetados e mantém a
+seleção vigente por volume nas 24h anteriores, com OHLC da pool primária. Não
+força a pool contra Stock como fonte de preço. Volume restaurado pode mudar a pool
+primária histórica; os agregados são recalculados até 24h após o cutoff, limitado
+ao horário de início dessa etapa, para cobrir essa dependência. Esse cutoff fica
+fixo na retomada. A conclusão de write significa que as etapas terminaram para o
+intervalo fechado; o minuto que contém M fica para o fluxo live/recovery posterior.
 
 Antes de habilitar ativos tokenizados oficiais como cotação V3, use
 `npm run robinhood:audit-v3-stock-pairs -- --from-block=<início> --to-block=<fim>

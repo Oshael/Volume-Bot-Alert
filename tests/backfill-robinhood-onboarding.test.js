@@ -104,6 +104,32 @@ describe('Robinhood combined onboarding backfill', () => {
     assert.equal(maxActiveLogReads, 3);
   });
 
+  it('waits for outstanding discovery writes before propagating a protocol failure', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let settled = false;
+    let persisted = false;
+    const pending = backfillStockPairs(options(), {
+      runtime: {
+        rpcClient: { request: async (method, params) => {
+          if (method === 'eth_chainId') return '0x1237';
+          if (params[0].address !== v4.ROBINHOOD_V4_POOL_MANAGER) throw new Error('factory failed');
+          await gate;
+          return [stockInitialize()];
+        } },
+        timestamps: { enrich: async (logs) => logs },
+        persistence: { upsertRecoveredPools: async () => { persisted = true; return { upsertedPools: 1 }; } },
+      }, logger: { log() {} },
+    }).catch((error) => { settled = true; return error; });
+    await new Promise((resolve) => setImmediate(resolve));
+    const escapedEarly = settled;
+    release();
+    const error = await pending;
+    assert.match(error.message, /factory failed/);
+    assert.equal(escapedEarly, false);
+    assert.equal(persisted, true);
+  });
+
   it('runs stock discovery and holder recovery under one confirmation', async () => {
     let holderOptions;
     const report = await main([], {

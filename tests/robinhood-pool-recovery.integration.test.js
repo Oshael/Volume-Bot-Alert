@@ -11,6 +11,7 @@ const { __private: { createRepository: createArchiveRepository } } = require('..
 const { CANONICAL_CONTRACTS } = require('../src/services/robinhood-market-policy');
 const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
+const { __private: { LOCK_KEY, withCampaignLock } } = require('../src/utils/backfill-robinhood-stock-history');
 
 const TOKEN = `0x${'2'.repeat(40)}`;
 const STOCK = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
@@ -124,5 +125,16 @@ describe('Robinhood historical pool recovery', () => {
       { processed: false, captured: false, observed: true },
       { processed: false, captured: true, observed: false },
     ]);
+  });
+
+  it('excludes concurrent Stock campaigns and releases the PostgreSQL lock after failure', async () => {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [LOCK_KEY]);
+    try {
+      await assert.rejects(withCampaignLock(db, async () => { throw new Error('unexpected execution'); }), /Another Stock/);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [LOCK_KEY]);
+    }
+    await assert.rejects(withCampaignLock(db, async () => { throw new Error('campaign interrupted'); }), /campaign interrupted/);
+    assert.equal(await withCampaignLock(db, async () => 'ready'), 'ready');
   });
 });

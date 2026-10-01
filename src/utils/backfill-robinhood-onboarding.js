@@ -315,7 +315,7 @@ async function backfillStockPairs(options, deps = {}) {
   const limitedRpc = deps.stockRpcLimiter
     || createAdaptiveRpcLimiter(runtime.rpcClient, options.stockRpcConcurrency || 12);
   const scanRuntime = { ...runtime, rpcClient: limitedRpc };
-  const protocols = Object.fromEntries(await Promise.all(PROTOCOLS.map(async (specification) => {
+  const scanned = await Promise.allSettled(PROTOCOLS.map(async (specification) => {
     const save = async (nextBlock, totals) => {
       state.protocols[specification.protocol] = {
         nextBlock, completed: BigInt(nextBlock) > BigInt(toBlock), ...totals,
@@ -330,7 +330,10 @@ async function backfillStockPairs(options, deps = {}) {
         rpcStatus: limitedRpc.getStatus,
       }),
     ];
-  })));
+  }));
+  const failure = scanned.find((result) => result.status === 'rejected');
+  if (failure) throw failure.reason;
+  const protocols = Object.fromEntries(scanned.map((result) => result.value));
   return {
     mode: options.confirm ? 'apply' : 'read-only',
     fromBlock: options.fromBlock,
