@@ -1,4 +1,5 @@
 const db = require('./db');
+const { upsertPool } = require('./robinhood-pool-registry-write');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { OUTBOX_NOTIFY_CHANNEL } = require('./robinhood-derived-outbox');
 const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
@@ -624,46 +625,6 @@ async function assertCanonicalDiscoveryBatch(client, entries) {
     error.code = 'discovery_recovery_fence_conflict';
     throw error;
   }
-}
-
-async function upsertPool(client, pool) {
-  await client.query(
-    `INSERT INTO robinhood_pool_registry (
-       chain, protocol, market_key, pool_address, pool_id, origin_address,
-       token_address, quote_address, currency0, currency1, fee, tick_spacing,
-       hooks_address, discovery_block, discovery_block_hash, discovery_tx_hash,
-       discovery_log_index, discovered_at, metadata
-     ) VALUES (
-       'robinhood', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-       $12, $13, $14, $15, $16, $17, $18::jsonb
-     )
-     ON CONFLICT (chain, protocol, market_key) DO UPDATE SET
-       pool_address = EXCLUDED.pool_address,
-       pool_id = EXCLUDED.pool_id,
-       origin_address = EXCLUDED.origin_address,
-       token_address = EXCLUDED.token_address,
-       quote_address = EXCLUDED.quote_address,
-       currency0 = EXCLUDED.currency0,
-       currency1 = EXCLUDED.currency1,
-       fee = EXCLUDED.fee,
-       tick_spacing = EXCLUDED.tick_spacing,
-       hooks_address = EXCLUDED.hooks_address,
-       discovery_block = EXCLUDED.discovery_block,
-       discovery_block_hash = EXCLUDED.discovery_block_hash,
-       discovery_tx_hash = EXCLUDED.discovery_tx_hash,
-       discovery_log_index = EXCLUDED.discovery_log_index,
-       discovered_at = EXCLUDED.discovered_at,
-       active = true,
-       metadata = EXCLUDED.metadata,
-       updated_at = NOW()`,
-    [
-      pool.protocol, pool.marketKey, pool.poolAddress, pool.poolId, pool.originAddress,
-      pool.tokenAddress, pool.quoteAddress, pool.currency0, pool.currency1,
-      pool.fee, pool.tickSpacing, pool.hooksAddress, pool.discoveryBlock,
-      pool.discoveryBlockHash, pool.discoveryTxHash, pool.discoveryLogIndex,
-      pool.discoveredAt, pool.metadata,
-    ]
-  );
 }
 
 async function updatePoolNoxaLaunch(client, launch) {
@@ -2087,7 +2048,9 @@ function createRobinhoodPersistenceRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      for (const pool of pools) await upsertPool(client, pool);
+      for (const pool of pools) {
+        await upsertPool(client, pool, { preserveExistingState: true });
+      }
       await client.query('COMMIT');
       return { upsertedPools: pools.length };
     } catch (error) {

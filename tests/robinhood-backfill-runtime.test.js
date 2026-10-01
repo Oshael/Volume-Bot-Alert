@@ -1,6 +1,9 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  CANONICAL_CONTRACTS, ROBINHOOD_TOKENIZED_ASSETS,
+} = require('../src/services/robinhood-market-policy');
+const {
   createRobinhoodBackfillAggregationRuntime,
   createRobinhoodBackfillEnrichmentRuntime,
   createRobinhoodBackfillFinalizerRuntime,
@@ -46,7 +49,7 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(calls[0].tokenLimit, 3);
   });
 
-  it('loads only claimed pools per batch while reusing the WETH quote reader', async () => {
+  it('loads only claimed pools per batch while reusing the WETH and Stock quote readers', async () => {
     const clock = scheduler();
     const clientOptions = [];
     const adapters = [];
@@ -74,7 +77,7 @@ describe('Robinhood backfill operational runtime', () => {
       }),
       v4LiquidityReaderFactory: () => v4LiquidityReader,
       quoteReaderFactory: (input) => {
-        const reader = { rpcClient: input.rpcClient };
+        const reader = { rpcClient: input.rpcClient, getSnapshot() {} };
         quoteReaders.push(reader);
         return reader;
       },
@@ -116,6 +119,9 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(quoteReaders.length, 1);
     assert.equal(adapters[0].quoteReader, quoteReaders[0]);
     assert.equal(adapters[1].quoteReader, quoteReaders[0]);
+    assert.equal(typeof adapters[0].stockQuoteReader.getSnapshot, 'function');
+    assert.equal(adapters[1].stockQuoteReader, adapters[0].stockQuoteReader);
+    assert.equal(adapters[2].stockQuoteReader, adapters[0].stockQuoteReader);
     assert.equal(adapters[0].v4LiquidityReader, v4LiquidityReader);
     assert.equal(adapters[1].v4LiquidityReader, v4LiquidityReader);
     assert.equal(runtime.getStatus().totals.runs, 3);
@@ -125,14 +131,21 @@ describe('Robinhood backfill operational runtime', () => {
   it('routes only timestamps through Alchemy with automatic dRPC fallback', async () => {
     const clock = scheduler();
     const calls = [];
+    const metadataCalls = [];
+    const stock = ROBINHOOD_TOKENIZED_ASSETS.NVDA;
+    const referencePool = `0x${'2'.repeat(40)}`;
     let adapterInput;
     const runtime = createRobinhoodBackfillEnrichmentRuntime({
       ...clock,
       logger: { error() {} },
       clientFactory: (options) => ({
         providers: options.providers.map(({ name }) => name),
-        requestProvider: async (provider, method) => {
-          calls.push({ kind: 'single', providers: [provider], method });
+        requestProvider: async (provider, method, params) => {
+          calls.push({ kind: 'single', providers: [provider], method, params });
+          if (method === 'eth_call') {
+            return `0x${[2n * 10n ** 18n, 84n * 10n ** 6n, 0n]
+              .map((value) => value.toString(16).padStart(64, '0')).join('')}`;
+          }
           return method === 'eth_chainId' ? '0x1237' : 'drpc-result';
         },
         requestBatchProvider: async () => ['drpc-batch'],
@@ -147,6 +160,23 @@ describe('Robinhood backfill operational runtime', () => {
         getMetrics: () => ({ 'alchemy-free': { requests: 1 } }),
       }),
       repositoryFactory: () => ({ listActivePoolsByIdentities: async () => [] }),
+      stockReferenceRepositoryFactory: () => ({
+        async listStockUsdReferences(input) {
+          assert.deepEqual(input, { stockAddress: stock, blockNumber: '100' });
+          return [{
+            protocol: 'uniswap-v2', marketKey: `robinhood:uniswap-v2:${referencePool}`,
+            poolAddress: referencePool, tokenAddress: stock,
+            quoteAddress: CANONICAL_CONTRACTS.USDG,
+            currency0: stock, currency1: CANONICAL_CONTRACTS.USDG,
+          }];
+        },
+      }),
+      metadataReaderFactory: () => ({
+        async getMetadata(address, options) {
+          metadataCalls.push({ address, options });
+          return { decimals: address === stock ? 18 : 6 };
+        },
+      }),
       adapterFactory: (input) => {
         adapterInput = input;
         return { prepareClaim() {}, buildEntry() {} };
@@ -189,6 +219,17 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(calls.at(-2).requestOptions.fallbackOnRpcError, true);
     assert.deepEqual(calls.at(-1).providers, ['alchemy-free', 'drpc']);
     assert.deepEqual(calls.find(({ method }) => method === 'eth_call').providers, ['drpc']);
+    const snapshot = await adapterInput.stockQuoteReader.getSnapshot({
+      stockAddress: stock, blockTag: '0x64',
+    });
+    assert.equal(snapshot.priceUsd, '42');
+    assert.equal(snapshot.source, 'canonical-uniswap-v2-stock-usdg');
+    assert.deepEqual(calls.at(-1).providers, ['drpc']);
+    assert.equal(calls.at(-1).params[1], '0x64');
+    assert.deepEqual(metadataCalls, [
+      { address: stock, options: { blockTag: '0x64' } },
+      { address: CANONICAL_CONTRACTS.USDG, options: { blockTag: '0x64' } },
+    ]);
     await runtime.stop();
   });
 

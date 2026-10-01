@@ -353,6 +353,13 @@ Grupos existentes:
 O enrichment do `robinhood-backfill` carrega do catálogo somente as identidades
 `(protocol, market_key)` presentes no lote já reclamado. A busca usa a chave primária
 do registry, evita varredura global e inclui pools novos imediatamente no lote seguinte.
+Para mercados contra Stocks oficiais, o adapter recebe um leitor Stock/USD reutilizado
+entre lotes, composto com as referências do registry e o mesmo leitor WETH/USD.
+Estado de pool e metadados ERC-20 são solicitados no bloco do swap pelo dRPC configurado;
+o fallback de timestamps para Alchemy não participa dessas chamadas. O leitor conserva
+o fallback existente para checkpoints canônicos do journal de referências Stock/USD.
+Sem cotação histórica utilizável, o enriquecimento propaga o erro para o contrato de
+retry/settlement do worker, sem assumir paridade de Stock com USD.
 
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
 `(chain, address)` de `chain = 'solana'`. Quarantine, soft archive e os conjuntos
@@ -3931,7 +3938,9 @@ e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com
 `-- --confirm-robinhood-onboarding-backfill`. O scanner percorre apenas eventos de criação
 V2, V3 e V4 em paralelo, usa ranges adaptativos externos de 2.000.000 de blocos por
-default e faz upserts ativos idempotentes. As subdivisões de ranges também executam em
+default e faz upserts idempotentes: pools novas nascem ativas; em registros existentes,
+preserva `active` e metadados adicionais (incluindo NOXA), atualiza a orientação
+token/quote e mescla os metadados de descoberta não nulos. As subdivisões de ranges executam em
 paralelo sob um limitador RPC adaptativo compartilhado (máximo 12 por default), que reduz
 a concorrência após rate limit, timeout ou falha de transporte e recupera gradualmente.
 `--stock-rpc-concurrency` ajusta esse teto. Para retomada durável, passe

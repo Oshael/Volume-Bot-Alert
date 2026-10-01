@@ -6,6 +6,13 @@ const {
   createLiquidityHistoricalRangeRepository,
 } = require('../models/robinhood-liquidity-historical-ranges');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
+const { createErc20MetadataReader } = require('./evm-erc20-metadata');
+const {
+  createRobinhoodPoolLiquiditySnapshotRepository,
+} = require('../models/robinhood-pool-liquidity-snapshot');
+const {
+  createRobinhoodStockUsdQuoteReader,
+} = require('./robinhood-stock-usd-quote');
 const {
   createRobinhoodBackfillEnrichmentAdapter,
 } = require('./robinhood-backfill-enrichment-adapter');
@@ -205,6 +212,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
   let repository = null;
   let v4LiquidityReader = null;
   let quoteReader = null;
+  let stockQuoteReader = null;
   let chainValidated = false;
   let timestampProvider = 'drpc';
   return createLoopRuntime({
@@ -225,6 +233,14 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
       rpcClient = createEnrichmentRpcRouter(rawClient, options.alchemyTimestampsEnabled);
       quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
         rpcClient,
+      });
+      stockQuoteReader = (deps.stockQuoteReaderFactory || createRobinhoodStockUsdQuoteReader)({
+        rpcClient,
+        repository: (
+          deps.stockReferenceRepositoryFactory || createRobinhoodPoolLiquiditySnapshotRepository
+        )(),
+        metadataReader: (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient }),
+        wethQuoteReader: quoteReader,
       });
       timestampProvider = options.alchemyTimestampsEnabled ? 'alchemy-free' : 'drpc';
       repository = (deps.repositoryFactory || createRobinhoodPersistenceRepository)();
@@ -252,6 +268,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
             rpcProvider: 'drpc',
             timestampProvider,
             quoteReader,
+            stockQuoteReader,
             v4LiquidityReader,
           });
         },
