@@ -21,6 +21,7 @@ const SCOPES_SQL = `WITH requested AS (
       ON scope.chain = '${CHAIN}' AND scope.projection_version = $2
      AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
      AND scope.token_scope_hash IS NULL
+     AND scope.scope_id IS NULL
      AND scope.token_addresses @> ARRAY[requested.token_address]
     UNION ALL
     SELECT requested.token_address, scope.scan_scope_id, scope.stream,
@@ -33,6 +34,28 @@ const SCOPES_SQL = `WITH requested AS (
       ON scope.chain = tokens.chain AND scope.token_scope_hash = tokens.scope_hash
      AND scope.projection_version = $2
      AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
+     AND scope.scope_id IS NULL
+    UNION ALL
+    SELECT requested.token_address, scope.scan_scope_id, scope.stream,
+      scope.from_block, scope.through_block, scope.checkpoint_hash
+    FROM requested
+    JOIN robinhood_wallet_transfer_scan_scopes scope
+      ON scope.chain = '${CHAIN}' AND scope.projection_version = $2
+     AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
+     AND scope.token_addresses IS NULL AND scope.token_scope_hash IS NULL
+    JOIN robinhood_wallet_transfer_scope_heads head
+      ON head.scope_id = scope.scope_id AND head.chain = scope.chain
+     AND head.projection_version = scope.projection_version AND head.stream = scope.stream
+     AND head.state = 'ready' AND scope.from_block >= head.baseline_next_block
+     AND scope.scope_version <= head.current_version
+    JOIN robinhood_wallet_transfer_scope_versions version
+      ON version.scope_id = scope.scope_id AND version.scope_version = scope.scope_version
+    WHERE EXISTS (
+      SELECT 1 FROM robinhood_wallet_transfer_scope_members member
+      WHERE member.scope_id = scope.scope_id AND member.token_address = requested.token_address
+        AND member.valid_from_version <= scope.scope_version
+        AND (member.valid_to_version IS NULL OR scope.scope_version < member.valid_to_version)
+    )
   ), matching AS (
     SELECT requested.token_address, scope.scan_scope_id, scope.stream,
       scope.from_block, scope.through_block,

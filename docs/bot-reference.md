@@ -4925,7 +4925,16 @@ de holders. Normalização e hash são verificados; o estado só fica ready apó
 o hash dos membros copiados. O bootstrap lê o array original completo na abertura
 e os membros completos na conferência final, com escritas limitadas por lote.
 Não retome o writer antigo após preparar a base: isso torna o ponto preparado stale.
-Essa preparação não habilita a escrita versionada nem altera a prova de cobertura.
+Essa preparação não habilita a escrita versionada. O leitor de cobertura aceita
+arrays inline, referências por hash e ranges com `scope_id`/`scope_version` na mesma
+janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,
+versão já confirmada e não superior à versão atual, e início do range a partir de
+`baseline_next_block`. A participação do token é avaliada na versão registrada no
+range: início inclusivo e fim exclusivo, sem inferir participação histórica pela
+lista atual. Uma saída conserva a prova antiga; a reentrada só cobre os ranges da
+nova participação. Checkpoints órfãos e gaps continuam incompletos até replay
+canônico, e disponibilidade raw permanece obrigatória. Aplique a Stage 259 antes
+de atualizar esse leitor e atualize o leitor antes de ativar o writer versionado.
 No ranking de wallets, `eventsComplete` só fica verdadeiro quando os cursores
 seed/live alcançam a janela, as fronteiras temporais têm blocos canônicos
 adjacentes, os ranges live do token são contínuos com checkpoints canônicos,
