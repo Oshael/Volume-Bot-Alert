@@ -4948,6 +4948,13 @@ atualize o writer e retome os workers. Confira `scopeManifest.format=versioned`
 e compare taxas de WAL, lag/avanço de capture e transfers, tempos de commit e
 readiness do ranking na mesma janela. O schema legado/GIN permanece para leitura
 histórica e recuperação; sua limpeza é uma operação separada.
+Para dimensionar a conversão histórica, use o auditor manual somente leitura
+`node src/utils/audit-robinhood-wallet-transfer-scope-history.js` com
+`--projection-version=rh_transfer_v1 --stream=live --max-ranges=1`.
+O [runbook de auditoria histórica](robinhood-wallet-transfer-scope-history-audit.md)
+descreve limites e retomada. O relatório mede linhas lógicas de participação e
+mudanças entre conjuntos; não certifica hashes canônicos nem estima espaço físico
+recuperável. Não converte ranges ou instala schema.
 O leitor de cobertura aceita
 arrays inline, referências por hash e ranges com `scope_id`/`scope_version` na mesma
 janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,
