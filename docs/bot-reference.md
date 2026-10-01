@@ -4960,8 +4960,12 @@ use `node src/utils/audit-robinhood-wallet-transfer-selection.js` com
 `--from-block=INICIO --to-block=FIM`. O [runbook de seleção por lote](robinhood-wallet-transfer-selection-audit.md)
 descreve limites e o snapshot somente leitura. O LIVE ainda usa o conjunto completo;
 paridade dessa seleção não substitui a prova de cobertura ou comprova redução de lag.
+O leitor também suporta a prova global compacta da Stage 261; aplique esse schema
+antes de atualizar o leitor. O [contrato de prova global](robinhood-wallet-transfer-global-scan-proof.md)
+define exceções, limites, transação e recuperação. O produtor LIVE ainda usa o
+manifesto anterior; a nova tabela não converte nem substitui provas históricas.
 O leitor de cobertura aceita
-arrays inline, referências por hash e ranges com `scope_id`/`scope_version` na mesma
+arrays inline, referências por hash, ranges com `scope_id`/`scope_version` e provas globais na mesma
 janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,
 versão já confirmada e não superior à versão atual, e início do range a partir de
 `baseline_next_block`. A participação do token é avaliada na versão registrada no

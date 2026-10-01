@@ -6927,6 +6927,26 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage261-robinhood-global-transfer-scans',
+    name: 'Stage 261 Robinhood complete global transfer scan proof',
+    repair: 'node src/utils/db-init-stage261.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_global_scans',
+      columns: ['global_scan_id', 'chain', 'projection_version', 'stream', 'from_block', 'through_block',
+        'checkpoint_hash', 'cursor_version', 'reader_version', 'observed_logs', 'observed_contracts',
+        'selected_contracts', 'excluded_token_addresses', 'proof_hash', 'captured_at'],
+      constraints: [
+        { name: 'robinhood_wallet_transfer_global_scans_pkey', includes: ['PRIMARY KEY', 'global_scan_id'] },
+        { name: 'rh_transfer_global_scan_bounds', includes: ['CHECK', 'from_block', 'through_block', '5000'] },
+        { name: 'rh_transfer_global_scan_payload', includes: ['CHECK', 'excluded_token_addresses', '450002'] },
+        { name: 'rh_transfer_global_scan_cursor', includes: ['FOREIGN KEY', 'robinhood_wallet_transfer_cursors'] },
+        { name: 'rh_transfer_global_scan_identity', includes: ['UNIQUE', 'cursor_version', 'reader_version'] },
+      ],
+      indexes: [{ name: 'idx_rh_transfer_global_scan_range',
+        includes: ['chain', 'projection_version', 'stream', 'through_block', 'from_block', 'checkpoint_hash'] }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

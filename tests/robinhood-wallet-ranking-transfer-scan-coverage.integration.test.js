@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const { after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
+const stage261 = require('../src/utils/db-init-stage261');
+const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
+const { persistGlobalScanProof } = require('../src/models/robinhood-wallet-transfer-global-scan-proof');
 const {
   createRobinhoodWalletRankingTransferScanCoverageRepository,
 } = require('../src/models/robinhood-wallet-ranking-transfer-scan-coverage');
@@ -50,6 +53,13 @@ async function withDatabase(work) {
       scope_id bigint, token_address text, valid_from_version bigint, valid_to_version bigint,
       PRIMARY KEY (scope_id, token_address, valid_from_version)
     ) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_cursors (
+      chain varchar(16),projection_version varchar(64),stream varchar(16),next_block bigint,
+      next_transaction_index integer DEFAULT 0,next_log_index integer DEFAULT 0,
+      version bigint,lifecycle_state text,PRIMARY KEY(chain,projection_version,stream)
+    ) ON COMMIT DROP`);
+    await client.query(stage261.STATEMENTS[0].replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE'));
+    await client.query(stage261.STATEMENTS[1]);
     await work(client);
   } finally {
     await client.query('ROLLBACK');
@@ -77,8 +87,106 @@ function repositoryFor(client, rawTransferAvailable = true) {
   });
 }
 
+async function globalFixture(client, checkpointHash = HASH_B) {
+  await client.query(`INSERT INTO robinhood_wallet_transfer_cursors
+    (chain,projection_version,stream,next_block,version,lifecycle_state)
+    VALUES ('robinhood','rh_transfer_v1','live',105,2,'running')`);
+  await client.query(`INSERT INTO robinhood_chain_blocks VALUES
+    ('robinhood',104,$1,true),('robinhood',109,$2,true)`, [HASH_A, checkpointHash]);
+  await client.query(`INSERT INTO robinhood_wallet_transfer_scan_scopes
+    (chain,projection_version,stream,from_block,through_block,checkpoint_hash,token_addresses)
+    VALUES ('robinhood','rh_transfer_v1','live',100,104,$1,$2)`, [HASH_A, [COMPLETE, GAP, MISSING]]);
+  return { batch: { projectionVersion: 'rh_transfer_v1', stream: 'live', expectedVersion: '2',
+    nextBlock: '110', checkpointBlock: '109', checkpointHash },
+  capture: { source: 'canonical-journal', complete: true, selectedLogsValidated: true,
+    fromBlock: '105', throughBlock: '109', checkpointHash, observedLogs: 5,
+    observedTokenAddresses: [COMPLETE, GAP], selectedTokenAddresses: [COMPLETE] } };
+}
+const advanceGlobal = (client) => client.query("UPDATE robinhood_wallet_transfer_cursors SET next_block=110,version=version+1");
+
 describe('Robinhood ranking transfer scan coverage', () => {
   after(async () => db.pool.end());
+  it('installs the additive global proof schema idempotently with database payload bounds', async () => {
+    await withDatabase(async (client) => {
+      for (const sql of stage261.STATEMENTS) {
+        await client.query(sql.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE IF NOT EXISTS'));
+      }
+      const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage261-robinhood-global-transfer-scans');
+      const definition = group.tables[0];
+      const columns = (await client.query(`SELECT attname FROM pg_attribute
+        WHERE attrelid='robinhood_wallet_transfer_global_scans'::regclass AND attnum>0 AND NOT attisdropped`)).rows;
+      for (const column of definition.columns) assert.ok(columns.some((row) => row.attname === column), column);
+      const constraints = (await client.query(`SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint
+        WHERE conrelid='robinhood_wallet_transfer_global_scans'::regclass`)).rows;
+      for (const constraint of definition.constraints) {
+        const installed = constraints.find((row) => row.conname === constraint.name)?.definition;
+        assert.ok(installed && constraint.includes.every((part) => installed.includes(part)), constraint.name);
+      }
+      assert.ok((await client.query("SELECT to_regclass('idx_rh_transfer_global_scan_range') AS oid")).rows[0].oid);
+      const { batch, capture } = await globalFixture(client);
+      await persistGlobalScanProof(client, batch, capture);
+      for (const mutation of ["excluded_token_addresses=ARRAY[NULL]::text[]", 'selected_contracts=3',
+        'through_block=from_block+5000', "reader_version='unknown'"]) {
+        await client.query('SAVEPOINT invalid_payload');
+        await assert.rejects(client.query(`UPDATE robinhood_wallet_transfer_global_scans SET ${mutation}`), /constraint/);
+        await client.query('ROLLBACK TO SAVEPOINT invalid_payload');
+      }
+    });
+  });
+  it('covers selected and absent tokens only after cursor confirmation, while preserving exclusions and raw gates', async () => {
+    await withDatabase(async (client) => {
+      const { batch, capture } = await globalFixture(client);
+      await assert.rejects(persistGlobalScanProof(client, { ...batch, nextBlock: '111' }, capture), /committed batch/);
+      const first = await persistGlobalScanProof(client, batch, capture);
+      assert.deepEqual(await persistGlobalScanProof(client, batch, capture), first);
+      await assert.rejects(persistGlobalScanProof(client, batch, { ...capture, selectedTokenAddresses: [GAP] }), /conflict/);
+      const inspected = () => repositoryFor(client).inspectBlockRange(input([COMPLETE, GAP, MISSING]));
+      assert.deepEqual((await inspected()).map((row) => row.scanProofReady), [false, false, false]);
+      await advanceGlobal(client);
+      assert.deepEqual((await inspected()).map((row) => row.scanProofReady), [true, false, true]);
+      const [unavailable] = await repositoryFor(client, false).inspectBlockRange(input([MISSING]));
+      assert.equal(unavailable.blockRangeCovered, true);
+      assert.equal(unavailable.scanProofReady, false);
+      await assert.rejects(persistGlobalScanProof(client, batch, capture), /cursor conflict/);
+    });
+  });
+  it('rolls proof and cursor back together and requires canonical replay after a reorg', async () => {
+    await withDatabase(async (client) => {
+      const { batch, capture } = await globalFixture(client);
+      await client.query('SAVEPOINT atomic_proof');
+      await persistGlobalScanProof(client, batch, capture);
+      await advanceGlobal(client);
+      await client.query('ROLLBACK TO SAVEPOINT atomic_proof');
+      assert.equal((await client.query('SELECT count(*)::int AS count FROM robinhood_wallet_transfer_global_scans')).rows[0].count, 0);
+      await persistGlobalScanProof(client, batch, capture);
+      await advanceGlobal(client);
+      await client.query('UPDATE robinhood_chain_blocks SET canonical=false WHERE block_number=109');
+      await client.query("UPDATE robinhood_wallet_transfer_cursors SET next_block=105,version=4");
+      await assert.rejects(persistGlobalScanProof(client, { ...batch, expectedVersion: '4' }, capture), /noncanonical/);
+      assert.equal((await repositoryFor(client).inspectBlockRange(input([COMPLETE])))[0].scanProofReady, false);
+      await client.query(`INSERT INTO robinhood_chain_blocks VALUES ('robinhood',109,$1,true)`, [HASH_C]);
+      await persistGlobalScanProof(client, { ...batch, expectedVersion: '4', checkpointHash: HASH_C }, { ...capture, checkpointHash: HASH_C });
+      await advanceGlobal(client);
+      assert.equal((await repositoryFor(client).inspectBlockRange(input([COMPLETE])))[0].scanProofReady, true);
+    });
+  });
+  it('keeps global seed evidence incomplete and detects a missing range in mixed history', async () => {
+    await withDatabase(async (client) => {
+      const { batch, capture } = await globalFixture(client);
+      await client.query(`INSERT INTO robinhood_wallet_transfer_cursors
+        (chain,projection_version,stream,next_block,version,lifecycle_state)
+        VALUES ('robinhood','rh_transfer_v1','seed',105,2,'running')`);
+      await persistGlobalScanProof(client, { ...batch, stream: 'seed' }, capture);
+      await advanceGlobal(client);
+      const [seedOnly] = await repositoryFor(client).inspectBlockRange({ ...input([MISSING]), fromBlock: '105' });
+      assert.deepEqual(seedOnly.coverageReasons, ['transfer_scan_seed_raw_unproven']);
+      await client.query("UPDATE robinhood_wallet_transfer_cursors SET next_block=106,version=4 WHERE stream='live'");
+      await persistGlobalScanProof(client, { ...batch, expectedVersion: '4' }, { ...capture, fromBlock: '106' });
+      await advanceGlobal(client);
+      const [gap] = await repositoryFor(client).inspectBlockRange(input([COMPLETE]));
+      assert.deepEqual(gap.coverageReasons, ['transfer_scan_scope_gap']);
+    });
+  });
   it('requires continuous canonical live scans and available raw partitions', async () => {
     await withDatabase(async (client) => {
       await client.query(`INSERT INTO robinhood_chain_blocks VALUES

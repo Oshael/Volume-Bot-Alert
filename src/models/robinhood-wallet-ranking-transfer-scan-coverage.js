@@ -56,6 +56,19 @@ const SCOPES_SQL = `WITH requested AS (
         AND member.valid_from_version <= scope.scope_version
         AND (member.valid_to_version IS NULL OR scope.scope_version < member.valid_to_version)
     )
+    UNION ALL
+    SELECT requested.token_address, scope.global_scan_id AS scan_scope_id, scope.stream,
+      scope.from_block, scope.through_block, scope.checkpoint_hash
+    FROM requested
+    JOIN robinhood_wallet_transfer_global_scans scope
+      ON scope.chain = '${CHAIN}' AND scope.projection_version = $2
+     AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
+     AND scope.reader_version = 'canonical-global-v1'
+     AND NOT (scope.excluded_token_addresses @> ARRAY[requested.token_address])
+    JOIN robinhood_wallet_transfer_cursors cursor
+      ON cursor.chain = scope.chain AND cursor.projection_version = scope.projection_version
+     AND cursor.stream = scope.stream AND cursor.version >= scope.cursor_version
+     AND cursor.next_block > scope.through_block
   ), matching AS (
     SELECT requested.token_address, scope.scan_scope_id, scope.stream,
       scope.from_block, scope.through_block,
