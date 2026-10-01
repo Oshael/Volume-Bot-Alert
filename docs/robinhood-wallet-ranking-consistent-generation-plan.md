@@ -1,139 +1,142 @@
-# Gerações consistentes do ranking de wallets Robinhood
+# Ranking de wallets Robinhood: plano simplificado
 
-## Objetivo e limite operacional
+## Decisão proposta
 
-Preservar o ganho das posições ainda abertas nas janelas 24h, 7d, 30d e ALL,
-incluindo redução proporcional após vendas/transfers, precisão decimal,
-desempate por endereço e exclusão de wallets com posições incertas.
+Reusar a projeção financeira, o snapshot de leitura e a publicação compacta
+existentes. Avaliar cálculo em conjunto no PostgreSQL antes de criar qualquer
+mecanismo próprio para congelar posições e preços.
 
-Este documento propõe o trabalho local seguinte. Não autoriza migrations,
-deploy, mudanças de flags, serviços ou limpeza na VPS. A permissão remota
-permanece somente leitura. A arquitetura deve ser validada em shadow antes
-de substituir a fonte da API; nenhuma melhoria do lag foi demonstrada por ela.
+A proposta de captura de valores anteriores, registro de gerações em execução,
+barreiras nos writers e tabelas de sobreposição foi retirada do escopo
+recomendado. A estimativa anterior de sete etapas e 2.500–3.200 linhas não é
+um orçamento aprovado nem uma necessidade demonstrada.
 
-## Contratos existentes e impedimentos
+Esta revisão altera apenas o plano. Não altera código, schema, API, flags ou
+serviços; a VPS continua com permissão somente leitura.
 
-- `src/models/robinhood-wallet-ranking-position-read.js` pagina o estado atual
-  por token/wallet. As posições são atualizadas no lugar; filtrar por
-  `through_block <= corte` perde a posição antiga de pares alterados depois
-  dele. Não reconstrói o universo naquele bloco.
-- A Stage 126 oferece chave primária por token/wallet, mas não índice para
-  percorrer posições abertas por wallet/token. Ordenação global repetida sem
-  índice precisa ser avaliada pelo plano de execução antes de uso.
-- `src/models/robinhood-wallet-ranking-price-read.js` seleciona preços e mercado
-  de valuation em buckets mutáveis. `asOf` limita timestamps; não congela as
-  versões das linhas entre transações. Uma atualização posterior do mesmo
-  bucket pode até retirar da consulta a versão anterior elegível.
-- As preimagens da Stage 245 são opcionais, guardam o estado anterior de lotes
-  LIVE e expiram em três dias. Não cobrem preços nem todas as formas de repair.
-  Não usar sua existência como prova de snapshot completo do ranking.
-- `src/services/robinhood-wallet-ranking-aggregate.js` já consome lotes de até
-  100 posições ordenadas por wallet/token com memória limitada. Cabe ao leitor
-  provar um corte consistente e o fim do universo.
-- A Stage 260 publica um resultado compacto com CAS, checkpoint e revisão de
-  reorg. Não prova que os lotes de entrada foram lidos na mesma geração.
+## Evidência e limites
 
-## Alternativas
+**Observações do código:**
 
-| Estratégia | Consistência | Custo/limitação | Decisão proposta |
-| --- | --- | --- | --- |
-| Repetir consultas ao estado atual com o mesmo `asOf` | Não garantida | Mistura posições, preços e universo | Rejeitar |
-| Uma transação REPEATABLE READ para todo o universo | Garantida dentro da transação | Snapshot longo durante milhões de cálculos e retenção de versões MVCC | Rejeitar como motor global |
-| Descartar o cálculo sempre que qualquer revisão avançar | Evita publicar mistura | Pode nunca concluir com LIVE e preços ativos | Somente referência limitada de teste |
-| Copiar integralmente todas as posições a cada geração | Possível com corte atômico | Duplica uma base grande e aumenta WAL/espaço | Rejeitar como caminho recorrente |
-| Preservar apenas os valores sobrescritos durante um corte ativo | Possível com captura transacional completa | Novo protocolo de captura, orçamento e leitura por sobreposição | Prototipar localmente, com gates |
+- `src/models/robinhood-wallet-ranking-read-snapshot.js` já usa REPEATABLE READ
+  READ ONLY. Dentro de uma mesma execução, posições, preços, eventos e revisões
+  podem ser lidos no mesmo snapshot sem captura própria. O teste de integração
+  existente confirma que uma atualização concorrente não muda a segunda leitura.
+- O wrapper limita cada statement a 5 segundos e a inatividade a 30 segundos,
+  mas não impõe prazo total à transação. Isso precisa de limite explícito;
+  paginação ilimitada dentro dele não é uma solução aceitável.
+- `src/models/robinhood-wallet-ranking-publication.js` já mantém até 100 wallets
+  por janela, com checkpoint, CAS e proteção contra reorg. O payload enviado
+  é limitado a 64 KiB. O LIVE pode avançar sem invalidar um resultado coerente
+  anterior; leitura informa diferença de revisões.
+- `src/services/robinhood-wallet-ranking-page.js` ainda recalcula a cada página.
+  Compartilhar um resultado evita que cada cliente repita esse trabalho, mas
+  não torna barato o cálculo inicial nem resolve o teto de 1.000 posições.
+- ALL usa quantidade atual, custo remanescente e preço. Janelas finitas
+  reconstruem o saldo inicial e aplicam os eventos ordenados, com redução
+  proporcional. São problemas diferentes para execução, com a mesma métrica.
 
-## Protocolo proposto para bootstrap consistente
+**Hipótese a testar:** calcular e agregar ALL em conjunto no banco pode custar
+menos que transportar milhões de posições e fazer leituras por lote no Node.
+Ela é rejeitada se a consulta não concluir no orçamento, divergir da referência
+ou causar pressão incompatível com o LIVE. SQL e cache, por si só, não provam
+escala nem redução do lag.
 
-1. Registrar uma geração durável com bloco/hash, `asOf`, revisões das cinco
-   fontes, projeção, lease, prazo e limites. Admitir no máximo um corte ativo
-   por projeção, compartilhado entre as quatro janelas.
-2. Armar a captura por uma barreira curta, compartilhada pelos writers antes
-   de alterar fontes. A abertura precisa excluir commits que escapem da
-   captura. Capturar metadados sem essa barreira não congela a origem.
-3. Na primeira mudança de cada identidade depois do corte, preservar somente
-   os campos anteriores necessários ao ranking. Inserções sem linha anterior
-   precisam de marcador de ausência; fechamentos e deletes devem preservar
-   posições que estavam abertas no corte. Repetições não criam novas cópias.
-4. Aplicar o mesmo princípio às identidades de preço/valuation necessárias às
-   quatro janelas. Não substituir isso por consultas tardias aos buckets atuais.
-   Alterações retrospectivas de swaps, transfers, classificação ou decimais
-   devem preservar evidência ou invalidar a geração antes de modificar a fonte.
-5. Ler, em transações curtas, a união do estado atual não sobrescrito com o
-   estado anterior capturado. O marcador de ausência/posição fechada também
-   exclui a linha atual; não filtrar os marcadores antes dessa exclusão.
-   A consulta deve recuperar linhas apagadas e não admitir wallets nascidas
-   depois do corte. Paginação por wallet/token precisa de índice apropriado.
-6. Se expirar o prazo, o orçamento de captura ou a lease, abandonar a geração
-   de forma atômica e deixar o LIVE prosseguir. O ranking não pode bloquear
-   indefinidamente um writer para salvar um cálculo. Quantificar linhas,
-   bytes, WAL e espera de locks antes de habilitar qualquer captura.
-7. Reorg invalida a geração. Repairs e retenção, incluindo remoção de partições
-   que não dispara triggers por linha, participam do protocolo ou impedem a
-   admissão. A validação final precisa ocorrer na transação de publicação;
-   checar validade numa consulta anterior deixa uma corrida.
-8. Publicar somente após EOF comprovado de todas as entradas e validação do
-   corte. Retomar um acumulador perdido exige replay determinístico da mesma
-   origem, ou checkpoint de estado suficiente; apenas retomar seu cursor perde
-   somas e candidatos já processados. Limpar capturas somente após tornar a
-   geração inacessível, em lotes limitados.
+**Causa confirmada:** esta revisão não identifica a fase responsável pelo lag.
+O efeito de desligar transfers foi relatado pelo operador, mas não isola
+consulta de escopo, projeção financeira, grafo, commit ou outro trabalho.
 
-Esse protocolo é uma proposta, não uma capacidade já disponível. Sua primeira
-implementação fica opt-in e sem alterar a API. Não há orçamento de produção
-aprovado; tamanho do índice, taxa de mudanças durante o corte e duração de
-bootstrap são gates de aceitação, não suposições sobre a capacidade da VPS.
+## Caminho mínimo para validar o desenho
 
-## Fluxo recorrente e custo
+1. Adicionar prazo total ao snapshot existente e executar um leitor ALL em
+   shadow. Ler o checkpoint, `asOf`, revisões e fontes dentro desse snapshot.
+   O leitor usa consulta em conjunto, agrupa todas as posições por wallet e
+   devolve somente top 100 e metadados. Não ordenar milhões de posições por
+   wallet para transportá-las ao acumulador, nem criar um índice dessa ordem
+   antes de demonstrar que ele é necessário.
+2. Testar paridade do ALL contra o domínio atual em fixtures que incluem
+   mais de 1.000 posições, somas por wallet, preços pequenos, perdas,
+   desempates, custo desconhecido, fontes ausentes e atualizações concorrentes.
+   Reusar a seleção de preço/mercado existente; não fazer uma cópia aproximada
+   dela. Precisão e arredondamento por posição, antes da soma por wallet,
+   fazem parte do contrato. Divisão NUMERIC não deve ser presumida equivalente
+   à aritmética racional sem esses testes.
+3. Se o leitor passar nos testes e no orçamento medido, conectar o cálculo
+   compartilhado ao armazenamento da Stage 260 e fazer a API paginar o
+   resultado publicado. Reusar o mecanismo existente de `worker_leases` para
+   impedir cálculos simultâneos entre processos; não criar tabela de jobs.
+   Coalescer avisos após commit e conservar somente uma execução pendente.
+4. Avaliar 24h/7d/30d separadamente, após essa medição. Preservar os gates de
+   cobertura e o replay proporcional existentes. Não usar apenas
+   `quantidade * (preço atual - preço inicial)` quando houve eventos na janela,
+   nem declarar exato um histórico truncado. Só dimensionar esse corte após
+   localizar o custo dominante e provar uma alternativa equivalente.
 
-Bootstrap consistente não justifica repetir um scan completo após cada aviso.
-O funcionamento recorrente deve consumir eventos duráveis de pares alterados,
-coalescer mudanças de preço e agendar expirações de janela. A atualização de
-preço afeta todas as posições abertas do token, mesmo sem trades novos.
-Resumos por par/wallet precisam preservar a fórmula e ter orçamento medido;
-somar compras e vendas diárias não preserva redução proporcional.
+Um prazo experimental de 10 segundos para a execução completa, com statements
+limitados a no máximo 5 segundos e ao tempo restante, é um ponto de partida
+para teste local, não uma configuração aprovada de produção. Timeout deve
+abortar, liberar a conexão e não publicar universo parcial. Não estender o
+prazo automaticamente até conseguir atravessar o universo.
 
-O worker futuro reage ao sinal já existente após commit, recuperando trabalho
-durável após perda de NOTIFY. Backfill/reconciliação têm cursor, limites e
-prioridade inferior ao LIVE. Nenhum serviço está incluído no primeiro corte;
-quando houver serviço, seguir `docs/new-worker-service-runbook.md` e a template
-`trendscope-worker@.service`.
+Uma tentativa que não termina nesse orçamento continua sendo uma limitação.
+Se a leitura em conjunto falhar no universo real, reavaliar uma projeção
+incremental focada com a evidência de custo; não retomar automaticamente o
+plano de captura próprio nem prometer que um cache resolve o universo inteiro.
 
-## Escopo e cortes para autorização
+## Execução compartilhada e contrato público
 
-O bloco de bootstrap/publicação deve ser planejado como aproximadamente
-2.500–3.200 linhas alteradas, contando código, testes e documentação, com
-12–16 arquivos de produção, distribuídas em cortes de até 500 linhas.
-A estimativa precisa ser refinada por corte; crescimento acima de 20% exige
-nova direção. O fluxo incremental
-recorrente e a conversão dos 96,5 GiB de escopos são blocos separados.
+A publicação é feita depois de encerrar a transação de leitura, usando o corte
+capturado nela e o gate de checkpoint/reorg/CAS existente. Antes de conectar
+fontes, verificar que seus writers publicam as revisões necessárias; a presença
+da tabela de revisões não dispensa essa verificação.
 
-| Corte | Entrega | Arquivos/boundaries previstas | Validação |
-| --- | --- | --- | --- |
-| 1, 400–480 linhas | Registro e lifecycle de geração com lease, prazo, limites e exclusão de concorrência; ainda incapaz de afirmar captura pronta | `src/utils/db-init-stage261.js`, `src/utils/runtime-schema.js`, `src/models/robinhood-wallet-ranking-generation.js`, teste de integração próprio, `docs/bot-reference.md` | Schema, CAS concorrente, lease expirada, rollback, lint |
-| 2 | Barreira e captura compacta de posições; migrations/index necessários | Adapter dedicado e participação dos caminhos LIVE/repair/reorg | Mudança antes/depois da abertura, insert, close, delete, replay, orçamento excedido sem perder escrita LIVE |
-| 3 | Congelamento de preços/valuation e invalidação de evidência retrospectiva | Adapter dedicado para fontes de mercado e evidência | Bucket sobrescrito, baseline, troca de mercado, correção histórica, retenção/partição |
-| 4 | Leitor por sobreposição e keyset wallet/token | Repositório de leitura dedicado | Universo acima de 1.000, posição apagada/fechada, nova wallet, cursor, EXPLAIN, timeout |
-| 5 | Enriquecimento e cálculo compartilhado com reinício seguro | Builder dedicado reutilizando domínio/coverage existentes | Quatro janelas, partial tardio, tiny gains, falta/truncamento de evidência, replay |
-| 6 | Publicação acoplada à validade da origem e executor shadow limitado | Repositório de publicação e runner dedicado | Corrida com reorg/expiração, CAS, concorrência, falha e preservação da geração anterior |
-| 7 | Leitura HTTP de publicação, freshness e rollout | Boundary da página/API e documentação operacional | Cursor estável, auth, stale/indisponível, frontend e integração quando aplicável |
+A API deve informar `asOf`, instante de publicação, diferença de revisões e
+atraso. `isFresh` não é TTL: preços podem expirar sem revisão nova. Expiração
+é trabalho temporal limitado. Avisos LIVE disparam trabalho coalescido;
+reconexão/readiness usam as revisões duráveis. Não escolher uma cadência de
+produção antes de medir duração, concorrência, custo e tolerância de freshness.
 
-As etapas da tabela são fronteiras de entrega; se uma ultrapassar 500 linhas,
-ela precisa ser dividida antes da implementação e da autorização respectiva.
-Cada corte exige revisão integral de seu diff e commit por escopo. O primeiro
-não instala captura, worker, índice grande nem altera o resultado servido.
-Antes dos demais, mapear todos os writers/pruners relevantes e verificar
-que cabem no fan-out previsto. Não habilitar um subconjunto da captura.
+Falta de primeira geração completa retorna indisponibilidade explícita.
+Uma geração anterior válida pode continuar visível com atraso informado;
+reorg invalidado não admite esse fallback. Requisição de outro `asOf` e cursor
+de geração substituída precisam de tratamento explícito, sem recálculo global
+silencioso por request. A mudança da API só ocorre com fluxo validado.
 
-## Aceitação e diagnóstico
+## Escopo seguinte e validação
 
-Testes de integração devem usar conexões simultâneas: abrir corte, ler um lote,
-alterar as fontes, fechar/reabrir/deletar posições e ler os lotes seguintes.
-Comparar ao resultado de referência do corte, não apenas ao estado final atual.
-Provar recuperação após restart, at-least-once e rejeição de cortes inválidos.
+O próximo corte proposto é apenas a prova ALL com prazo total: aproximadamente
+350–480 linhas alteradas, incluindo testes e documentação. Fronteiras previstas:
+`src/models/robinhood-wallet-ranking-read-snapshot.js`, seleção SQL reutilizável
+em `src/models/robinhood-wallet-ranking-price-read.js`, um leitor ALL dedicado
+e testes unitários/de integração correspondentes. Não inclui nova migration,
+triggers, serviço, alteração dos writers ou troca da API.
 
-Medir tempo total, p95 de lotes/commits, linhas e bytes capturados, WAL/s,
-esperas de locks, memória e idade da publicação. Na VPS, comparar o mesmo
-lag primário e guardrails contra uma janela equivalente antes da ativação.
-Se o lag não melhorar, reabrir o diagnóstico; menos consultas ou memória não
-confirmam a causa do incidente. A captura de valores anteriores adiciona custo
-ao writer e só pode ser aceita se esse custo respeitar o orçamento medido.
+A contagem deve ser refinada antes de implementar; acima de 500 linhas exige
+divisão e autorização. O corte de publicação/API depende do resultado do
+experimento. Não há estimativa fechada para as janelas finitas nem promessa de
+que dois cortes concluam o redesenho inteiro. Validar com lint e testes de
+paridade/concorrência; se surgir necessidade de índice/schema, apresentar o
+plano de execução e o escopo antes de editar.
+
+A medição de universo grande deve começar com EXPLAIN sem ANALYZE. Executar
+medição completa somente em ambiente apropriado e com timeout; não provocar
+um scan prolongado na VPS só para obter um benchmark. Comparar duração,
+linhas/bytes transportados, memória, temporários, waits e idade do resultado.
+
+## Espaço em disco e aceitação operacional
+
+Os 96,5 GiB observados são principalmente provas históricas de tokens varridos,
+não resultados de ranking. `robinhood-wallet-transfer-scope-writer.js` já usa
+scope/version quando há baseline pronto; ainda recai no formato legado antes
+do baseline. Confirmar crescimento por delta e preservar prova histórica são
+prioridades de armazenamento independentes do cálculo ALL.
+
+A recuperação física continua exigindo conversão histórica validada e uma
+operação autorizada à parte. Não apagar arrays referenciados, remover gates de
+cobertura ou prometer espaço livre porque a API passou a ler publicação.
+
+**Ponto importante:** o novo plano retira estruturas novas e captura adicional,
+mas sua viabilidade no universo real ainda precisa ser medida. Não houve
+correção do lag ou recuperação de espaço nesta revisão. Só aceitar uma futura
+mudança como remediação após comparar o mesmo lag primário e guardrails em
+janelas equivalentes; se não melhorar, reabrir o diagnóstico.
