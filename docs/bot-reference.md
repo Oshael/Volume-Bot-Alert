@@ -4971,8 +4971,13 @@ retirada autorizada, cobertura, auditor e bootstrap reconstroem a participação
 pelo dicionário. Um ID posterior ao mapa representa ausência. O ramo GIN legado
 permanece separado, e continuidade, checkpoint canônico, raw e baseline seguem
 obrigatórios. O schema impede mudanças dos IDs e de mapas já publicados, mas
-o futuro conversor precisa validar o hash reconstruído antes de retirar arrays.
+o conversor valida o hash reconstruído; retirar arrays exige uma operação separada.
 O LIVE canônico continua usando provas globais, sem alimentar esse dicionário.
+O conversor manual `node src/utils/convert-robinhood-wallet-transfer-scope-history.js`
+usa simulação por padrão; `--commit` somente grava mapas, preservando arrays e
+referências dos ranges. O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
+define autorização, limites, retomada por ID e proteção do LIVE. Não é um serviço
+nem uma rotina de retenção; mapas preparados para arrays inline ainda não têm FK.
 **Ponto importante:** Stage 262 somente prepara compatibilidade. Não converte o
 histórico, não autoriza exclusões e não recupera os 96,5 GiB; compactação física
 e publicação de mapas precisam de auditoria e autorização próprias.
