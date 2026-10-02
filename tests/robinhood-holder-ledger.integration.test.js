@@ -1244,6 +1244,76 @@ it('lets capture lock the cursor during automatic pruning but still fences admis
 });
 
 describe('Robinhood holder journal automatic prune scan', () => {
+  it('avoids a history-wide sort and retains recent events and the floor across arbitrary batches', async () => {
+    await require('./helpers/test-db').assertUsingTestDatabase(db);
+    const client = await db.getClient();
+    try {
+      await client.query('DISCARD TEMP');
+      for (const table of [
+        'robinhood_holder_transfer_journal', 'robinhood_holder_cursors',
+        'robinhood_holder_token_states', 'robinhood_holder_global_backfill_runs',
+        'robinhood_holder_global_backfill_tokens', 'robinhood_holder_capture_receipts',
+      ]) await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
+      await client.query(stage229.STATEMENTS[0].replace(
+        'CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE'
+      ));
+      await client.query(stage229.STATEMENTS[1]);
+      await client.query(`INSERT INTO robinhood_holder_cursors
+        (next_block, journal_floor_block) VALUES (20150, 100)`);
+      await client.query(`INSERT INTO robinhood_holder_transfer_journal
+        (block_number, block_hash, transaction_hash, transaction_index, log_index,
+         token_address, from_wallet, to_wallet, amount_raw, applied, captured_at, applied_at,
+         to_balance_before, to_balance_after, holder_delta)
+        VALUES (140, $1, $2, 0, 1, $6, $7, $8, 1, true, NOW()-INTERVAL '4 days', NOW()-INTERVAL '4 days', 0, 1, 1),
+               (101, $1, $3, 0, 2, $6, $7, $8, 1, true, NOW()-INTERVAL '4 days', NOW()-INTERVAL '4 days', 0, 1, 1),
+               (103, $1, $4, 0, 3, $6, $7, $8, 1, true, NOW()-INTERVAL '4 days', NOW(), 0, 1, 1),
+               (160, $1, $5, 0, 4, $6, $7, $8, 1, true, NOW()-INTERVAL '4 days', NOW()-INTERVAL '4 days', 0, 1, 1)`,
+      [HASH_A, HASH_B, HASH_C, HASH_D, HASH_E, TOKEN_UNTRACKED, ZERO_ADDRESS, BOB]);
+      const previousTimeout = (await client.query('SHOW statement_timeout')).rows;
+      const plans = [];
+      let failAfterDelete = true;
+      const retention = createRobinhoodHolderJournalRetention({ database: {
+        getClient: async () => ({ release() {}, async query(sql, params) {
+          if (sql.includes('holder-prune:delete_applied')) {
+            const result = await client.query(`EXPLAIN (FORMAT JSON) ${sql}`, params);
+            plans.push(result.rows[0]['QUERY PLAN'][0].Plan);
+            const deleted = await client.query(sql, params);
+            if (failAfterDelete) throw Object.assign(new Error('injected timeout'), { code: '57014' });
+            return deleted;
+          }
+          return client.query(sql, params);
+        } }),
+      } });
+      const options = { batchLimit: 1, retentionMs: 259200000 };
+      await assert.rejects(retention.pruneOnce(options), { code: '57014' });
+      assert.equal((await client.query('SELECT COUNT(*)::int AS n FROM robinhood_holder_transfer_journal')).rows[0].n, 4);
+      assert.equal(String((await client.query('SELECT completed_passes FROM robinhood_holder_journal_prune_scans')).rows[0].completed_passes), '0');
+      const nodeTypes = (plan) => [plan['Node Type'], ...(plan.Plans || []).flatMap(nodeTypes)];
+      const candidates = plans[0].Plans.find((plan) => plan['Subplan Name'] === 'CTE candidates');
+      assert.equal(nodeTypes(candidates).includes('Sort'), false);
+      failAfterDelete = false;
+      for (let batch = 0; batch < 2; batch += 1) {
+        const result = await retention.pruneOnce(options);
+        assert.equal(result.deletedEvents, 1);
+        assert.equal(result.journalFloorBlock, '100');
+        assert.equal(result.status, 'draining');
+      }
+      assert.deepEqual((await client.query(`SELECT block_number::int AS block
+        FROM robinhood_holder_transfer_journal ORDER BY block_number`)).rows,
+      [{ block: 103 }, { block: 160 }]);
+      assert.equal((await retention.pruneOnce(options)).journalFloorBlock, '100');
+      await client.query(`UPDATE robinhood_holder_transfer_journal
+        SET applied_at = NOW()-INTERVAL '4 days' WHERE block_number=103`);
+      const finished = await retention.pruneOnce(options);
+      assert.equal(finished.status, 'pruned');
+      assert.equal(finished.journalFloorBlock, '150');
+      assert.deepEqual((await client.query('SHOW statement_timeout')).rows, previousTimeout);
+    } finally {
+      await client.query('ROLLBACK');
+      await client.query('DISCARD TEMP');
+      client.release();
+    }
+  });
   it('bounds each page, persists progress, and revisits formerly protected events', async () => {
     const client = await db.getClient();
     try {

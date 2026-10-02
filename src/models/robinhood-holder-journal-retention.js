@@ -1,5 +1,6 @@
 const db = require('./db');
 const { pruneJournalPrefix } = require('./robinhood-holder-journal-prefix-prune');
+const { createAutomaticPruneBudget } = require('./robinhood-holder-prune-budget');
 
 const DEFAULT_RETENTION_BLOCKS = 20_000;
 const DEFAULT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
@@ -43,12 +44,13 @@ function normalizeOptions(options = {}) {
   });
 }
 
-async function withTransaction(database, operation) {
+async function withTransaction(database, operation, automatic) {
   const client = await database.getClient();
   try {
     await client.query('BEGIN');
-    const result = await operation(client);
-    await client.query('COMMIT');
+    const bounded = automatic ? await createAutomaticPruneBudget(client) : client;
+    const result = await operation(bounded);
+    await bounded.query('COMMIT');
     return result;
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch (_) {}
@@ -236,6 +238,8 @@ function scanPosition(scanState, floorBlock, cutoffBlock) {
 }
 
 async function deleteAppliedBatch(client, cutoffBlock, batchLimit, retentionMs) {
+  // Any eligible batch is safe: the floor only advances after check_remaining.
+  // Ordering the entire applied history before LIMIT spills gigabytes to disk.
   const result = await client.query(
     `/* holder-prune:delete_applied */ WITH candidates AS MATERIALIZED (
        SELECT chain, transaction_hash, log_index
@@ -243,7 +247,6 @@ async function deleteAppliedBatch(client, cutoffBlock, batchLimit, retentionMs) 
         WHERE chain = 'robinhood' AND applied = true AND block_number < $1
           AND ($3::bigint IS NULL OR COALESCE(applied_at, captured_at)
             <= NOW() - ($3::bigint * INTERVAL '1 millisecond'))
-        ORDER BY block_number, transaction_index, log_index
         LIMIT $2::int
         FOR UPDATE
      )
@@ -359,7 +362,7 @@ function createRobinhoodHolderJournalRetention(options = {}) {
         status: 'pruned', deletedEvents, discardedBufferedEvents, scannedBufferedEvents,
         cutoffBlock: scanCutoff.toString(), journalFloorBlock,
       });
-    });
+    }, normalized.beforeBlock === null);
   }
 
   return Object.freeze({ pruneOnce });

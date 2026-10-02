@@ -3092,6 +3092,15 @@ passagem e nunca avança o `journal_floor_block` antes de revalidar pendências;
 reinício, erro ou reorg não pulam eventos. A lease continua única, com até
 `ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES` páginas por tick, intervalo e
 backoff existentes. A telemetria expõe linhas examinadas e buffers descartados.
+Na exclusão automática de eventos já aplicados, a seleção não ordena o histórico
+inteiro: qualquer lote elegível pode ser removido, e o floor só avança após a
+checagem de que não restam linhas anteriores ao cutoff. Cada transação automática
+tem orçamento de 8 segundos, statements de até 2 segundos (reduzidos pelo tempo
+restante), `lock_timeout=250ms`, `idle_in_transaction_session_timeout=5s` e
+`work_mem=4MB`, todos locais à transação. Timeout ou orçamento esgotado provoca
+rollback do lote, preserva o floor/scan cursor e segue o backoff existente; pode
+reter dados por mais tempo se não houver progresso dentro do orçamento. Isso
+dispensa migration. A limpeza manual mantém seus limites e política auditada.
 O prune automático segura `FOR KEY SHARE` no cursor durante a transação: impede
 admissões e rewinds que exigem `FOR UPDATE`, mas permite que a captura confirme
 lotes com `FOR NO KEY UPDATE` enquanto a limpeza examina ou remove linhas antigas.
