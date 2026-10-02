@@ -44,9 +44,11 @@ function createRobinhoodInsiderShadowCandidateRepository(options = {}) {
         WHERE state.chain = 'robinhood' AND state.ledger_status = 'live'
           AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
           AND ($4::varchar IS NULL OR state.token_address > $4)
+          -- All candidate states are Robinhood; evaluate replay readiness once,
+          -- before scanning token state, attribution or classification.
           AND EXISTS (
             SELECT 1 FROM robinhood_directional_transfer_replay_runs replay
-             WHERE replay.chain = state.chain AND replay.projection_version = $2
+             WHERE replay.chain = 'robinhood' AND replay.projection_version = $2
                AND replay.status = 'completed'
           )
           AND (
