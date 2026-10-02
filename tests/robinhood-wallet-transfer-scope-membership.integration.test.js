@@ -12,6 +12,8 @@ const stage258 = require('../src/utils/db-init-stage258');
 const stage257 = require('../src/utils/db-init-stage257');
 const { createRobinhoodWalletTransferProjectionRepository } = require('../src/models/robinhood-wallet-transfer-projection');
 const stage259 = require('../src/utils/db-init-stage259');
+const stage262 = require('../src/utils/db-init-stage262');
+const { encodeScopeBitmap } = require('../src/models/robinhood-wallet-transfer-scope-bitmap');
 const { inspectScopeBaseline, prepareScopeBaseline } = require('../src/models/robinhood-wallet-transfer-scope-membership');
 const { main } = require('../src/utils/bootstrap-robinhood-wallet-transfer-scope-membership');
 const schema = `test_scopem_${randomUUID().replaceAll('-', '')}`;
@@ -34,7 +36,7 @@ async function fixture(reusable = false, stream = 'live', tokens = TOKENS) {
   const projectionVersion = `test_scope_${randomUUID().replaceAll('-', '')}`;
   const scopeHash = createHash('sha256').update(tokens.join('\n')).digest('hex');
   if (reusable) {
-    await db.query(`INSERT INTO robinhood_wallet_transfer_token_scopes VALUES
+    await db.query(`INSERT INTO robinhood_wallet_transfer_token_scopes (chain,scope_hash,token_addresses,created_at) VALUES
       ('robinhood',$1,$2,NOW()) ON CONFLICT DO NOTHING`, [scopeHash, tokens]);
   }
   await db.query(`INSERT INTO robinhood_wallet_transfer_cursors
@@ -69,6 +71,7 @@ describe('Transfer scope baseline persistence', () => {
       for (const sql of stage.STATEMENTS) await db.query(sql);
     }
     for (let attempt = 0; attempt < 2; attempt++) await stage259.init({ database: db, closePool: false });
+    await stage262.init({ database: db, closePool: false });
   });
   after(async () => {
     if (initialized) await baseDb.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -113,6 +116,20 @@ describe('Transfer scope baseline persistence', () => {
     assert.equal(await memberCount(input), 2);
     assert.equal((await inspectScopeBaseline(db, input)).loaded_tokens, 2);
     assert.equal((await prepareScopeBaseline(db, input)).state, 'ready');
+  });
+  it('bootstraps a compact checkpoint scope without changing its cursor fence', async () => {
+    const input = await fixture(true);
+    const dictionary = (await db.query(`INSERT INTO robinhood_wallet_transfer_scope_dictionary(chain,token_address)
+      SELECT 'robinhood',token FROM unnest($1::text[]) token RETURNING token_address,ordinal`, [TOKENS])).rows;
+    const encoded = encodeScopeBitmap(TOKENS, dictionary);
+    await db.query(`UPDATE robinhood_wallet_transfer_token_scopes SET token_addresses=NULL,scope_bitmap=$1,
+      dictionary_size=$2,bitmap_token_count=$3 WHERE scope_hash=$4`,
+    [encoded.bitmap, encoded.dictionarySize, encoded.tokenCount, encoded.scopeHash]);
+    assert.equal((await inspectScopeBaseline(db, input)).token_count, 3);
+    assert.equal((await prepareScopeBaseline(db, input)).state, 'preparing');
+    assert.equal((await prepareScopeBaseline(db, input)).state, 'ready');
+    assert.equal(await memberCount(input), 3);
+    assert.equal((await inspectScopeBaseline(db, input)).cursor_version, '0');
   });
   for (const update of ["version=version+1,next_block=102", `checkpoint_hash='0x${'e'.repeat(64)}'`]) {
     it(`rejects a stale cursor fence: ${update}`, async () => {

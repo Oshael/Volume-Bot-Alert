@@ -1,6 +1,7 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
+const { SCOPE_TOKENS_SQL } = require('./robinhood-wallet-transfer-scope-bitmap');
 const LEASES = ['robinhood-wallet-transfer-live-worker', 'robinhood-wallet-transfer-backfill-worker'];
 
 function normalize(input = {}) {
@@ -20,7 +21,7 @@ async function inspectScopeBaseline(database, input = {}) {
   const { stream, projectionVersion } = normalize(input);
   const result = await database.query(`SELECT c.version AS cursor_version, c.next_block,
       c.checkpoint_block, c.checkpoint_hash, s.scan_scope_id, s.token_scope_hash,
-      cardinality(COALESCE(s.token_addresses,t.token_addresses)) AS token_count,
+      cardinality(${SCOPE_TOKENS_SQL}) AS token_count,
       h.scope_id, h.state, h.loaded_tokens,
       EXISTS (SELECT 1 FROM worker_leases WHERE lease_key=ANY($3::text[])
         AND lease_until>clock_timestamp()) AS worker_active
@@ -43,7 +44,7 @@ async function createBaseline(client, identity, point) {
   if (!point.scan_scope_id || !point.token_count || BigInt(point.next_block) !== BigInt(point.checkpoint_block) + 1n) {
     throw new Error('committed scope at checkpoint is missing');
   }
-  const { rows } = await client.query(`SELECT COALESCE(s.token_addresses,t.token_addresses) AS tokens
+  const { rows } = await client.query(`SELECT ${SCOPE_TOKENS_SQL} AS tokens
     FROM robinhood_wallet_transfer_scan_scopes s LEFT JOIN robinhood_wallet_transfer_token_scopes t
       ON t.chain=s.chain AND t.scope_hash=s.token_scope_hash WHERE s.scan_scope_id=$1`, [point.scan_scope_id]);
   const tokens = rows[0].tokens;
@@ -85,7 +86,7 @@ async function copyBatch(client, head, batchSize) {
       (scope_id,token_address,valid_from_version)
     SELECT $1,token,0 FROM robinhood_wallet_transfer_scan_scopes s
     LEFT JOIN robinhood_wallet_transfer_token_scopes t ON t.chain=s.chain AND t.scope_hash=s.token_scope_hash
-    CROSS JOIN LATERAL unnest((COALESCE(s.token_addresses,t.token_addresses))[$3:$4]) AS item(token)
+    CROSS JOIN LATERAL unnest((${SCOPE_TOKENS_SQL})[$3:$4]) AS item(token)
     WHERE s.scan_scope_id=$2`,
   [head.scope_id, head.baseline_scan_scope_id, head.loaded_tokens + 1, head.loaded_tokens + batchSize]);
   if (inserted.rowCount !== Math.min(batchSize, head.token_count - head.loaded_tokens)) {

@@ -5,6 +5,7 @@ const { after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const stage261 = require('../src/utils/db-init-stage261');
+const { encodeScopeBitmap } = require('../src/models/robinhood-wallet-transfer-scope-bitmap');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { persistGlobalScanProof } = require('../src/models/robinhood-wallet-transfer-global-scan-proof');
 const {
@@ -37,7 +38,10 @@ async function withDatabase(work) {
       scope_id bigint, scope_version bigint
     ) ON COMMIT DROP`);
     await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_token_scopes (
-      chain text, scope_hash text, token_addresses text[]
+      chain text, scope_hash text, token_addresses text[], scope_bitmap bytea, dictionary_size integer
+    ) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_scope_dictionary (
+      chain text, token_address text, ordinal integer
     ) ON COMMIT DROP`);
     await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
       chain text, block_number bigint, block_hash text, canonical boolean
@@ -106,6 +110,27 @@ const advanceGlobal = (client) => client.query("UPDATE robinhood_wallet_transfer
 
 describe('Robinhood ranking transfer scan coverage', () => {
   after(async () => db.pool.end());
+  it('reads mixed arrays/bitmaps exactly while retaining absence, canonical and raw gates', async () => {
+    await withDatabase(async (client) => {
+      const dictionary = TOKENS.map((token_address, ordinal) => ({ token_address, ordinal }));
+      for (const entry of dictionary) await client.query('INSERT INTO robinhood_wallet_transfer_scope_dictionary VALUES ($1,$2,$3)',
+        ['robinhood', entry.token_address, entry.ordinal]);
+      const members = [COMPLETE, GAP].sort();
+      const encoded = encodeScopeBitmap(members, dictionary.slice(0, 2));
+      await client.query(`INSERT INTO robinhood_wallet_transfer_token_scopes VALUES
+        ('robinhood',$1,NULL,$2,$3)`, [encoded.scopeHash, encoded.bitmap, encoded.dictionarySize]);
+      await client.query(`INSERT INTO robinhood_wallet_transfer_scan_scopes
+        (chain,projection_version,stream,from_block,through_block,checkpoint_hash,token_addresses,token_scope_hash)
+        VALUES ('robinhood','rh_transfer_v1','live',100,104,$1,$2,NULL),
+          ('robinhood','rh_transfer_v1','live',105,109,$3,NULL,$4)`, [HASH_A, members, HASH_B, encoded.scopeHash]);
+      await client.query("INSERT INTO robinhood_chain_blocks VALUES ('robinhood',104,$1,true),('robinhood',109,$2,true)", [HASH_A, HASH_B]);
+      const read = () => repositoryFor(client).inspectBlockRange(input());
+      assert.deepEqual((await read()).map((r) => r.blockRangeCovered), [true, true, false, false, false]);
+      assert.equal((await repositoryFor(client, false).inspectBlockRange(input([COMPLETE])))[0].scanProofReady, false);
+      await client.query('UPDATE robinhood_chain_blocks SET canonical=false WHERE block_number=109');
+      assert.equal((await read())[0].blockRangeCovered, false);
+    });
+  });
   it('installs the additive global proof schema idempotently with database payload bounds', async () => {
     await withDatabase(async (client) => {
       for (const sql of stage261.STATEMENTS) {
@@ -204,7 +229,7 @@ describe('Robinhood ranking transfer scan coverage', () => {
       [HASH_A, HASH_B, HASH_C, HASH_D, COMPLETE, GAP, SEED_ONLY, ORPHAN]);
       // Mix legacy arrays and reusable scopes in the same canonical window.
       await client.query(`INSERT INTO robinhood_wallet_transfer_token_scopes
-        VALUES ('robinhood', $1, ARRAY[$2])`, [HASH_A.slice(2), COMPLETE]);
+        (chain,scope_hash,token_addresses) VALUES ('robinhood', $1, ARRAY[$2])`, [HASH_A.slice(2), COMPLETE]);
       await client.query(`UPDATE robinhood_wallet_transfer_scan_scopes
         SET token_addresses=NULL, token_scope_hash=$1
         WHERE from_block=105 AND checkpoint_hash=$2`, [HASH_A.slice(2), HASH_B]);
@@ -273,7 +298,8 @@ describe('Robinhood ranking transfer scan coverage', () => {
       await client.query(`INSERT INTO robinhood_wallet_transfer_scope_members VALUES (1,$1,0,NULL)`, [COMPLETE]);
       await client.query(`UPDATE robinhood_wallet_transfer_scan_scopes
         SET scope_id=NULL,scope_version=NULL,token_addresses=ARRAY[$1] WHERE through_block=104`, [COMPLETE]);
-      await client.query(`INSERT INTO robinhood_wallet_transfer_token_scopes VALUES ('robinhood',$1,ARRAY[$2])`,
+      await client.query(`INSERT INTO robinhood_wallet_transfer_token_scopes
+        (chain,scope_hash,token_addresses) VALUES ('robinhood',$1,ARRAY[$2])`,
       [HASH_A.slice(2), COMPLETE]);
       await client.query(`UPDATE robinhood_wallet_transfer_scan_scopes
         SET scope_id=NULL,scope_version=NULL,token_scope_hash=$1 WHERE through_block=109`, [HASH_A.slice(2)]);

@@ -1,6 +1,7 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
+const { SCOPE_TOKENS_SQL } = require('./robinhood-wallet-transfer-scope-bitmap');
 const TOTAL_KEYS = ['ranges', 'bases', 'versions', 'unchangedRanges', 'gaps',
   'tokenOccurrences', 'membershipRows', 'added', 'removed'];
 
@@ -91,7 +92,7 @@ async function auditScopeHistory(database, input) {
   }
   async function loadTokens(row) {
     const { rows } = await query(`SELECT CASE WHEN cardinality(tokens) <= $2 THEN tokens ELSE NULL END AS tokens
-      FROM (SELECT COALESCE(s.token_addresses,t.token_addresses) AS tokens
+      FROM (SELECT ${SCOPE_TOKENS_SQL} AS tokens
         FROM robinhood_wallet_transfer_scan_scopes s
         LEFT JOIN robinhood_wallet_transfer_token_scopes t ON t.chain=s.chain AND t.scope_hash=s.token_scope_hash
         WHERE s.scan_scope_id=$1) source`, [row.scan_scope_id, options.maxTokens]);

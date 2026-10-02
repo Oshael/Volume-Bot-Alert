@@ -4959,6 +4959,23 @@ atualize o writer e retome os workers. Confira `scopeManifest.format=versioned`
 e compare taxas de WAL, lag/avanço de capture e transfers, tempos de commit e
 readiness do ranking na mesma janela. O schema legado/GIN permanece para leitura
 histórica e recuperação; sua limpeza é uma operação separada.
+A leitura de conjuntos históricos em mapas de bits exige a Stage 262:
+`node src/utils/db-init-stage262.js`, seguida de `npm run db:schema-check`, antes
+de publicar/reiniciar os leitores, inclusive API/web. O schema acrescenta um
+dicionário de endereços com IDs imutáveis (até 1.000.000) e mapas opcionais aos
+conjuntos por hash; não preenche mapas nem retira arrays. Cada mapa admite até
+125.000 bytes e 500.000 membros; ordinais não são reutilizados. O hash permanece
+o SHA-256 dos endereços normalizados e ordenados, não dos bytes do mapa.
+Durante a preparação, o array continua sendo a fonte de leitura. Depois de sua
+retirada autorizada, cobertura, auditor e bootstrap reconstroem a participação
+pelo dicionário. Um ID posterior ao mapa representa ausência. O ramo GIN legado
+permanece separado, e continuidade, checkpoint canônico, raw e baseline seguem
+obrigatórios. O schema impede mudanças dos IDs e de mapas já publicados, mas
+o futuro conversor precisa validar o hash reconstruído antes de retirar arrays.
+O LIVE canônico continua usando provas globais, sem alimentar esse dicionário.
+**Ponto importante:** Stage 262 somente prepara compatibilidade. Não converte o
+histórico, não autoriza exclusões e não recupera os 96,5 GiB; compactação física
+e publicação de mapas precisam de auditoria e autorização próprias.
 Para dimensionar a conversão histórica, use o auditor manual somente leitura
 `node src/utils/audit-robinhood-wallet-transfer-scope-history.js` com
 `--projection-version=rh_transfer_v1 --stream=live --max-ranges=1`.

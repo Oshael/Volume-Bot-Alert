@@ -6928,6 +6928,26 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage262-robinhood-transfer-scope-bitmaps',
+    name: 'Stage 262 Robinhood immutable historical transfer scope bitmaps',
+    repair: 'node src/utils/db-init-stage262.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_scope_dictionary', columns: ['chain', 'ordinal', 'token_address'],
+      constraints: [
+        { name: 'rh_transfer_dictionary_pkey', includes: ['PRIMARY KEY', 'chain', 'ordinal'] },
+        { name: 'rh_transfer_dictionary_token', includes: ['UNIQUE', 'token_address'] },
+        { name: 'rh_transfer_dictionary_bound', includes: ['CHECK', '999999'] },
+      ],
+      triggers: [{ name: 'rh_transfer_dictionary_immutable', includes: ['UPDATE', 'DELETE', 'TRUNCATE'] }],
+    }, {
+      table: 'robinhood_wallet_transfer_token_scopes',
+      columns: ['scope_bitmap', 'dictionary_size', 'bitmap_token_count'],
+      constraints: [{ name: 'rh_transfer_scope_bitmap_payload', includes: ['CHECK', 'bit_count', '1000000', '500000'] }],
+      indexes: [{ name: 'idx_rh_transfer_scope_bitmaps', includes: ['chain', 'scope_hash', 'scope_bitmap IS NOT NULL'] }],
+      triggers: [{ name: 'rh_transfer_bitmap_immutable', includes: ['UPDATE', 'rh_transfer_bitmap_immutable'] }],
+    }],
+  },
+  {
     key: 'stage261-robinhood-global-transfer-scans',
     name: 'Stage 261 Robinhood complete global transfer scan proof',
     repair: 'node src/utils/db-init-stage261.js',

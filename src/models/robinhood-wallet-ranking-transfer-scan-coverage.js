@@ -27,6 +27,21 @@ const SCOPES_SQL = `WITH requested AS (
     SELECT requested.token_address, scope.scan_scope_id, scope.stream,
       scope.from_block, scope.through_block, scope.checkpoint_hash
     FROM requested
+    JOIN robinhood_wallet_transfer_scope_dictionary dictionary
+      ON dictionary.chain = '${CHAIN}' AND dictionary.token_address = requested.token_address
+    JOIN robinhood_wallet_transfer_token_scopes tokens
+      ON tokens.chain = dictionary.chain AND tokens.token_addresses IS NULL
+     AND tokens.scope_bitmap IS NOT NULL
+     AND CASE WHEN dictionary.ordinal < tokens.dictionary_size
+       THEN get_bit(tokens.scope_bitmap, dictionary.ordinal) = 1 ELSE false END
+    JOIN robinhood_wallet_transfer_scan_scopes scope
+      ON scope.chain = tokens.chain AND scope.token_scope_hash = tokens.scope_hash
+     AND scope.projection_version = $2 AND scope.scope_id IS NULL
+     AND scope.from_block <= $4::bigint AND scope.through_block >= $3::bigint
+    UNION ALL
+    SELECT requested.token_address, scope.scan_scope_id, scope.stream,
+      scope.from_block, scope.through_block, scope.checkpoint_hash
+    FROM requested
     JOIN robinhood_wallet_transfer_token_scopes tokens
       ON tokens.chain = '${CHAIN}'
      AND tokens.token_addresses @> ARRAY[requested.token_address]
