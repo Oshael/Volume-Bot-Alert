@@ -5,6 +5,7 @@ const {
 } = require('./robinhood-holder-coverage');
 const { refreshExistingHotQueue } = require('./robinhood-holder-hot-queue');
 const { enqueuePublications } = require('./robinhood-holder-realtime-outbox');
+const { PENDING_TOKEN_SELECTION_SQL } = require('./robinhood-holder-pending-selection');
 
 const CHAIN = 'robinhood';
 const STREAM = 'live';
@@ -1784,28 +1785,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     if (limit < 1 || limit > 50_000) throw new Error('pendingTokens.limit is invalid');
     const shard = selectionShard(input);
     const result = await database.query(
-      `SELECT state.token_address
-         FROM robinhood_holder_token_states state
-         INNER JOIN LATERAL (
-           SELECT journal.block_number, journal.transaction_index, journal.log_index
-             FROM robinhood_holder_transfer_journal journal
-            WHERE journal.chain = state.chain
-              AND journal.token_address = state.token_address
-              AND journal.applied = false
-            ORDER BY journal.block_number, journal.transaction_index, journal.log_index
-            LIMIT 1
-         ) pending ON true
-        WHERE state.chain = 'robinhood'
-          AND state.ledger_status IN ('shadow', 'live')
-          AND NOT (state.token_address = ANY($1::varchar[]))
-          AND mod(
-            hashtextextended(state.token_address, 0) & 9223372036854775807,
-            $3::bigint
-          ) = $4::bigint
-        ORDER BY pending.block_number DESC, pending.transaction_index DESC,
-                 pending.log_index DESC,
-                 (state.ledger_status = 'live') DESC, state.token_address
-        LIMIT $2::int`,
+      PENDING_TOKEN_SELECTION_SQL,
       [excluded, limit, shard.count, shard.index]
     );
     return Object.freeze(result.rows.map((row) => row.token_address));

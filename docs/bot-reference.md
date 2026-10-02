@@ -3599,6 +3599,15 @@ Lotes hot têm no máximo 25 eventos e cada tick dura por default até 2s. O pol
 de 100ms permanece somente como recuperação. A telemetria `freshness` expõe a
 contagem de cada classe, incluindo `staleShadowTokens`, além de `pendingTokens`,
 `worstLagBlocks` e `oldestAgeMs`.
+Quando as páginas hot não oferecem candidatos, a reconciliação pelo journal busca
+o primeiro evento não aplicado de cada token no índice parcial já existente,
+avançando por endereço até 512 tokens distintos. Um 513º token, inclusive ainda
+não rastreado ou inelegível, aciona a consulta completa pelos estados do ledger;
+o limite da busca rápida nunca trunca candidatos. Os dois caminhos usam o mesmo
+snapshot SQL, filtros de estado, exclusões, shard e ordenação pelo primeiro evento
+pendente, com desempate live antes de shadow e por endereço. Esse fallback recupera
+pendências sem ticket hot; a consulta completa ainda pode ser cara sob backlog
+amplo. Não requer novo índice ou migração e preserva a prioridade da fila hot.
 O `lastResult.timing` da lease do apply
 separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
 publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
