@@ -351,19 +351,25 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
        ORDER BY block_number, action_index, transaction_hash`,
       [CHAIN, fromTime, toTime, fromBlock, toBlock, transactionHashes]
     )));
-    // V4 pools share a manager endpoint; return its identity once, not every pool.
-    // Keep V2/V3 separate so their lookup can use the pool-address index.
+    // An ordered lower-bound probe stops after one V4 entry, even for unknown
+    // endpoints. Accept only an exact match. This avoids scanning duplicate
+    // manager keys; V2/V3 retain their separate pool-address lookup.
     const poolPromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
       `SELECT protocol, pool_address, origin_address FROM robinhood_pool_registry
        WHERE chain = $1 AND active = true
          AND protocol IN ('uniswap-v2', 'uniswap-v3')
          AND pool_address = ANY($2::varchar[])
        UNION ALL
-       SELECT 'uniswap-v4' AS protocol, NULL::varchar AS pool_address, origin_address
-       FROM robinhood_pool_registry
-       WHERE chain = $1 AND active = true AND protocol = 'uniswap-v4'
-         AND origin_address = ANY($2::varchar[])
-       GROUP BY origin_address`,
+       SELECT 'uniswap-v4' AS protocol, NULL::varchar AS pool_address, matched.origin_address
+       FROM unnest($2::varchar[]) AS endpoint(origin_address)
+       CROSS JOIN LATERAL (
+         SELECT origin_address FROM robinhood_pool_registry
+         WHERE chain = $1 AND active = true AND protocol = 'uniswap-v4'
+           AND origin_address IS NOT NULL
+           AND origin_address >= endpoint.origin_address
+         ORDER BY origin_address LIMIT 1
+       ) matched
+       WHERE matched.origin_address = endpoint.origin_address`,
       [CHAIN, endpointAddresses]
     )));
     const rolePromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(

@@ -6981,6 +6981,21 @@ const SCHEMA_GROUPS = [
         includes: ['chain', 'projection_version', 'stream', 'through_block', 'from_block', 'checkpoint_hash'] }],
     }],
   },
+  {
+    key: 'stage264-robinhood-active-v4-manager-index',
+    name: 'Stage 264 Robinhood active V4 manager lookup index',
+    repair: 'node src/utils/db-init-stage264.js',
+    tables: [{
+      table: 'robinhood_pool_registry',
+      indexes: [{
+        name: 'idx_rh_pool_registry_active_v4_manager',
+        includes: [
+          '(chain, origin_address)', 'active = true',
+          "(protocol)::text = 'uniswap-v4'::text", 'origin_address IS NOT NULL',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -7026,6 +7041,7 @@ const PROFILE_GROUP_KEYS = {
     'stage214-robinhood-holder-realtime-lifecycle',
     'stage215-robinhood-token-deployment-mint-anchor',
     'stage216-robinhood-launchpad-lifecycle',
+    'stage264-robinhood-active-v4-manager-index',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

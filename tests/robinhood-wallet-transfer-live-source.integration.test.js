@@ -18,6 +18,7 @@ const stage133 = require('../src/utils/db-init-stage133');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage134 = require('../src/utils/db-init-stage134');
 const stage135 = require('../src/utils/db-init-stage135');
+const stage264 = require('../src/utils/db-init-stage264');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -46,7 +47,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
       stage63, stage90, stage91, stage116, stage120, stage122, stage133, stage129, stage134,
-      stage135,
+      stage135, stage264,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -127,10 +128,14 @@ describe('Robinhood wallet transfer LIVE source', () => {
     );
 
     const poolPayloadSizes = [];
+    const poolQueries = [];
     const repository = createRobinhoodWalletTransferLiveSourceRepository({
       database: { async query(sql, parameters) {
         const result = await db.query(sql, parameters);
-        if (sql.includes('FROM robinhood_pool_registry')) poolPayloadSizes.push(result.rows.length);
+        if (sql.includes('FROM robinhood_pool_registry')) {
+          poolPayloadSizes.push(result.rows.length);
+          poolQueries.push({ sql, parameters });
+        }
         return result;
       } },
     });
@@ -141,13 +146,13 @@ describe('Robinhood wallet transfer LIVE source', () => {
     const context = await repository.loadRangeContext({
       fromBlock: '100', toBlock: '119',
       transactionHashes: [TX],
-      endpointAddresses: [WALLET, POOL, V3_POOL, ROUTER, MANAGER, INACTIVE_MANAGER],
+      endpointAddresses: [WALLET, POOL, V3_POOL, ROUTER, MANAGER, INACTIVE_MANAGER, OTHER_MANAGER],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
     });
     const backfillContext = await repository.loadBackfillRangeContext({
       fromBlock: '100', toBlock: '119',
       transactionHashes: [TX],
-      endpointAddresses: [WALLET, POOL, V3_POOL, ROUTER, MANAGER, INACTIVE_MANAGER],
+      endpointAddresses: [WALLET, POOL, V3_POOL, ROUTER, MANAGER, INACTIVE_MANAGER, OTHER_MANAGER],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
     });
 
@@ -164,7 +169,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
     assert.equal(tokens.includes(TOKEN), true);
     assert.equal(context.swapCoverageComplete, true);
     assert.equal(context.swaps.length, 1);
-    assert.deepEqual(context.poolAddresses, [POOL, V3_POOL, MANAGER].sort());
+    assert.deepEqual(context.poolAddresses, [POOL, V3_POOL, MANAGER, OTHER_MANAGER].sort());
     assert.deepEqual(context.routerAddresses, [ROUTER]);
     assert.deepEqual(context.contractAddresses, [POOL]);
     assert.deepEqual(context.contractRoleEvidence, [{
@@ -173,12 +178,12 @@ describe('Robinhood wallet transfer LIVE source', () => {
     }]);
     assert.deepEqual(context.walletAddresses, [WALLET]);
     assert.deepEqual(context.endpointRoleCoverage, {
-      requested: 6, persisted: 1, unpersisted: 5, probes: 0,
+      requested: 7, persisted: 1, unpersisted: 6, probes: 0,
     });
     assert.equal(backfillContext.ready, true);
     assert.deepEqual(backfillContext.poolAddresses, context.poolAddresses);
     assert.deepEqual(backfillContext.rpcExemptAddresses,
-      [POOL, V3_POOL, MANAGER, ROUTER, WALLET].sort());
+      [POOL, V3_POOL, MANAGER, OTHER_MANAGER, ROUTER, WALLET].sort());
     assert.deepEqual(backfillContext.contextQueryChunks, {
       transactionHashes: 1, endpointAddresses: 1,
     });
@@ -187,7 +192,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
       const classifier = createRobinhoodTransferClassifier(rangeContext);
       for (const [toWallet, kind] of [
         [POOL, 'liquidity_flow'], [V3_POOL, 'liquidity_flow'], [MANAGER, 'liquidity_flow'],
-        [ROUTER, 'router_flow'], [INACTIVE_MANAGER, 'unknown'], [OTHER_MANAGER, 'unknown'],
+        [ROUTER, 'router_flow'], [INACTIVE_MANAGER, 'unknown'], [OTHER_MANAGER, 'liquidity_flow'],
       ]) {
         const result = classifier.classify({
           transactionHash: `0x${'c'.repeat(64)}`, logIndex: '1', tokenAddress: TOKEN,
@@ -199,7 +204,27 @@ describe('Robinhood wallet transfer LIVE source', () => {
       }
     }
     // The SQL payload must scale with endpoint identities, not V4 pool count.
-    assert.deepEqual(poolPayloadSizes, [3, 3]);
+    assert.deepEqual(poolPayloadSizes, [4, 4]);
+    // Inspect actual work, not just the deduplicated payload. Disabling sequential
+    // scans makes index eligibility deterministic even with this small fixture.
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL enable_seqscan = off');
+      const { sql, parameters } = poolQueries[0];
+      const explained = await client.query(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, parameters
+      );
+      const nodes = [explained.rows[0]['QUERY PLAN'][0].Plan];
+      for (let i = 0; i < nodes.length; i++) nodes.push(...(nodes[i].Plans || []));
+      const managerScan = nodes.find((node) => node['Index Name'] === stage264.INDEX_NAME);
+      assert.ok(managerScan, 'active V4 managers must support an indexed lookup');
+      assert.equal(managerScan['Actual Loops'], parameters[1].length);
+      assert.ok(managerScan['Actual Rows'] <= 1, 'each lookup stops at its first match');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
     assert.equal((await repository.loadBackfillRangeContext({
       fromBlock: '99', toBlock: '100', transactionHashes: [], endpointAddresses: [],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',

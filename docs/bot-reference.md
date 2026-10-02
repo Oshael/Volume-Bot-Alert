@@ -7465,9 +7465,16 @@ divididas em consultas PostgreSQL de até 10.000 identidades, sem reduzir o rang
 `contextQueryChunks` informa quantas consultas foram necessárias para hashes e
 endpoints; os limites continuam valendo por query, não por batch do backfill.
 O contexto retorna identidades de pools ativos: endereços de pools V2/V3 e um
-registro por manager V4 solicitado, deduplicado no PostgreSQL antes do retorno.
-LIVE e backfill usam a mesma consulta; a quantidade de pools V4 de um manager
-não multiplica o payload. A consulta continua lendo o registry a cada range.
+registro por manager V4 solicitado. LIVE e backfill usam a mesma consulta,
+com busca ordenada no índice parcial `idx_rh_pool_registry_active_v4_manager`
+e parada no primeiro candidato por endpoint; o candidato só é aceito quando
+seu endereço coincide com o endpoint solicitado. A quantidade de pools V4 de
+um manager não multiplica o payload nem exige ler todos os seus pools.
+A consulta continua lendo o registry a cada range, sem cache de classificação.
+Antes de reiniciar os serviços com essa versão, execute
+`node src/utils/db-init-stage264.js` e `npm run db:schema-check`.
+A Stage 264 cria o índice concorrentemente, fora de transação, e pode ser repetida
+para recuperar uma criação interrompida; não altera registros do registry.
 
 Depois de preencher os papéis, execute `npm run
 robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.
