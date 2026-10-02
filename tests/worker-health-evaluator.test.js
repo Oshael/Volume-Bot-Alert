@@ -26,8 +26,8 @@ function codes(issues) {
 describe('worker health registry', () => {
   it('registers every current durable worker lease exactly once', () => {
     const definitions = listWorkerHealthDefinitions();
-    assert.equal(definitions.length, 55);
-    assert.equal(new Set(definitions.map(({ key }) => key)).size, 55);
+    assert.equal(definitions.length, 54);
+    assert.equal(new Set(definitions.map(({ key }) => key)).size, 54);
     assert.equal(getWorkerHealthDefinition('callout-capture-worker').group, 'callouts');
     assert.deepEqual(getWorkerHealthDefinition('robinhood-catalog-projection-worker').groups,
       ['robinhood-derived', 'robinhood']);
@@ -47,6 +47,7 @@ describe('worker health registry', () => {
     assert.equal(getWorkerHealthDefinition('robinhood-wallet-transfer-live-worker').group,
       'robinhood-wallet-transfers');
     assert.equal(getWorkerHealthDefinition('unknown-worker'), null);
+    assert.equal(getWorkerHealthDefinition('robinhood-holder-summary-worker'), null);
   });
 });
 

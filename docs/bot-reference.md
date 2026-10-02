@@ -3017,12 +3017,13 @@ Stages confirmados:
 | 230 | índice parcial ordenado do claim de publicação lifecycle auditada |
 | 231 | fronteira durável por token para o início da captura live de holders |
 
-Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
-Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
+Holders RH usam o ledger local. A Stage 111 preserva summaries Blockscout legados,
+sem refresh pelo worker de resumo; as Stages 116–118 mantêm os saldos locais
 por eventos ERC-20 `Transfer`, com apenas balances positivos, journal reversível,
 detecção automática de reorg e retenção padrão de 20.000 blocos. A Stage 119 é a
 fronteira de leitura: publica o ledger somente quando o token está `live` e há
-cursor, usando o summary Blockscout nos demais estados. Ela não duplica dados.
+cursor, preservando summaries legados nos demais estados para os readers de
+workspace. A rota `/holders` exige o ledger publicado. A view não duplica dados.
 No source live `canonical_journal`, a busca de ancestral de reorg parte do hash
 do checkpoint antigo do holder e segue `parent_hash` em `robinhood_chain_blocks`
 por até 1.000 blocos, respeitando também `journal_floor_block`. Ela independe de
@@ -3157,9 +3158,9 @@ e execute
 `node src/utils/prepare-robinhood-holder-journal-compaction.js --prepare --write
 --allow-archive-recovery`.
 O prepare exige no mínimo 60 GiB livres e recusa qualquer lease holder que possa
-alterar o ledger. A lease `robinhood-holder-summary-worker` pode permanecer ativa:
-ela escreve somente projeções de resumo/snapshot e não toca no journal, balances,
-token states ou cursores. A tabela nova mantém a janela recente de 20.000 blocos e
+alterar o ledger. Leases antigas de `robinhood-holder-summary-worker`, já retirado
+do runtime, não bloqueiam o prepare. A tabela nova mantém a janela recente de
+20.000 blocos e
 pendências antigas de estados não `drifted` ou campanhas globais ativas. Eventos antigos já
 aplicados são descartados porque seus saldos atuais estão materializados; rollback
 ou reparo anterior ao cutoff exige temporariamente o archive externo, reconhecido
@@ -3334,30 +3335,30 @@ o lag ficar acima de 100 por 15 s, se cursor ou pendência estagnarem, ou se lea
 telemetria, counters ou processing degradarem. A amostra que provocar a parada é
 gravada no log antes do rollback.
 
-`monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
-`GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
-linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);
-no fallback acompanha a última observação Blockscout. A lista paginada de 50
-wallets continua vindo do Blockscout e não é um snapshot atômico com o count.
-No fallback Blockscout, o client de holders identifica `cf-mitigated: challenge`
-como `provider_blocked`. Esse erro abre imediatamente o circuito do scheduler,
-sem retries imediatos, e impede novas chamadas da fila. Após
-`ROBINHOOD_HOLDER_CIRCUIT_RESET_MS` (padrão 30 s), apenas uma sondagem pode acessar
-o provedor; sucesso libera a fila e novo bloqueio reabre o circuito. Respostas
-de chamadas anteriores ao bloqueio não liberam o circuito. O summary worker
-mantém o backoff por token e preserva a última contagem válida durante a falha.
-O circuito é local a cada scheduler; o worker e a rota HTTP possuem instâncias
-independentes. HTTP 403 sem esse cabeçalho mantém o tratamento de erro definitivo.
+`monitored`, `recent`, `old-week`, pins e tokens manuais consultam essa view em
+lote. Para `ledger_live`, freshness acompanha o cursor (`checked_at`); summaries
+legados acompanham a última observação armazenada.
+`GET /api/robinhood/holders` lê count e página exclusivamente do ledger publicado,
+sem fallback externo ou refresh de resumo. `refreshQueued` permanece `false`.
+O worker `robinhood-holder-summary-worker` foi retirado do runtime e do registro
+de saúde; as antigas flags `ROBINHOOD_HOLDER_SUMMARY_*`, `ROBINHOOD_HOLDER_HOT_*`,
+`ROBINHOOD_HOLDER_COLD_REFRESH_MS` e flags de backoff desse worker são ignoradas.
+Após atualizar o código, reinicie `trendscope-worker@robinhood-derived.service`
+na VPS2, `trendscope-web.service` na VPS1 e o monitor
+`trendscope-worker@worker-health.service` onde estiver ativo.
+Se `WORKER_HEALTH_EXPECTED_COMPONENTS` listar o worker
+retirado explicitamente, remova essa entrada antes de reiniciar o monitor.
+
 `GET /api/robinhood/holder-history` lê snapshots diários do PostgreSQL e não
 inventa comparação de 24 horas quando falta um dia. O worker diário `ledger_live`
 é opt-in por `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED`, exige captura live habilitada e
 saudável e grava batches limitados. A Stage 140 também projeta, no mesmo tick,
-`published.observed_at` para um bucket de 1h UTC; Blockscout faz o mesmo na escrita
-do summary. O bucket guarda a última observação da hora, com `ledger_live` acima de
-Blockscout, e não representa necessariamente uma coleta no fechamento exato. Não
+`published.observed_at` para um bucket de 1h UTC. O bucket guarda a última
+observação da hora, com `ledger_live` acima dos registros Blockscout legados,
+e não representa necessariamente uma coleta no fechamento exato. Não
 há backfill sub-diário. Aplique `node src/utils/db-init-stage140.js` antes do código
-e mantenha `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` ou
-`ROBINHOOD_HOLDER_SUMMARY_ENABLED` ativo para a série crescer. O backend publica
+e mantenha a publicação live ativa; `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` habilita
+a reconciliação dos snapshots. O backend publica
 `holder:count` sequenciado
 via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado e
 persiste esse evento live diretamente nos snapshots diário e horário. O worker de
@@ -4222,15 +4223,16 @@ ajustam esses limites. VPS e PC devem usar o mesmo
 `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`. Se o PC ficar offline, somente
 essa fila larga sem state aguarda; tokens já entregues ao live continuam na VPS.
 
-`GET /api/robinhood/holders` prefere o ledger PostgreSQL quando o token está
-`live`. A paginação local usa cursor opaco e ordem estável por balance decrescente
-e endereço crescente, retornando 50 wallets por página. Cursores locais nunca
-degradam para Blockscout no meio da navegação; se o state deixar de ser publicado,
-a rota falha fechado. Tokens ainda sem state `live` preservam o fallback paginado
-do Blockscout. Classificação local só afirma burn e pools conhecidos; os demais
-endereços permanecem `unknown`, sem fingir que contrato é EOA. O `summary`
+`GET /api/robinhood/holders` usa exclusivamente o ledger PostgreSQL quando o token
+está `live`. A paginação local usa cursor opaco e ordem estável por balance decrescente
+e endereço crescente, retornando 50 wallets por página. Cursores Blockscout legados
+recebem `400 INVALID_REQUEST`; a navegação deve recomeçar sem cursor. Se o token
+ainda não tiver state `live` publicado ou perder essa publicação, a rota retorna
+`503 HOLDERS_NOT_READY`, inclusive na primeira página. Classificação local só
+afirma burn e pools conhecidos; os demais endereços permanecem `unknown`, sem
+fingir que contrato é EOA. O `summary`
 inclui `totalSupplyRaw` (última observação `accepted` de `robinhood_market_observations`,
-só no caminho ledger; `null` no fallback Blockscout), consumido pelo frontend.
+ou `null` quando ausente), consumido pelo frontend.
 
 No expanded chart RH, chart, trades e holders ficam visíveis simultaneamente.
 
@@ -5675,8 +5677,7 @@ journal retido continua sendo revertido automaticamente; ausência de evidência
 canônica suficiente falha fechado. `ROBINHOOD_HOLDER_RECONCILIATION_ENABLED` pode
 permanecer `false`; quando habilitado, o reconciliador Blockscout é somente uma
 verificação externa opcional e não faz parte do caminho necessário de publicação.
-O refresh Blockscout legado continua opt-in no grupo `robinhood-derived` como
-fallback.
+O grupo `robinhood-derived` não inicializa mais o refresh Blockscout de holders.
 
 Para uma campanha global já `completed`, o one-shot
 `ROBINHOOD_HOLDER_GLOBAL_PROMOTE_RUN_ID=<id> npm run robinhood:holder-global-promote`
@@ -5768,8 +5769,8 @@ nenhum evento aplicado e no máximo uma campanha global em `scanning` ou
 `attached`, e falha se os leases dos writers live, live-apply, backfill, cold ou
 global ainda estiverem vigentes. Dentro de uma transação com CAS, remove balances e journal
 provisórios, exclui o token da campanha ativa, zera o count, limpa o checkpoint
-live e move o token para `drifted` com cursor no `deployment_block`. Isso habilita
-o fallback Blockscout imediatamente, mas o ledger local só pode voltar após replay
+live e move o token para `drifted` com cursor no `deployment_block`. A rota de
+holders retorna `HOLDERS_NOT_READY` até o ledger local voltar após replay
 integral; a unit `trendscope-worker@robinhood-holders.service` deve permanecer
 parada durante o confirm.
 

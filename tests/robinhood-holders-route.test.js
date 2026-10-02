@@ -10,6 +10,10 @@ const {
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const NOW = Date.parse('2026-08-10T05:00:00.000Z');
+const CURSOR = `ledger_v1.${Buffer.from(JSON.stringify({
+  walletAddress: `0x${'b'.repeat(40)}`, balanceRaw: '5000000000000000000',
+  rank: 1, filter: 'top',
+})).toString('base64url')}`;
 
 function cachedSummary(overrides = {}) {
   return {
@@ -28,6 +32,8 @@ function cachedSummary(overrides = {}) {
 function page() {
   return {
     address: TOKEN,
+    holderCount: 4424,
+    totalSupplyRaw: null,
     items: [{
       rank: 1,
       address: `0x${'b'.repeat(40)}`,
@@ -37,9 +43,10 @@ function page() {
       isVerifiedContract: false,
     }],
     hasMore: true,
-    nextCursor: 'opaque_cursor',
-    source: 'blockscout',
+    nextCursor: CURSOR,
+    source: 'ledger_live',
     observedAt: '2026-08-10T05:00:00.000Z',
+    checkedAt: '2026-08-10T05:00:00.000Z',
   };
 }
 
@@ -66,10 +73,8 @@ function appWith(options = {}) {
     recordFailure: async () => {},
   };
   const client = options.client || {
-    getTokenHoldersPage: async () => page(),
-    getTokenHolderSummary: async () => ({
-      available: true, holderCount: 4500, observedAt: new Date(NOW).toISOString(),
-    }),
+    getTokenHoldersPage: async () => assert.fail('Blockscout must not be contacted'),
+    getTokenHolderSummary: async () => assert.fail('Blockscout must not be contacted'),
   };
   const scheduler = options.scheduler || {
     schedule: (task) => Promise.resolve().then(task),
@@ -80,7 +85,7 @@ function appWith(options = {}) {
     repository,
     nativeBalanceProvider: options.nativeBalanceProvider,
     holderPageRepository: options.holderPageRepository || {
-      listPublishedPage: async () => null,
+      listPublishedPage: async () => page(),
     },
     holderIntelligenceRepository: options.holderIntelligenceRepository || {
       loadPage: async ({ walletAddresses }) => ({
@@ -106,13 +111,12 @@ function appWith(options = {}) {
 }
 
 describe('Robinhood holders route', () => {
-  it('requires authentication before accessing provider data', async () => {
-    let providerCalls = 0;
+  it('requires authentication before reading holder data', async () => {
+    let reads = 0;
     const response = await request(appWith({
       authenticate: (_req, res) => res.status(401).json({ error: 'Authentication required' }),
-      client: {
-        getTokenHoldersPage: async () => { providerCalls += 1; },
-        getTokenHolderSummary: async () => { providerCalls += 1; },
+      holderPageRepository: {
+        listPublishedPage: async () => { reads += 1; return page(); },
       },
     })).get(`/api/robinhood/holders?token=${TOKEN}`);
     const historyResponse = await request(appWith({
@@ -125,7 +129,7 @@ describe('Robinhood holders route', () => {
     assert.equal(response.status, 401);
     assert.equal(historyResponse.status, 401);
     assert.equal(seriesResponse.status, 401);
-    assert.equal(providerCalls, 0);
+    assert.equal(reads, 0);
   });
 
   it('rejects the RH-scoped route when Robinhood visibility is disabled', async () => {
@@ -254,7 +258,7 @@ describe('Robinhood holders route', () => {
     assert.equal(reads, 1);
   });
 
-  it('returns the normalized page with a fresh cached summary', async () => {
+  it('returns the normalized published ledger page and its fresh count', async () => {
     const response = await request(appWith())
       .get(`/api/robinhood/holders?token=${TOKEN}`);
 
@@ -266,7 +270,7 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.holders[0].rank, 1);
     assert.equal(response.body.holders[0].profile, null);
     assert.equal(response.body.hasMore, true);
-    assert.equal(response.body.nextCursor, 'opaque_cursor');
+    assert.equal(response.body.nextCursor, CURSOR);
     assert.equal(response.body.refreshQueued, false);
   });
 
@@ -435,10 +439,10 @@ describe('Robinhood holders route', () => {
         getTokenHoldersPage: async () => { providerCalls += 1; },
         getTokenHolderSummary: async () => { providerCalls += 1; },
       },
-    })).get(`/api/robinhood/holders?token=${TOKEN}&cursor=ledger_v1.e30`);
+    })).get(`/api/robinhood/holders?token=${TOKEN}&cursor=${CURSOR}`);
 
-    assert.equal(response.status, 400);
-    assert.equal(response.body.code, 'INVALID_REQUEST');
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'HOLDERS_NOT_READY');
     assert.equal(providerCalls, 0);
   });
 
@@ -479,16 +483,19 @@ describe('Robinhood holders route', () => {
     assert.equal(warnings[0][0], '[RobinhoodHoldersRoute] holder intelligence unavailable');
   });
 
-  it('queues a stale first-page summary refresh after prioritizing the page', async () => {
+  it('returns not-ready on the first page without fetching or writing fallback summaries', async () => {
     const calls = [];
     const writes = [];
     const repository = {
-      getPublishedSummaries: async () => [cachedSummary({
-        observedAt: '2026-08-10T04:00:00.000Z',
-        checkedAt: '2026-08-10T04:00:00.000Z',
-      })],
+      getPublishedSummaries: async () => {
+        calls.push('cache');
+        return [cachedSummary({
+          observedAt: '2026-08-10T04:00:00.000Z',
+          checkedAt: '2026-08-10T04:00:00.000Z',
+        })];
+      },
       recordSuccess: async (input) => writes.push(input),
-      recordFailure: async () => assert.fail('refresh should succeed'),
+      recordFailure: async (input) => writes.push(input),
     };
     const client = {
       getTokenHoldersPage: async () => { calls.push('page'); return page(); },
@@ -497,26 +504,24 @@ describe('Robinhood holders route', () => {
         return { available: true, holderCount: 4500, observedAt: new Date(NOW).toISOString() };
       },
     };
-    const response = await request(appWith({ repository, client }))
-      .get(`/api/robinhood/holders?token=${TOKEN}`);
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.equal(response.status, 200);
-    assert.equal(response.body.summary.freshness, 'stale');
-    assert.equal(response.body.refreshQueued, true);
-    assert.deepEqual(calls, ['page', 'summary']);
-    assert.equal(writes[0].holderCount, 4500);
+    const response = await request(appWith({
+      repository, client,
+      holderPageRepository: { listPublishedPage: async () => null },
+    })).get(`/api/robinhood/holders?token=${TOKEN}`);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'HOLDERS_NOT_READY');
+    assert.deepEqual(calls, []);
+    assert.deepEqual(writes, []);
   });
 
   it('publishes a live ledger count without queuing a Blockscout summary refresh', async () => {
     let summaryCalls = 0;
     const response = await request(appWith({
-      repository: {
-        getPublishedSummaries: async () => [cachedSummary({
-          source: 'ledger_live',
+      holderPageRepository: {
+        listPublishedPage: async () => ({ ...page(),
           observedAt: '2026-08-10T04:00:00.000Z',
           checkedAt: '2026-08-10T04:59:59.000Z',
-        })],
+        }),
       },
       client: {
         getTokenHoldersPage: async () => page(),
@@ -531,7 +536,7 @@ describe('Robinhood holders route', () => {
     assert.equal(summaryCalls, 0);
   });
 
-  it('does not enqueue another summary refresh while paginating', async () => {
+  it('rejects legacy Blockscout cursors without reading the ledger or contacting the provider', async () => {
     let summaryCalls = 0;
     const cursor = Buffer.from(JSON.stringify({
       address_hash: `0x${'b'.repeat(40)}`,
@@ -539,40 +544,46 @@ describe('Robinhood holders route', () => {
       value: '42',
     })).toString('base64url');
     const response = await request(appWith({
-      repository: {
-        getPublishedSummaries: async () => [cachedSummary({
-          observedAt: '2026-08-10T04:00:00.000Z',
-          checkedAt: '2026-08-10T04:00:00.000Z',
-        })],
-        recordSuccess: async () => {},
-        recordFailure: async () => {},
+      holderPageRepository: {
+        listPublishedPage: async () => assert.fail('legacy cursor must be rejected first'),
       },
       client: {
-        getTokenHoldersPage: async () => page(),
+        getTokenHoldersPage: async () => { summaryCalls += 1; return page(); },
         getTokenHolderSummary: async () => { summaryCalls += 1; },
       },
     })).get(`/api/robinhood/holders?token=${TOKEN}&cursor=${cursor}`);
 
-    assert.equal(response.status, 200);
-    assert.equal(response.body.refreshQueued, false);
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'INVALID_REQUEST');
     assert.equal(summaryCalls, 0);
   });
 
-  it('returns a safe 503 and Retry-After without exposing provider details', async () => {
-    const providerError = Object.assign(new Error('secret upstream response'), {
-      code: 'circuit_open',
-      retryAfter: '2.5',
-    });
+  it('returns a safe 503 without exposing ledger failure details', async () => {
     const response = await request(appWith({
-      client: {
-        getTokenHoldersPage: async () => { throw providerError; },
-        getTokenHolderSummary: async () => ({ available: false }),
+      holderPageRepository: {
+        listPublishedPage: async () => { throw new Error('secret database response'); },
       },
     })).get(`/api/robinhood/holders?token=${TOKEN}`);
 
     assert.equal(response.status, 503);
-    assert.equal(response.headers['retry-after'], '3');
+    assert.equal(response.headers['retry-after'], undefined);
     assert.equal(response.body.code, 'HOLDERS_UNAVAILABLE');
-    assert.doesNotMatch(JSON.stringify(response.body), /secret upstream/i);
+    assert.doesNotMatch(JSON.stringify(response.body), /secret database/i);
+  });
+
+  it('accepts ledger pagination and rejects a cursor from another filter', async () => {
+    const app = appWith({ holderPageRepository: {
+      listPublishedPage: async (input) => {
+        assert.deepEqual(input, { tokenAddress: TOKEN, cursor: CURSOR, filter: 'top' });
+        return page();
+      },
+    } });
+    const valid = await request(app).get(`/api/robinhood/holders?token=${TOKEN}&cursor=${CURSOR}`);
+    const wrongFilter = await request(app)
+      .get(`/api/robinhood/holders?token=${TOKEN}&cursor=${CURSOR}&filter=snipers`);
+    assert.equal(valid.status, 200);
+    assert.equal(valid.body.refreshQueued, false);
+    assert.equal(wrongFilter.status, 400);
+    assert.equal(wrongFilter.body.code, 'INVALID_REQUEST');
   });
 });

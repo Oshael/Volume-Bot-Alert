@@ -59,7 +59,6 @@ const robinhoodHolderIntelligenceWorker = require('./services/robinhood-holder-i
 const robinhoodHolderLiveWorker = require('./services/robinhood-holder-live-worker');
 const robinhoodHolderReconciliationWorker = require('./services/robinhood-holder-reconciliation-worker');
 const robinhoodHolderSnapshotWorker = require('./services/robinhood-holder-snapshot-worker');
-const robinhoodHolderSummaryWorker = require('./services/robinhood-holder-summary-worker');
 const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
 const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
@@ -154,7 +153,6 @@ const ROBINHOOD_HOLDER_INTELLIGENCE_LEASE_KEY = 'robinhood-holder-intelligence-w
 const ROBINHOOD_HOLDER_LIVE_LEASE_KEY = 'robinhood-holder-live-worker';
 const ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY = 'robinhood-holder-reconciliation-worker';
 const ROBINHOOD_HOLDER_SNAPSHOT_LEASE_KEY = 'robinhood-holder-snapshot-worker';
-const ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY = 'robinhood-holder-summary-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_WALLET_POSITION_LIVE_LEASE_KEY = 'robinhood-wallet-position-live-worker';
 const ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY = 'robinhood-first-buy-live-worker';
@@ -638,18 +636,6 @@ function startRobinhoodDerivedWorkerGroup() {
           ),
         }),
       }
-    );
-  }
-  if (config.robinhoodHolderSummaryWorker.enabled) {
-    startLockedWorker(
-      'robinhood-derived',
-      ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY,
-      'Robinhood holder summary worker',
-      () => robinhoodHolderSummaryWorker.start({
-        ...config.robinhoodHolderSummaryWorker,
-        requestOptions: config.robinhoodHolderRequests,
-      }),
-      { metadataProvider: () => ({ telemetry: robinhoodHolderSummaryWorker.getStatus() }) }
     );
   }
 }
@@ -1412,7 +1398,6 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodBackfillRuntime.aggregation.stop(),
       robinhoodCatalogStagingWorker.stop(),
       robinhoodCatalogProjectionWorker.stop(),
-      robinhoodHolderSummaryWorker.stop(),
       robinhoodLiveCatalogWorker.stop(),
       robinhoodRealtimeAlertWorker.stop(),
       robinhoodMarketAggregateWorker.stop(),

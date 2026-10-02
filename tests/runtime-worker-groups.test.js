@@ -1141,19 +1141,15 @@ describe('runtime worker groups config', () => {
     });
   });
 
-  it('keeps the Blockscout holder summary opt-in and bounded', () => {
+  it('ignores the retired Blockscout holder summary settings even when enabled', () => {
     withEnv({
-      ROBINHOOD_HOLDER_SUMMARY_ENABLED: undefined,
+      ROBINHOOD_HOLDER_SUMMARY_ENABLED: 'true',
       ROBINHOOD_HOLDER_SUMMARY_INTERVAL_MS: '1',
       ROBINHOOD_HOLDER_SUMMARY_BATCH_SIZE: '999',
       ROBINHOOD_HOLDER_HOT_REFRESH_MS: '1',
       ROBINHOOD_HOLDER_COLD_REFRESH_MS: '9999999999',
     }, (config) => {
-      assert.equal(config.robinhoodHolderSummaryWorker.enabled, false);
-      assert.equal(config.robinhoodHolderSummaryWorker.intervalMs, 10_000);
-      assert.equal(config.robinhoodHolderSummaryWorker.batchSize, 50);
-      assert.equal(config.robinhoodHolderSummaryWorker.hotRefreshMs, 60_000);
-      assert.equal(config.robinhoodHolderSummaryWorker.coldRefreshMs, 604_800_000);
+      assert.equal(Object.hasOwn(config, 'robinhoodHolderSummaryWorker'), false);
     });
   });
 

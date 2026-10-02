@@ -1398,18 +1398,6 @@ module.exports = {
     ),
   },
 
-  robinhoodHolderSummaryWorker: {
-    enabled: parseBoolean(process.env.ROBINHOOD_HOLDER_SUMMARY_ENABLED, false),
-    intervalMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_SUMMARY_INTERVAL_MS, 30_000, 10_000, 3_600_000),
-    batchSize: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_SUMMARY_BATCH_SIZE, 20, 2, 50),
-    hotWindowMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_HOT_WINDOW_MS, 3_600_000, 300_000, 86_400_000),
-    hotRefreshMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_HOT_REFRESH_MS, 300_000, 60_000, 3_600_000),
-    coldRefreshMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_REFRESH_MS, 21_600_000, 300_000, 604_800_000),
-    failureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_FAILURE_BACKOFF_MS, 300_000, 60_000, 3_600_000),
-    maxFailureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_MAX_FAILURE_BACKOFF_MS, 21_600_000, 60_000, 86_400_000),
-    unavailableRetryMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_UNAVAILABLE_RETRY_MS, 86_400_000, 3_600_000, 604_800_000),
-  },
-
   robinhoodHolderIntelligenceWorker: {
     enabled: robinhoodHolderIntelligenceEnabled,
     intervalMs: parseIntegerInRange(

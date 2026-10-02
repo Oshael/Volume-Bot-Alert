@@ -68,7 +68,6 @@ const DEFINITIONS = [
   ['robinhood-holder-reconciliation-worker', 'Robinhood holder reconciliation worker', 'robinhood-holders', 'polling'],
   ['robinhood-holder-journal-prune-worker', 'Robinhood holder journal prune worker', 'robinhood-holders', 'maintenance'],
   ['robinhood-holder-snapshot-worker', 'Robinhood holder snapshot worker', 'robinhood-holders', 'maintenance'],
-  ['robinhood-holder-summary-worker', 'Robinhood holder summary worker', 'robinhood-derived', 'polling'],
   ['robinhood-holder-global-backfill-worker', 'Robinhood holder global backfill worker', 'robinhood-holder-global|robinhood-holders', 'maintenance'],
   ['robinhood-backfill-discovery-scanner', 'Robinhood backfill discovery scanner', 'robinhood-backfill|robinhood', 'polling'],
   ['robinhood-backfill-market-scanner', 'Robinhood backfill market scanner', 'robinhood-backfill|robinhood', 'polling'],

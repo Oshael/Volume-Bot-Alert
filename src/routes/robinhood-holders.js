@@ -9,7 +9,6 @@ const {
 } = require('../models/robinhood-token-holder-summary');
 const {
   createRobinhoodHolderPageRepository,
-  isLedgerCursor,
   validateLedgerCursor,
 } = require('../models/robinhood-holder-page');
 const {
@@ -23,14 +22,6 @@ const {
   HOLDER_DISTRIBUTION_METRICS,
 } = require('../services/robinhood-holder-classification-domain');
 const {
-  createRobinhoodBlockscoutHoldersClient,
-  validateHoldersCursor,
-} = require('../services/robinhood-blockscout-holders');
-const {
-  createRobinhoodHolderRequestScheduler,
-  parseRetryAfterMs,
-} = require('../services/robinhood-holder-request-scheduler');
-const {
   createRobinhoodNativeBalanceProvider,
 } = require('../services/robinhood-native-balance-provider');
 const { normalizeTokenAddress } = require('../utils/token-identity');
@@ -40,7 +31,6 @@ const {
 } = require('../utils/robinhood-holder-summary-view');
 
 const DEFAULT_REFRESH_MS = 5 * 60_000;
-const DEFAULT_FAILURE_RETRY_MS = 5 * 60_000;
 const DEFAULT_HISTORY_DAYS = 30;
 const MAX_HISTORY_DAYS = 90;
 
@@ -61,15 +51,7 @@ function parseHolderFilter(value) {
 }
 
 function publicSummary(row, nowMs, refreshMs) {
-  if (!row) return Object.freeze({
-    holderCount: null,
-    totalSupplyRaw: null,
-    source: 'blockscout',
-    observedAt: null,
-    checkedAt: null,
-    freshness: 'unavailable',
-  });
-  const freshnessAt = row.source === 'ledger_live' ? row.checkedAt : row.observedAt;
+  const freshnessAt = row.checkedAt;
   const freshnessMs = freshnessAt == null ? NaN : Date.parse(freshnessAt);
   const freshness = row.holderCount == null
     ? 'unavailable'
@@ -84,42 +66,19 @@ function publicSummary(row, nowMs, refreshMs) {
   });
 }
 
-function shouldQueueRefresh(row, hasCursor, nowMs, refreshMs) {
-  if (hasCursor || row?.source === 'ledger_live') return false;
-  if (!row) return true;
-  const retryAfterMs = row.retryAfterAt == null ? NaN : Date.parse(row.retryAfterAt);
-  if (Number.isFinite(retryAfterMs) && retryAfterMs > nowMs) return false;
-  const checkedMs = Date.parse(row.checkedAt);
-  return !Number.isFinite(checkedMs) || nowMs - checkedMs >= refreshMs;
-}
-
 function safeErrorCode(error) {
   const normalized = String(error?.code || 'provider_error').trim().toLowerCase();
   return normalized.replace(/[^a-z0-9_:-]+/g, '_').slice(0, 64) || 'provider_error';
 }
 
 function parsePageCursor(value, filter = 'top') {
-  if (isLedgerCursor(value)) {
-    return Object.freeze({
-      source: 'ledger', ledgerCursor: validateLedgerCursor(value, filter), blockscoutCursor: null,
-    });
-  }
-  if (filter !== 'top') {
-    if (value != null && value !== '') throw new RangeError('filtered cursor is invalid');
-    return Object.freeze({ source: 'ledger', ledgerCursor: null, blockscoutCursor: null });
-  }
-  const blockscoutCursor = validateHoldersCursor(value);
-  return Object.freeze({
-    source: blockscoutCursor ? 'blockscout' : 'auto',
-    ledgerCursor: null, blockscoutCursor,
-  });
+  return value == null || value === '' ? null : validateLedgerCursor(value, filter);
 }
 
 async function sendPublishedLedgerPage(input) {
-  if (input.cursor.source === 'blockscout') return false;
   try {
     const page = await input.repository.listPublishedPage({
-      tokenAddress: input.tokenAddress, cursor: input.cursor.ledgerCursor, filter: input.filter,
+      tokenAddress: input.tokenAddress, cursor: input.cursor, filter: input.filter,
     });
     if (page) {
       const nativeItems = await enrichNativeBalances(
@@ -147,13 +106,10 @@ async function sendPublishedLedgerPage(input) {
       });
       return true;
     }
-    if (input.cursor.source === 'ledger') {
-      input.response.status(503).json({
-        error: 'Holder ledger is not currently published', code: 'HOLDERS_NOT_READY',
-      });
-      return true;
-    }
-    return false;
+    input.response.status(503).json({
+      error: 'Holder ledger is not currently published', code: 'HOLDERS_NOT_READY',
+    });
+    return true;
   } catch (error) {
     const invalid = error?.code === 'invalid_cursor';
     input.logger.warn?.('[RobinhoodHoldersRoute] holder ledger page unavailable', {
@@ -279,56 +235,10 @@ function createRobinhoodHoldersRouter(options = {}) {
     || createRobinhoodHolderPageRepository();
   const holderIntelligenceRepository = resolveHolderIntelligenceRepository(options);
   const holderProfileRepository = resolveHolderProfileRepository(options);
-  const client = options.client || createRobinhoodBlockscoutHoldersClient();
-  const scheduler = options.scheduler || createRobinhoodHolderRequestScheduler(
-    options.requestOptions || config.robinhoodHolderRequests
-  );
   const logger = options.logger || console;
   const nativeBalances = resolveNativeBalanceProvider(options);
   const now = options.now || Date.now;
-  const refreshMs = Number(options.refreshMs) || config.robinhoodHolderSummaryWorker?.hotRefreshMs
-    || DEFAULT_REFRESH_MS;
-  const failureRetryMs = Number(options.failureRetryMs) || DEFAULT_FAILURE_RETRY_MS;
-  const unavailableRetryMs = Number(options.unavailableRetryMs)
-    || config.robinhoodHolderSummaryWorker?.unavailableRetryMs || 24 * 60 * 60_000;
-  const refreshInFlight = new Set();
-
-  function queueSummaryRefresh(tokenAddress) {
-    if (refreshInFlight.has(tokenAddress)) return false;
-    refreshInFlight.add(tokenAddress);
-    void scheduler.schedule(() => client.getTokenHolderSummary(tokenAddress))
-      .then(
-        (summary) => {
-          const write = summary.available
-            ? repository.recordSuccess({
-                tokenAddress,
-                holderCount: summary.holderCount,
-                observedAt: summary.observedAt,
-              })
-            : repository.recordFailure({
-                tokenAddress,
-                errorCode: 'unavailable',
-                retryAfterAt: new Date(now() + unavailableRetryMs).toISOString(),
-              });
-          return write.catch((error) => logger.warn?.(
-            '[RobinhoodHoldersRoute] summary refresh persistence failed',
-            { code: safeErrorCode(error) }
-          ));
-        },
-        (error) => repository.recordFailure({
-          tokenAddress,
-          errorCode: safeErrorCode(error),
-          retryAfterAt: new Date(
-            now() + (parseRetryAfterMs(error, now()) ?? failureRetryMs)
-          ).toISOString(),
-        }).catch((persistenceError) => logger.warn?.(
-          '[RobinhoodHoldersRoute] summary refresh persistence failed',
-          { code: safeErrorCode(persistenceError) }
-        ))
-      )
-      .finally(() => refreshInFlight.delete(tokenAddress));
-    return true;
-  }
+  const refreshMs = Number(options.refreshMs) || DEFAULT_REFRESH_MS;
 
   router.get('/holder-history', auth, visibility, async (req, res) => {
     let tokenAddress;
@@ -398,66 +308,13 @@ function createRobinhoodHoldersRouter(options = {}) {
       return res.status(400).json({ error: 'token or cursor is invalid', code: 'INVALID_REQUEST' });
     }
 
-    if (await sendPublishedLedgerPage({
+    return sendPublishedLedgerPage({
       repository: holderPageRepository, tokenAddress, cursor: pageCursor,
       filter: holderFilter,
       intelligence: holderIntelligenceRepository,
       holderProfiles: holderProfileRepository,
       response: res, logger, nativeBalances, nowMs: now(), refreshMs,
-    })) return undefined;
-    const cursor = pageCursor.blockscoutCursor;
-
-    const pagePromise = scheduler.schedule(
-      () => client.getTokenHoldersPage(tokenAddress, cursor)
-    );
-    let cached = null;
-    try {
-      [cached] = await repository.getPublishedSummaries([tokenAddress]);
-    } catch (error) {
-      logger.warn?.('[RobinhoodHoldersRoute] summary cache unavailable', {
-        code: safeErrorCode(error),
-      });
-    }
-    const nowMs = now();
-    const refreshQueued = shouldQueueRefresh(cached, cursor != null, nowMs, refreshMs)
-      ? queueSummaryRefresh(tokenAddress) : false;
-
-    try {
-      const page = await pagePromise;
-      const nativeItems = await enrichNativeBalances(page.items, nativeBalances, logger);
-      const intelligence = await enrichIntelligence(
-        nativeItems, holderIntelligenceRepository, tokenAddress, logger
-      );
-      const holders = await enrichHolderProfiles(
-        intelligence.holders, holderProfileRepository, logger
-      );
-      return res.json({
-        token: tokenAddress, filter: holderFilter,
-        summary: publicSummary(cached, nowMs, refreshMs),
-        holders,
-        classificationVersion: intelligence.classificationVersion,
-        classificationStatus: intelligence.classificationStatus,
-        classificationThroughBlock: intelligence.classificationThroughBlock,
-        distribution: intelligence.distribution,
-        hasMore: page.hasMore,
-        nextCursor: page.nextCursor,
-        observedAt: page.observedAt,
-        refreshQueued,
-      });
-    } catch (error) {
-      const retryAfterMs = parseRetryAfterMs(error, now());
-      if (retryAfterMs !== null) {
-        res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
-      }
-      logger.warn?.('[RobinhoodHoldersRoute] page unavailable', {
-        code: safeErrorCode(error),
-        httpStatus: Number(error?.httpStatus) || null,
-      });
-      return res.status(503).json({
-        error: 'Holder data is temporarily unavailable',
-        code: 'HOLDERS_UNAVAILABLE',
-      });
-    }
+    });
   });
 
   return router;
@@ -468,7 +325,7 @@ router.createRobinhoodHoldersRouter = createRobinhoodHoldersRouter;
 router.__private = {
   enrichIntelligence, enrichNativeBalances, parseHistoryDays, parseHolderFilter, publicSummary,
   resolveNativeBalanceProvider,
-  safeErrorCode, shouldQueueRefresh,
+  safeErrorCode,
 };
 
 module.exports = router;
