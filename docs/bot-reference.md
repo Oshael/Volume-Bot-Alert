@@ -7454,6 +7454,10 @@ As listas de `transactionHashes`, `endpointAddresses` e roles também são
 divididas em consultas PostgreSQL de até 10.000 identidades, sem reduzir o range.
 `contextQueryChunks` informa quantas consultas foram necessárias para hashes e
 endpoints; os limites continuam valendo por query, não por batch do backfill.
+O contexto retorna identidades de pools ativos: endereços de pools V2/V3 e um
+registro por manager V4 solicitado, deduplicado no PostgreSQL antes do retorno.
+LIVE e backfill usam a mesma consulta; a quantidade de pools V4 de um manager
+não multiplica o payload. A consulta continua lendo o registry a cada range.
 
 Depois de preencher os papéis, execute `npm run
 robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.

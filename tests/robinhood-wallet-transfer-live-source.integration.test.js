@@ -7,6 +7,7 @@ const db = require('../src/models/db');
 const {
   createRobinhoodWalletTransferLiveSourceRepository,
 } = require('../src/models/robinhood-wallet-transfer-live-source');
+const { createRobinhoodTransferClassifier } = require('../src/services/robinhood-transfer-classifier');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage91 = require('../src/utils/db-init-stage91');
@@ -23,13 +24,17 @@ const TOKEN = `0x${'1'.repeat(40)}`;
 const WALLET = `0x${'2'.repeat(40)}`;
 const POOL = `0x${'3'.repeat(40)}`;
 const ROUTER = `0x${'4'.repeat(40)}`;
+const MANAGER = `0x${'5'.repeat(40)}`;
+const INACTIVE_MANAGER = `0x${'6'.repeat(40)}`;
+const OTHER_MANAGER = `0x${'7'.repeat(40)}`;
+const V3_POOL = `0x${'8'.repeat(40)}`;
 const TX = `0x${'a'.repeat(64)}`;
 const HASH = `0x${'b'.repeat(64)}`;
 const PARTITION = 'robinhood_wallet_swaps_2099_02_01';
 
 async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_swaps WHERE transaction_hash = $1', [TX]);
-  await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', ['test-transfer-source']);
+  await db.query('DELETE FROM robinhood_pool_registry WHERE market_key LIKE $1', ['test-transfer-source%']);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query("DELETE FROM robinhood_wallet_swap_cursors WHERE chain = 'robinhood' AND stream IN ('seed', 'live')");
   await db.query("DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = 'test_transfer_plan_v1'");
@@ -86,8 +91,22 @@ describe('Robinhood wallet transfer LIVE source', () => {
          quote_address, currency0, currency1, discovery_block, discovery_block_hash,
          discovery_tx_hash, discovery_log_index, discovered_at
        ) VALUES ('robinhood', 'uniswap-v2', 'test-transfer-source', $1, $3, $2,
+         $3, $2, $3, 1, $4, $5, 1, NOW()),
+         ('robinhood', 'uniswap-v3', 'test-transfer-source-v3', $6, $3, $2,
          $3, $2, $3, 1, $4, $5, 1, NOW())`,
-      [POOL, TOKEN, ROUTER, HASH, TX]
+      [POOL, TOKEN, ROUTER, HASH, TX, V3_POOL]
+    );
+    await db.query(
+      `INSERT INTO robinhood_pool_registry (
+         chain, protocol, market_key, pool_id, origin_address, token_address,
+         quote_address, currency0, currency1, discovery_block, discovery_block_hash,
+         discovery_tx_hash, discovery_log_index, discovered_at, active
+       ) SELECT 'robinhood', 'uniswap-v4', 'test-transfer-source-v4-' || id,
+         '0x' || repeat('e', 60) || lpad(to_hex(id), 4, '0'),
+         CASE WHEN id <= 128 THEN $1 WHEN id = 129 THEN $2 ELSE $3 END,
+         $4, $5, $4, $5, 1, $6, $7, id, NOW(), id <> 129
+       FROM generate_series(1, 130) AS fixture(id)`,
+      [MANAGER, INACTIVE_MANAGER, OTHER_MANAGER, TOKEN, ROUTER, HASH, TX]
     );
     await db.query(
       `INSERT INTO robinhood_wallet_swaps (
@@ -107,19 +126,28 @@ describe('Robinhood wallet transfer LIVE source', () => {
       [POOL, HASH]
     );
 
-    const repository = createRobinhoodWalletTransferLiveSourceRepository({ database: db });
+    const poolPayloadSizes = [];
+    const repository = createRobinhoodWalletTransferLiveSourceRepository({
+      database: { async query(sql, parameters) {
+        const result = await db.query(sql, parameters);
+        if (sql.includes('FROM robinhood_pool_registry')) poolPayloadSizes.push(result.rows.length);
+        return result;
+      } },
+    });
     const frontier = await repository.loadSwapFrontier();
     const backfillFrontier = await repository.loadBackfillFrontier();
     const backfillPlan = await repository.loadBackfillPlan('test_transfer_plan_v1');
     const tokens = await repository.listTrackedTokenAddresses();
     const context = await repository.loadRangeContext({
       fromBlock: '100', toBlock: '119',
-      transactionHashes: [TX], endpointAddresses: [WALLET, POOL, ROUTER],
+      transactionHashes: [TX],
+      endpointAddresses: [WALLET, POOL, V3_POOL, ROUTER, MANAGER, INACTIVE_MANAGER],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
     });
     const backfillContext = await repository.loadBackfillRangeContext({
       fromBlock: '100', toBlock: '119',
-      transactionHashes: [TX], endpointAddresses: [WALLET, POOL, ROUTER],
+      transactionHashes: [TX],
+      endpointAddresses: [WALLET, POOL, V3_POOL, ROUTER, MANAGER, INACTIVE_MANAGER],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
     });
 
@@ -136,7 +164,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
     assert.equal(tokens.includes(TOKEN), true);
     assert.equal(context.swapCoverageComplete, true);
     assert.equal(context.swaps.length, 1);
-    assert.deepEqual(context.poolAddresses, [POOL]);
+    assert.deepEqual(context.poolAddresses, [POOL, V3_POOL, MANAGER].sort());
     assert.deepEqual(context.routerAddresses, [ROUTER]);
     assert.deepEqual(context.contractAddresses, [POOL]);
     assert.deepEqual(context.contractRoleEvidence, [{
@@ -145,14 +173,33 @@ describe('Robinhood wallet transfer LIVE source', () => {
     }]);
     assert.deepEqual(context.walletAddresses, [WALLET]);
     assert.deepEqual(context.endpointRoleCoverage, {
-      requested: 3, persisted: 1, unpersisted: 2, probes: 0,
+      requested: 6, persisted: 1, unpersisted: 5, probes: 0,
     });
     assert.equal(backfillContext.ready, true);
-    assert.deepEqual(backfillContext.rpcExemptAddresses, [POOL, ROUTER, WALLET].sort());
+    assert.deepEqual(backfillContext.poolAddresses, context.poolAddresses);
+    assert.deepEqual(backfillContext.rpcExemptAddresses,
+      [POOL, V3_POOL, MANAGER, ROUTER, WALLET].sort());
     assert.deepEqual(backfillContext.contextQueryChunks, {
       transactionHashes: 1, endpointAddresses: 1,
     });
     assert.equal(backfillContext.swaps.length, 1);
+    for (const rangeContext of [context, backfillContext]) {
+      const classifier = createRobinhoodTransferClassifier(rangeContext);
+      for (const [toWallet, kind] of [
+        [POOL, 'liquidity_flow'], [V3_POOL, 'liquidity_flow'], [MANAGER, 'liquidity_flow'],
+        [ROUTER, 'router_flow'], [INACTIVE_MANAGER, 'unknown'], [OTHER_MANAGER, 'unknown'],
+      ]) {
+        const result = classifier.classify({
+          transactionHash: `0x${'c'.repeat(64)}`, logIndex: '1', tokenAddress: TOKEN,
+          fromWallet: WALLET, toWallet, amountRaw: '1',
+        }, rangeContext);
+        assert.equal(result.kind, kind);
+        assert.equal(result.affectsPosition, false);
+        assert.equal(result.connectionEligible, false);
+      }
+    }
+    // The SQL payload must scale with endpoint identities, not V4 pool count.
+    assert.deepEqual(poolPayloadSizes, [3, 3]);
     assert.equal((await repository.loadBackfillRangeContext({
       fromBlock: '99', toBlock: '100', transactionHashes: [], endpointAddresses: [],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',

@@ -351,11 +351,19 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
        ORDER BY block_number, action_index, transaction_hash`,
       [CHAIN, fromTime, toTime, fromBlock, toBlock, transactionHashes]
     )));
+    // V4 pools share a manager endpoint; return its identity once, not every pool.
+    // Keep V2/V3 separate so their lookup can use the pool-address index.
     const poolPromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
       `SELECT protocol, pool_address, origin_address FROM robinhood_pool_registry
        WHERE chain = $1 AND active = true
-         AND (pool_address = ANY($2::varchar[])
-           OR (protocol = 'uniswap-v4' AND origin_address = ANY($2::varchar[])))`,
+         AND protocol IN ('uniswap-v2', 'uniswap-v3')
+         AND pool_address = ANY($2::varchar[])
+       UNION ALL
+       SELECT 'uniswap-v4' AS protocol, NULL::varchar AS pool_address, origin_address
+       FROM robinhood_pool_registry
+       WHERE chain = $1 AND active = true AND protocol = 'uniswap-v4'
+         AND origin_address = ANY($2::varchar[])
+       GROUP BY origin_address`,
       [CHAIN, endpointAddresses]
     )));
     const rolePromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
