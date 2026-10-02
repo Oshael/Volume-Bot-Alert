@@ -6948,6 +6948,20 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage263-robinhood-transfer-scope-bitmap-staging',
+    name: 'Stage 263 Robinhood immutable transfer scope bitmap preparation',
+    repair: 'node src/utils/db-init-stage263.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_scope_bitmap_staging',
+      columns: ['chain', 'scope_hash', 'scope_bitmap', 'dictionary_size', 'bitmap_token_count', 'created_at'],
+      constraints: [
+        { name: 'rh_transfer_bitmap_staging_pkey', includes: ['PRIMARY KEY', 'chain', 'scope_hash'] },
+        { name: 'rh_transfer_bitmap_staging_payload', includes: ['CHECK', 'bit_count', '1000000', '500000'] },
+      ],
+      triggers: [{ name: 'rh_transfer_bitmap_staging_immutable', includes: ['UPDATE', 'DELETE', 'TRUNCATE'] }],
+    }],
+  },
+  {
     key: 'stage261-robinhood-global-transfer-scans',
     name: 'Stage 261 Robinhood complete global transfer scan proof',
     repair: 'node src/utils/db-init-stage261.js',

@@ -57,27 +57,31 @@ async function completeDictionary(query, tokens, dictionary, commit) {
   }
   return missing.length;
 }
-async function stageMap(query, hash, tokens, dictionary, existing, commit) {
+function validateLegacyScope(existing, hash) {
   if (existing?.array_present && !existing.token_addresses) throw new Error('oversized existing token scope');
   if (existing?.token_addresses) fingerprint(existing.token_addresses, hash);
-  if (existing?.scope_bitmap) {
-    decodeScopeBitmap(mapPayload(existing), dictionary);
-    return { payload: mapPayload(existing), status: 'verified-existing' };
-  }
-  if (existing && !existing.token_addresses) throw new Error('missing or oversized existing token scope');
+  if (existing && !existing.token_addresses && !existing.scope_bitmap) throw new Error('missing existing token scope');
+}
+async function stageMap(query, hash, tokens, dictionary, prepared, commit) {
+  if (prepared) return { payload: mapPayload(prepared), status: 'verified-existing', storage: prepared.storage };
   const payload = encodeScopeBitmap(tokens, dictionary);
   decodeScopeBitmap(payload, dictionary);
-  if (!commit) return { payload, status: 'would-stage' };
-  if (existing) await query(`UPDATE robinhood_wallet_transfer_token_scopes
-    SET scope_bitmap=$2,dictionary_size=$3,bitmap_token_count=$4 WHERE chain='robinhood' AND scope_hash=$1`,
-  [hash, payload.bitmap, payload.dictionarySize, payload.tokenCount]);
-  else await query(`INSERT INTO robinhood_wallet_transfer_token_scopes
-    (chain,scope_hash,token_addresses,scope_bitmap,dictionary_size,bitmap_token_count)
-    VALUES ('robinhood',$1,NULL,$2,$3,$4)`, [hash, payload.bitmap, payload.dictionarySize, payload.tokenCount]);
+  if (!commit) return { payload, status: 'would-stage', storage: 'staging' };
+  await query(`INSERT INTO robinhood_wallet_transfer_scope_bitmap_staging
+    (chain,scope_hash,scope_bitmap,dictionary_size,bitmap_token_count)
+    VALUES ('robinhood',$1,$2,$3,$4)`, [hash, payload.bitmap, payload.dictionarySize, payload.tokenCount]);
   const saved = (await query(`SELECT scope_hash,scope_bitmap,dictionary_size,bitmap_token_count
-    FROM robinhood_wallet_transfer_token_scopes WHERE chain='robinhood' AND scope_hash=$1`, [hash])).rows[0];
+    FROM robinhood_wallet_transfer_scope_bitmap_staging WHERE chain='robinhood' AND scope_hash=$1`, [hash])).rows[0];
   decodeScopeBitmap(mapPayload(saved), dictionary);
-  return { payload, status: 'staged' };
+  return { payload, status: 'staged', storage: 'staging' };
+}
+async function preparedMap(query, hash, existing, dictionary) {
+  const staged = (await query(`SELECT scope_hash,scope_bitmap,dictionary_size,bitmap_token_count
+    FROM robinhood_wallet_transfer_scope_bitmap_staging WHERE chain='robinhood' AND scope_hash=$1`, [hash])).rows[0];
+  if (existing?.scope_bitmap) decodeScopeBitmap(mapPayload(existing), dictionary);
+  if (staged) decodeScopeBitmap(mapPayload(staged), dictionary);
+  if (staged) return { ...staged, storage: 'staging' };
+  return existing?.scope_bitmap ? { ...existing, storage: 'legacy' } : null;
 }
 async function stageSource(query, row, options) {
   if (!['topics-only', 'address-filtered'].includes(row.filter_mode)) throw new Error('unsupported historical scope');
@@ -94,14 +98,16 @@ async function stageSource(query, row, options) {
     CASE WHEN cardinality(token_addresses)<=$2 THEN token_addresses ELSE NULL END AS token_addresses,
     scope_bitmap,dictionary_size,bitmap_token_count
     FROM robinhood_wallet_transfer_token_scopes WHERE chain='robinhood' AND scope_hash=$1
-    ${options.commit ? 'FOR UPDATE' : ''}`, [hash, options.maxTokens])).rows[0];
+    ${options.commit ? 'FOR SHARE' : ''}`, [hash, options.maxTokens])).rows[0];
+  validateLegacyScope(existing, hash);
   const dictionary = await readDictionary(query);
-  const added = existing?.scope_bitmap ? 0 : await completeDictionary(query, tokens, dictionary, options.commit);
-  const { payload, status } = await stageMap(query, hash, tokens, dictionary, existing, options.commit);
+  const prepared = await preparedMap(query, hash, existing, dictionary);
+  const added = prepared ? 0 : await completeDictionary(query, tokens, dictionary, options.commit);
+  const { payload, status, storage } = await stageMap(query, hash, tokens, dictionary, prepared, options.commit);
   return { scanScopeId: row.id, hash, fromBlock: row.from_block, throughBlock: row.through_block,
     checkpointHash: row.checkpoint_hash, source: row.token_scope_hash ? 'hashed' : 'inline',
     tokens: tokens.length, dictionaryAdded: added, dictionarySize: payload.dictionarySize,
-    bitmapBytes: payload.bitmap.length, status };
+    bitmapBytes: payload.bitmap.length, status, storage };
 }
 async function convertOne(database, options, cursor, deadline) {
   const client = await database.getClient();

@@ -4,7 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { after, before, beforeEach, afterEach, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
-const stages = [256, 258, 262].map((n) => require(`../src/utils/db-init-stage${n}`));
+const stages = [256, 258, 262, 263].map((n) => require(`../src/utils/db-init-stage${n}`));
 const { convertScopeHistory } = require('../src/models/robinhood-wallet-transfer-scope-converter');
 const { main } = require('../src/utils/convert-robinhood-wallet-transfer-scope-history');
 const { decodeScopeBitmap } = require('../src/models/robinhood-wallet-transfer-scope-bitmap');
@@ -25,10 +25,16 @@ async function source(members = tokens, hashed = false, scopeId = null) {
 async function count(table) { return (await client.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n; }
 const dictionaryCount = () => count('robinhood_wallet_transfer_scope_dictionary');
 async function saved(hash) {
-  const row = (await client.query('SELECT * FROM robinhood_wallet_transfer_token_scopes WHERE scope_hash=$1', [hash])).rows[0];
+  const row = (await client.query('SELECT * FROM robinhood_wallet_transfer_scope_bitmap_staging WHERE scope_hash=$1', [hash])).rows[0];
   const dictionary = (await client.query('SELECT token_address,ordinal FROM robinhood_wallet_transfer_scope_dictionary')).rows;
   return { row, tokens: decodeScopeBitmap({ bitmap: row.scope_bitmap, dictionarySize: row.dictionary_size,
     tokenCount: row.bitmap_token_count, scopeHash: row.scope_hash }, dictionary) };
+}
+async function protectLegacy() {
+  await client.query(`CREATE FUNCTION forbid_legacy_write() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'legacy scope write forbidden during preparation'; END $$`);
+  await client.query(`CREATE TRIGGER forbid_legacy_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+    ON robinhood_wallet_transfer_token_scopes FOR EACH STATEMENT EXECUTE FUNCTION forbid_legacy_write()`);
 }
 describe('Historical scope bitmap staging', () => {
   before(async () => { await assertUsingTestDatabase(db); client = await db.getClient(); });
@@ -55,16 +61,21 @@ describe('Historical scope bitmap staging', () => {
     assert.equal(report.mode, 'dry-run'); assert.equal(report.stopReason, 'cohort-end');
     assert.deepEqual(report.measured.map((m) => m.source), ['inline', 'hashed']);
     assert.equal(progress.length, 2); assert.equal(await dictionaryCount(), 0);
+    assert.equal(await count('robinhood_wallet_transfer_scope_bitmap_staging'), 0);
     assert.deepEqual((await client.query(`SELECT last_value,is_called FROM ${sequence}`)).rows, before);
     assert.equal((await client.query('SELECT scope_bitmap FROM robinhood_wallet_transfer_token_scopes')).rows[0].scope_bitmap, null);
   });
   it('stages exact membership including removal/reentry and deduplicates without changing source ranges', async () => {
     const first = await source(tokens.toReversed()); await source(tokens.slice(1), true); await source();
     const ranges = (await client.query('SELECT * FROM robinhood_wallet_transfer_scan_scopes ORDER BY scan_scope_id')).rows;
+    const legacy = (await client.query('SELECT * FROM robinhood_wallet_transfer_token_scopes')).rows;
+    await protectLegacy();
     const report = await main(['--projection-version=convert', '--stream=live', '--max-ranges=10', '--commit'],
       { database, logger: { log() {} } });
     assert.deepEqual(report.measured.map((r) => r.status), ['staged', 'staged', 'verified-existing']);
-    assert.equal(await dictionaryCount(), 3); assert.equal(await count('robinhood_wallet_transfer_token_scopes'), 2);
+    assert.equal(await dictionaryCount(), 3); assert.equal(await count('robinhood_wallet_transfer_scope_bitmap_staging'), 2);
+    assert.deepEqual((await client.query('SELECT * FROM robinhood_wallet_transfer_token_scopes')).rows, legacy);
+    assert.ok(report.measured.every((r) => r.storage === 'staging'));
     assert.deepEqual((await saved(first.hash)).tokens, tokens);
     assert.deepEqual((await client.query('SELECT * FROM robinhood_wallet_transfer_scan_scopes ORDER BY scan_scope_id')).rows, ranges);
     const retry = await convertScopeHistory(database, { ...input, commit: true });
@@ -84,23 +95,64 @@ describe('Historical scope bitmap staging', () => {
   it('rolls back dictionary/map writes on failure and safely retries burned identity gaps', async () => {
     const { hash } = await source();
     const failing = { getClient: async () => ({ release() {}, query(sql, params) {
-      if (sql.startsWith('INSERT INTO robinhood_wallet_transfer_token_scopes')) throw new Error('injected map failure');
+      if (sql.startsWith('INSERT INTO robinhood_wallet_transfer_scope_bitmap_staging')) throw new Error('injected map failure');
       return client.query(sql, params);
     } }) };
     await assert.rejects(convertScopeHistory(failing, { ...input, commit: true }), /injected/);
     assert.equal(await dictionaryCount(), 0); assert.equal(await count('robinhood_wallet_transfer_token_scopes'), 0);
+    assert.equal(await count('robinhood_wallet_transfer_scope_bitmap_staging'), 0);
     await convertScopeHistory(database, { ...input, commit: true });
     assert.deepEqual((await saved(hash)).tokens, tokens); assert.equal(await dictionaryCount(), 3);
   });
-  it('stages 414065 tokens in bounded dictionary batches without consuming IDs on retry', async () => {
+  it('stages a 414065-token hashed scope without legacy writes or new identity reservations on retry', async () => {
     const members = Array.from({ length: 414065 }, (_, n) => `0x${n.toString(16).padStart(40, '0')}`);
-    const { hash } = await source(members);
+    const { hash } = await source(members, true);
+    const legacy = (await client.query('SELECT * FROM robinhood_wallet_transfer_token_scopes')).rows;
+    await protectLegacy();
+    // Production already has 408623 dictionary entries; this hashed set adds 5442.
+    for (let offset = 0; offset < 408623; offset += 5000) {
+      await client.query(`INSERT INTO robinhood_wallet_transfer_scope_dictionary(chain,token_address)
+        SELECT 'robinhood',token FROM unnest($1::text[]) token ORDER BY token`,
+      [members.slice(offset, Math.min(offset + 5000, 408623))]);
+    }
     const first = await convertScopeHistory(database, { ...input, commit: true, budgetMs: 30000 });
-    assert.equal(first.measured[0].dictionaryAdded, 414065);
+    assert.equal(first.measured[0].dictionaryAdded, 5442);
     assert.deepEqual((await saved(hash)).tokens, members);
+    const sequence = (await client.query(`SELECT pg_get_serial_sequence('robinhood_wallet_transfer_scope_dictionary','ordinal') AS name`)).rows[0].name;
+    const reserved = (await client.query(`SELECT last_value,is_called FROM ${sequence}`)).rows;
     const retry = await convertScopeHistory(database, { ...input, commit: true, budgetMs: 30000 });
     assert.equal(retry.measured[0].dictionarySize, first.measured[0].dictionarySize);
     assert.equal(await dictionaryCount(), 414065);
+    assert.deepEqual((await client.query(`SELECT last_value,is_called FROM ${sequence}`)).rows, reserved);
+    assert.deepEqual((await client.query('SELECT * FROM robinhood_wallet_transfer_token_scopes')).rows, legacy);
+  });
+  it('reuses an already published legacy map without rewriting it or creating a duplicate staging map', async () => {
+    const { hash } = await source(tokens, true);
+    await client.query(`INSERT INTO robinhood_wallet_transfer_scope_dictionary(chain,token_address)
+      SELECT 'robinhood',token FROM unnest($1::text[]) token ORDER BY token`, [tokens]);
+    await client.query(`UPDATE robinhood_wallet_transfer_token_scopes SET scope_bitmap=$1,
+      dictionary_size=3,bitmap_token_count=3 WHERE scope_hash=$2`, [Buffer.from([7]), hash]);
+    await protectLegacy();
+    const report = await convertScopeHistory(database, { ...input, commit: true });
+    assert.equal(report.measured[0].storage, 'legacy');
+    assert.equal(report.measured[0].status, 'verified-existing');
+    assert.equal(report.measured[0].dictionaryAdded, 0);
+    assert.equal(await count('robinhood_wallet_transfer_scope_bitmap_staging'), 0);
+  });
+  it('initializes staging idempotently and enforces bounded, immutable payloads', async () => {
+    await stages.at(-1).init({ database, closePool: false });
+    const { hash } = await source(); await convertScopeHistory(database, { ...input, commit: true });
+    for (const sql of ['UPDATE robinhood_wallet_transfer_scope_bitmap_staging SET dictionary_size=3',
+      'DELETE FROM robinhood_wallet_transfer_scope_bitmap_staging', 'TRUNCATE robinhood_wallet_transfer_scope_bitmap_staging']) {
+      await assert.rejects(client.query(sql), /immutable/);
+    }
+    for (const [bitmap, size, count] of [[Buffer.from([15]), 3, 4], [Buffer.from([7]), 3, 2],
+      [Buffer.alloc(0), 0, 1], [Buffer.alloc(1), 1000001, 1], [Buffer.from([7]), 3, 500001]]) {
+      await assert.rejects(client.query(`INSERT INTO robinhood_wallet_transfer_scope_bitmap_staging
+        (chain,scope_hash,scope_bitmap,dictionary_size,bitmap_token_count) VALUES ('robinhood',$1,$2,$3,$4)`,
+      ['a'.repeat(64), bitmap, size, count]), /rh_transfer_bitmap_staging_payload/);
+    }
+    assert.deepEqual((await saved(hash)).tokens, tokens);
   });
   it('refuses corruption, oversized sources and noncanonical checkpoints before staging', async () => {
     await source(tokens, true);

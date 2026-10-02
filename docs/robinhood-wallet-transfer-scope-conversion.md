@@ -4,15 +4,21 @@ Ferramenta manual, fora do LIVE. Ela prepara uma representação equivalente dos
 arrays inline e conjuntos por hash, sem retirar a fonte nem trocar referências
 dos ranges. O progresso confirmado é o mapa imutável gravado por hash. Repetir um
 range valida/reutiliza esse mapa, sem reservar novamente IDs de tokens conhecidos.
+Mapas novos são inseridos em `robinhood_wallet_transfer_scope_bitmap_staging`
+(Stage 263), sem `INSERT`/`UPDATE` na tabela legada de conjuntos. Mapas publicados
+anteriormente nas colunas da Stage 262 também são validados e reutilizados.
 
 **Ponto importante:** aprovação de código não autoriza executar `--commit` na VPS.
 Esta preparação não libera os 96,5 GiB nem comprova correção do lag. Ela pode
 acrescentar espaço e WAL; a recuperação física e a retirada dos arrays são operações
-posteriores. Mapas de arrays inline permanecem sem referência FK durante esta fase:
-não executar limpeza de conjuntos “órfãos”.
+posteriores. A tabela de preparação não tem FK para os conjuntos legados, pois
+arrays inline ainda não têm referência por hash: não limpar mapas “órfãos”.
+Leitores e gates de cobertura não consultam essa tabela; a preparação não publica
+mapas nem muda a fonte de verdade do ranking.
 
-Antes do piloto, aplicar Stage 262, conferir seu contrato no schema-check e manter
-os leitores compatíveis publicados. Conferir orçamento de disco/WAL, slots/archive,
+Antes de publicar/reiniciar código que exige esse schema, aplicar Stage 262 e
+Stage 263 (`node src/utils/db-init-stage263.js`) e executar `npm run db:schema-check`.
+Manter os leitores compatíveis publicados. Conferir orçamento de disco/WAL, slots/archive,
 leases e frontier de capture, swaps e transfers. Não iniciar quando o LIVE estiver
 atrasado ou houver pressão de disco/I/O. A ferramenta não instala schemas nem
 ativa/reinicia workers. Não existe loop de retries, serviço ou timer.
@@ -52,7 +58,10 @@ não cria prova global, altera cursores, declara continuidade nem mede planos de
 cobertura; os gates do ranking continuam nos leitores existentes.
 
 A saída JSONL tem eventos `progress` após cada transação e `complete` no final.
-Guarde-a fora do disco sob pressão. `resume.highWaterId` fixa o maior ID da coorte
+`storage=staging` identifica a preparação separada; `storage=legacy` indica um
+mapa já existente nas colunas compatíveis. Ambos precisam passar pela validação
+do hash reconstruído; `verified-existing` não significa publicação ou continuidade.
+Guarde a saída fora do disco sob pressão. `resume.highWaterId` fixa o maior ID da coorte
 inicial; `resume.afterId` identifica o último range concluído, não necessariamente
 um bloco. Retome com ambos, usando a mesma projeção/stream e o mesmo modo:
 
@@ -79,3 +88,6 @@ e lag dos consumidores com o baseline anterior. Se piorarem, interromper a campa
 Mapas preparados ficam armazenados; arrays/referências mantidos permitem continuar
 usando a fonte antiga. Auditar toda a coorte e medir equivalência/custo de cobertura
 antes de propor a publicação de referências compactas e remoção de payloads.
+A publicação futura precisa disponibilizar os mapas nas colunas compreendidas
+pelos leitores da Stage 262 e, para inline, trocar referências. Essa operação,
+a retirada dos arrays e a recuperação física não estão implementadas no conversor.

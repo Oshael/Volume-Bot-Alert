@@ -4974,10 +4974,15 @@ obrigatórios. O schema impede mudanças dos IDs e de mapas já publicados, mas
 o conversor valida o hash reconstruído; retirar arrays exige uma operação separada.
 O LIVE canônico continua usando provas globais, sem alimentar esse dicionário.
 O conversor manual `node src/utils/convert-robinhood-wallet-transfer-scope-history.js`
-usa simulação por padrão; `--commit` somente grava mapas, preservando arrays e
-referências dos ranges. O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
+usa simulação por padrão; `--commit` insere mapas na tabela imutável
+`robinhood_wallet_transfer_scope_bitmap_staging`, preservando arrays e referências
+dos ranges sem escrever na tabela legada de conjuntos. Exige Stage 263
+(`node src/utils/db-init-stage263.js`) e schema-check antes da publicação/restart
+do código. Mapas já existentes nas colunas da Stage 262 são validados/reutilizados.
+Os leitores não consultam a preparação; a publicação continua sendo uma operação
+separada. O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
 define autorização, limites, retomada por ID e proteção do LIVE. Não é um serviço
-nem uma rotina de retenção; mapas preparados para arrays inline ainda não têm FK.
+nem uma rotina de retenção; a tabela de preparação não tem FK para conjuntos legados.
 **Ponto importante:** Stage 262 somente prepara compatibilidade. Não converte o
 histórico, não autoriza exclusões e não recupera os 96,5 GiB; compactação física
 e publicação de mapas precisam de auditoria e autorização próprias.
