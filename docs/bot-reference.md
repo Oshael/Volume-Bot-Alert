@@ -4969,6 +4969,8 @@ antes de atualizar o leitor. O [contrato de prova global](robinhood-wallet-trans
 define exceções, limites, transação e recuperação. O produtor canônico grava essa
 prova no mesmo commit financeiro/cursor/invalidação, sem arrays do catálogo por lote.
 A nova tabela não converte nem substitui provas históricas.
+O [runbook de ativação global](robinhood-wallet-transfer-global-rollout.md) define
+pré-requisitos, schema, ordem reader/writer, aceitação e rollback operacional.
 O leitor de cobertura aceita
 arrays inline, referências por hash, ranges com `scope_id`/`scope_version` e provas globais na mesma
 janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,
