@@ -162,6 +162,77 @@ describe('Robinhood holder request scheduler', () => {
     assert.equal(scheduler.getStatus().circuitOpened, 1);
   });
 
+  it('pauses queued requests immediately for a provider block and probes before resuming', async () => {
+    const clock = createClock();
+    const scheduler = createRobinhoodHolderRequestScheduler({
+      now: clock.now, sleep: clock.sleep, concurrency: 1,
+      maxRetries: 3, circuitFailureThreshold: 5, circuitResetMs: 30_000,
+    });
+    let attempts = 0;
+    const blocked = () => {
+      attempts += 1;
+      throw providerError('provider_blocked', { httpStatus: 403 });
+    };
+    const batch = await Promise.allSettled(Array.from({ length: 20 }, () => scheduler.schedule(blocked)));
+    assert.equal(attempts, 1);
+    assert.equal(batch[0].reason.code, 'provider_blocked');
+    assert.equal(batch.slice(1).every((result) => result.reason.code === 'circuit_open'), true);
+    assert.equal(scheduler.getStatus().circuitState, 'open');
+    assert.equal(scheduler.getStatus().retries, 0);
+
+    clock.advance(30_000);
+    let rejectProbe;
+    const probe = scheduler.schedule(() => new Promise((resolve, reject) => { rejectProbe = reject; }));
+    await tick();
+    await assert.rejects(scheduler.schedule(() => 'second probe'), (error) => error.code === 'circuit_open');
+    rejectProbe(providerError('provider_blocked'));
+    await assert.rejects(probe, (error) => error.code === 'provider_blocked');
+    assert.equal(scheduler.getStatus().circuitState, 'open');
+
+    clock.advance(30_000);
+    assert.equal(await scheduler.schedule(() => 'healthy'), 'healthy');
+    assert.equal(scheduler.getStatus().circuitState, 'closed');
+    assert.equal(await scheduler.schedule(() => 'resumed'), 'resumed');
+  });
+
+  it('keeps the circuit open when a pre-block request settles or awaits a start slot', async () => {
+    for (const outcome of ['success', 'definitive']) {
+      const clock = createClock();
+      const scheduler = createRobinhoodHolderRequestScheduler({
+        now: clock.now, sleep: clock.sleep, concurrency: 2,
+      });
+      let settleLate;
+      const late = scheduler.schedule(() => new Promise((resolve, reject) => {
+        settleLate = () => outcome === 'success' ? resolve('late')
+          : reject(providerError('unavailable', { retryable: false }));
+      }));
+      await tick();
+      await assert.rejects(scheduler.schedule(() => { throw providerError('provider_blocked'); }));
+      settleLate();
+      if (outcome === 'success') assert.equal(await late, 'late');
+      else await assert.rejects(late, (error) => error.code === 'unavailable');
+      assert.equal(scheduler.getStatus().circuitState, 'open');
+    }
+
+    const clock = createClock();
+    let releaseSlot;
+    const scheduler = createRobinhoodHolderRequestScheduler({
+      now: clock.now, concurrency: 2,
+      sleep: () => new Promise((resolve) => { releaseSlot = resolve; }),
+    });
+    let rejectFirst;
+    let secondStarted = false;
+    const first = scheduler.schedule(() => new Promise((resolve, reject) => { rejectFirst = reject; }));
+    const second = scheduler.schedule(() => { secondStarted = true; });
+    await tick();
+    rejectFirst(providerError('provider_blocked'));
+    await assert.rejects(first, (error) => error.code === 'provider_blocked');
+    releaseSlot();
+    await assert.rejects(second, (error) => error.code === 'circuit_open');
+    assert.equal(secondStarted, false);
+    assert.equal(scheduler.getStatus().attempts, 1);
+  });
+
   it('parses both Retry-After formats', () => {
     const now = Date.parse('2026-08-10T00:00:00.000Z');
     assert.equal(parseRetryAfterMs({ retryAfter: '1.5' }, now), 1500);

@@ -5,6 +5,8 @@ const {
   createRobinhoodHolderSummaryWorker,
   __private,
 } = require('../src/services/robinhood-holder-summary-worker');
+const { createRobinhoodBlockscoutHoldersClient } = require('../src/services/robinhood-blockscout-holders');
+const { createRobinhoodHolderRequestScheduler } = require('../src/services/robinhood-holder-request-scheduler');
 
 const TOKENS = ['a', 'b', 'c'].map((letter) => `0x${letter.repeat(40)}`);
 const NOW = Date.parse('2026-08-10T04:00:00.000Z');
@@ -86,6 +88,43 @@ describe('Robinhood holder summary worker', () => {
     assert.equal(timers.scheduled[1].delayMs, 10_000);
     await worker.stop();
     assert.equal(timers.cancelled.length, 1);
+  });
+
+  it('limits a provider challenge to one HTTP attempt and preserves candidate backoff', async () => {
+    let current = NOW;
+    let requests = 0;
+    const failures = [];
+    const successes = [];
+    const worker = createRobinhoodHolderSummaryWorker({
+      now: () => current,
+      client: createRobinhoodBlockscoutHoldersClient({
+        fetchImpl: async () => {
+          requests += 1;
+          return { status: 403, ok: false,
+            headers: { get: (name) => name === 'cf-mitigated' ? 'challenge' : null } };
+        },
+      }),
+      requestScheduler: createRobinhoodHolderRequestScheduler({
+        concurrency: 1, now: () => current, sleep: async (ms) => { current += ms; },
+      }),
+      repository: {
+        listRefreshCandidates: async () => TOKENS.map((tokenAddress) => ({
+          tokenAddress, priority: 'hot', consecutiveFailures: 0,
+        })),
+        recordSuccess: async (input) => successes.push(input),
+        recordFailure: async (input) => failures.push(input),
+      },
+    });
+    const summary = await worker.runOnce();
+    assert.equal(requests, 1);
+    assert.equal(summary.failed, 3);
+    assert.equal(summary.updated, 0);
+    assert.deepEqual(successes, []);
+    assert.deepEqual(failures.map(({ errorCode }) => errorCode),
+      ['provider_blocked', 'circuit_open', 'circuit_open']);
+    assert.equal(failures.every(({ retryAfterAt }) => Date.parse(retryAfterAt) > NOW), true);
+    assert.equal(worker.getStatus().requestScheduler.circuitState, 'open');
+    assert.equal(worker.getStatus().requestScheduler.retries, 0);
   });
 
   it('bounds refresh and failure policies coherently', () => {

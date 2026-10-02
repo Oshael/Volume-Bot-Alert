@@ -130,7 +130,7 @@ describe('Robinhood Blockscout holders client', () => {
       error instanceof RobinhoodBlockscoutHoldersError && error.code === 'timeout' && error.retryable
     ));
 
-    for (const [status, retryable] of [[429, true], [503, true], [400, false]]) {
+    for (const [status, retryable] of [[408, true], [429, true], [503, true], [400, false], [401, false], [403, false]]) {
       const failed = client(async () => response(status, null, null, { 'retry-after': '2' }));
       await assert.rejects(() => failed.getTokenHolderSummary(TOKEN), (error) => (
         error.code === 'http_error' && error.httpStatus === status
@@ -142,5 +142,22 @@ describe('Robinhood Blockscout holders client', () => {
     await assert.rejects(() => invalidJson.getTokenHolderSummary(TOKEN), (error) => (
       error.code === 'invalid_response' && error.retryable === false
     ));
+  });
+
+  it('identifies Cloudflare challenges for summaries and pages before parsing the response', async () => {
+    for (const status of [200, 403, 404, 503]) {
+      const api = client(async () => response(status, null, new Error('must not parse HTML'), {
+        'cf-mitigated': 'challenge', 'content-type': 'text/html', 'retry-after': '120',
+      }));
+      for (const request of [
+        () => api.getTokenHolderSummary(TOKEN), () => api.getTokenHoldersPage(TOKEN),
+      ]) {
+        await assert.rejects(request, (error) => (
+          error instanceof RobinhoodBlockscoutHoldersError
+          && error.code === 'provider_blocked' && error.httpStatus === status
+          && error.retryable === true && error.retryAfter === '120'
+        ));
+      }
+    }
   });
 });

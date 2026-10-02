@@ -225,6 +225,13 @@ function createRobinhoodBlockscoutHoldersClient(options = {}) {
     } finally {
       clearTimeout(timeout);
     }
+    if (response.headers?.get?.('cf-mitigated') === 'challenge') {
+      throw holdersError(`Blockscout ${resource} was blocked by a provider challenge`, 'provider_blocked', {
+        httpStatus: response.status,
+        retryable: true,
+        retryAfter: response.headers?.get?.('retry-after'),
+      });
+    }
     if (response.status === 404) return null;
     if (!response.ok) {
       const retryable = response.status === 408 || response.status === 429 || response.status >= 500;

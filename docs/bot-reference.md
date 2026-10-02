@@ -3339,6 +3339,15 @@ gravada no log antes do rollback.
 linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);
 no fallback acompanha a última observação Blockscout. A lista paginada de 50
 wallets continua vindo do Blockscout e não é um snapshot atômico com o count.
+No fallback Blockscout, o client de holders identifica `cf-mitigated: challenge`
+como `provider_blocked`. Esse erro abre imediatamente o circuito do scheduler,
+sem retries imediatos, e impede novas chamadas da fila. Após
+`ROBINHOOD_HOLDER_CIRCUIT_RESET_MS` (padrão 30 s), apenas uma sondagem pode acessar
+o provedor; sucesso libera a fila e novo bloqueio reabre o circuito. Respostas
+de chamadas anteriores ao bloqueio não liberam o circuito. O summary worker
+mantém o backoff por token e preserva a última contagem válida durante a falha.
+O circuito é local a cada scheduler; o worker e a rota HTTP possuem instâncias
+independentes. HTTP 403 sem esse cabeçalho mantém o tratamento de erro definitivo.
 `GET /api/robinhood/holder-history` lê snapshots diários do PostgreSQL e não
 inventa comparação de 24 horas quando falta um dia. O worker diário `ledger_live`
 é opt-in por `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED`, exige captura live habilitada e

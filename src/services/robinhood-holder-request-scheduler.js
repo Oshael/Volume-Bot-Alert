@@ -118,8 +118,13 @@ function createRobinhoodHolderRequestScheduler(options = {}) {
 
   function recordFinalFailure(error, wasProbe) {
     counters.failures += 1;
+    if (error?.code === 'provider_blocked') {
+      consecutiveFailures += 1;
+      openCircuit();
+      return;
+    }
     if (error?.retryable !== true) {
-      closeCircuit();
+      if (wasProbe || circuitState === 'closed') closeCircuit();
       return;
     }
     consecutiveFailures += 1;
@@ -141,6 +146,8 @@ function createRobinhoodHolderRequestScheduler(options = {}) {
       await priorGate;
       const delayMs = Math.max(0, nextStartAt - now());
       if (delayMs > 0) await sleep(delayMs);
+      // Access may have been acquired before another in-flight request blocked the provider.
+      if (circuitState === 'open') throw circuitError();
       nextStartAt = now() + minStartIntervalMs;
       counters.attempts += 1;
     } catch (error) {
@@ -169,11 +176,13 @@ function createRobinhoodHolderRequestScheduler(options = {}) {
       try {
         const result = await runInStartSlot(task, retryIndex + 1);
         counters.successes += 1;
-        closeCircuit();
+        if (wasProbe || circuitState === 'closed') closeCircuit();
         return result;
       } catch (error) {
+        if (error instanceof RobinhoodHolderSchedulerError && error.code === 'circuit_open') throw error;
         recordAttemptError(error);
-        const canRetry = error?.retryable === true && retryIndex < maxRetries;
+        const canRetry = error?.retryable === true && error.code !== 'provider_blocked'
+          && retryIndex < maxRetries;
         if (!canRetry) {
           recordFinalFailure(error, wasProbe);
           throw error;
@@ -201,7 +210,10 @@ function createRobinhoodHolderRequestScheduler(options = {}) {
   function schedule(task) {
     if (typeof task !== 'function') return Promise.reject(new TypeError('Holders task must be a function'));
     counters.requests += 1;
-    if (refreshCircuitState() === 'open') return Promise.reject(circuitError());
+    const state = refreshCircuitState();
+    if (state === 'open' || (state === 'half_open' && halfOpenInFlight)) {
+      return Promise.reject(circuitError());
+    }
     return new Promise((resolve, reject) => {
       queue.push({ task, resolve, reject });
       drain();
