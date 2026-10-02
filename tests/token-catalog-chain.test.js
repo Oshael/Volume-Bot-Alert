@@ -145,6 +145,8 @@ describe('token catalog chain identity', () => {
       assert.equal(updated.address, SOLANA);
       assert.equal(calls.length, 1);
       assert.match(calls[0], /^UPDATE token_catalog/);
+      assert.match(calls[0], /WHERE chain = 'solana' AND address = \$1/);
+      assert.match(calls[0], /ab\.chain = token_catalog\.chain AND ab\.address = token_catalog\.address/);
       assert.equal(recordedPrevious, previousRow);
     } finally {
       monitoredTokenExitEvent.recordIfExited = originalRecordIfExited;

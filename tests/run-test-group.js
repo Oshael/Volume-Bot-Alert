@@ -11,6 +11,7 @@ const INTEGRATION_TESTS = [
   'auth.test.js',
   'billing.test.js',
   'catalog.test.js',
+  'token-catalog-evaluation.integration.test.js',
   'config.test.js',
   'dashboard.test.js',
   'dashboard-radar-sql.integration.test.js',

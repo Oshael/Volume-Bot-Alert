@@ -246,7 +246,7 @@ async function getLegacySignalExitSnapshot(address) {
        evaluation_error_count,
        last_evaluation_error
      FROM token_catalog
-     WHERE address = $1
+     WHERE chain = 'solana' AND address = $1
      LIMIT 1`,
     [address]
   );
@@ -1023,7 +1023,7 @@ async function preserveGmgnPositiveVolumeWindows(address, result, volumes, previ
     const { rows } = await db.query(
       `SELECT last_vol_1h, last_vol_6h, last_vol_24h
        FROM token_catalog
-       WHERE address = $1
+       WHERE chain = 'solana' AND address = $1
        LIMIT 1`,
       [address]
     );
@@ -1887,6 +1887,7 @@ async function reactivateAdminBlockedToken(address) {
 }
 
 async function applyEvaluationResult(address, result, options = {}) {
+  // Legacy evaluation belongs to Solana; Robinhood has a dedicated catalog writer.
   await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
   const hasPreviousRow = Object.prototype.hasOwnProperty.call(options, 'previousMonitoringRow');
@@ -1967,12 +1968,12 @@ async function applyEvaluationResult(address, result, options = {}) {
            THEN NOW()
            ELSE metadata_updated_at
          END
-     WHERE address = $1
+     WHERE chain = 'solana' AND address = $1
        AND COALESCE(source, '') <> 'admin-blocked'
        AND NOT EXISTS (
          SELECT 1
          FROM admin_blocked_tokens ab
-         WHERE ab.address = token_catalog.address
+         WHERE ab.chain = token_catalog.chain AND ab.address = token_catalog.address
        )
      RETURNING *`,
     [
@@ -2031,13 +2032,13 @@ async function applyEvaluationResult(address, result, options = {}) {
          last_evaluation_error = NULL,
          evaluation_error_count = 0,
          metadata_updated_at = NOW()
-     WHERE address = $1
+     WHERE chain = 'solana' AND address = $1
        AND (
          source = 'admin-blocked'
          OR EXISTS (
            SELECT 1
            FROM admin_blocked_tokens ab
-           WHERE ab.address = token_catalog.address
+           WHERE ab.chain = token_catalog.chain AND ab.address = token_catalog.address
          )
        )
      RETURNING *`,

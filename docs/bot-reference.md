@@ -2924,6 +2924,11 @@ persistência da avaliação, evitando uma leitura pontual redundante por token;
 chamadores externos que não possuem esse snapshot preservam o fallback de
 leitura anterior.
 
+`applyEvaluationResult` pertence ao fluxo Solana: a atualização, as leituras
+auxiliares e a proteção de admin block usam a identidade `(chain, address)`
+com `chain = 'solana'`, aproveitando o índice composto existente. Avaliações
+legadas sem linha Solana retornam `null`; Robinhood mantém seu writer dedicado.
+
 ### 12.1 Recovery recente de candles via CoinGecko
 
 `npm run market-buckets:recover-coingecko` audita as últimas 12 horas completas
