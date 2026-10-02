@@ -4909,7 +4909,7 @@ massiva no caminho LIVE. O primeiro lote de um conjunto novo ainda precisa
 persistir/indexar esse conjunto. Após retomar transfers, compare na mesma janela
 o avanço e lag de capture/transfers, `lastResult.timing` e taxas de WAL/I/O;
 reduzir custo do manifesto sozinho não confirma resolução de um incidente.
-A preparação de participação versionada exige `node src/utils/db-init-stage259.js`
+Para RPC e backfill, a preparação de participação versionada exige `node src/utils/db-init-stage259.js`
 e `npm run db:schema-check`. O schema acrescenta heads, versões e intervalos de
 participação por token, sem converter manifestos antigos nem preencher membros
 durante a migration. O bootstrap operacional é isolado do LIVE: com as leases de
@@ -4936,9 +4936,11 @@ Não há cache de referências: restart relê o head durável, e rollback desfaz
 versão, manifesto, cursor e invalidação juntos. A leitura do conjunto ativo completo
 em mudanças ainda tem custo de memória/I/O; essa mudança elimina sua regravação
 integral no formato versionado, não o custo de todas as etapas de transfers.
-Os resultados expõem `scopeManifest`: em LIVE fica em `telemetry.scopeManifest`;
+No LIVE canônico, use a prova global descrita abaixo: ela não exige bootstrap
+de participação versionada. Os resultados expõem `scopeManifest`: em LIVE fica em `telemetry.scopeManifest`;
 em seed, no resultado do commit. `format=versioned` informa `scopeId`, `version`,
-`added` e `removed`; `format=legacy` informa `baseline-missing` ou `before-baseline`.
+`added` e `removed`; `format=legacy` informa `baseline-missing` ou `before-baseline`;
+`format=global` informa `globalScanId`, com candidatos/exclusões no status do worker.
 Em reorg, as versões de participação não são rebobinadas: o replay calcula outro
 delta para o conjunto efetivamente varrido e conserva manifestos/versões antigos
 para a checagem canônica. Recuperação anterior a `baseline_next_block` usa prova
@@ -4958,12 +4960,15 @@ recuperável. Não converte ranges ou instala schema.
 Para comparar a regra atual com seleção limitada aos contratos de um lote,
 use `node src/utils/audit-robinhood-wallet-transfer-selection.js` com
 `--from-block=INICIO --to-block=FIM`. O [runbook de seleção por lote](robinhood-wallet-transfer-selection-audit.md)
-descreve limites e o snapshot somente leitura. O LIVE ainda usa o conjunto completo;
-paridade dessa seleção não substitui a prova de cobertura ou comprova redução de lag.
+descreve limites e o snapshot somente leitura. No modo `canonical_journal`, o LIVE
+descobre contratos em Transfers e swaps e aplica essa regra somente aos candidatos
+do lote, num snapshot REPEATABLE READ READ ONLY; RPC mantém o catálogo completo.
+Paridade dessa seleção não comprova redução de lag.
 O leitor também suporta a prova global compacta da Stage 261; aplique esse schema
 antes de atualizar o leitor. O [contrato de prova global](robinhood-wallet-transfer-global-scan-proof.md)
-define exceções, limites, transação e recuperação. O produtor LIVE ainda usa o
-manifesto anterior; a nova tabela não converte nem substitui provas históricas.
+define exceções, limites, transação e recuperação. O produtor canônico grava essa
+prova no mesmo commit financeiro/cursor/invalidação, sem arrays do catálogo por lote.
+A nova tabela não converte nem substitui provas históricas.
 O leitor de cobertura aceita
 arrays inline, referências por hash, ranges com `scope_id`/`scope_version` e provas globais na mesma
 janela. Para o formato versionado, exige head ready da mesma chain/projeção/stream,

@@ -1,6 +1,7 @@
 const db = require('./db');
 const { publishRankingInvalidation } = require('./robinhood-wallet-ranking-invalidation');
 const { persistCaptureScope } = require('./robinhood-wallet-transfer-scan-scope');
+const { normalizeGlobalScanCapture } = require('./robinhood-wallet-transfer-global-scan-proof');
 const {
   captureTransferPreimages,
 } = require('./robinhood-wallet-transfer-reorg-journal');
@@ -224,11 +225,13 @@ function normalizeCommitInput(input) {
   if (input.events != null && !Array.isArray(input.events)) throw new Error('events must be a list');
   const captureScope = input.captureScope == null ? null
     : normalizeCaptureScope(input.captureScope, checkpointBlock, checkpointHash, next);
+  const globalScan = input.globalScan == null ? null : normalizeGlobalScanCapture(input.globalScan,
+    { stream, next, checkpointBlock, checkpointHash, captureScope, events: input.events || [] });
   return {
     projectionVersion, stream, expectedVersion: uint(input.expectedVersion, 'expectedVersion'),
     next, nextBlockTime, safeHead, checkpointBlock, checkpointHash, summarizedThroughDay,
     summary: summarize(Array.isArray(input.events) ? input.events : [], projectionVersion),
-    captureScope,
+    captureScope, globalScan,
   };
 }
 function currentPosition(current) {

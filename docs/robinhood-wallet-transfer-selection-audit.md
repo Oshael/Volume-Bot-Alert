@@ -28,7 +28,9 @@ Os tempos são sequenciais, com efeitos de cache, e não provam ganho de through
 ou causa de lag. O resultado reflete a participação atual no snapshot, não a
 participação histórica no instante dos eventos. `parity=false` encerra a CLI com erro.
 
-**Ponto importante:** o LIVE continua consultando o catálogo completo. Esta
+**Ponto importante:** o LIVE canônico usa seleção por candidatos e prova global;
+o modo RPC mantém o catálogo completo. Esta
 ferramenta não muda captura, classificação, persistência, manifesto ou cobertura.
 Paridade neste diagnóstico não autoriza usar a lista reduzida como prova de
-ausência: a futura prova global precisa ser implementada e validada separadamente.
+ausência: o [contrato global](robinhood-wallet-transfer-global-scan-proof.md) exige
+leitura completa, validação dos selecionados e commit atômico.

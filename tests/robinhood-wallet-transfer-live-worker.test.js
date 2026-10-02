@@ -118,6 +118,16 @@ describe('Robinhood wallet transfer LIVE worker', () => {
     await worker.stop();
   });
 
+  it('exposes compact global proof and selection counts in worker status', async () => {
+    const scopeManifest = { format: 'global', globalScanId: '7' };
+    const worker = createRobinhoodWalletTransferLiveWorker({ runtimeFactory: async () => ({ tickDeps: {} }),
+      runTick: async () => ({ status: 'projected', telemetry: { filterMode: 'canonical-global-v1',
+        candidateTokens: 43, excludedContracts: 16, scopeManifest } }) });
+    await worker.runOnce();
+    const result = worker.getStatus().lastResult;
+    assert.deepEqual([result.candidateTokens, result.excludedContracts, result.scopeManifest], [43, 16, scopeManifest]);
+  });
+
   it('measures source growth and net catch-up across worker samples', async () => {
     const results = [
       { status: 'projected', fromBlock: '100', nextBlock: '125', sourceThrough: '200' },

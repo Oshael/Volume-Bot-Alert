@@ -8,6 +8,7 @@ const {
 } = require('./robinhood-wallet-unified-position-batch');
 
 const STREAM = 'live';
+const { captureLiveRange } = require('./robinhood-wallet-transfer-live-capture');
 
 function createPhaseTimer(now = Date.now) {
   const startedAt = now();
@@ -200,8 +201,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     return Object.freeze({ status: 'caught-up', nextBlock: cursor.nextBlock, sourceThrough });
   }
   const range = rangeFor(cursor, sourceThrough, maxBlocks);
-  const tokenAddresses = await deps.source.listTrackedTokenAddresses();
-  const captured = await deps.evidence.readRange({ tokenAddresses, ...range });
+  const { captured, tokenAddresses, captureManifest } = await captureLiveRange(deps, range, cursor);
   const fromTime = cursor?.nextBlockTime || captured.checkpoint.blockTime;
   if (!cursor) {
     cursor = await initializeCursor(deps.projection, captured, sourceThrough);
@@ -240,8 +240,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     expectedVersion: cursor.version, nextBlock: captured.nextBlock,
     nextBlockTime: captured.checkpoint.blockTime, safeHead: sourceThrough,
     checkpointBlock: captured.checkpoint.number, checkpointHash: captured.checkpoint.hash,
-    captureScope: { fromBlock: captured.fromBlock, tokenAddresses,
-      filterMode: captured.telemetry.filterMode },
+    ...captureManifest,
     events: classified.events.filter(isEdgeEligibleTransfer),
     ...(unified.batch ? { positionBatch: unified.batch } : {}),
   });

@@ -70,4 +70,18 @@ async function persistGlobalScanProof(client, batch, capture) {
   if (!existing || existing.proof_hash !== proof.proofHash) throw new Error('global proof conflict or noncanonical checkpoint');
   return { format: 'global', globalScanId: existing.global_scan_id };
 }
-module.exports = { buildGlobalScanProof, persistGlobalScanProof, READER_VERSION };
+function normalizeGlobalScanCapture(capture, batch) {
+  const observedTokenAddresses = normalizeCandidates(capture.observedTokenAddresses);
+  const selectedTokenAddresses = normalizeCandidates(capture.selectedTokenAddresses);
+  const normalized = { ...capture, observedTokenAddresses, selectedTokenAddresses };
+  const proof = buildGlobalScanProof(normalized);
+  if (batch.captureScope || batch.stream !== 'live' || batch.next.transactionIndex !== 0 || batch.next.logIndex !== 0
+    || proof.throughBlock !== batch.checkpointBlock || proof.checkpointHash !== batch.checkpointHash
+    || BigInt(batch.next.block) !== BigInt(proof.throughBlock) + 1n) throw new Error('global scan does not match batch');
+  const allowed = new Set(selectedTokenAddresses);
+  if (batch.events.some((event) => !allowed.has(normalizeCandidates([event.tokenAddress])[0]))) {
+    throw new Error('Transfer event outside global selection');
+  }
+  return { ...normalized, fromBlock: proof.fromBlock, throughBlock: proof.throughBlock };
+}
+module.exports = { buildGlobalScanProof, normalizeGlobalScanCapture, persistGlobalScanProof, READER_VERSION };

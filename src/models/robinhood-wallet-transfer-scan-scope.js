@@ -2,9 +2,11 @@
 
 const { createHash } = require('node:crypto');
 const { persistVersionedScope } = require('./robinhood-wallet-transfer-scope-writer');
+const { persistGlobalScanProof } = require('./robinhood-wallet-transfer-global-scan-proof');
 
 // The caller supplies the sorted, unique, normalized set actually scanned.
 async function persistCaptureScope(client, batch) {
+  if (batch.globalScan) return persistGlobalScanProof(client, { ...batch, nextBlock: batch.next.block }, batch.globalScan);
   const scope = batch.captureScope;
   if (!scope?.tokenAddresses.length) return;
   const scopeHash = createHash('sha256').update(scope.tokenAddresses.join('\n')).digest('hex');

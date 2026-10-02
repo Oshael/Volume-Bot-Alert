@@ -17,7 +17,12 @@ apenas em swaps não mudam essa prova de Transfer.
 coerente com o lote e contagens exatas. O produtor precisa provar faixa integral
 canônica, limites sem truncamento e validação estrita dos logs selecionados antes
 de afirmar `complete` e `selectedLogsValidated`. Esses campos não certificam a
-origem de um objeto arbitrário. O produtor LIVE ainda não implementa esse contrato.
+origem de um objeto arbitrário. O produtor LIVE `canonical_journal` usa
+`readSelectedRange`: consulta headers, logs globais, swaps e participação atual
+num único snapshot REPEATABLE READ READ ONLY. Inclui contratos presentes apenas
+em swaps na seleção financeira. Valida estritamente Transfers selecionados;
+contratos omitidos permanecem explicitamente excluídos. Headers ausentes, cobertura
+indisponível e logs selecionados inválidos abortam antes de avançar o cursor.
 
 `persistGlobalScanProof(client,batch,capture)` revalida e trava o cursor inicial,
 exige fronteira inteira de bloco e checkpoint canônico, e não abre/commita transação.
@@ -31,13 +36,21 @@ explicitamente as provas associadas.
 Limites: até 5.000 blocos, 100.000 logs, 10.000 contratos e 450.002 bytes na
 representação textual de exceções. O banco reforça contagens e limites; listas
 com null ou endereços inválidos são recusadas. Exceder limites exige subdividir
-antes do commit, sem declarar completo um bloco/lote truncado.
+antes do commit, sem declarar completo um bloco/lote truncado. O produtor reduz
+a faixa pela metade ao exceder linhas/contratos; um único bloco acima do limite
+falha com `wallet_transfer_global_limit`, sem fallback para o catálogo completo.
+Swaps também têm teto de 100.000 linhas. Cada statement tem até 5s, lock timeout
+de 1s e orçamento compartilhado de 15s entre consultas/tentativas; transferência
+e processamento local não têm prazo rígido. O worker mantém retry/backoff e
+telemetria de candidatos, exclusões, subdivisões, manifesto e taxa/lag do cursor.
 
 O leitor agrega os quatro formatos e mantém os gates de continuidade, checkpoint
 canônico, seed/LIVE e disponibilidade raw. Sem todas essas provas, ranking permanece
 incompleto; o manifesto global sozinho não prova cobertura temporal ou financeira.
 
-**Ponto importante:** este corte prepara schema, validação, persistência e leitura.
-Não conecta o produtor LIVE, não troca o worker nem aplica a migration na VPS.
-Antes da ativação faltam produtor global limitado, seleção coerente por lote,
-integração com o commit financeiro e paridade do fluxo completo.
+**Ponto importante:** aplique Stage 261 e verifique schema antes de atualizar
+leitor e worker canônico. O commit grava prova, efeitos financeiros, cursores e
+invalidação na mesma transação; RPC e backfill preservam o manifesto anterior.
+Antes da ativação faça paridade somente leitura em faixas reais e registre
+baseline/guardrails para comparar throughput, lag, WAL e I/O. Esta integração
+não recupera o histórico de 96,5 GiB nem comprova correção do lag observado.

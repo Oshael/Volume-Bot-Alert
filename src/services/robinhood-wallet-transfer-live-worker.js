@@ -109,6 +109,8 @@ function compactTelemetry(result) {
     endpointRoleProbes: count(telemetry.endpointRoles?.probes),
     unknownEvidence: telemetry.unknownEvidence || null,
     timing: telemetry.timing || null,
+    ...(telemetry.filterMode === 'canonical-global-v1' ? { scopeManifest: telemetry.scopeManifest || null,
+      candidateTokens: count(telemetry.candidateTokens), excludedContracts: count(telemetry.excludedContracts) } : {}),
   });
 }
 

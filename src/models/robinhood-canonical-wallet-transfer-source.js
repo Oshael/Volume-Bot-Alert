@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('./db');
+const { readCandidateRange } = require('./robinhood-wallet-transfer-candidate-capture');
 
 const CHAIN = 'robinhood';
 
@@ -67,6 +68,7 @@ function createRobinhoodCanonicalWalletTransferSource(options = {}) {
 
   return Object.freeze({
     matchesCheckpoint: (checkpoint) => transferReader.matchesCheckpoint(checkpoint),
+    readSelectedRange: (input) => readCandidateRange(database, input),
     readRange,
   });
 }

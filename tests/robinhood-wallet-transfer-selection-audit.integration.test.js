@@ -1,5 +1,6 @@
 process.env.NODE_ENV = 'test';
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { before, beforeEach, after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -8,6 +9,8 @@ const { listTrackedTokens } = require('../src/models/robinhood-wallet-transfer-t
 const { auditBatchSelection } = require('../src/models/robinhood-wallet-transfer-selection-audit');
 const { parseArgs } = require('../src/utils/audit-robinhood-wallet-transfer-selection');
 const { TRANSFER_TOPIC } = require('../src/services/evm-erc20-supply-delta');
+const { createRobinhoodCanonicalWalletTransferSource } = require('../src/models/robinhood-canonical-wallet-transfer-source');
+const { buildGlobalScanProof } = require('../src/models/robinhood-wallet-transfer-global-scan-proof');
 const token = (id) => `0x${id.toString(16).padStart(40, '0')}`;
 const hash = `0x${'a'.repeat(64)}`;
 const tables = ['robinhood_holder_token_states', 'robinhood_holder_global_backfill_runs',
@@ -120,5 +123,57 @@ describe('Candidate transfer selection and read-only batch parity', () => {
       await assert.rejects(auditBatchSelection(database, input), /invalid/);
     }
     for (const args of [['--commit'], ['--from-block=1', '--from-block=2']]) assert.throws(() => parseArgs(args), /argument/);
+  });
+  function candidateSource() {
+    return createRobinhoodCanonicalWalletTransferSource({ database,
+      transferReader: { readGlobalRange() { throw new Error('legacy capture invoked'); }, matchesCheckpoint: async () => true } });
+  }
+  it('captures selected Transfers and swap-only contracts, preserving explicit exclusions and the legacy result', async () => {
+    await event(token(1), 1);
+    await event(token(4), 2, true);
+    await event(token(2), 3, false, `0x${'b'.repeat(64)}`);
+    await client.query(`INSERT INTO robinhood_wallet_swaps VALUES
+      ('robinhood',$1,$2,1,$3,101,'2099-01-01T00:00:01Z')`, [token(5), hash, token(90)]);
+    const input = { fromBlock: 100, toBlock: 102 };
+    const expected = await auditBatchSelection(database, input);
+    const captured = await candidateSource().readSelectedRange(input);
+    assert.equal(readonly, 'on');
+    assert.deepEqual(captured.selectedTokenAddresses, [token(1), token(5)]);
+    assert.equal(captured.transfers.length, expected.transfers.full.count);
+    const legacyTransfers = captured.transfers.map(({ blockTime: _blockTime, ...transfer }) => transfer);
+    assert.equal(createHash('sha256').update(JSON.stringify(legacyTransfers)).digest('hex'), expected.transfers.full.hash);
+    assert.equal(captured.transfers[0].tokenAddress, token(1));
+    assert.equal(captured.transfers[0].blockTime, '2099-01-01T00:00:01.000Z');
+    assert.deepEqual(buildGlobalScanProof(captured.globalScan).excludedTokenAddresses, [token(4)]);
+    await event(token(1), 4, true);
+    await assert.rejects(candidateSource().readSelectedRange(input), (error) => error.code === 'holder_transfer_invalid_log');
+    assert.equal((await client.query('SHOW transaction_read_only')).rows[0].transaction_read_only, 'off');
+  });
+  it('reduces dense ranges without truncation, and fails on an oversized single block', async () => {
+    await event(token(1), 1);
+    await event(token(1), 2);
+    const input = { fromBlock: 100, toBlock: 102, maximumRows: 1 };
+    const captured = await candidateSource().readSelectedRange(input);
+    assert.deepEqual([captured.fromBlock, captured.toBlock, captured.nextBlock], ['100', '100', '101']);
+    assert.equal(captured.telemetry.splits, 2);
+    assert.deepEqual(buildGlobalScanProof(captured.globalScan).excludedTokenAddresses, []);
+    await assert.rejects(candidateSource().readSelectedRange({ ...input, fromBlock: 101, toBlock: 101 }),
+      (error) => error.code === 'wallet_transfer_global_limit');
+    await client.query('TRUNCATE robinhood_chain_events');
+    await client.query(`INSERT INTO robinhood_wallet_swaps VALUES
+      ('robinhood',$1,$2,1,$3,101,'2099-01-01T00:00:01Z'),('robinhood',$1,$2,2,$3,101,'2099-01-01T00:00:01Z')`,
+    [token(5), hash, token(90)]);
+    await assert.rejects(candidateSource().readSelectedRange({ ...input, fromBlock: 101, toBlock: 101 }), /limit/);
+  });
+  it('rejects incomplete or invalid canonical headers before producing absence evidence', async () => {
+    const source = candidateSource(); const input = { fromBlock: 100, toBlock: 102 };
+    await assert.rejects(source.readSelectedRange({ fromBlock: 99, toBlock: 102 }), /coverage/);
+    await client.query('UPDATE robinhood_chain_blocks SET block_timestamp=NULL WHERE block_number=101');
+    await assert.rejects(source.readSelectedRange(input), /header/);
+    await client.query('DELETE FROM robinhood_chain_blocks WHERE block_number=101');
+    await assert.rejects(source.readSelectedRange(input), /header gap/);
+    for (const invalid of [{ fromBlock: -1 }, { toBlock: 5100 }, { maximumRows: 100001 }]) {
+      await assert.rejects(source.readSelectedRange({ ...input, ...invalid }), /invalid/);
+    }
   });
 });

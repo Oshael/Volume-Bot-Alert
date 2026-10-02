@@ -78,6 +78,40 @@ function dependencies(overrides = {}) {
 }
 
 describe('Robinhood wallet transfer LIVE tick', () => {
+  it('uses candidate capture and forwards its proof with swap-only selection to the financial path', async () => {
+    const swapOnly = `0x${'4'.repeat(40)}`;
+    let financialSelection;
+    const positions = {
+      loadCursor: async (_version, stream) => stream === 'seed'
+        ? { lifecycleState: 'complete', nextBlock: '100' } : cursor(),
+      initCursor: async () => { throw new Error('unexpected initialization'); },
+      loadPositions: async () => [],
+      readUnifiedRangeSwaps: async (input) => { financialSelection = input.tokenAddresses; return []; },
+    };
+    const deps = dependencies({ positions,
+      transactionPositions: { resolveSwaps: async () => ({ swaps: [], telemetry: {} }) } });
+    deps.source.listTrackedTokenAddresses = async () => { throw new Error('full catalog read'); };
+    deps.evidence.readRange = async () => { throw new Error('legacy range read'); };
+    const globalScan = { source: 'canonical-journal', complete: true, selectedLogsValidated: true,
+      fromBlock: '100', throughBlock: '100', checkpointHash: HASH, observedLogs: 1,
+      observedTokenAddresses: [TOKEN], selectedTokenAddresses: [TOKEN, swapOnly] };
+    deps.evidence.readSelectedRange = async (input) => {
+      assert.deepEqual(input, { fromBlock: '100', toBlock: '100', fromTime: TIME });
+      return { ...captured(), selectedTokenAddresses: [TOKEN, swapOnly], globalScan };
+    };
+    const result = await runRobinhoodWalletTransferLiveTick(deps, { unifiedPositionEnabled: true });
+    assert.equal(result.status, 'projected');
+    assert.deepEqual(financialSelection, [TOKEN, swapOnly]);
+    assert.deepEqual(deps.calls.projected[0].globalScan, globalScan);
+    assert.equal(deps.calls.projected[0].captureScope, undefined);
+    assert.equal(deps.calls.projected[0].positionBatch.positions.length, 2);
+    deps.evidence.readSelectedRange = async () => ({ ...captured(), selectedTokenAddresses: [TOKEN] });
+    await assert.rejects(runRobinhoodWalletTransferLiveTick(deps), /missing its global proof/);
+    deps.evidence.readSelectedRange = async () => { throw new Error('capture incomplete'); };
+    await assert.rejects(runRobinhoodWalletTransferLiveTick(deps), /capture incomplete/);
+    assert.equal(deps.calls.projected.length, 1);
+    assert.equal(deps.calls.raw.length, 1);
+  });
   it('classifies, persists raw evidence and atomically advances edge projection', async () => {
     const scopeManifest = { format: 'versioned', scopeId: '1', version: '2', added: 1, removed: 0 };
     const deps = dependencies({ projected: { committed: true, edgeGroups: 1,

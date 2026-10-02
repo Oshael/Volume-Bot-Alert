@@ -47,6 +47,7 @@ const stage256 = require('../src/utils/db-init-stage256');
 const stage257 = require('../src/utils/db-init-stage257');
 const stage258 = require('../src/utils/db-init-stage258');
 const stage259 = require('../src/utils/db-init-stage259');
+const stage261 = require('../src/utils/db-init-stage261');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -72,6 +73,7 @@ function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
 
 async function cleanup() {
   const transferVersions = [VERSION, ATOMIC_VERSION, LIVE_VERSION, SCOPE_VERSION, REUSE_VERSION];
+  await db.query('DELETE FROM robinhood_wallet_transfer_global_scans WHERE projection_version=ANY($1::varchar[])', [transferVersions]);
   const referenced = await db.query(`SELECT DISTINCT token_scope_hash
     FROM robinhood_wallet_transfer_scan_scopes WHERE projection_version=ANY($1::varchar[])
       AND token_scope_hash IS NOT NULL`, [transferVersions]);
@@ -110,7 +112,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     schemaCreated = true;
     for (const stage of [stage126, stage127, stage128, stage243, stage244, stage129,
       stage130, stage131, stage132, stage134, stage137, stage153, stage191, stage208,
-      stage256, stage257, stage258, stage259]) {
+      stage256, stage257, stage258, stage259, stage261]) {
       for (const sql of stage.STATEMENTS) await db.query(sql);
     }
     await cleanup();
@@ -120,6 +122,54 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await db.pool.end();
   });
   beforeEach(cleanup);
+
+  it('commits global proof with financial effects and rolls all state back on noncanonical proof', async () => {
+    const positions = createRobinhoodWalletPositionRepository({ database: db });
+    const transfers = createRobinhoodWalletTransferProjectionRepository({ database: db, positionProjection: positions });
+    await transfers.initCursor({ projectionVersion: ATOMIC_VERSION, stream: 'live', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00Z', safeHead: '200' });
+    await positions.initCursor({ projectionVersion: POSITION_VERSION, stream: 'live', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00Z', safeHead: '200' });
+    const transferEvent = { ...event(100, 5, 10), classificationVersion: ATOMIC_VERSION };
+    const input = { projectionVersion: ATOMIC_VERSION, stream: 'live', expectedVersion: 0,
+      nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00Z', safeHead: '200',
+      checkpointBlock: '100', checkpointHash: transferEvent.blockHash, events: [transferEvent],
+      globalScan: { source: 'canonical-journal', complete: true, selectedLogsValidated: true,
+        fromBlock: '100', throughBlock: '100', checkpointHash: transferEvent.blockHash,
+        observedLogs: 2, observedTokenAddresses: [TOKEN, BOB], selectedTokenAddresses: [TOKEN] },
+      positionBatch: { projectionVersion: POSITION_VERSION, stream: 'live', expectedVersion: 0,
+        nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00Z', safeHead: '200',
+        positions: [{ tokenAddress: TOKEN, walletAddress: ALICE, quantityRaw: '10', throughBlock: '100', throughLogIndex: '5' }] } };
+    const revision = await rankingRevision('transfers');
+    const positionRevision = await rankingRevision('positions');
+    await assert.rejects(transfers.commitBatch(input), /noncanonical/);
+    assert.equal((await transfers.loadCursor(ATOMIC_VERSION, 'live')).version, 0);
+    assert.equal((await positions.loadCursor(POSITION_VERSION, 'live')).version, 0);
+    assert.equal(await rankingRevision('transfers'), revision);
+    assert.equal(await rankingRevision('positions'), positionRevision);
+    for (const table of ['robinhood_wallet_transfer_global_scans', 'robinhood_wallet_transfer_edges',
+      'robinhood_wallet_token_positions', 'robinhood_wallet_transfer_reorg_journal']) {
+      assert.equal((await db.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
+    }
+    await db.query(`INSERT INTO robinhood_chain_blocks
+      (chain,block_number,block_hash,parent_hash,capture_digest,block_timestamp,finality,canonical,head_observed_at,receipts_available_at)
+      VALUES ('robinhood',100,$1,$2,$2,'2099-01-01T00:00:00Z','observed',true,NOW(),NOW())`,
+    [transferEvent.blockHash, `0x${'f'.repeat(64)}`]);
+    const result = await transfers.commitBatch(input);
+    assert.equal(result.committed, true);
+    assert.equal(result.captureScope.format, 'global');
+    assert.equal(await rankingRevision('transfers'), revision + 1n);
+    assert.equal(await rankingRevision('positions'), positionRevision + 1n);
+    assert.equal((await positions.loadCursor(POSITION_VERSION, 'live')).version, 1);
+    assert.deepEqual((await db.query('SELECT excluded_token_addresses,cursor_version::text FROM robinhood_wallet_transfer_global_scans')).rows,
+      [{ excluded_token_addresses: [BOB], cursor_version: '1' }]);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM robinhood_wallet_transfer_token_scopes')).rows[0].count, 0);
+    assert.deepEqual(await transfers.commitBatch(input), { committed: false, reason: 'cursor_conflict' });
+    const invalid = [ { captureScope: { fromBlock: '100', tokenAddresses: [TOKEN], filterMode: 'topics-only' } },
+      { nextLogIndex: 1 }, { globalScan: { ...input.globalScan, selectedLogsValidated: false } },
+      { events: [{ ...transferEvent, tokenAddress: BOB }] } ];
+    for (const mutation of invalid) await assert.rejects(transfers.commitBatch({ ...input, ...mutation }), /global|selection/);
+  });
 
   it('persists scanned token scope for an empty range with the cursor, not for a rejected batch', async () => {
     const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
