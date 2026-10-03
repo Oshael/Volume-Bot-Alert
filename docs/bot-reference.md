@@ -4338,10 +4338,32 @@ batch, concorrência e retry de métricas indisponíveis são configurados por
 `ROBINHOOD_HOLDER_INTELLIGENCE_CONCURRENCY` e
 `ROBINHOOD_HOLDER_INTELLIGENCE_UNAVAILABLE_RETRY_MS`.
 
+A seleção de continuidade percorre os estados live por `token_address`, com
+cursor `scanAfterToken` em memória. Cada ciclo examina no máximo cinco vezes o
+batch (até 500 estados) e materializa no máximo o batch, com a concorrência
+configurada. Páginas vazias avançam; ao fim da varredura o cursor volta ao início.
+Uma frontier sem número/hash canônico em `robinhood_chain_blocks` é adiada antes
+dos cálculos; os guards de commit continuam obrigatórios. Essa varredura limitada
+repara classificações ausentes ou defasadas sem participar de capture/apply live.
+
+Retries por token e frontier também ficam em memória: falhas usam backoff
+exponencial do intervalo até o teto de erro existente; resultado `deferred` usa
+o intervalo normal; um lote de etapas inteiramente `unchanged`/`stale_ignored`
+usa o prazo de unavailable, contado da tentativa, sem alterar timestamps dos
+snapshots. Outra frontier libera imediatamente o retry na próxima seleção.
+O cache guarda até 10.000 tokens; ao atingir esse limite descarta a entrada mais
+antiga, que pode então ser tentada antes do prazo. Restart reinicia cursor e cache,
+mas mantém as classificações duráveis e a idempotência dos writers. O prazo é
+mínimo: uma nova tentativa ainda depende de o cursor alcançar o token.
+
 Na operação, a fonte de verdade para saúde desse worker é a lease
 `robinhood-holder-intelligence-worker` em `worker_leases`. `lease_until > NOW()`,
 heartbeat recente, `metadata.telemetry.running=true`, `totalRuns` crescente,
-`lastCompletedAt` recente e `lastError=null` provam que o loop está executando.
+`lastCompletedAt` recente indicam execução do loop. Falhas parciais aparecem em
+`totalFailed`, `lastError` do ciclo e `lastFailure` com timestamp; não interrompem
+os outros tokens. `lastSelection` informa estados examinados, frontiers sem
+âncora, candidatos selecionados e retries adiados. Compare deltas e o avanço de
+`scanAfterToken`: loop ativo e `lastError=null` não provam cobertura completa.
 `totalCandidates=0` pode ser saudável quando não há tokens com ledger `live` ou
 quando todas as frontiers já estão sincronizadas; por isso ausência de writes ou
 de logs de sucesso, isoladamente, não prova falha. A mesma telemetria aparece em

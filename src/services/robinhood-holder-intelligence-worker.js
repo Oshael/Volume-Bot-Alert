@@ -13,6 +13,7 @@ const {
 const {
   createRobinhoodHolderTopDistributionMaterializer,
 } = require('./robinhood-holder-top-distribution-materializer');
+const { createHolderIntelligenceRetry } = require('./robinhood-holder-intelligence-retry');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -46,6 +47,7 @@ function createRobinhoodHolderIntelligenceWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancelSchedule = deps.cancelSchedule || clearTimeout;
   const logger = deps.logger || console;
+  const retry = createHolderIntelligenceRetry({ now: deps.now });
   const candidates = deps.candidates
     || (deps.candidateFactory || createRobinhoodHolderIntelligenceCandidateRepository)();
   const materializers = deps.materializers || Object.freeze([
@@ -62,38 +64,61 @@ function createRobinhoodHolderIntelligenceWorker(deps = {}) {
   let timer = null;
   let activeRun = null;
   let running = false;
+  let afterToken = null;
   const status = {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalCandidates: 0, totalCompleted: 0, totalDeferred: 0, totalFailed: 0,
     consecutiveErrors: 0, lastResult: null, lastError: null, lastCompletedAt: null,
+    scanAfterToken: null, lastSelection: null, lastFailure: null,
+    totalRetryDeferred: 0, totalUnanchored: 0, cachedRetryTokens: 0,
   };
 
-  async function materializeToken(tokenAddress) {
-    return Promise.allSettled(materializers.map((value) => value.materializeToken(tokenAddress)));
+  async function selectPage() {
+    const input = { limit: options.batchSize,
+      unavailableRetryMs: options.unavailableRetryMs, afterToken };
+    if (candidates.listCandidatePage) return candidates.listCandidatePage(input);
+    return { candidates: (await candidates.listCandidates(input))
+      .map((tokenAddress) => ({ tokenAddress })), exhausted: true, scanned: 0, unanchored: 0 };
+  }
+
+  async function materializeToken(candidate) {
+    const results = await Promise.allSettled(materializers
+      .map((value) => value.materializeToken(candidate.tokenAddress)));
+    return { results, error: retry.record(candidate, results, options) };
   }
 
   async function execute() {
     status.inFlight = true;
     status.totalRuns += 1;
     try {
-      const tokenAddresses = await candidates.listCandidates({
-        limit: options.batchSize, unavailableRetryMs: options.unavailableRetryMs,
-      });
+      const page = await selectPage();
+      const due = page.candidates.filter(retry.isDue);
+      const retryDeferred = page.candidates.length - due.length;
       const counts = { completed: 0, deferred: 0, failed: 0 };
-      for (let offset = 0; offset < tokenAddresses.length; offset += options.concurrency) {
-        const batch = tokenAddresses.slice(offset, offset + options.concurrency);
+      let firstError = null;
+      for (let offset = 0; offset < due.length; offset += options.concurrency) {
+        const batch = due.slice(offset, offset + options.concurrency);
         const tokenResults = await Promise.all(batch.map(materializeToken));
-        for (const results of tokenResults) {
+        for (const { results, error } of tokenResults) {
+          firstError ||= error;
           for (const result of results) counts[resultBucket(result)] += 1;
         }
       }
-      const result = Object.freeze({ candidates: tokenAddresses.length, ...counts });
-      status.totalCandidates += tokenAddresses.length;
+      afterToken = page.exhausted ? null : page.nextToken;
+      status.scanAfterToken = afterToken;
+      status.lastSelection = { scanned: page.scanned, unanchored: page.unanchored,
+        selected: page.candidates.length, retryDeferred, exhausted: page.exhausted };
+      status.totalRetryDeferred += retryDeferred;
+      status.totalUnanchored += page.unanchored;
+      status.cachedRetryTokens = retry.getSize();
+      const result = Object.freeze({ candidates: due.length, ...counts });
+      status.totalCandidates += due.length;
       status.totalCompleted += counts.completed;
       status.totalDeferred += counts.deferred;
       status.totalFailed += counts.failed;
       status.consecutiveErrors = 0;
-      status.lastError = null;
+      status.lastError = firstError;
+      if (firstError) status.lastFailure = { ...firstError, at: new Date().toISOString() };
       status.lastResult = result;
       return result;
     } catch (error) {
