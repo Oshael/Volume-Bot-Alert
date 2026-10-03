@@ -4356,6 +4356,35 @@ antiga, que pode então ser tentada antes do prazo. Restart reinicia cursor e ca
 mas mantém as classificações duráveis e a idempotência dos writers. O prazo é
 mínimo: uma nova tentativa ainda depende de o cursor alcançar o token.
 
+Frontiers históricas do ledger legacy podem ter manifesto vigente e não possuir
+mais o header no journal raw. O comando manual
+`node src/utils/repair-robinhood-holder-frontier-anchors.js` verifica essas provas
+por RPC sem gravar por padrão. Usa `ROBINHOOD_ARCHIVE_RPC_URL` ou, na ausência,
+`ROBINHOOD_RPC_URL`; exige chain ID 4663 e número/hash/timestamp coerentes. Antes
+dos headers históricos, verifica também o checkpoint capturado no mesmo RPC.
+`--block=35641986` restringe o piloto a um bloco; `--scan-limit=500` limita estados
+e aceita até 5.000; `--after-token=<nextToken>` continua a varredura por endereço.
+O JSON compacto informa `scanned`, `nextToken`, `exhausted`, `distinctAnchors`
+e resultados por bloco/hash. `sampledTokens` conta somente estados desta página.
+
+Para persistir, acrescente **ambas** as flags `--apply` e
+`--confirm-repair-robinhood-holder-frontier-anchors`, após revisar o preview.
+O reparo deduplica bloco/hash na página, executa RPC com concorrência 1, espaçamento
+mínimo de 100 ms, sem retry automático e timeout padrão de 5 s
+(`--timeout-ms`, máximo 60 s). Cada prova é gravada em transação curta, com fence
+compartilhado de recovery, geração de captura inalterada e revalidação do estado
+e manifesto usados como amostra. Recovery, divergência canônica, hash durável
+ambíguo ou timestamp conflitante impedem a gravação; nenhuma evidência é sobrescrita.
+Após o insert, a prova armazenada é conferida novamente, inclusive se outro writer
+inseriu a mesma chave durante a verificação.
+Só insere em `robinhood_chain_block_anchors`, sem alterar saldos, frontiers,
+manifestos ou criar captura incompleta em `robinhood_chain_blocks`; não exige migration.
+`stale` exige nova seleção; `unresolved` retorna exit code 1 e deve ser investigado
+antes de repetir a mesma página, sem avançar sobre falhas. A execução é sob demanda,
+fora do caminho live, sem serviço ou agendamento. Âncoras duráveis restauradas ainda
+não liberam a inteligência: a seleção e os writers atualmente exigem o header raw
+canônico. Não retire esse guard para executar o reparo.
+
 Na operação, a fonte de verdade para saúde desse worker é a lease
 `robinhood-holder-intelligence-worker` em `worker_leases`. `lease_until > NOW()`,
 heartbeat recente, `metadata.telemetry.running=true`, `totalRuns` crescente,
