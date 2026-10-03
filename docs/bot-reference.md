@@ -5011,10 +5011,15 @@ Os leitores não consultam a preparação. A ferramenta manual
 `node src/utils/publish-robinhood-wallet-transfer-scope-maps.js` publica mapas por
 hash ausentes após auditoria final, preservando arrays e ranges; conjuntos legados
 com arrays ficam pendentes de troca atômica para evitar reinserção no GIN.
-Usa simulação por padrão,
-transação por mapa e retomada por hash. O [runbook de publicação](robinhood-wallet-transfer-scope-publication.md)
-define limites, evidências e autorização de escrita. A troca de referências inline
-e a retirada dos arrays continuam separadas. O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
+Usa simulação por padrão, transação por mapa e retomada por hash. O modo explícito
+`--cutover-hashed-arrays` valida cada membro do array atual contra o mapa auditado,
+bloqueia o conjunto e publica bitmap/retira array atomicamente após autorização
+específica. Um mapa confirmado é reutilizado sem UPDATE. Não muda referências,
+ranges, cursores ou métrica; o trigger impede recolocar o array retirado.
+O [runbook de publicação](robinhood-wallet-transfer-scope-publication.md) define
+limites, evidências, cursor por operação e autorização de escrita. A troca de
+referências inline e a recuperação física continuam separadas.
+O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
 define autorização, limites, retomada por ID e proteção do LIVE. Não é um serviço
 nem uma rotina de retenção; a tabela de preparação não tem FK para conjuntos legados.
 **Ponto importante:** Stage 262 somente prepara compatibilidade. Não converte o

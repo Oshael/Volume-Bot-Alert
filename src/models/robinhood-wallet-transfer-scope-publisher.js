@@ -30,33 +30,57 @@ function optionsFor(input, maps) {
   const maxMaps = Number(input.maxMaps ?? 1), budgetMs = Number(input.budgetMs ?? 10000);
   if (!Number.isInteger(maxMaps) || maxMaps < 1 || maxMaps > 50
     || !Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 30000
-    || (input.commit != null && typeof input.commit !== 'boolean')) throw new Error('invalid publication limits');
+    || (input.commit != null && typeof input.commit !== 'boolean')
+    || (input.cutoverArrays != null && typeof input.cutoverArrays !== 'boolean')) throw new Error('invalid publication limits');
   const afterHash = input.afterHash ?? null;
   if (afterHash !== null && (!HASH.test(afterHash) || !maps.some(m => m.hash === afterHash))) {
     throw new Error('resume hash is outside audited cohort');
   }
-  return { maxMaps, budgetMs, afterHash, commit: input.commit === true };
+  return { maxMaps, budgetMs, afterHash, commit: input.commit === true, cutoverArrays: input.cutoverArrays === true };
 }
 function validateMap(row, saved, dictionary) {
   if (!row) throw new Error('audited map missing');
   const proof = metadataHash({ hash: row.scope_hash, size: row.dictionary_size,
     count: row.bitmap_token_count, bytes: digest(row.scope_bitmap) });
   if (proof !== saved.bitmap || row.bitmap_token_count !== saved.count) throw new Error('audited bitmap changed');
-  decodeScopeBitmap({ bitmap: row.scope_bitmap, dictionarySize: row.dictionary_size,
+  return decodeScopeBitmap({ bitmap: row.scope_bitmap, dictionarySize: row.dictionary_size,
     tokenCount: row.bitmap_token_count, scopeHash: row.scope_hash }, dictionary);
 }
-async function publishOne(query, saved, dictionary, commit) {
+async function cutoverArray(query, legacy, payload, saved, dictionary, members, commit) {
+  if (!Array.isArray(legacy.token_addresses) || legacy.token_addresses.length !== members.length
+    || !members.every((token, i) => legacy.token_addresses[i] === token)) {
+    throw new Error('legacy array differs from audited membership');
+  }
+  if (legacy.scope_bitmap) validateMap(legacy, saved, dictionary);
+  if (!commit) return 'would-cutover-array';
+  // Publish the replacement and retire its source together; never expose a missing payload.
+  const stored = (await query(`UPDATE robinhood_wallet_transfer_token_scopes SET
+    scope_bitmap=$2,dictionary_size=$3,bitmap_token_count=$4,token_addresses=NULL
+    WHERE chain='robinhood' AND scope_hash=$1 AND token_addresses IS NOT NULL
+    RETURNING scope_hash,scope_bitmap,dictionary_size,bitmap_token_count,token_addresses`,
+  [saved.hash, payload.scope_bitmap, payload.dictionary_size, payload.bitmap_token_count])).rows[0];
+  validateMap(stored, saved, dictionary);
+  if (stored.token_addresses !== null) throw new Error('legacy array was not retired');
+  return 'array-cutover';
+}
+async function publishOne(query, saved, dictionary, options) {
+  const { commit, cutoverArrays } = options;
   const legacy = (await query(`SELECT scope_hash,scope_bitmap,dictionary_size,bitmap_token_count
+    ${cutoverArrays ? ',token_addresses' : ''}
     FROM robinhood_wallet_transfer_token_scopes
-    WHERE chain='robinhood' AND scope_hash=$1`, [saved.hash])).rows[0];
+    WHERE chain='robinhood' AND scope_hash=$1${cutoverArrays && commit ? ' FOR UPDATE' : ''}`, [saved.hash])).rows[0];
   const staged = (await query(`SELECT scope_hash,scope_bitmap,dictionary_size,bitmap_token_count
     FROM robinhood_wallet_transfer_scope_bitmap_staging WHERE chain='robinhood' AND scope_hash=$1`, [saved.hash])).rows[0];
   const payload = saved.storage === 'legacy' ? legacy : staged;
-  validateMap(payload, saved, dictionary);
+  const members = validateMap(payload, saved, dictionary);
+  if (cutoverArrays && legacy && legacy.token_addresses !== null) {
+    return cutoverArray(query, legacy, payload, saved, dictionary, members, commit);
+  }
   if (legacy?.scope_bitmap) {
     validateMap(legacy, saved, dictionary);
     return 'verified-existing';
   }
+  if (cutoverArrays) throw new Error('scope missing from publication table; publish maps before cutover');
   // Updating bitmap columns can force GIN reinsertion of a huge unchanged array.
   // Publishing and removing that array must instead be a separately authorized atomic cutover.
   if (legacy) return 'deferred-array-cutover';
@@ -74,7 +98,9 @@ async function publishOne(query, saved, dictionary, commit) {
 async function publishScopeMaps(database, input, onProgress = () => {}) {
   const maps = auditMaps(input.audit), options = optionsFor(input, maps);
   const report = { mode: options.commit ? 'publish-maps-only' : 'dry-run', auditChecksum: input.audit.checksum,
+    operation: options.cutoverArrays ? 'hashed-array-cutover' : 'map-publication',
     measured: [], resume: { afterHash: options.afterHash }, stopReason: 'map-limit' };
+  if (options.cutoverArrays && options.commit) report.mode = 'cutover-hashed-arrays';
   const deadline = Date.now() + options.budgetMs, client = await database.getClient();
   async function query(sql, params) {
     const remaining = deadline - Date.now();
@@ -101,7 +127,7 @@ async function publishScopeMaps(database, input, onProgress = () => {}) {
     for (const saved of remaining.slice(0, options.maxMaps)) {
       if (Date.now() >= deadline) { report.stopReason = 'time-budget'; break; }
       await begin();
-      const status = await publishOne(query, saved, dictionary, options.commit);
+      const status = await publishOne(query, saved, dictionary, options);
       if (Date.now() >= deadline) throw new Error('publication time budget exhausted');
       await client.query('COMMIT');
       report.measured.push({ hash: saved.hash, tokens: saved.count, status });

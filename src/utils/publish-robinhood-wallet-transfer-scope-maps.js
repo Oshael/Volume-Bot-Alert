@@ -6,6 +6,7 @@ function parseArgs(argv) {
   const options = {};
   for (const arg of argv) {
     if (arg === '--commit' && !Object.hasOwn(options, 'commit')) { options.commit = true; continue; }
+    if (arg === '--cutover-hashed-arrays' && !Object.hasOwn(options, 'cutoverArrays')) { options.cutoverArrays = true; continue; }
     const match = /^--([a-z-]+)=(.+)$/.exec(arg);
     if (!match || !flags[match[1]] || Object.hasOwn(options, flags[match[1]])) throw new Error('invalid publication argument');
     options[flags[match[1]]] = match[2];
