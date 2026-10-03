@@ -88,6 +88,7 @@ e lag dos consumidores com o baseline anterior. Se piorarem, interromper a campa
 Mapas preparados ficam armazenados; arrays/referências mantidos permitem continuar
 usando a fonte antiga. Auditar toda a coorte e medir equivalência/custo de cobertura
 antes de propor a publicação de referências compactas e remoção de payloads.
-A publicação futura precisa disponibilizar os mapas nas colunas compreendidas
-pelos leitores da Stage 262 e, para inline, trocar referências. Essa operação,
-a retirada dos arrays e a recuperação física não estão implementadas no conversor.
+A [ferramenta de publicação](robinhood-wallet-transfer-scope-publication.md) disponibiliza
+os mapas nas colunas compreendidas pelos leitores da Stage 262, preservando os arrays.
+Para inline, ainda é necessário trocar referências. Essa troca, a retirada dos
+arrays e a recuperação física não estão implementadas no conversor/publicador.

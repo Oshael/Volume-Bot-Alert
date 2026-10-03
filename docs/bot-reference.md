@@ -5007,8 +5007,14 @@ usa simulação por padrão; `--commit` insere mapas na tabela imutável
 dos ranges sem escrever na tabela legada de conjuntos. Exige Stage 263
 (`node src/utils/db-init-stage263.js`) e schema-check antes da publicação/restart
 do código. Mapas já existentes nas colunas da Stage 262 são validados/reutilizados.
-Os leitores não consultam a preparação; a publicação continua sendo uma operação
-separada. O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
+Os leitores não consultam a preparação. A ferramenta manual
+`node src/utils/publish-robinhood-wallet-transfer-scope-maps.js` publica mapas por
+hash ausentes após auditoria final, preservando arrays e ranges; conjuntos legados
+com arrays ficam pendentes de troca atômica para evitar reinserção no GIN.
+Usa simulação por padrão,
+transação por mapa e retomada por hash. O [runbook de publicação](robinhood-wallet-transfer-scope-publication.md)
+define limites, evidências e autorização de escrita. A troca de referências inline
+e a retirada dos arrays continuam separadas. O [runbook de preparação](robinhood-wallet-transfer-scope-conversion.md)
 define autorização, limites, retomada por ID e proteção do LIVE. Não é um serviço
 nem uma rotina de retenção; a tabela de preparação não tem FK para conjuntos legados.
 **Ponto importante:** Stage 262 somente prepara compatibilidade. Não converte o
