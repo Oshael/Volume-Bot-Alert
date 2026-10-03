@@ -64,6 +64,15 @@ Always review the complete `git diff` before proposing or creating a commit. Rep
 - If validation is interrupted, reuse still-valid results and report what passed, what stopped, and the residual risk. If the user asks to stop validation, stop immediately and start no new commands.
 - Final reports should lead with the outcome and include affected files, validation, material risks, commit hashes when applicable, and pending work. Omit transcripts, repeated rationale, and unchanged details.
 
+### VPS diagnostic output
+
+- Minimize output tokens during VPS analysis. Prefer compact machine-readable output; remove decorative alignment, padding, borders, banners, repeated headers/footers, and pagers.
+- For PostgreSQL, prefer `psql -XAt -P pager=off` or compact JSON/JSONL through the database client. For positional output, state column names/order and units once; do not repeat presentation-only labels for every row.
+- Select only columns needed for the current hypothesis, bound rows and time windows, and prefer aggregates, rates/deltas, and small representative samples. Avoid `SELECT *`, full telemetry objects, and complete query-plan dumps unless their contents are needed to distinguish causes.
+- For logs and code, use targeted `rg` searches and bounded excerpts. Do not dump whole files or logs when a focused selection answers the question.
+- Save bulky raw evidence to local files when necessary and bring only relevant fields, summaries, and error excerpts into the model context. Expand the output only when the next diagnostic question requires it.
+- Preserve diagnostic meaning: field identities, units, timestamps/timezone, correlation keys, nulls, relevant errors, and contrary evidence. Formatting is dispensable; necessary metadata is not. Make sampling, omitted fields, and truncation explicit when they limit the conclusion.
+
 ## Change limits and commits
 
 - A slice may change at most 500 lines, counted as additions plus deletions across code, tests, schema, and documentation; new files count in full.
