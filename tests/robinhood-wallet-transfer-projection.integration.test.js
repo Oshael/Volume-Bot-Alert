@@ -49,6 +49,7 @@ const stage258 = require('../src/utils/db-init-stage258');
 const stage259 = require('../src/utils/db-init-stage259');
 const stage261 = require('../src/utils/db-init-stage261');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
+const { captureTransferPreimages } = require('../src/models/robinhood-wallet-transfer-reorg-journal');
 
 const VERSION = 'test_transfer_projection_v1';
 const ATOMIC_VERSION = 'test_transfer_position_atomic_v1';
@@ -484,6 +485,92 @@ describe('Robinhood wallet transfer projection persistence', () => {
     assert.deepEqual(position.rows, [{ quantity_raw: '10' }]);
     assert.equal(transferCursor.version, 1);
     assert.equal(positionCursor.version, 1);
+  });
+
+  it('bounds daily preimage reads while preserving UTC days, versions and duplicate transfers', async () => {
+    const client = await db.getClient();
+    const amount = '1234567890123456789012345678901234567890';
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL statement_timeout = '10s'");
+      await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_daily_summaries
+        (LIKE ${schema}.robinhood_wallet_transfer_daily_summaries INCLUDING ALL)
+        ON COMMIT DROP`);
+      const insertSql = `INSERT INTO robinhood_wallet_transfer_daily_summaries (
+        chain, projection_version, summary_day, token_address,
+        transfer_count, total_amount_raw, wallet_transfer_count, wallet_transfer_amount_raw,
+        dex_flow_count, dex_flow_amount_raw, through_block, through_transaction_index,
+        through_log_index, through_block_time
+      )`;
+      await client.query(`${insertSql}
+        SELECT 'robinhood', $1, DATE '2099-01-01', '0x' || lpad(to_hex(id), 40, '0'),
+          1, 10, 0, 0, 1, 10, 99, 0, 0, '2099-01-01T00:00:00Z'::timestamptz
+        FROM generate_series(1, 100000) id`, [LIVE_VERSION]);
+      const fixtures = [
+        { version: LIVE_VERSION, day: '2099-01-01', token: TOKEN, amount },
+        { version: LIVE_VERSION, day: '2099-01-02', token: TOKEN, amount: '20' },
+        { version: VERSION, day: '2099-01-02', token: BOB, amount: '99' },
+        { version: LIVE_VERSION, day: '2099-01-01', token: BOB, amount: '30' },
+        { version: LIVE_VERSION, day: '2099-01-03', token: TOKEN, amount: '40' },
+      ];
+      await client.query(`${insertSql}
+        SELECT 'robinhood', item.version, item.day::date, item.token,
+          1, item.amount::numeric, 0, 0, 1, item.amount::numeric, 99, 0, 0,
+          (item.day || 'T00:00:00Z')::timestamptz
+        FROM jsonb_to_recordset($1::jsonb) AS item(version text, day text, token text, amount text)`,
+      [JSON.stringify(fixtures)]);
+      await client.query('ANALYZE robinhood_wallet_transfer_daily_summaries');
+      const events = [
+        { ...event(100, 1, 10, 'dex_flow'), blockTime: '2099-01-01T23:59:59.000Z' },
+        { ...event(100, 2, 10, 'dex_flow'), blockTime: '2099-01-01T23:59:59.999Z' },
+        event(101, 3, 20, 'dex_flow'),
+        { ...event(101, 4, 99, 'dex_flow'), tokenAddress: BOB },
+      ].map((row) => ({ ...row, block: row.blockNumber }));
+      let dailyLookup;
+      const recorded = {
+        async query(sql, params) {
+          if (sql.includes('robinhood_wallet_transfer_daily_summaries summary')) {
+            dailyLookup = { sql, params };
+          }
+          return client.query(sql, params);
+        },
+      };
+      assert.equal(await captureTransferPreimages(recorded, LIVE_VERSION, events), 6);
+      const { rows } = await client.query(`SELECT identity_key, had_previous, previous_row
+        FROM robinhood_wallet_transfer_reorg_journal
+        WHERE projection_version=$1 AND aggregate_kind='daily_summary'
+        ORDER BY identity_key`, [LIVE_VERSION]);
+      assert.deepEqual(rows.map((row) => [row.identity_key, row.had_previous]), [
+        [`daily:2099-01-01:${TOKEN}`, true],
+        [`daily:2099-01-02:${TOKEN}`, true],
+        [`daily:2099-01-02:${BOB}`, false],
+      ]);
+      for (const [index, expectedAmount] of [amount, '20'].entries()) {
+        const previous = rows[index].previous_row;
+        assert.equal(previous.token_address, TOKEN);
+        assert.equal(previous.projection_version, LIVE_VERSION);
+        assert.equal(previous.summary_day, fixtures[index].day);
+        assert.equal(previous.transfer_count, '1');
+        assert.equal(previous.total_amount_raw, expectedAmount);
+        assert.equal(previous.dex_flow_amount_raw, expectedAmount);
+        assert.equal(previous.wallet_transfer_amount_raw, '0');
+        assert.equal(previous.through_block, '99');
+      }
+      assert.equal(rows[2].previous_row, null);
+      const explained = await client.query(
+        `EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) ${dailyLookup.sql}`, dailyLookup.params
+      );
+      const nodes = (node) => [node, ...(node.Plans || []).flatMap(nodes)];
+      const examined = nodes(explained.rows[0]['QUERY PLAN'][0].Plan)
+        .filter((node) => node['Relation Name'] === 'robinhood_wallet_transfer_daily_summaries')
+        .reduce((sum, node) => sum + node['Actual Loops'] * (
+          node['Actual Rows'] + (node['Rows Removed by Filter'] || 0)
+        ), 0);
+      assert.ok(examined < 100, `daily lookup examined ${examined} rows for three keys`);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('journals exact LIVE preimages per batch before replacing aggregates', async () => {

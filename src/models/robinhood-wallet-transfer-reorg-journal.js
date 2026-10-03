@@ -22,6 +22,7 @@ function identities(events) {
   const edges = new Set();
   const edgeLookups = new Map();
   const daily = new Set();
+  const dailyLookups = new Map();
   const evidence = new Set();
   const evidenceLookups = new Map();
   for (const event of events) {
@@ -33,7 +34,13 @@ function identities(events) {
       from_wallet: event.fromWallet,
       to_wallet: event.toWallet,
     });
-    daily.add(dailyKey(event));
+    const dailyIdentity = dailyKey(event);
+    daily.add(dailyIdentity);
+    dailyLookups.set(dailyIdentity, {
+      identity_key: dailyIdentity,
+      summary_day: event.blockTime.slice(0, 10),
+      token_address: event.tokenAddress,
+    });
     if (event.transferKind === 'wallet_transfer') {
       const [leftWallet, rightWallet] = [event.fromWallet, event.toWallet].sort();
       for (const role of EVIDENCE_ROLES) {
@@ -51,7 +58,7 @@ function identities(events) {
   }
   return {
     edges: [...edges], edgeLookups: [...edgeLookups.values()],
-    daily: [...daily], evidence: [...evidence],
+    daily: [...daily], dailyLookups: [...dailyLookups.values()], evidence: [...evidence],
     evidenceLookups: [...evidenceLookups.values()],
   };
 }
@@ -81,7 +88,7 @@ async function loadRows(client, projectionVersion, keys) {
       [CHAIN, projectionVersion, JSON.stringify(keys.edgeLookups)],
     ],
     keys.daily.length && [
-      `SELECT 'daily:' || summary_day::text || ':' || token_address AS identity_key,
+      `SELECT requested.identity_key,
               to_jsonb(summary) || jsonb_build_object(
                 'transfer_count', transfer_count::text,
                 'total_amount_raw', total_amount_raw::text,
@@ -91,10 +98,14 @@ async function loadRows(client, projectionVersion, keys) {
                 'dex_flow_amount_raw', dex_flow_amount_raw::text,
                 'through_block', through_block::text
               ) AS previous_row
-         FROM robinhood_wallet_transfer_daily_summaries summary
-        WHERE chain=$1 AND projection_version=$2
-          AND ('daily:' || summary_day::text || ':' || token_address) = ANY($3::text[])`,
-      [CHAIN, projectionVersion, keys.daily],
+         FROM jsonb_to_recordset($3::jsonb) AS requested(
+                identity_key text, summary_day date, token_address text
+              )
+         JOIN robinhood_wallet_transfer_daily_summaries summary
+           ON summary.chain=$1 AND summary.projection_version=$2
+          AND summary.summary_day=requested.summary_day
+          AND summary.token_address=requested.token_address`,
+      [CHAIN, projectionVersion, JSON.stringify(keys.dailyLookups)],
     ],
     keys.evidence.length && [
       `SELECT requested.identity_key,

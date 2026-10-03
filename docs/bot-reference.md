@@ -7359,8 +7359,11 @@ O repository de projeção persiste arestas, resumo diário por token, evidênci
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é
 rejeitado antes dos `UPSERTs`. Ele aceita somente eventos previamente
 classificados na mesma versão. A captura de preimagens de evidência consulta o slot
-pelas colunas do índice composto (`chain`, versão, token, par, kind e role); não
-reintroduza identidade concatenada no predicado desse hot path.
+pelas colunas do índice composto (`chain`, versão, token, par, kind e role).
+Para os resumos diários, a captura deduplica as chaves do lote e consulta a chave
+primária existente por `chain`, versão de projeção, data UTC e token. As identidades
+textuais do journal permanecem iguais; não reintroduza identidade concatenada no
+predicado desses hot paths.
 
 O adapter LIVE de fonte permanece inativo e só considera cobertura de swaps
 com cursor `live` em `running`, frontier/checkpoint comprovados e sem ultrapassar
