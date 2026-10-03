@@ -1,16 +1,105 @@
+process.env.NODE_ENV = 'test';
+
 const assert = require('node:assert/strict');
-const { after, describe, it } = require('node:test');
+const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const { assertUsingTestDatabase } = require('./helpers/test-db');
 const {
   createRobinhoodHolderBootstrapRepository,
 } = require('../src/models/robinhood-holder-bootstrap');
 
 const TOKENS = ['a', 'b', 'c', 'd', 'e', 'f'].map((digit) => `0x${digit.repeat(40)}`);
 
+before(() => assertUsingTestDatabase(db));
 after(() => db.pool.end());
 
 describe('Robinhood holder bootstrap persistence', () => {
+  it('avoids a state-index probe per catalog token when discovery finds no admissions', async () => {
+    const tables = {
+      token_catalog: `chain varchar(16), address varchar(42), first_seen_at timestamptz,
+        PRIMARY KEY (chain, address)`,
+      robinhood_holder_token_states: `chain varchar(16), token_address varchar(42),
+        PRIMARY KEY (chain, token_address)`,
+      robinhood_token_attributions: `chain varchar(16), token_address varchar(42),
+        source varchar(32), attribution_block bigint, PRIMARY KEY (chain, token_address)`,
+      robinhood_holder_cursors: `chain varchar(16), stream varchar(16), safe_head bigint,
+        journal_floor_block bigint, buffer_floor_block bigint`,
+      admin_blocked_tokens: 'chain varchar(16), address varchar(42)',
+      robinhood_holder_global_backfill_tokens: `chain varchar(16), token_address varchar(42),
+        run_id int, status varchar(16)`,
+      robinhood_holder_global_backfill_runs: 'id int, chain varchar(16), status varchar(16)',
+    };
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL statement_timeout = '10s'");
+      await client.query('SET LOCAL random_page_cost = 1.1');
+      await client.query("SET LOCAL work_mem = '64MB'");
+      for (const [name, fields] of Object.entries(tables)) {
+        await client.query(`CREATE TEMP TABLE ${name} (${fields}) ON COMMIT DROP`);
+      }
+      await client.query(`CREATE INDEX bootstrap_catalog_fixture
+        ON token_catalog (chain, first_seen_at, address)`);
+      await client.query(`INSERT INTO token_catalog
+        SELECT 'robinhood', '0x' || lpad(to_hex(id), 40, '0'),
+          CASE WHEN id <= 10000 THEN '2026-09-10T09:00:00Z'::timestamptz
+               ELSE '2026-09-01T09:00:00Z'::timestamptz END
+        FROM generate_series(1, 100000) id`);
+      await client.query(`INSERT INTO robinhood_holder_token_states
+        SELECT chain, address FROM token_catalog ORDER BY address LIMIT 9500`);
+      await client.query(`INSERT INTO robinhood_holder_token_states
+        SELECT 'robinhood', '0x' || lpad(to_hex(id), 40, '0')
+        FROM generate_series(10001, 50500) id`);
+      await client.query(`INSERT INTO robinhood_token_attributions
+        SELECT catalog.chain, catalog.address,
+          CASE WHEN state.token_address IS NULL THEN 'ambiguous' ELSE 'rpc_direct' END, 35001
+        FROM token_catalog catalog LEFT JOIN robinhood_holder_token_states state
+          ON state.chain=catalog.chain AND state.token_address=catalog.address`);
+      await client.query(`INSERT INTO robinhood_holder_cursors
+        VALUES ('robinhood', 'live', 50000, 40000, 35000)`);
+      for (const name of Object.keys(tables)) await client.query(`ANALYZE ${name}`);
+      let discovered;
+      const repository = createRobinhoodHolderBootstrapRepository({
+        database: { async query(sql, params) {
+          discovered = { sql, params, rows: (await client.query(sql, params)).rows };
+          // Exercise the real discovery SQL; leave writes to the admission contract below.
+          return { rows: [] };
+        } },
+      });
+      const options = { admittedAfter: '2026-09-10T08:30:00Z', limit: 100 };
+      assert.deepEqual(await repository.seedNewTokens(options), []);
+      assert.deepEqual(discovered.rows, []);
+      const { rows } = await client.query(
+        `EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) ${discovered.sql}`, discovered.params
+      );
+      const nodes = (node) => [node, ...(node.Plans || []).flatMap(nodes)];
+      const stateProbes = nodes(rows[0]['QUERY PLAN'][0].Plan)
+        .filter((node) => node['Relation Name'] === 'robinhood_holder_token_states')
+        .reduce((sum, node) => sum + node['Actual Loops'], 0);
+      assert.ok(stateProbes < 100, `discovery performed ${stateProbes} state-index probes`);
+
+      // Changing the read plan must preserve ordering, page size and readiness gates.
+      const eligible = [9501, 9502].map((id) => `0x${id.toString(16).padStart(40, '0')}`);
+      await client.query(`UPDATE robinhood_token_attributions SET source='rpc_direct'
+        WHERE token_address=ANY($1::varchar[])`, [eligible]);
+      await repository.seedNewTokens({ ...options, limit: 1 });
+      assert.deepEqual(discovered.rows.map((row) => row.token_address), eligible.slice(0, 1));
+      await repository.seedNewTokens(options);
+      assert.deepEqual(discovered.rows.map((row) => row.token_address), eligible);
+      await client.query(`UPDATE robinhood_holder_cursors
+        SET journal_floor_block=NULL, buffer_floor_block=NULL`);
+      await repository.seedNewTokens(options);
+      assert.deepEqual(discovered.rows.map((row) => row.token_address), eligible);
+      await client.query('UPDATE robinhood_holder_cursors SET safe_head=NULL');
+      await repository.seedNewTokens(options);
+      assert.deepEqual(discovered.rows, []);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
   it('admits disjoint new/cold exact cohorts and remains idempotent', async () => {
     const client = await db.getClient();
     try {

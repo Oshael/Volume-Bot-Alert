@@ -3051,7 +3051,10 @@ durável até materializarem o token state, quando o copiam para a coluna. Estad
 anteriores permanecem com `NULL`, que significa cobertura não comprovada e deve
 falhar fechado em qualquer cutover tracked-only. A descoberta de candidatos do
 bootstrap é somente leitura e não trava o
-cursor durante a busca no catálogo. Havendo candidatos, uma transação curta
+cursor durante a busca no catálogo. A descoberta materializa primeiro os tokens
+da janela ainda sem estado, antes de juntar a proveniência e ordenar o lote; isso
+evita uma busca repetida ao índice de estados por token quando não há admissões.
+Não exige novo índice ou migração. Havendo candidatos, uma transação curta
 trava o cursor com `SKIP LOCKED` e revalida apenas o lote selecionado: proveniência,
 janela de admissão, coortes globais, estado existente e floors atuais de cobertura.
 Enquanto o deployment permanecer coberto simultaneamente por

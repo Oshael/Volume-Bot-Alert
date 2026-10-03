@@ -48,13 +48,25 @@ function normalizeSeededRow(row) {
 }
 
 function liveCandidatesSql(revalidate = false) {
-  return `SELECT catalog.address AS token_address, attribution.attribution_block
-    FROM token_catalog catalog
+  // Materialize the untracked set before the ordered discovery LIMIT, so an
+  // empty admission batch does not probe state once per catalog token.
+  // Admission still revalidates its small hint batch directly under the cursor lock.
+  const discovery = revalidate ? '' : `WITH untracked AS MATERIALIZED (
+    SELECT catalog.chain, catalog.address, catalog.first_seen_at
+      FROM token_catalog catalog
+      LEFT JOIN robinhood_holder_token_states state
+        ON state.chain = catalog.chain AND state.token_address = catalog.address
+     WHERE catalog.chain = $1 AND catalog.first_seen_at >= $2::timestamptz
+       AND state.token_address IS NULL
+  ) `;
+  const stateJoin = revalidate ? `LEFT JOIN robinhood_holder_token_states state
+      ON state.chain = catalog.chain AND state.token_address = catalog.address` : '';
+  return `${discovery}SELECT catalog.address AS token_address, attribution.attribution_block
+    FROM ${revalidate ? 'token_catalog' : 'untracked'} catalog
     INNER JOIN robinhood_token_attributions attribution
       ON attribution.chain = catalog.chain AND attribution.token_address = catalog.address
     CROSS JOIN robinhood_holder_cursors cursor
-    LEFT JOIN robinhood_holder_token_states state
-      ON state.chain = catalog.chain AND state.token_address = catalog.address
+    ${stateJoin}
    WHERE catalog.chain = $1 AND cursor.chain = $1 AND cursor.stream = 'live'
      ${revalidate ? 'AND catalog.address = ANY($6::varchar[])' : ''}
      AND catalog.first_seen_at >= $2::timestamptz
@@ -68,7 +80,7 @@ function liveCandidatesSql(revalidate = false) {
          COALESCE(cursor.buffer_floor_block, cursor.safe_head)
        )
      )
-     AND state.token_address IS NULL
+     ${revalidate ? 'AND state.token_address IS NULL' : ''}
      AND NOT EXISTS (
        SELECT 1 FROM admin_blocked_tokens blocked
         WHERE blocked.chain = catalog.chain AND blocked.address = catalog.address
