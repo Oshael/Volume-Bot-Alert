@@ -6,8 +6,8 @@ const {
   compareClassificationFrontiers,
 } = require('../services/robinhood-holder-classification-domain');
 const {
-  lockRobinhoodCanonicalProjection,
-} = require('./robinhood-canonical-projection-fence');
+  lockRobinhoodHolderCanonicalProjection,
+} = require('./robinhood-holder-canonical-projection');
 
 const FRONTIER_STATUSES = new Set(['ready', 'stale', 'reorged']);
 
@@ -167,7 +167,7 @@ function rowSnapshot(row) {
 
 function createRobinhoodHolderDistributionMetricRepository(options = {}) {
   const database = options.database || db;
-  const projectionFence = options.projectionFence || lockRobinhoodCanonicalProjection;
+  const projectionFence = options.projectionFence || lockRobinhoodHolderCanonicalProjection;
 
   async function replaceMetricSnapshot(input, transitionOptions = {}) {
     const candidate = normalizeSnapshot(input);
@@ -176,7 +176,10 @@ function createRobinhoodHolderDistributionMetricRepository(options = {}) {
       await client.query('BEGIN');
       await projectionFence(client, candidate.throughBlockNumber == null
         ? null : { blockNumber: candidate.throughBlockNumber,
-          blockHash: candidate.throughBlockHash }, 'holder distribution');
+          blockHash: candidate.throughBlockHash }, 'holder distribution', {
+        tokenAddress: candidate.tokenAddress,
+        legacyLedger: ['dev_hold', 'top10', 'top50'].includes(candidate.metric),
+      });
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
         ['robinhood', candidate.tokenAddress, candidate.metric,
           candidate.classificationVersion].join(':'),

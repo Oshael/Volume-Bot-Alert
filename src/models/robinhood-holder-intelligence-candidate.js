@@ -1,5 +1,6 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const { holderCanonicalReadySql } = require('./robinhood-holder-canonical-projection');
 const {
   HOLDER_CLASSIFICATION_VERSION,
 } = require('../services/robinhood-holder-classification-domain');
@@ -25,20 +26,18 @@ function createRobinhoodHolderIntelligenceCandidateRepository(options = {}) {
       : normalizeTokenAddress('robinhood', input.afterToken);
     const scanLimit = limit * 5;
     const result = await database.query(
-      `WITH scanned AS MATERIALIZED (
+      `WITH capture AS MATERIALIZED (
+         SELECT chain FROM robinhood_chain_capture_cursor WHERE chain='robinhood'
+           AND recovery_state='running'
+       ), scanned AS MATERIALIZED (
          SELECT chain, token_address, live_through_block, live_through_hash
-         FROM robinhood_holder_token_states state
+         FROM robinhood_holder_token_states state JOIN capture USING (chain)
          WHERE state.chain = 'robinhood' AND state.ledger_status = 'live'
            AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
            AND state.token_address > $4::varchar
          ORDER BY state.token_address LIMIT $5::int
        ), anchored AS MATERIALIZED (
-         SELECT state.*, EXISTS (
-           SELECT 1 FROM robinhood_chain_blocks block
-            WHERE block.chain = state.chain AND block.canonical
-              AND block.block_number = state.live_through_block
-              AND block.block_hash = state.live_through_hash
-         ) AS canonical_ready FROM scanned state
+         SELECT state.*, ${holderCanonicalReadySql()} AS canonical_ready FROM scanned state
        ), candidates AS MATERIALIZED (
          SELECT state.token_address, state.live_through_block, state.live_through_hash
          FROM anchored state

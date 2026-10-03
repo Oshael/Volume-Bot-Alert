@@ -16,13 +16,17 @@ it('advances past blocked frontiers and retries unchanged/failing tokens without
   try {
     await client.query('BEGIN');
     for (const table of ['robinhood_holder_token_states',
-      'robinhood_holder_classification_states', 'robinhood_holder_distribution_metrics']) {
+      'robinhood_holder_classification_states', 'robinhood_holder_distribution_metrics',
+      'robinhood_holder_legacy_coverage_manifest', 'robinhood_chain_block_anchors',
+      'robinhood_chain_recoveries', 'robinhood_chain_capture_cursor']) {
       await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
     }
     await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
       chain text, block_number bigint, block_hash text, canonical boolean
     )`);
     await client.query(`INSERT INTO robinhood_chain_blocks VALUES ('robinhood',100,$1,true)`, [HASH]);
+    await client.query(`INSERT INTO robinhood_chain_capture_cursor
+      (chain,next_block,checkpoint_block,checkpoint_hash) VALUES ('robinhood',102,101,$1)`, [HASH]);
     for (let n = 1; n <= 13; n += 1) {
       await client.query(`INSERT INTO robinhood_holder_token_states
         (token_address,ledger_status,live_through_block,live_through_hash)

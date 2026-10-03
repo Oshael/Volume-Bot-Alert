@@ -4342,8 +4342,9 @@ A seleção de continuidade percorre os estados live por `token_address`, com
 cursor `scanAfterToken` em memória. Cada ciclo examina no máximo cinco vezes o
 batch (até 500 estados) e materializa no máximo o batch, com a concorrência
 configurada. Páginas vazias avançam; ao fim da varredura o cursor volta ao início.
-Uma frontier sem número/hash canônico em `robinhood_chain_blocks` é adiada antes
-dos cálculos; os guards de commit continuam obrigatórios. Essa varredura limitada
+Uma frontier precisa de header raw canônico ou prova histórica durável válida
+para o ledger legacy; recovery ativo impede a seleção. Os guards de commit
+continuam obrigatórios. Essa varredura limitada
 repara classificações ausentes ou defasadas sem participar de capture/apply live.
 
 Retries por token e frontier também ficam em memória: falhas usam backoff
@@ -4374,16 +4375,32 @@ mínimo de 100 ms, sem retry automático e timeout padrão de 5 s
 (`--timeout-ms`, máximo 60 s). Cada prova é gravada em transação curta, com fence
 compartilhado de recovery, geração de captura inalterada e revalidação do estado
 e manifesto usados como amostra. Recovery, divergência canônica, hash durável
-ambíguo ou timestamp conflitante impedem a gravação; nenhuma evidência é sobrescrita.
+ambíguo ou timestamp conflitante impedem a gravação; número/hash/timestamp não são sobrescritos.
 Após o insert, a prova armazenada é conferida novamente, inclusive se outro writer
 inseriu a mesma chave durante a verificação.
 Só insere em `robinhood_chain_block_anchors`, sem alterar saldos, frontiers,
 manifestos ou criar captura incompleta em `robinhood_chain_blocks`; não exige migration.
 `stale` exige nova seleção; `unresolved` retorna exit code 1 e deve ser investigado
 antes de repetir a mesma página, sem avançar sobre falhas. A execução é sob demanda,
-fora do caminho live, sem serviço ou agendamento. Âncoras duráveis restauradas ainda
-não liberam a inteligência: a seleção e os writers atualmente exigem o header raw
-canônico. Não retire esse guard para executar o reparo.
+fora do caminho live, sem serviço ou agendamento. O RPC precisa fornecer headers
+históricos, não estado archive: não há `eth_call`, consultas de saldo ou traces históricos.
+
+A seleção e os writers de `LP`, `CEX`, `DEV HOLD`, Top 10 e Top 50 aceitam a prova
+durável somente para a mesma frontier de um estado `live` legacy, sem tail tracked,
+com manifesto na geração vigente e bloco não superior ao checkpoint capturado.
+Hash durável ambíguo, hash explicitamente órfão ou header canônico divergente impedem
+o fallback. Durante o commit, o estado/manifesto usado pelo fallback permanece
+travado para leitura e o fence compartilhado impede ativação de recovery.
+Os demais classificadores, métricas e domínios mantêm o guard raw canônico.
+
+Uma prova afetada por recovery detectado após sua gravação não é reutilizada.
+O limite é `affectedRange.fromBlock`; provas abaixo dele continuam válidas.
+Reparo RPC verificado após recovery, na geração esperada, renova `created_at`
+da prova já existente sem alterar seu header. Nesse uso, `created_at` representa
+a última revalidação durável; o caminho raw canônico também pode renová-la.
+Quando esses writers encontram um novo checkpoint raw canônico do ledger legacy,
+preservam seu header na mesma transação do snapshot, sem RPC adicional. Isso mantém
+a prova após retenção raw, sem mover o ledger nem transformar o journal em captura parcial.
 
 Na operação, a fonte de verdade para saúde desse worker é a lease
 `robinhood-holder-intelligence-worker` em `worker_leases`. `lease_until > NOW()`,

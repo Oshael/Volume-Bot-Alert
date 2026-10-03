@@ -39,7 +39,7 @@ async function fixture(action) {
     await client.query('BEGIN');
     for (const table of ['robinhood_holder_token_states',
       'robinhood_holder_legacy_coverage_manifest', 'robinhood_chain_capture_cursor',
-      'robinhood_chain_blocks', 'robinhood_chain_block_anchors']) {
+      'robinhood_chain_blocks', 'robinhood_chain_block_anchors', 'robinhood_chain_recoveries']) {
       await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
     }
     await client.query(`INSERT INTO robinhood_chain_capture_cursor

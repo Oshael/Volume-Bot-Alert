@@ -4,6 +4,7 @@ require('dotenv').config();
 const db = require('../models/db');
 const { normalizeTokenAddress } = require('./token-identity');
 const { lockRobinhoodCanonicalProjection } = require('../models/robinhood-canonical-projection-fence');
+const { refreshVerifiedHolderAnchor } = require('../models/robinhood-holder-canonical-projection');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
 const { createArchiveResolver, __private: { blockEvidence } } = require('./repair-robinhood-bundle-redistribution-anchors');
 
@@ -140,6 +141,7 @@ async function persistAnchor(database, candidate, evidence, expectedGeneration) 
     if (stored.rows[0].count !== 1 || !stored.rows[0].matched) {
       throw failure('holder_anchor_local_conflict');
     }
+    await refreshVerifiedHolderAnchor(client, block);
     return inserted.rowCount ? 'repaired' : 'already_present';
   });
 }
