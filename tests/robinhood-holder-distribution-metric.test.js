@@ -42,5 +42,10 @@ describe('Robinhood holder distribution metric persistence domain', () => {
     })), /cannot publish values/);
     assert.throws(() => __private.planTransition(current, snapshot({ metric: 'top10' })),
       /different metric/);
+    const unavailable = snapshot({ status: 'unavailable', statusReason: 'creator_unavailable',
+      throughBlockNumber: null, throughBlockHash: null, valueNumeratorRaw: null,
+      valueDenominatorRaw: null, walletCount: null });
+    assert.throws(() => __private.planTransition(current, unavailable), /reset/);
+    assert.equal(__private.planTransition(current, unavailable, { allowReset: true }), 'replace');
   });
 });

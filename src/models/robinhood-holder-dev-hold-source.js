@@ -14,6 +14,7 @@ function createRobinhoodHolderDevHoldSource(options = {}) {
               attribution.creator_address, attribution.source,
               attribution.attribution_block::text, attribution.attribution_tx_hash,
               attribution.attribution_factory_address, attribution.last_resolved_at,
+              attribution.updated_at::text AS attribution_updated_at,
               COALESCE(creator.balance_raw, 0)::text AS creator_balance_raw,
               supply.total_supply_raw::text
          FROM robinhood_holder_token_states state
@@ -37,10 +38,16 @@ function createRobinhoodHolderDevHoldSource(options = {}) {
         || row.live_through_hash == null) {
       return Object.freeze({ status: 'deferred', reason: 'holder_frontier_unavailable' });
     }
+    const frontier = Object.freeze({ blockNumber: row.live_through_block, blockHash: row.live_through_hash });
+    const projection = row.attribution_updated_at == null ? null : Object.freeze({
+      frontier, creator: Object.freeze({ address: row.creator_address, source: row.source,
+        blockNumber: row.attribution_block, updatedAt: row.attribution_updated_at }),
+    });
     if (row.creator_address == null || row.creator_address === ZERO_ADDRESS) {
       return Object.freeze({
         status: 'unavailable', tokenAddress, reason: 'creator_unavailable',
         evidence: Object.freeze({ source: 'robinhood_token_attributions' }),
+        projection: row.source === 'rpc_code_transition' && row.creator_address == null ? projection : null,
       });
     }
     if (row.attribution_block != null
@@ -55,9 +62,7 @@ function createRobinhoodHolderDevHoldSource(options = {}) {
     }
     return Object.freeze({
       status: 'ready', tokenAddress,
-      frontier: Object.freeze({
-        blockNumber: row.live_through_block, blockHash: row.live_through_hash,
-      }),
+      frontier, projection,
       creatorAddress: row.creator_address,
       creatorBalanceRaw: row.creator_balance_raw,
       totalSupplyRaw: row.total_supply_raw,

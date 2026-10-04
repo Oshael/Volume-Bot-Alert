@@ -8,6 +8,9 @@ const {
 const {
   lockRobinhoodHolderCanonicalProjection,
 } = require('./robinhood-holder-canonical-projection');
+const {
+  normalizeDevHoldSource, lockDevHoldSource, canInvalidateDevHoldCreator,
+} = require('./robinhood-holder-dev-hold-projection');
 
 const FRONTIER_STATUSES = new Set(['ready', 'stale', 'reorged']);
 
@@ -171,15 +174,20 @@ function createRobinhoodHolderDistributionMetricRepository(options = {}) {
 
   async function replaceMetricSnapshot(input, transitionOptions = {}) {
     const candidate = normalizeSnapshot(input);
+    const observation = normalizeDevHoldSource(transitionOptions.devHoldSource, candidate);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      await projectionFence(client, candidate.throughBlockNumber == null
+      await projectionFence(client, observation?.frontier || (candidate.throughBlockNumber == null
         ? null : { blockNumber: candidate.throughBlockNumber,
-          blockHash: candidate.throughBlockHash }, 'holder distribution', {
+          blockHash: candidate.throughBlockHash }), 'holder distribution', {
         tokenAddress: candidate.tokenAddress,
         legacyLedger: ['dev_hold', 'top10', 'top50'].includes(candidate.metric),
       });
+      if (observation && !await lockDevHoldSource(client, observation, candidate.tokenAddress)) {
+        await client.query('COMMIT');
+        return Object.freeze({ status: 'deferred', reason: 'dev_hold_source_changed' });
+      }
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
         ['robinhood', candidate.tokenAddress, candidate.metric,
           candidate.classificationVersion].join(':'),
@@ -190,7 +198,16 @@ function createRobinhoodHolderDistributionMetricRepository(options = {}) {
             AND classification_version = $3 FOR UPDATE`,
         [candidate.tokenAddress, candidate.metric, candidate.classificationVersion]
       );
-      const transition = planTransition(rowSnapshot(loaded.rows[0]), candidate, transitionOptions);
+      const current = rowSnapshot(loaded.rows[0]);
+      let guardedOptions = transitionOptions;
+      if (observation?.unavailable && current?.throughBlockNumber != null) {
+        if (!canInvalidateDevHoldCreator(current, observation)) {
+          await client.query('COMMIT');
+          return Object.freeze({ status: 'deferred', reason: 'dev_hold_invalidation_unverified' });
+        }
+        guardedOptions = { ...transitionOptions, allowReset: true };
+      }
+      const transition = planTransition(current, candidate, guardedOptions);
       if (transition === 'ignore' || transition === 'unchanged') {
         await client.query('COMMIT');
         return Object.freeze({ status: transition === 'ignore' ? 'stale_ignored' : 'unchanged' });

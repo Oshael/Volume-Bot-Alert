@@ -20,7 +20,7 @@ function createRobinhoodHolderDevHoldMaterializer(options = {}) {
       return metrics.replaceMetricSnapshot({
         tokenAddress: candidate.tokenAddress, metric: 'dev_hold', status: 'unavailable',
         statusReason: candidate.reason, evidence: candidate.evidence, observedAt: now(),
-      });
+      }, { devHoldSource: candidate.projection });
     }
     return metrics.replaceMetricSnapshot({
       tokenAddress: candidate.tokenAddress, metric: 'dev_hold', status: 'ready',
@@ -33,7 +33,7 @@ function createRobinhoodHolderDevHoldMaterializer(options = {}) {
       throughBlockNumber: candidate.frontier.blockNumber,
       throughBlockHash: candidate.frontier.blockHash,
       observedAt: now(),
-    });
+    }, { devHoldSource: candidate.projection });
   }
 
   return Object.freeze({ materializeToken });

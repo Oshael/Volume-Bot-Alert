@@ -4308,6 +4308,13 @@ positivos por saldo e endereço, soma os primeiros 10/50 e usa a soma de todos o
 balances como denominador na mesma frontier live. O materializador `DEV HOLD`
 usa o criador atribuído e calcula saldo/supply diretamente do ledger; criador ou
 supply ausente publica `unavailable`, nunca zero inventado.
+Quando uma atribuição legacy `blockscout` usada por DEV HOLD foi substituída por
+`rpc_code_transition` sem criador, o materializador pode invalidar o snapshot
+antigo para `unavailable/creator_unavailable`. A transação verifica a prova canônica
+do frontier observado, mantém estado/atribuição sob lock e revalida a revisão
+exata da atribuição. Frontier anterior, fork ou outra proveniência não autorizam
+reset. Uma leitura `ready` antiga também é adiada se a atribuição ou o ledger
+mudaram antes da gravação. Os demais resets continuam exigindo autorização explícita.
 
 O Stage 145 cria `robinhood_infrastructure_registry`, registro histórico e
 chain-scoped para CEX, routers, bridges, lockers e burn addresses. Cada entrada
