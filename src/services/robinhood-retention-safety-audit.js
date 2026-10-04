@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../models/db');
+const { inspectCoveragePending } = require('../models/robinhood-holder-coverage-pending');
 const { CLASSIFICATION_VERSION } = require('./robinhood-wallet-transfer-batch');
 
 const CHAIN = 'robinhood';
@@ -234,6 +235,13 @@ function evaluate(input = {}) {
     'no_holder_journal_prefix_eligible');
   const risks = holderRisks(row, holderCutoff);
   holderBlockers.push(...risks.blockers);
+  const coverage = input.coveragePending || [];
+  const pendingCoverage = coverage.filter((item) => item.status === 'pending');
+  const pendingFloor = minimum(pendingCoverage.map((item) => quantity(item.oldest_block)));
+  for (const [blockers, cutoff] of [[chainBlockers, chainCutoff], [holderBlockers, holderCutoff]]) {
+    add(blockers, pendingFloor != null && cutoff != null && pendingFloor < cutoff,
+      'holder_coverage_pending', text(pendingFloor));
+  }
 
   return Object.freeze({
     mode: 'read-only', action: 'none',
@@ -261,6 +269,8 @@ function evaluate(input = {}) {
       oldest_pending_deployment_mint_block: text(risks.mintRisk),
     },
     wallet_classification: classification,
+    holder_coverage: { pending: pendingCoverage.reduce((sum, item) => sum + Number(item.items), 0),
+      warning_after_s: 24 * 60 * 60, critical_after_s: 48 * 60 * 60, reasons: coverage },
     proof: {
       scope: 'durable_consumer_checkpoints_and_downstream_materialization_gates',
       holder_atomicity: 'balances_token_state_and_applied_marker_commit_together',
@@ -276,7 +286,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
   const holderRetentionBlocks = Number(options.holderRetentionBlocks ?? DEFAULT_RETENTION_BLOCKS);
   async function inspect() {
     const client = await database.getClient();
-    let state; let classification;
+    let state; let classification; let coveragePending;
     let phase = 'setup';
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -368,13 +378,16 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
         state.oldest_pending_deployment_mint_block = null;
         state.holder_mint_proof_skipped = !includeHolderProof;
       }
+      phase = 'holder_coverage';
+      coveragePending = await inspectCoveragePending(client);
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       error.auditPhase = phase;
       throw error;
     } finally { client.release(); }
-    return evaluate({ state, classification, chainRetentionBlocks, holderRetentionBlocks });
+    return evaluate({ state, classification, coveragePending,
+      chainRetentionBlocks, holderRetentionBlocks });
   }
   return Object.freeze({ inspect });
 }

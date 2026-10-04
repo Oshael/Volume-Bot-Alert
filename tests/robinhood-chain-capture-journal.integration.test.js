@@ -111,6 +111,11 @@ const stage247 = require('../src/utils/db-init-stage247');
 const stage253 = require('../src/utils/db-init-stage253');
 const stage254 = require('../src/utils/db-init-stage254');
 const stage257 = require('../src/utils/db-init-stage257');
+const stage265 = require('../src/utils/db-init-stage265');
+const { createRobinhoodTokenDeploymentOutboxRepository } = require('../src/models/robinhood-token-deployment-outbox');
+const { createRobinhoodHolderJournalRetention } = require('../src/models/robinhood-holder-journal-retention');
+const { inspectCoveragePending } = require('../src/models/robinhood-holder-coverage-pending');
+const { pruneBatch, pruneCanonicalStorageBatch } = require('../src/services/robinhood-chain-event-pruner');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
 const transactionShadowCopy = require('../src/utils/copy-robinhood-chain-transaction-shadow-page');
 const transactionShadowAudit = require('../src/utils/audit-robinhood-chain-transaction-shadow');
@@ -354,6 +359,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_swap_mc WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_transaction_positions WHERE chain='robinhood'");
   await db.query('DELETE FROM robinhood_token_deployment_outbox');
+  await db.query('DELETE FROM robinhood_holder_coverage_pending');
   await db.query("DELETE FROM robinhood_processed_logs WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_registry WHERE chain='robinhood'");
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
@@ -367,6 +373,7 @@ async function clearTables() {
 describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage265.init({ closePool: false });
     await stage63.init({ closePool: false });
     await stage64.init({ closePool: false });
     await stage65.init({ closePool: false });
@@ -1079,6 +1086,74 @@ describe('Robinhood canonical chain capture journal', () => {
     });
     assert.equal(preBondedState.bondProgressBps, 0);
     assert.equal(preBondedState.evidenceBlockHash, HASH);
+  });
+
+  function holderMint(address = TOKEN, overrides = {}) {
+    const input = capture();
+    input.events = [{ transactionHash: TX, transactionIndex: 0, logIndex: 0, address,
+      topics: [TRANSFER_TOPIC, ZERO_TOPIC, `0x${'0'.repeat(24)}${'8'.repeat(40)}`],
+      data: `0x${'0'.repeat(63)}1`, ...overrides }];
+    return input;
+  }
+
+  it('holder coverage survives creator completion, replay and all prune paths', async () => {
+    const journal = createRobinhoodChainCaptureJournal({ holderCoverageProtectionEnabled: true });
+    const input = holderMint();
+    await journal.commitBlock(input);
+    await createRobinhoodTokenDeploymentOutboxRepository().completeRecovered(TOKEN);
+    assert.equal((await journal.commitBlock(input)).status, 'replayed');
+    input.events[0].data = `0x${'0'.repeat(63)}2`;
+    await assert.rejects(journal.commitBlock(input), { code: 'capture_replay_conflict' });
+    const pending = await db.query(`SELECT status, from_block::text, generation::text
+      FROM robinhood_holder_coverage_pending WHERE token_address=$1`, [TOKEN]);
+    assert.deepEqual(pending.rows, [{ status: 'pending', from_block: '100', generation: '0' }]);
+    assert.equal((await db.query('SELECT 1 FROM robinhood_token_deployment_outbox')).rowCount, 0);
+    assert.equal((await db.query('SELECT 1 FROM robinhood_holder_token_states')).rowCount, 0);
+    await db.query(`INSERT INTO robinhood_holder_cursors(chain, stream, next_block, journal_floor_block)
+      VALUES ('robinhood', 'live', 102, 99)`);
+    const retention = createRobinhoodHolderJournalRetention();
+    for (const result of [
+      await retention.pruneOnce({ retentionBlocks: 1 }),
+      await retention.pruneOnce({ beforeBlock: '101', retentionBlocks: 1 }),
+      await pruneBatch(db, '101', 1),
+      await pruneCanonicalStorageBatch(db, '101', 1),
+    ]) assert.equal(result.reason, 'holder_coverage_pending');
+    assert.equal((await db.query('SELECT 1 FROM robinhood_chain_events')).rowCount, 1);
+    assert.equal((await db.query('SELECT 1 FROM robinhood_chain_blocks')).rowCount, 1);
+    assert.equal((await db.query('SELECT journal_floor_block FROM robinhood_holder_cursors'))
+      .rows[0].journal_floor_block, '99');
+    await db.query(`UPDATE robinhood_chain_blocks SET canonical=false`);
+    assert.equal((await inspectCoveragePending(db))[0].unproven_anchors, 1);
+    assert.equal((await pruneBatch(db, '101', 1)).reason, 'holder_coverage_pending');
+  });
+
+  it('holder coverage records explicit exclusions and ignores non-mint transfers', async () => {
+    const input = holderMint();
+    input.events[0].topics[1] = input.events[0].topics[2];
+    input.events.push(...[
+      [TOKEN, [TRANSFER_TOPIC, ZERO_TOPIC, ZERO_TOPIC, ZERO_TOPIC], '0x'],
+      [CANONICAL_CONTRACTS.WETH, [TRANSFER_TOPIC, ZERO_TOPIC, ZERO_TOPIC], `0x${'0'.repeat(64)}`],
+    ].map(([address, topics, data], index) => ({ ...holderMint(address).events[0],
+      logIndex: index + 1, topics, data })));
+    await createRobinhoodChainCaptureJournal({ holderCoverageProtectionEnabled: true }).commitBlock(input);
+    assert.deepEqual((await inspectCoveragePending(db)).map(({ reason, items }) => ({ reason, items })),
+      [{ reason: 'canonical_contract', items: 1 }, { reason: 'incompatible_transfer', items: 1 }]);
+  });
+
+  it('holder coverage rolls back with a failed domain commit and is disabled by default', async () => {
+    const database = { getClient: async () => {
+      const client = await db.getClient();
+      return { release: () => client.release(), query: (sql, params) => {
+        if (sql.includes('INSERT INTO robinhood_chain_domain_outbox')) throw new Error('domain failed');
+        return client.query(sql, params);
+      } };
+    } };
+    const journal = createRobinhoodChainCaptureJournal({ database, holderCoverageProtectionEnabled: true });
+    await assert.rejects(journal.commitBlock(holderMint()), /domain failed/);
+    assert.equal((await db.query('SELECT 1 FROM robinhood_holder_coverage_pending')).rowCount, 0);
+    assert.equal((await db.query('SELECT 1 FROM robinhood_chain_blocks')).rowCount, 0);
+    await createRobinhoodChainCaptureJournal().commitBlock(holderMint());
+    assert.equal((await db.query('SELECT 1 FROM robinhood_holder_coverage_pending')).rowCount, 0);
   });
 
   it('durably enqueues a generic zero-address mint before catalog discovery', async () => {

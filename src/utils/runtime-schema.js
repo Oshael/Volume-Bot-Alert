@@ -6998,6 +6998,23 @@ const SCHEMA_GROUPS = [
   },
 ];
 
+SCHEMA_GROUPS.push({
+  key: 'stage265-robinhood-holder-coverage-pending',
+  name: 'Stage 265 Robinhood holder coverage protection',
+  repair: 'node src/utils/db-init-stage265.js',
+  tables: [{ table: 'robinhood_holder_coverage_pending',
+    columns: ['chain', 'token_address', 'from_block', 'block_hash', 'transaction_hash',
+      'generation', 'status', 'reason', 'created_at'],
+    constraints: [
+      { name: 'rh_holder_coverage_pending_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address'] },
+      { name: 'rh_holder_coverage_pending_status_check',
+        includes: ['pending', 'excluded', 'coverage_and_handoff_unconfirmed', 'admin_blocked'] },
+    ],
+    indexes: [{ name: 'idx_rh_holder_coverage_pending_floor',
+      includes: ['chain, from_block', 'pending'] }],
+  }],
+});
+
 const PROFILE_GROUP_KEYS = {
   test: [
     'core-auth-billing',

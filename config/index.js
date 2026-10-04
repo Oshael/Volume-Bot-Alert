@@ -1719,6 +1719,9 @@ module.exports = {
 
   robinhoodChainCaptureWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_CHAIN_CAPTURE_ENABLED, false),
+    holderCoverageProtectionEnabled: parseBoolean(
+      process.env.ROBINHOOD_HOLDER_COVERAGE_PROTECTION_ENABLED, false
+    ),
     eventShadowEnabled: parseBoolean(process.env.ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED, false),
     transactionShadowEnabled: parseBoolean(
       process.env.ROBINHOOD_CHAIN_TRANSACTION_SHADOW_ENABLED, false

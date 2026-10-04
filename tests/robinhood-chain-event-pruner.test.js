@@ -18,6 +18,9 @@ function harness(input = {}) {
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
+      if (sql.includes('pg_advisory_xact_lock_shared') || sql.includes('holder-coverage:prune-gate')) {
+        return { rows: [] };
+      }
       if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql) || sql.startsWith('SET LOCAL')) {
         return { rows: [] };
       }

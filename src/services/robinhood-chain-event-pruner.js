@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../models/db');
+const { coveragePruneBlocker } = require('../models/robinhood-holder-coverage-pending');
 const {
   createRobinhoodRetentionSafetyAudit,
 } = require('./robinhood-retention-safety-audit');
@@ -247,6 +248,11 @@ async function pruneBatch(database, cutoffBlock, batchLimit,
       return Object.freeze({ status: 'blocked', reason: 'concurrent_pruner', deletedEvents: 0 });
     }
     const legacy = await legacyEventStorage(client);
+    const coverageBlocker = await coveragePruneBlocker(client, cutoffBlock);
+    if (coverageBlocker) {
+      await client.query('COMMIT');
+      return Object.freeze({ ...coverageBlocker, partitioned: !legacy, deletedEvents: 0 });
+    }
     if (!legacy || partitionPreview || partitionDropEnabled) {
       const result = await partitionModeResult(client, legacy, cutoffBlock,
         protectedRetentionMs, partitionDropEnabled, partitionPreview);
@@ -326,6 +332,11 @@ async function pruneCanonicalStorageBatch(
         deletedTransactions: 0, deletedBlocks: 0 });
     }
     await assertCanonicalStorageIndexes(client);
+    const coverageBlocker = await coveragePruneBlocker(client, cutoffBlock);
+    if (coverageBlocker) {
+      await client.query('COMMIT');
+      return Object.freeze({ ...coverageBlocker, deletedTransactions: 0, deletedBlocks: 0 });
+    }
     // A transaction delete would cascade into the shadow and create dead rows per event.
     const shadow = await client.query(
       "SELECT to_regclass('robinhood_chain_events_shadow') AS relation"

@@ -38,6 +38,15 @@ function classificationRows(overrides = {}) {
 }
 
 describe('Robinhood retention safety audit', () => {
+  it('blocks both journals after creator completion while holder coverage remains pending', () => {
+    const report = evaluate({ state: state(), chainRetentionBlocks: 100, holderRetentionBlocks: 200,
+      coveragePending: [{ status: 'pending', reason: 'coverage_and_handoff_unconfirmed',
+        items: 2, oldest_block: '500', oldest_age_s: '172801', unproven_anchors: 1 }] });
+    assert.equal(report.chain_events.blockers.at(-1).code, 'holder_coverage_pending');
+    assert.equal(report.holder_journal.blockers.at(-1).code, 'holder_coverage_pending');
+    assert.equal(report.holder_coverage.pending, 2);
+    assert.equal(report.holder_coverage.reasons[0].unproven_anchors, 1);
+  });
   it('calculates conservative independent cutoffs and never authorizes a write', () => {
     const report = evaluate({ state: state(),
       chainRetentionBlocks: 100, holderRetentionBlocks: 200 });
@@ -111,6 +120,7 @@ describe('Robinhood retention safety audit', () => {
     const queries = [];
     const client = { async query(sql) {
       queries.push(sql);
+      if (sql.includes('holder-coverage:audit')) return { rows: [] };
       if (sql.startsWith('BEGIN')) return { rows: [] };
       if (sql.startsWith('SET LOCAL')) return { rows: [] };
       if (sql.startsWith('/* retention-safety:state */')) return { rows: [state()] };
@@ -142,6 +152,7 @@ describe('Robinhood retention safety audit', () => {
     const queries = [];
     const client = { async query(sql) {
       queries.push(sql);
+      if (sql.includes('holder-coverage:audit')) return { rows: [] };
       if (sql.startsWith('BEGIN') || sql.startsWith('SET LOCAL') || sql === 'ROLLBACK') {
         return { rows: [] };
       }
@@ -170,6 +181,7 @@ describe('Robinhood retention safety audit', () => {
     const queries = [];
     const client = { async query(sql) {
       queries.push(sql);
+      if (sql.includes('holder-coverage:audit')) return { rows: [] };
       if (sql.startsWith('BEGIN') || sql.startsWith('SET LOCAL') || sql === 'ROLLBACK') {
         return { rows: [] };
       }
@@ -199,6 +211,7 @@ describe('Robinhood retention safety audit', () => {
       const queries = [];
       const client = { async query(sql) {
         queries.push(sql);
+      if (sql.includes('holder-coverage:audit')) return { rows: [] };
         if (sql.startsWith('BEGIN') || sql.startsWith('SET LOCAL') || sql === 'ROLLBACK') {
           return { rows: [] };
         }

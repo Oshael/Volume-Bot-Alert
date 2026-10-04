@@ -1,6 +1,7 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const db = require('./db');
+const { appendCoveragePending } = require('./robinhood-holder-coverage-pending');
 const { mirrorCapturedEvents } = require('./robinhood-chain-event-shadow');
 const { mirrorCapturedTransactions } = require('./robinhood-chain-transaction-shadow');
 const { insertCapturedTransactions } = require('./robinhood-chain-transaction-writer');
@@ -276,6 +277,7 @@ function publishCaptureTiming(callback, timing) {
 }
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
+  const holderCoverageProtectionEnabled = options.holderCoverageProtectionEnabled === true;
   const shadowEnabled = options.shadowEnabled === true;
   const transactionShadowEnabled = options.transactionShadowEnabled === true;
   const transactionPartitioned = options.transactionPartitioned === true;
@@ -456,6 +458,10 @@ function createRobinhoodChainCaptureJournal(options = {}) {
              )`, [CHAIN, JSON.stringify(payload.events)]
       );
       mark('eventsMs');
+      if (holderCoverageProtectionEnabled) {
+        await appendCoveragePending(client, payload.events, current?.generation ?? '0');
+      }
+      mark('holderCoverageMs');
       if (shadowEnabled) await mirrorCapturedEvents(client, payload.blocks);
       mark('eventShadowMs');
       await appendStockUsdReferenceEvents(client, payload.events);

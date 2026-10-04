@@ -96,6 +96,7 @@ async function main(deps = {}) {
     transactionPartitioned: transactionStorage.partitioned };
   const journal = deps.journal || createRobinhoodChainCaptureJournal({
     database, shadowEnabled: eventShadowEnabled,
+    holderCoverageProtectionEnabled: options.holderCoverageProtectionEnabled,
     transactionShadowEnabled: transactionStorage.shadowEnabled,
     transactionPartitioned: transactionStorage.partitioned,
   });

@@ -1,4 +1,5 @@
 const db = require('./db');
+const { coveragePruneBlocker } = require('./robinhood-holder-coverage-pending');
 const { pruneJournalPrefix } = require('./robinhood-holder-journal-prefix-prune');
 const { createAutomaticPruneBudget } = require('./robinhood-holder-prune-budget');
 
@@ -312,6 +313,10 @@ function createRobinhoodHolderJournalRetention(options = {}) {
           cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
+      const coverageBlocker = await coveragePruneBlocker(client, cutoffBlock);
+      if (coverageBlocker) return Object.freeze({ ...coverageBlocker,
+        deletedEvents: 0, discardedBufferedEvents: 0,
+        cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString() });
       if (normalized.beforeBlock !== null) {
         return Object.freeze(await pruneJournalPrefix(client, {
           cutoffBlock: cutoffBlock.toString(), floorBlock: floorBlock.toString(),

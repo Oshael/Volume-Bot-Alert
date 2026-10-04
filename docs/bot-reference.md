@@ -6382,6 +6382,32 @@ bloco. O canário passa a referenciar o evento exato no espelho, com
 descartada. Após o corte, confira `npm run db:schema-check` e confirme no catálogo
 que nenhuma FK ainda referencia `robinhood_chain_events`. Isso ainda não troca
 o capturador nem os leitores de eventos para a tabela particionada.
+A proteção de candidatos a holders exige a Stage 265
+(`node src/utils/db-init-stage265.js`) antes de implantar captura, auditoria e
+pruners que consultam `robinhood_holder_coverage_pending`. A flag
+`ROBINHOOD_HOLDER_COVERAGE_PROTECTION_ENABLED` tem default `false` e controla
+somente a criação de marcadores no chain capture; os pruners respeitam os
+marcadores existentes mesmo depois de desligá-la.
+O marcador usa `(chain, token_address)`, guarda a primeira âncora de mint e a
+geração da captura, no mesmo commit dos eventos, sem copiar raw nem receipts.
+Mints com formato incompatível, contratos canônicos, ativos tokenizados e
+bloqueios administrativos recebem exclusão explícita. Um mint ERC-20 válido
+posterior pode substituir uma exclusão por formato incompatível.
+Concluir ou apagar a tarefa de creator não libera a pendência. Captura duplicada
+não renova sua idade; um reorg não apaga o marcador nem libera sua faixa.
+O audit de retenção expõe `holder_coverage`, contagens por motivo, idade e
+âncoras sem prova canônica, com referências de alerta em 24h e 48h.
+Os pruners revalidam a proteção na transação, sob o fence de recovery: se o
+cutoff ultrapassa uma pendência, bloqueiam o lote inteiro, incluindo descarte
+de partições, storage canônico e journal holder aplicado ou vazio.
+**Ponto importante:** essa proteção é conservadora e pode impedir a drenagem
+após 72h; não libera pendências automaticamente nem inicializa holders.
+Antes de ativar, medir fluxo elegível, bytes, índices, WAL, crescimento líquido
+e orçamento de disco. O marcador não comprova deployment ou cobertura anterior
+ao mint; essa cobertura precisa ser validada antes de admitir o token.
+Desligar a flag preserva os marcadores e os dados protegidos. Não remover
+marcadores ou avançar floors para contornar o bloqueio.
+
 No startup, o capturador detecta o tipo da tabela ativa: enquanto for monolítica,
 respeita `ROBINHOOD_CHAIN_EVENT_SHADOW_ENABLED`; quando for particionada, desliga
 o espelhamento legado mesmo que a flag permaneça ligada. O pruner antigo recusa
