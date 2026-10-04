@@ -4193,12 +4193,20 @@ Os diagnósticos usam memória e o heartbeat existente, sem novas queries ou
 timers; não expõem URL, credenciais, payload RPC completo ou mensagens de erro.
 Considere sempre a idade do heartbeat: o retrato persistido não é uma leitura
 instantânea, e etapas de repositório incluem aquisição de conexão e execução SQL.
-No scan global, todo intervalo não vazio força `eth_getLogs` filtrado pelos endereços
-elegíveis naquele bloco. A allowlist é dividida em lotes de até 1.000 contratos; rejeições
+No scan global, por default cada intervalo não vazio força `eth_getLogs` filtrado pelos
+endereços elegíveis naquele bloco. A allowlist é dividida em lotes de até 1.000 contratos; rejeições
 de payload reduzem esse limite aprendido sem perder blocos ou eventos. O onboarding usa
 uma shard por range para que o prefetch 16 limite a pressão a 16 chamadas simultâneas.
 `activeRpc[].filterMode`, `addressCount` e `scopeTokens` identificam o caminho e o tamanho
 efetivos. O scanner nunca pula blocos: o filtro reduz os logs transferidos pelo RPC.
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_FORCE_ADDRESS_FILTERED=false` permite ao reader
+usar uma consulta somente por `Transfer` quando a coorte excede o limite de endereços.
+O reader filtra pela mesma coorte elegível antes de decodificar ou persistir; não
+admite tokens extras nem altera checkpoints, tratamento de déficit ou handoff.
+Esse modo pode reduzir chamadas ao Archive, mas transfere todos os logs `Transfer`
+da faixa e aumenta uso de rede e memória. Compare igualdade dos eventos, taxa de
+avanço e lag live antes de ativar; ranges e prefetch continuam limitados e adaptativos.
+Para rollback, restaure a flag para `true` e reinicie somente o worker global.
 O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
 não pode preceder o cutoff global.
 

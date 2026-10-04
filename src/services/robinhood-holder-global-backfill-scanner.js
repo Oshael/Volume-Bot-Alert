@@ -31,6 +31,7 @@ function normalizeOptions(input = {}) {
       input.finalityBlocks, DEFAULT_FINALITY_BLOCKS, 2000, 100_000, 'finalityBlocks'
     ),
     maxCommitMs: boundedInteger(input.maxCommitMs, 2000, 1, 300_000, 'maxCommitMs'),
+    forceAddressFiltered: input.forceAddressFiltered !== false,
     maxLiveLagBlocks: boundedInteger(
       input.maxLiveLagBlocks, 100, 0, 1_000_000, 'maxLiveLagBlocks'
     ),
@@ -510,7 +511,8 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       const startedAt = now();
       const tokenAddresses = rangeScope(schedule, range.toBlock);
       return reader.readGlobalRange({
-        tokenAddresses, ...range, forceAddressFiltered: tokenAddresses.length > 0,
+        tokenAddresses, ...range,
+        forceAddressFiltered: options.forceAddressFiltered && tokenAddresses.length > 0,
         deferRangeAdaptation: true,
       })
         .then((value) => observeFetched(value, Math.max(0, now() - startedAt)),

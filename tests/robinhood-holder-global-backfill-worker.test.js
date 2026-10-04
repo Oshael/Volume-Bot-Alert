@@ -287,6 +287,7 @@ describe('Robinhood holder global backfill worker', () => {
     await buildRuntime(normalizeOptions({
       enabled: true, catalogCutoff: CUTOFF, addressShardConcurrency: 3,
       addressFilterLimit: 750, maxCommitMs: 10_000, prefetch: 16,
+      forceAddressFiltered: false,
     }), {
       env: {
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -306,6 +307,7 @@ describe('Robinhood holder global backfill worker', () => {
     });
     assert.equal(calls[2].options.maxCommitMs, 10_000);
     assert.equal(calls[2].options.prefetch, 16);
+    assert.equal(calls[2].options.forceAddressFiltered, false);
   });
 
   it('falls back to the shared holder RPC when the dedicated URL is absent', async () => {

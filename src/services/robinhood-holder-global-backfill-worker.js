@@ -52,6 +52,7 @@ function normalizeOptions(input = {}) {
     addressFilterLimit: boundedInteger(
       input.addressFilterLimit, 1000, 1, 1000, 'addressFilterLimit'
     ),
+    forceAddressFiltered: input.forceAddressFiltered !== false,
     maxCommitMs: boundedInteger(input.maxCommitMs, 2000, 1, 300_000, 'maxCommitMs'),
     addressShardConcurrency: boundedInteger(
       input.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'
@@ -108,6 +109,7 @@ async function buildRuntime(options, deps = {}) {
     options: {
       rangeSize: options.rangeSize, prefetch: options.prefetch,
       finalityBlocks: options.finalityBlocks, maxCommitMs: options.maxCommitMs,
+      forceAddressFiltered: options.forceAddressFiltered,
     },
   }), 'scanner');
   const materializer = observe((deps.attachFactory || createRobinhoodHolderGlobalBackfillAttach)({
@@ -308,6 +310,7 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
       source: options.source,
       rangeSize: options.rangeSize, prefetch: options.prefetch,
       addressShardConcurrency: options.addressShardConcurrency, maxCommitMs: options.maxCommitMs,
+      forceAddressFiltered: options.forceAddressFiltered,
     },
   }), runOnce, start, stop });
 }

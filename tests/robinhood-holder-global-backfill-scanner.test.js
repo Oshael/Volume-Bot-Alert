@@ -273,6 +273,49 @@ describe('Robinhood holder global backfill scanner', () => {
     ]);
   });
 
+  it('keeps the exact deployed cohort when reading topics without address shards', async () => {
+    const { createRobinhoodHolderTransferReader } = require('../src/services/robinhood-holder-transfer-reader');
+    const { TRANSFER_TOPIC } = require('../src/services/evm-erc20-supply-delta');
+    const second = `0x${'2'.repeat(40)}`, future = `0x${'3'.repeat(40)}`;
+    const evidence = {
+      blockNumber: '0x64', blockHash: HASH, transactionHash: HASH, transactionIndex: '0x0',
+      address: TOKEN, logIndex: '0x0', data: `0x${'0'.repeat(63)}1`,
+      topics: [TRANSFER_TOPIC, `0x${'0'.repeat(64)}`, `0x${'0'.repeat(24)}${'4'.repeat(40)}`],
+    };
+    const reader = createRobinhoodHolderTransferReader({ addressFilterLimit: 1, rpcClient: {
+      request: async (method, params) => {
+        if (method === 'eth_chainId') return '0x1237';
+        if (method === 'eth_getBlockByNumber') return { number: params[0], hash: HASH };
+        assert.equal(method, 'eth_getLogs');
+        assert.equal(Object.hasOwn(params[0], 'address'), false);
+        return [evidence, { ...evidence, address: second, logIndex: '0x1' },
+          { ...evidence, address: future, logIndex: '0x2' },
+          { ...evidence, address: `0x${'9'.repeat(40)}`, topics: [TRANSFER_TOPIC] }];
+      },
+    } });
+    const commits = [];
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({ reader,
+      lifecycleRepository: {
+        getActiveRun: async () => runState(),
+        loadCohort: async () => { throw new Error('unexpected legacy cohort load'); },
+        loadCohortSchedule: async () => [
+          { tokenAddress: TOKEN, deploymentBlock: '100' },
+          { tokenAddress: second, deploymentBlock: '100' },
+          { tokenAddress: future, deploymentBlock: '120' },
+        ],
+      },
+      commitRepository: {
+        commitRange: async input => { commits.push(input); return { status: 'committed', ...input }; },
+        excludeToken: async () => { throw new Error('unexpected exclusion'); },
+      },
+      options: { forceAddressFiltered: false, rangeSize: 10, prefetch: 1 },
+    });
+    const result = await scanner.runOnce({ throughBlock: '109' });
+    assert.equal(result.nextBlock, '110');
+    assert.deepEqual(commits[0].transfers.map(row => row.tokenAddress), [TOKEN, second]);
+    assert.deepEqual(commits[0].checkpoint, { number: '109', hash: HASH });
+  });
+
   it('separates RPC wait from commit time in the last batch telemetry', async () => {
     let clock = 0;
     let releaseFetch;
