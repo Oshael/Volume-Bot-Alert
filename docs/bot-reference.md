@@ -7250,6 +7250,21 @@ runtime usa lease distribuído, expõe health telemetry e encerra o listener no
 shutdown. Esta família não terá backfill; a ativação live definirá o início da
 observação shadow.
 
+O writer de `robinhood_token_transfer_events` grava também a posição na sidecar
+`robinhood_transaction_positions` da Stage 139, na mesma transação PostgreSQL.
+Isso cobre `wallet_transfer`, `dex_flow`, `unknown` e `unclassified` com valor
+positivo e endpoints distintos e não zero; os dois últimos preservam a posição
+antes de uma classificação posterior. Vários logs da mesma transação compartilham
+uma posição. A gravação das posições usa lotes de até 10.000 eventos, não consulta RPC e não
+atualiza posições idênticas. Em replay de eventos já existentes, os metadados
+duráveis do raw prevalecem sobre o payload duplicado e podem preencher uma posição
+ausente. Conflito de bloco, hash ou índice com uma posição existente aborta a
+transação inteira, sem substituir evidência canônica; investigue o conflito ou
+conclua o rollback canônico antes de retomar. O caminho de swaps mantém seu contrato
+de substituição canônica. Não há novo worker nem migration: a Stage 139 já deve
+estar aplicada. A proteção vale para novas gravações e replays; dados históricos
+que não passarem pelo writer ainda precisam do repair limitado abaixo.
+
 Se o worker adiar tokens com `transaction_position_missing` por posições de
 transfer ou primeira venda anteriores à captura da sidecar, rode primeiro
 `npm run robinhood:bundle-redistribution-position-repair` para uma prévia sem

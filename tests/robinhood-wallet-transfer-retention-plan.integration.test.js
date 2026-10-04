@@ -10,6 +10,7 @@ const { createRobinhoodWalletTransferRetentionReadiness } = require('../src/mode
 const { createRobinhoodWalletTransferEvidenceMigration } = require('../src/models/robinhood-wallet-transfer-evidence-migration');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage132 = require('../src/utils/db-init-stage132');
+const stage139 = require('../src/utils/db-init-stage139');
 const stage243 = require('../src/utils/db-init-stage243');
 const stage244 = require('../src/utils/db-init-stage244');
 const stage191 = require('../src/utils/db-init-stage191');
@@ -43,6 +44,7 @@ async function insertVerified(day, version = VERSION) {
   );
 }
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])', [MIGRATION_TXS]);
   await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [UNKNOWN_TX]);
   await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1', [UNKNOWN_TX]);
   await db.query('DELETE FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [UNKNOWN_TX]);
@@ -58,6 +60,7 @@ describe('Robinhood wallet transfer retention plan integration', () => {
     await assertUsingTestDatabase(db);
     await stage128.init({ closePool: false });
     await stage132.init({ closePool: false });
+    await stage139.init({ closePool: false });
     await stage243.init({ closePool: false });
     await stage244.init({ closePool: false });
     await stage191.init({ closePool: false });

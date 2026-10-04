@@ -40,6 +40,7 @@ const stage131 = require('../src/utils/db-init-stage131');
 const stage132 = require('../src/utils/db-init-stage132');
 const stage134 = require('../src/utils/db-init-stage134');
 const stage137 = require('../src/utils/db-init-stage137');
+const stage139 = require('../src/utils/db-init-stage139');
 const stage153 = require('../src/utils/db-init-stage153');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage208 = require('../src/utils/db-init-stage208');
@@ -112,7 +113,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await baseDb.query(`CREATE SCHEMA ${schema}`);
     schemaCreated = true;
     for (const stage of [stage126, stage127, stage128, stage243, stage244, stage129,
-      stage130, stage131, stage132, stage134, stage137, stage153, stage191, stage208,
+      stage130, stage131, stage132, stage134, stage137, stage139, stage153, stage191, stage208,
       stage256, stage257, stage258, stage259, stage261]) {
       for (const sql of stage.STATEMENTS) await db.query(sql);
     }

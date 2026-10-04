@@ -63,6 +63,50 @@ function normalizeStored(row) {
 function createRobinhoodTransactionPositionRepository(options = {}) {
   const database = options.database || db;
 
+  // The caller owns BEGIN/COMMIT: conflicting evidence must roll back its source events too.
+  async function ensurePositions(inputs, transactionClient) {
+    if (!transactionClient || typeof transactionClient.query !== 'function') {
+      throw new TypeError('ensurePositions requires the source transaction client');
+    }
+    const payload = compactPositions(inputs).sort((a, b) => (
+      a.transaction_hash.localeCompare(b.transaction_hash)
+    ));
+    if (!payload.length) return Object.freeze({ requested: 0, persisted: 0 });
+    const inserted = await transactionClient.query(
+      `INSERT INTO robinhood_transaction_positions (
+         chain, transaction_hash, block_number, block_hash, transaction_index
+       ) SELECT $2, item.transaction_hash, item.block_number::bigint,
+                item.block_hash, item.transaction_index::integer
+         FROM jsonb_to_recordset($1::jsonb) AS item(
+           transaction_hash text, block_number text, block_hash text, transaction_index text
+         ) ORDER BY item.transaction_hash
+       ON CONFLICT (chain, transaction_hash) DO NOTHING`,
+      [JSON.stringify(payload), CHAIN]
+    );
+    const outcome = Object.freeze({ requested: payload.length, persisted: inserted.rowCount || 0 });
+    if (inserted.rowCount === payload.length) return outcome;
+    // A separate statement also sees a concurrent insert that ON CONFLICT waited for.
+    const stored = await transactionClient.query(
+      `SELECT transaction_hash, block_number::text, block_hash, transaction_index::text
+         FROM robinhood_transaction_positions
+        WHERE chain = $1 AND transaction_hash = ANY($2::varchar[])
+        ORDER BY transaction_hash FOR SHARE`,
+      [CHAIN, payload.map((row) => row.transaction_hash)]
+    );
+    const byHash = new Map(stored.rows.map((row) => [row.transaction_hash, row]));
+    for (const expected of payload) {
+      const actual = byHash.get(expected.transaction_hash);
+      if (!actual || actual.block_number !== expected.block_number
+          || actual.block_hash !== expected.block_hash
+          || actual.transaction_index !== expected.transaction_index) {
+        const error = new Error(`transaction position conflicts with source evidence: ${expected.transaction_hash}`);
+        error.code = 'ROBINHOOD_TRANSACTION_POSITION_CONFLICT';
+        throw error;
+      }
+    }
+    return outcome;
+  }
+
   async function upsertPositions(inputs = []) {
     const payload = compactPositions(inputs);
     if (!payload.length) return Object.freeze({ requested: 0, persisted: 0 });
@@ -112,10 +156,11 @@ function createRobinhoodTransactionPositionRepository(options = {}) {
     return Object.freeze(rows.map(normalizeStored));
   }
 
-  return Object.freeze({ loadPositions, upsertPositions });
+  return Object.freeze({ ensurePositions, loadPositions, upsertPositions });
 }
 
 module.exports = {
+  MAX_POSITIONS,
   createRobinhoodTransactionPositionRepository,
   __private: { compactPositions, normalizePosition },
 };

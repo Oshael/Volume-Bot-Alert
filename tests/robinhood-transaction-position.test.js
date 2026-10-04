@@ -75,4 +75,9 @@ describe('Robinhood transaction positions', () => {
     }]);
     assert.deepEqual(calls[1].params, ['robinhood', [TX]]);
   });
+
+  it('requires a source transaction for strict position persistence', async () => {
+    const repository = createRobinhoodTransactionPositionRepository();
+    await assert.rejects(repository.ensurePositions([position()]), /source transaction client/);
+  });
 });

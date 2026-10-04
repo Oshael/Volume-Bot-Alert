@@ -10,8 +10,15 @@ const stage128 = require('../src/utils/db-init-stage128');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
+const stage132 = require('../src/utils/db-init-stage132');
 const stage134 = require('../src/utils/db-init-stage134');
+const stage139 = require('../src/utils/db-init-stage139');
+const stage153 = require('../src/utils/db-init-stage153');
 const stage243 = require('../src/utils/db-init-stage243');
+const stage256 = require('../src/utils/db-init-stage256');
+const stage257 = require('../src/utils/db-init-stage257');
+const stage258 = require('../src/utils/db-init-stage258');
+const stage259 = require('../src/utils/db-init-stage259');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'rh_transfer_v1';
@@ -31,6 +38,21 @@ function event(blockNumber, blockTime, suffix) {
 }
 
 async function cleanup() {
+  const removedScopes = await db.query(
+    `DELETE FROM robinhood_wallet_transfer_scan_scopes
+     WHERE projection_version = $1 AND stream = 'seed' AND from_block = 90
+       AND through_block = 200 AND checkpoint_hash = $2 RETURNING token_scope_hash`, [VERSION, HASH]
+  );
+  await db.query(
+    `DELETE FROM robinhood_wallet_transfer_token_scopes scope
+     WHERE scope.chain = 'robinhood' AND scope.scope_hash = ANY($1::varchar[])
+       AND NOT EXISTS (SELECT 1 FROM robinhood_wallet_transfer_scan_scopes scan
+         WHERE scan.chain = scope.chain AND scan.token_scope_hash = scope.scope_hash)`,
+    [removedScopes.rows.map((row) => row.token_scope_hash).filter(Boolean)]
+  );
+  await db.query('DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])', [
+    [1, 2].map((suffix) => `0x${String(suffix).padStart(64, 'b')}`),
+  ]);
   await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = $1 AND token_address = $2', [VERSION, TOKEN]);
@@ -42,7 +64,8 @@ async function cleanup() {
 describe('Robinhood wallet-transfer backfill commit integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage128, stage129, stage130, stage131, stage134, stage243]) {
+    for (const stage of [stage128, stage129, stage130, stage131, stage132, stage134, stage139, stage153,
+      stage243, stage256, stage257, stage258, stage259]) {
       await stage.init({ closePool: false });
     }
     await cleanup();
@@ -62,7 +85,7 @@ describe('Robinhood wallet-transfer backfill commit integration', () => {
         event(100, '2099-07-14T12:00:00.000Z', 1),
         event(200, '2099-08-14T12:00:00.000Z', 2),
       ],
-      telemetry: { requests: 1 },
+      telemetry: { requests: 1, filterMode: 'address-filtered' },
     };
     const dependencies = {
       source: {
@@ -112,6 +135,11 @@ describe('Robinhood wallet-transfer backfill commit integration', () => {
     assert.equal(result.status, 'complete');
     assert.equal(result.rawInserted, 1);
     assert.deepEqual(raw.rows, [{ block_number: '200' }]);
+    const position = await db.query(
+      'SELECT block_number::text, transaction_index FROM robinhood_transaction_positions WHERE transaction_hash = $1',
+      [captured.transfers[1].transactionHash]
+    );
+    assert.deepEqual(position.rows, [{ block_number: '200', transaction_index: 2 }]);
     assert.deepEqual(edge.rows, [{ transfer_count: '2' }]);
     assert.deepEqual(daily.rows, [{ count: 2 }]);
     assert.deepEqual(cursor.rows, [{

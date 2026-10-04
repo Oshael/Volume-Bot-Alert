@@ -19,6 +19,7 @@ const stage131 = require('../src/utils/db-init-stage131');
 const stage132 = require('../src/utils/db-init-stage132');
 const stage135 = require('../src/utils/db-init-stage135');
 const stage136 = require('../src/utils/db-init-stage136');
+const stage139 = require('../src/utils/db-init-stage139');
 const stage153 = require('../src/utils/db-init-stage153');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage205 = require('../src/utils/db-init-stage205');
@@ -49,6 +50,8 @@ let insertedCaptureCursor = false;
 let originalCaptureCursor = null;
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])',
+    [[TX1, TX2, TX3, RAWLESS_TX]]);
   await db.query('DELETE FROM robinhood_wallet_transfer_evidence_dispositions WHERE transaction_hash = $1', [RAWLESS_TX]);
   await db.query('DELETE FROM robinhood_wallet_transfer_reclassifications WHERE to_classification_version = $1', [RAWLESS_VERSION]);
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = $1', [RAWLESS_VERSION]);
@@ -147,7 +150,7 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
-      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153,
+      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage139, stage153,
       stage191, stage205, stage243, stage244,
     ]) {
       await stage.init({ closePool: false });
@@ -481,6 +484,10 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
     assert.equal((await db.query(
       'SELECT 1 FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [RAWLESS_TX]
     )).rowCount, 0);
+    assert.deepEqual((await db.query(
+      `SELECT block_number::text, block_hash, transaction_index
+         FROM robinhood_transaction_positions WHERE transaction_hash = $1`, [RAWLESS_TX]
+    )).rows, [{ block_number: '200', block_hash: RAWLESS_HASH, transaction_index: 1 }]);
     assert.equal((await db.query(
       `SELECT lifecycle_state FROM robinhood_wallet_transfer_compaction_watermarks
        WHERE projection_version = $1`, [RAWLESS_VERSION]

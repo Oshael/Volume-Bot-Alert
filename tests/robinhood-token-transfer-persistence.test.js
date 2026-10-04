@@ -8,7 +8,7 @@ const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
   RAW_RETENTION_DAYS,
   createRobinhoodTokenTransferRepository,
-  __private: { dayBounds, dayKey, normalizeTransferEvent, partitionName },
+  __private: { dayBounds, dayKey, normalizeTransferEvent, partitionName, transferPositions },
 } = require('../src/models/robinhood-token-transfer-persistence');
 
 function event(overrides = {}) {
@@ -106,6 +106,24 @@ describe('Robinhood token transfer persistence', () => {
     assert.throws(() => normalizeTransferEvent(event({ logIndex: '2147483648' })), /exceeds PostgreSQL integer/);
     assert.throws(() => normalizeTransferEvent(event({ classificationVersion: 'v1' })), /cannot have/);
     assert.throws(() => normalizeTransferEvent(event({ transferKind: 'mint' })), /require a valid/);
+  });
+
+  it('retains positions for relevant and pending transfers, excluding non-edge evidence', () => {
+    const eligible = event({ fromWallet: `0x${'3'.repeat(40)}`, amountRaw: '1' });
+    for (const transferKind of ['wallet_transfer', 'dex_flow', 'unknown', 'unclassified']) {
+      const row = normalizeTransferEvent({
+        ...eligible, transferKind,
+        classificationVersion: transferKind === 'unclassified' ? null : 'rh_transfer_v1',
+      });
+      assert.equal(transferPositions([row]).length, 1, transferKind);
+    }
+    for (const overrides of [
+      { amountRaw: '0' }, { fromWallet: eligible.toWallet },
+      { fromWallet: `0x${'0'.repeat(40)}` }, { toWallet: `0x${'0'.repeat(40)}` },
+      { transferKind: 'contract_flow', classificationVersion: 'rh_transfer_v1' },
+    ]) {
+      assert.deepEqual(transferPositions([normalizeTransferEvent({ ...eligible, ...overrides })]), []);
+    }
   });
 
   it('ensures sorted daily partitions before one idempotent bulk insert', async () => {

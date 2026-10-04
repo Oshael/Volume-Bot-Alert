@@ -1,9 +1,13 @@
 const db = require('./db');
+const {
+  MAX_POSITIONS, createRobinhoodTransactionPositionRepository,
+} = require('./robinhood-transaction-position');
 
 const CHAIN = 'robinhood';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const RAW_RETENTION_DAYS = 30;
 const RETENTION_DAY_LOCK_PREFIX = 'rh-transfer-retention-day:';
+const POSITION_KINDS = new Set(['wallet_transfer', 'dex_flow', 'unknown', 'unclassified']);
 const TRANSFER_KINDS = new Set([
   'unclassified', 'mint', 'burn', 'dex_flow', 'liquidity_flow',
   'router_flow', 'wallet_transfer', 'wallet_self', 'contract_flow', 'unknown',
@@ -98,8 +102,43 @@ function normalizeTransferEvent(input = {}) {
   };
 }
 
+function transferPositions(rows) {
+  return rows.filter((row) => POSITION_KINDS.has(row.transfer_kind)
+    && row.from_wallet !== ZERO_ADDRESS && row.to_wallet !== ZERO_ADDRESS
+    && row.from_wallet !== row.to_wallet && BigInt(row.amount_raw) > 0n)
+    .map((row) => ({
+      transactionHash: row.transaction_hash, blockNumber: row.block_number,
+      blockHash: row.block_hash, transactionIndex: row.transaction_index,
+    }));
+}
+
+async function loadDuplicateEvidence(client, rows) {
+  const keys = rows.map((row) => ({
+    transaction_hash: row.transaction_hash, log_index: row.log_index, block_time: row.block_time,
+  }));
+  const result = await client.query(
+    `SELECT raw.transaction_hash, raw.block_number::text, raw.block_hash,
+            raw.transaction_index::text, raw.transfer_kind,
+            raw.from_wallet, raw.to_wallet, raw.amount_raw::text
+       FROM jsonb_to_recordset($1::jsonb) AS item(
+         transaction_hash text, log_index text, block_time text
+       ) CROSS JOIN LATERAL (
+         SELECT transaction_hash, block_number, block_hash, transaction_index,
+                transfer_kind, from_wallet, to_wallet, amount_raw
+           FROM robinhood_token_transfer_events
+          WHERE chain = $2 AND transaction_hash = item.transaction_hash
+            AND log_index = item.log_index::integer
+            AND block_time = item.block_time::timestamptz
+          LIMIT 1
+       ) raw`,
+    [JSON.stringify(keys), CHAIN]
+  );
+  return result.rows;
+}
+
 function createRobinhoodTokenTransferRepository(options = {}) {
   const database = options.database || db;
+  const positions = createRobinhoodTransactionPositionRepository({ database });
   const preservePendingEvidence = options.preservePendingEvidence === undefined
     ? process.env.ROBINHOOD_WALLET_TRANSFER_PENDING_EVIDENCE_ENABLED === 'true'
     : options.preservePendingEvidence === true;
@@ -188,6 +227,14 @@ function createRobinhoodTokenTransferRepository(options = {}) {
         preservePendingEvidence ? preservationSql : insertSql,
         [JSON.stringify(payload)]
       );
+      const inserted = preservePendingEvidence ? result.rows[0].inserted : result.rowCount || 0;
+      for (let offset = 0; offset < normalized.length; offset += MAX_POSITIONS) {
+        const batch = normalized.slice(offset, offset + MAX_POSITIONS);
+        // On replay, the committed raw row wins over a divergent duplicate payload.
+        const evidence = inserted < normalized.length
+          ? await loadDuplicateEvidence(client, batch) : batch;
+        await positions.ensurePositions(transferPositions(evidence), client);
+      }
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -211,5 +258,5 @@ module.exports = {
   lockRobinhoodTransferRetentionDay,
   partitionName,
   createRobinhoodTokenTransferRepository,
-  __private: { dayBounds, dayKey, normalizeTransferEvent, partitionName },
+  __private: { dayBounds, dayKey, normalizeTransferEvent, partitionName, transferPositions },
 };

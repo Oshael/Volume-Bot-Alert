@@ -7,6 +7,7 @@ const db = require('../src/models/db');
 const stage128 = require('../src/utils/db-init-stage128');
 const stage132 = require('../src/utils/db-init-stage132');
 const stage138 = require('../src/utils/db-init-stage138');
+const stage139 = require('../src/utils/db-init-stage139');
 const stage243 = require('../src/utils/db-init-stage243');
 const {
   createRobinhoodTokenTransferRepository,
@@ -17,6 +18,28 @@ const TOKEN = `0x${'1'.repeat(40)}`;
 const RETENTION_VERSION = 'test_writer_retention_v1';
 const FIRST_GUARDED_DAY = '2199-01-02';
 const DROPPED_GUARDED_DAY = '2199-01-03';
+const POSITION_HASHES = Array.from({ length: 20 }, (_, i) => (
+  `0x${'de12'.repeat(15)}${i.toString(16).padStart(4, '0')}`
+));
+
+function walletEvent(suffix, overrides = {}) {
+  return event('2099-01-01', 1, {
+    blockNumber: String(100 + suffix), blockHash: `0x${'abc1'.repeat(16)}`,
+    transactionHash: POSITION_HASHES[suffix], transactionIndex: String(suffix),
+    fromWallet: `0x${'3'.repeat(40)}`, amountRaw: '10',
+    transferKind: 'wallet_transfer', classificationVersion: 'rh_transfer_v1',
+    ...overrides,
+  });
+}
+
+async function loadPosition(hash) {
+  const { rows } = await db.query(
+    `SELECT block_number::text, block_hash, transaction_index::text, updated_at
+       FROM robinhood_transaction_positions WHERE chain = 'robinhood' AND transaction_hash = $1`,
+    [hash]
+  );
+  return rows[0];
+}
 
 function event(day, suffix, overrides = {}) {
   return {
@@ -35,15 +58,18 @@ describe('Robinhood token transfer persistence integration', () => {
     await stage128.init({ closePool: false });
     await stage132.init({ closePool: false });
     await stage138.init({ closePool: false });
+    await stage139.init({ closePool: false });
     await stage243.init({ closePool: false });
     await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [RETENTION_VERSION]);
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
     await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])', [POSITION_HASHES]);
   });
   after(async () => {
     await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [RETENTION_VERSION]);
     await db.query('DELETE FROM robinhood_token_transfer_events WHERE token_address = $1', [TOKEN]);
     await db.query('DELETE FROM robinhood_wallet_transfer_pending_evidence WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])', [POSITION_HASHES]);
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2098_12_31');
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2099_01_01');
     await db.query('DROP TABLE IF EXISTS robinhood_token_transfer_events_2199_01_02');
@@ -172,5 +198,82 @@ describe('Robinhood token transfer persistence integration', () => {
               to_regclass('robinhood_token_transfer_events_2199_01_03') AS dropped`
     );
     assert.deepEqual(partitions.rows[0], { first: null, dropped: null });
+  });
+
+  it('persists a pure transfer position once even with multiple logs and retries', async () => {
+    const repository = createRobinhoodTokenTransferRepository({ database: db });
+    const transfer = walletEvent(0);
+    const events = [transfer, { ...transfer, logIndex: '2' }];
+    assert.equal((await repository.insertTransferEvents(events)).inserted, 2);
+    const first = await loadPosition(transfer.transactionHash);
+    assert.equal(first.block_number, transfer.blockNumber);
+    assert.equal(first.block_hash, transfer.blockHash);
+    assert.equal(first.transaction_index, transfer.transactionIndex);
+    assert.equal((await repository.insertTransferEvents(events)).inserted, 0);
+    assert.deepEqual(await loadPosition(transfer.transactionHash), first);
+  });
+
+  it('repairs a missing position on replay using durable raw evidence over duplicate input', async () => {
+    const repository = createRobinhoodTokenTransferRepository({ database: db });
+    const transfer = walletEvent(1);
+    await repository.insertTransferEvents([transfer]);
+    await db.query('DELETE FROM robinhood_transaction_positions WHERE transaction_hash = $1', [transfer.transactionHash]);
+    assert.equal((await repository.insertTransferEvents([{
+      ...transfer, transactionIndex: '99', blockHash: `0x${'9'.repeat(64)}`,
+    }])).inserted, 0);
+    const stored = await loadPosition(transfer.transactionHash);
+    assert.equal(stored.transaction_index, transfer.transactionIndex);
+    assert.equal(stored.block_hash, transfer.blockHash);
+  });
+
+  it('captures the position before an unknown transfer can later become a wallet transfer', async () => {
+    const repository = createRobinhoodTokenTransferRepository({ database: db, preservePendingEvidence: true });
+    const transfer = walletEvent(2, { transferKind: 'unknown' });
+    await repository.insertTransferEvents([transfer]);
+    assert.equal((await loadPosition(transfer.transactionHash)).transaction_index, transfer.transactionIndex);
+    const preserved = await db.query(
+      'SELECT transaction_index FROM robinhood_wallet_transfer_pending_evidence WHERE transaction_hash = $1',
+      [transfer.transactionHash]
+    );
+    assert.equal(preserved.rows[0].transaction_index, Number(transfer.transactionIndex));
+  });
+
+  it('rolls back raw transfers and newly inserted positions instead of overwriting conflicting evidence', async () => {
+    const repository = createRobinhoodTokenTransferRepository({ database: db });
+    for (const [index, conflict] of [
+      { blockNumber: '999' }, { blockHash: `0x${'9'.repeat(64)}` }, { transactionIndex: '99' },
+    ].entries()) {
+      const transfer = walletEvent(3 + index);
+      const fresh = walletEvent(6 + index);
+      const other = { ...transfer, ...conflict };
+      await db.query(
+        `INSERT INTO robinhood_transaction_positions
+           (chain, transaction_hash, block_number, block_hash, transaction_index)
+         VALUES ('robinhood', $1, $2, $3, $4)`,
+        [other.transactionHash, other.blockNumber, other.blockHash, other.transactionIndex]
+      );
+      const before = await loadPosition(transfer.transactionHash);
+      await assert.rejects(repository.insertTransferEvents([fresh, transfer]), {
+        code: 'ROBINHOOD_TRANSACTION_POSITION_CONFLICT',
+      });
+      assert.deepEqual(await loadPosition(transfer.transactionHash), before);
+      assert.equal(await loadPosition(fresh.transactionHash), undefined);
+      const raw = await db.query(
+        'SELECT 1 FROM robinhood_token_transfer_events WHERE transaction_hash = ANY($1::varchar[])',
+        [[transfer.transactionHash, fresh.transactionHash]]
+      );
+      assert.equal(raw.rowCount, 0);
+    }
+  });
+
+  it('rejects inconsistent positions across logs in one transaction and rolls back raw evidence', async () => {
+    const repository = createRobinhoodTokenTransferRepository({ database: db });
+    const transfer = walletEvent(9);
+    await assert.rejects(repository.insertTransferEvents([
+      transfer, { ...transfer, logIndex: '2', transactionIndex: '99' },
+    ]), /conflicting evidence/);
+    assert.equal(await loadPosition(transfer.transactionHash), undefined);
+    const raw = await db.query('SELECT 1 FROM robinhood_token_transfer_events WHERE transaction_hash = $1', [transfer.transactionHash]);
+    assert.equal(raw.rowCount, 0);
   });
 });
