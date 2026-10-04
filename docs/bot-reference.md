@@ -407,6 +407,26 @@ Para o descarte somente de eventos particionados, o risco global
 deployment e redistribution são rechecados na faixa da partição candidata.
 Outros bloqueios do audit continuam impedindo a poda. Essa exceção não libera
 a retenção das tabelas canônicas de blocos e transações.
+
+Na VPS, parte dos índices físicos das partições históricas de
+`robinhood_chain_events` fica em `trendscope_nvme2`
+(`/srv/trendscope-data-2/pg16-tablespace`), enquanto seus heaps permanecem em
+`trendscope_raw` (`/srv/trendscope-data/pg16-tablespace`). A localização efetiva
+de cada heap e índice vem de `pg_class.reltablespace`, `pg_tablespace` e
+`pg_relation_filepath`; não a deduza pelo nome da partição nem atribua todo
+`pg_total_relation_size` a um único mountpoint. Mover um índice existente não
+altera a colocação dos índices de futuras partições; confira a configuração do
+índice pai antes de provisioná-las. As verificações de colocação da Stage 247 e
+de `provision-robinhood-chain-journal-partition.js` exigem, respectivamente, o
+tablespace informado e o do índice pai; podem recusar partições históricas cujos
+índices foram movidos. Preserve essa distribuição ao planejar uma revalidação
+histórica e use o provisionador para novas faixas à frente da captura.
+O descarte auditado de uma partição libera
+heap e índices nos respectivos volumes. Movimentações com
+`ALTER INDEX ... SET TABLESPACE` exigem margem no destino e no filesystem do WAL,
+mantêm lock exclusivo no índice durante a cópia e devem ser sequenciais, com
+acompanhamento da captura e dos consumidores.
+
 O journal compacto `robinhood_stock_usd_reference_events` não
 participa dessa poda e mantém a referência histórica necessária após o raw expirar.
 Depois de aplicar `node src/utils/db-init-stage240.js`, a retenção do journal canônico
