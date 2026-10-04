@@ -59,7 +59,10 @@ function normalizeOptions(input = {}) {
 function buildRuntime(deps = {}) {
   const database = deps.database || db;
   const bootstrap = deps.bootstrap
-    || (deps.bootstrapFactory || createRobinhoodHolderBootstrapRepository)({ database });
+    || (deps.bootstrapFactory || createRobinhoodHolderBootstrapRepository)({ database,
+      ...((deps.env || process.env).ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED === 'true'
+        ? { localAdmissionEnabled: true } : {}),
+    });
   const executor = deps.executor
     || (deps.executorFactory || createConfiguredRobinhoodHolderBackfillExecutor)({
       database, env: deps.env || process.env, allowPriority: true,

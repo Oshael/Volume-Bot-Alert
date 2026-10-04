@@ -7015,6 +7015,16 @@ SCHEMA_GROUPS.push({
   }],
 });
 
+SCHEMA_GROUPS.push({
+  key: 'stage266-robinhood-holder-local-admission', name: 'Stage 266 Robinhood local holder admission',
+  repair: 'node src/utils/db-init-stage266.js',
+  tables: [{ table: 'robinhood_holder_coverage_pending', columns: ['admitted_tail_from_block'],
+    constraints: [{ name: 'rh_holder_local_admission_check',
+      includes: ['admitted_tail_from_block', 'pending', 'covered', 'from_block'] },
+    { name: 'rh_holder_coverage_pending_status_check', includes: ['covered', 'local_live_handoff'] }],
+  }],
+});
+
 const PROFILE_GROUP_KEYS = {
   test: [
     'core-auth-billing',

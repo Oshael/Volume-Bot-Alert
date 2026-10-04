@@ -6,6 +6,8 @@ const {
 const { refreshExistingHotQueue } = require('./robinhood-holder-hot-queue');
 const { enqueuePublications } = require('./robinhood-holder-realtime-outbox');
 const { PENDING_TOKEN_SELECTION_SQL } = require('./robinhood-holder-pending-selection');
+const { completeLocalCoverage } = require('./robinhood-holder-coverage-pending');
+const { lockRobinhoodCanonicalProjection } = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const STREAM = 'live';
@@ -1337,11 +1339,12 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const tokenAddress = input.tokenAddress == null
       ? null : hex(input.tokenAddress, 20, 'shadowPromotion.tokenAddress');
     return withTransaction(database, async (client) => {
+      if (options.localAdmissionEnabled) await lockRobinhoodCanonicalProjection(client, null, 'holder promotion');
       await lockReorgFence(client, 'shared');
       const cursorResult = await client.query(
         `SELECT next_block, checkpoint_block, checkpoint_hash
            FROM robinhood_holder_cursors
-          WHERE chain = 'robinhood' AND stream = 'live'`
+          WHERE chain = 'robinhood' AND stream = 'live' ${options.localAdmissionEnabled ? 'FOR SHARE' : ''}`
       );
       const cursor = cursorResult.rows[0];
       if (!cursor || cursor.checkpoint_block == null || cursor.checkpoint_hash == null
@@ -1350,6 +1353,9 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         error.code = 'holder_cursor_corrupt';
         throw error;
       }
+      if (options.localAdmissionEnabled) await lockRobinhoodCanonicalProjection(client, {
+        blockNumber: cursor.checkpoint_block, blockHash: cursor.checkpoint_hash,
+      }, 'holder promotion');
       const result = await client.query(
         `WITH candidates AS MATERIALIZED (
            SELECT state.token_address
@@ -1385,6 +1391,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         liveThroughHash: row.live_through_hash,
       }));
       await enqueuePublications(client, publications);
+      if (options.localAdmissionEnabled) await completeLocalCoverage(client,
+        result.rows.map((row) => row.token_address));
       return Object.freeze({
         status: result.rowCount ? 'promoted' : 'idle',
         promotedTokens: result.rowCount,

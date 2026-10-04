@@ -3,8 +3,8 @@
 Data: 2026-10-04. Escopo: Robinhood, captura recente, inicialização dos holders,
 replay local e retenção das evidências necessárias a esse fluxo.
 
-Status: corte 1 implementado e validado localmente, com Stage 265 autorizado.
-Cortes 2–4 pendentes. A proteção está desligada por padrão; implantação,
+Status: cortes 1–3 implementados localmente, com Stages 265 e 266 autorizados.
+Corte 4 pendente. A proteção está desligada por padrão; implantação,
 alterações de ambiente, reinícios e remoções na VPS exigem autorização operacional.
 
 ## 1. Resultado esperado
@@ -304,7 +304,7 @@ Nunca avançar watermark manualmente para liberar uma remoção.
 
 - [x] Corte 1: proteção de pendências validada, incluindo término antecipado do creator.
 - [x] Corte 2: replay local completo e gaps bloqueados, sem RPC histórico silencioso.
-- [ ] Corte 3: inicialização tardia e entrega ao live idempotentes e recuperáveis.
+- [x] Corte 3: inicialização tardia e entrega ao live idempotentes e recuperáveis.
 - [ ] Corte 4: descarte seguro, orçamento/alertas e operação documentados.
 - [ ] Piloto novo chega a holders `live` sem perder mint, transfers ou cobertura.
 - [ ] Reinício/reorg dentro da janela preservada mantém o contrato ou bloqueia com motivo.

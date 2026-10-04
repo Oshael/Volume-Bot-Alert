@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { describe, it } = require('node:test');
 
 const {
@@ -38,6 +39,20 @@ function completed(overrides = {}) {
 }
 
 describe('Robinhood holder live worker', () => {
+  it('requires the protected local replay configuration for local admission', () => {
+    const env = { ...process.env, NODE_ENV: 'test', ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED: 'true',
+      ROBINHOOD_HOLDER_BACKFILL_ENABLED: 'true', ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '2026-09-01',
+      ROBINHOOD_HOLDER_BACKFILL_SOURCE: 'canonical_local', ROBINHOOD_HOLDER_LIVE_SOURCE: 'canonical_journal',
+      ROBINHOOD_HOLDER_COLD_ENABLED: 'false', ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'false' };
+    for (const protectedCapture of ['false', 'true']) {
+      const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+        cwd: require('node:path').resolve(__dirname, '..'), encoding: 'utf8',
+        env: { ...env, ROBINHOOD_HOLDER_COVERAGE_PROTECTION_ENABLED: protectedCapture },
+      });
+      assert.equal(result.status, protectedCapture === 'true' ? 0 : 1, result.stderr);
+    }
+    assert.equal(normalizeOptions({}, {}).localAdmissionEnabled, false);
+  });
   it('requires an explicit true value to authorize tracked capture', () => {
     assert.equal(normalizeOptions({}, {}).allowTrackedCapture, false);
     assert.equal(normalizeOptions({}, {
@@ -310,17 +325,20 @@ describe('Robinhood holder live worker', () => {
     ]);
   });
 
-  it('wires capture and handoff to the canonical journal without creating an RPC client', async () => {
+  it('wires local admission without reading history on the canonical LIVE path', async () => {
     const calls = [];
     let disabledPublisher;
     const reader = { assertChain: async () => calls.push('chain') };
     const runtime = await buildRuntime({
-      sourceMode: 'canonical_journal', rpcTimeoutMs: 9000, addressShardConcurrency: 2,
+      sourceMode: 'canonical_journal', localAdmissionEnabled: true,
+      rpcTimeoutMs: 9000, addressShardConcurrency: 2,
     }, {
       database: 'database',
       rpcClientFactory: () => { throw new Error('RPC must not be created'); },
       canonicalReaderFactory: (input) => { calls.push(['canonical', input]); return reader; },
-      ledger: 'ledger', bootstrap: 'bootstrap', handoffRepository: 'handoffRepository',
+      ledgerFactory: (input) => { calls.push(['ledger', input]); return 'ledger'; },
+      bootstrapFactory: () => { throw new Error('historical admission on LIVE'); },
+      handoffRepository: 'handoffRepository',
       captureFactory: (input) => { calls.push(['capture', input]); return 'capture'; },
       handoffFactory: (input) => { calls.push(['handoff', input]); return 'handoff'; },
       runnerFactory: (input) => {
@@ -339,8 +357,9 @@ describe('Robinhood holder live worker', () => {
     assert.equal(await disabledPublisher([]), 0);
     assert.deepEqual(calls, [
       ['canonical', { database: 'database' }], 'chain',
+      ['ledger', { database: 'database', localAdmissionEnabled: true }],
       ['capture', {
-        bootstrap: 'bootstrap', ledger: 'ledger', reader, sourceMode: 'canonical_journal',
+        bootstrap: null, ledger: 'ledger', reader, sourceMode: 'canonical_journal',
       }],
       ['handoff', { repository: 'handoffRepository', reader }],
       ['runner', {

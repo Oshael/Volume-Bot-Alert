@@ -41,6 +41,8 @@ function normalizeOptions(options = {}, env = process.env) {
   }
   return Object.freeze({
     enabled: options.enabled === true,
+    localAdmissionEnabled: options.localAdmissionEnabled === true
+      || env.ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED === 'true',
     allowTrackedCapture: options.allowTrackedCapture === true
       || env.ROBINHOOD_HOLDER_TRACKED_CAPTURE_ENABLED === 'true',
     sourceMode: normalizeRobinhoodHolderLiveSource(
@@ -78,9 +80,9 @@ async function buildRuntime(options, deps = {}) {
     addressShardConcurrency: options.addressShardConcurrency,
   }, { ...deps, database });
   const ledger = deps.ledger || (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({
-    database,
+    database, ...(options.localAdmissionEnabled ? { localAdmissionEnabled: true } : {}),
   });
-  const bootstrap = resolveBootstrap(deps, database);
+  const bootstrap = options.localAdmissionEnabled ? null : resolveBootstrap(deps, database);
   const { reader } = source;
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
     bootstrap, ledger, reader, sourceMode: source.sourceMode,

@@ -3819,7 +3819,32 @@ No modo local, receipts independentes não estão disponíveis: déficit permane
 `drift-unverified`/`deficit-unverified`, sem confirmar drift por releitura local.
 O worker expõe o motivo do bloqueio; a recuperação deve restaurar a evidência ou
 selecionar explicitamente o modo legado `rpc`. Voltar a `rpc` não exige migration.
-Essas opções não admitem tokens nem liberam a proteção de cobertura pendente.
+Essas opções de fonte, isoladamente, não admitem tokens nem liberam a proteção.
+Para admissão local, aplique Stage 265 e depois Stage 266
+(`node src/utils/db-init-stage266.js`) e use
+`ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED=true` (default `false`). A configuração
+exige proteção de cobertura ligada, incremental habilitado com `canonical_local`,
+LIVE com fonte `canonical_journal` e cold desligado. `ADMITTED_AFTER` continua
+obrigatório para a configuração; a admissão local substitui o corte de data por
+deployment exato, transação bem-sucedida canônica e prova completa desde a criação.
+A ausência de atribuição exata mantém o token pendente.
+O incremental reconcilia atribuições tardias na cadência/backoff já configurados;
+a leitura histórica fica fora do caminho LIVE. Cada rodada considera até 10 tokens,
+com orçamento total `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
+(20.000 por default), chunks de até
+5.000 blocos e timeout de 2s por consulta. Essa reconciliação usa o marcador por
+token como chave idempotente e a geração/checkpoint da captura como watermark.
+Antes da prova, a âncora protegida recua duravelmente ao deployment sob o fence
+exclusivo de pruning/recovery. Lacunas bloqueiam sem inicializar saldo zero.
+A admissão grava estado `backfilling` e `admitted_tail_from_block` juntos, trava
+o cursor LIVE e incrementa sua versão para invalidar escopos lidos anteriormente.
+O replay para nessa cauda durável; handoff descarta a sobreposição já reproduzida
+e o apply existente consome o restante. A promoção para LIVE grava a publicação
+e marca a cobertura `covered` no mesmo commit, somente com cauda, deployment, geração e
+âncoras canônicas compatíveis. Falha ou reorg mantém a proteção; geração antiga
+exige reconciliação explícita, sem apagar marcadores para contornar o bloqueio.
+O ACK durável impede que mints posteriores recriem pendências; somente `pending`
+bloqueia pruning. Desligar a admissão restaura o bootstrap legado e preserva os registros.
 Nos modos legados, o executor rele o trecho ate o primeiro deficit por
 `eth_getBlockReceipts`; se esse replay passa, commita o trecho e recupera o token.
 Somente deficit reproduzido por receipts conta para as tres confirmacoes de
@@ -6436,7 +6461,8 @@ Os pruners revalidam a proteção na transação, sob o fence de recovery: se o
 cutoff ultrapassa uma pendência, bloqueiam o lote inteiro, incluindo descarte
 de partições, storage canônico e journal holder aplicado ou vazio.
 **Ponto importante:** essa proteção é conservadora e pode impedir a drenagem
-após 72h; não libera pendências automaticamente nem inicializa holders.
+após 72h; sua liberação exige entrega local durável ao LIVE pela admissão opt-in
+descrita acima, ou um procedimento explícito de recuperação.
 Antes de ativar, medir fluxo elegível, bytes, índices, WAL, crescimento líquido
 e orçamento de disco. O marcador não comprova deployment ou cobertura anterior
 ao mint; essa cobertura precisa ser validada antes de admitir o token.

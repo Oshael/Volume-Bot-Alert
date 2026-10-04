@@ -551,6 +551,9 @@ const robinhoodHolderGlobalCatalogCutoff = parseOptionalTimestamp(
   process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF
 );
 const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIVE_ENABLED, false);
+const robinhoodHolderLocalAdmissionEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED, false
+);
 const robinhoodHolderIntelligenceEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED, false
 );
@@ -709,6 +712,13 @@ if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
 }
 if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderGlobalCatalogCutoff) {
   missing.push('ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF');
+}
+if (robinhoodHolderLocalAdmissionEnabled && (!robinhoodHolderBackfillEnabled
+    || robinhoodHolderColdEnabled
+    || !parseBoolean(process.env.ROBINHOOD_HOLDER_COVERAGE_PROTECTION_ENABLED, false)
+    || String(process.env.ROBINHOOD_HOLDER_BACKFILL_SOURCE || '').trim().toLowerCase() !== 'canonical_local'
+    || normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE) !== 'canonical_journal')) {
+  missing.push('local holder admission requires protection, incremental canonical_local, canonical_journal LIVE and cold disabled');
 }
 if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderLiveEnabled
     && !robinhoodHolderGlobalIsolated) {
@@ -1524,6 +1534,7 @@ module.exports = {
 
   robinhoodHolderLiveWorker: {
     enabled: robinhoodHolderLiveEnabled,
+    localAdmissionEnabled: robinhoodHolderLocalAdmissionEnabled,
     sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_INTERVAL_MS, 5000, 100, 300_000

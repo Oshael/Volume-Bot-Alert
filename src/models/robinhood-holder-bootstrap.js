@@ -1,4 +1,5 @@
 const db = require('./db');
+const { seedLocalTokens } = require('./robinhood-holder-local-admission');
 
 const CHAIN = 'robinhood';
 const EXACT_DEPLOYMENT_SOURCES = Object.freeze([
@@ -149,6 +150,9 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
 
   async function seedNewTokens(input = {}) {
     const normalized = normalizeOptions(input);
+    if (options.localAdmissionEnabled === true) return Object.freeze(
+      (await seedLocalTokens(database, normalized, EXACT_DEPLOYMENT_SOURCES)).map(normalizeSeededRow)
+    );
     const params = [CHAIN, normalized.admittedAfter,
       [...EXACT_DEPLOYMENT_SOURCES], normalized.limit, normalized.maxInitialGapBlocks];
     const candidates = await database.query(liveCandidatesSql(), params);

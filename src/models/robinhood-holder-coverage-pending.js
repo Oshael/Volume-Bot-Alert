@@ -79,4 +79,21 @@ async function inspectCoveragePending(client) {
   return result.rows;
 }
 
-module.exports = { appendCoveragePending, coveragePruneBlocker, inspectCoveragePending };
+async function completeLocalCoverage(client, addresses) {
+  if (!addresses.length) return;
+  await client.query(`UPDATE robinhood_holder_coverage_pending pending
+    SET status='covered',reason='local_live_handoff'
+    FROM robinhood_holder_token_states state, robinhood_chain_capture_cursor capture,
+      robinhood_chain_blocks birth
+    WHERE pending.chain='robinhood' AND pending.token_address=ANY($1::varchar[])
+      AND pending.status='pending' AND pending.admitted_tail_from_block IS NOT NULL
+      AND state.chain=pending.chain AND state.token_address=pending.token_address
+      AND state.ledger_status='live' AND state.deployment_block=pending.from_block
+      AND state.tail_capture_from_block=pending.admitted_tail_from_block
+      AND state.backfill_next_block >= pending.admitted_tail_from_block
+      AND capture.chain=pending.chain AND capture.recovery_state='running'
+      AND capture.generation=pending.generation AND birth.chain=pending.chain AND birth.canonical
+      AND birth.block_number=pending.from_block AND birth.block_hash=pending.block_hash`, [addresses]);
+}
+
+module.exports = { appendCoveragePending, completeLocalCoverage, coveragePruneBlocker, inspectCoveragePending };

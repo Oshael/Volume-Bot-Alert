@@ -8,8 +8,23 @@ const {
 } = require('../src/models/robinhood-holder-bootstrap');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
+const { __private: { proveRange } } = require('../src/models/robinhood-holder-local-admission');
 
 describe('Robinhood holder bootstrap repository', () => {
+  it('proves long local coverage with bounded overlapping chunks in one generation', async () => {
+    const ranges = [];
+    const source = { async readRange(input) {
+      ranges.push([input.fromBlock, input.toBlock]);
+      return { localProof: { generation: '0' }, nextBlock: String(BigInt(input.toBlock) + 1n) };
+    } };
+    const candidate = { token_address: TOKEN, deployment_block: '100' };
+    assert.equal((await proveRange(source, candidate, 10100n)).nextBlock, '10101');
+    assert.deepEqual(ranges, [['100', '5099'], ['5099', '10098'], ['10098', '10100']]);
+    let generation = 0;
+    await assert.rejects(proveRange({ async readRange() {
+      return { localProof: { generation: String(generation++) } };
+    } }, candidate, 5100n), (error) => error.reason === 'generation-changed');
+  });
   it('requires a durable admission cutoff and bounded batch', () => {
     assert.deepEqual(__private.normalizeOptions({
       admittedAfter: '2026-08-10T00:00:00.000Z', limit: 25,

@@ -112,6 +112,12 @@ const stage253 = require('../src/utils/db-init-stage253');
 const stage254 = require('../src/utils/db-init-stage254');
 const stage257 = require('../src/utils/db-init-stage257');
 const stage265 = require('../src/utils/db-init-stage265');
+const stage266 = require('../src/utils/db-init-stage266');
+const stage232 = require('../src/utils/db-init-stage232');
+const stage234 = require('../src/utils/db-init-stage234');
+const { createRobinhoodHolderBootstrapRepository } = require('../src/models/robinhood-holder-bootstrap');
+const { createRobinhoodHolderLedgerRepository } = require('../src/models/robinhood-holder-ledger');
+const { createRobinhoodHolderHandoffRepository } = require('../src/models/robinhood-holder-handoff');
 const { createRobinhoodTokenDeploymentOutboxRepository } = require('../src/models/robinhood-token-deployment-outbox');
 const { createRobinhoodHolderJournalRetention } = require('../src/models/robinhood-holder-journal-retention');
 const { inspectCoveragePending } = require('../src/models/robinhood-holder-coverage-pending');
@@ -377,6 +383,7 @@ describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage265.init({ closePool: false });
+    await stage266.init({ closePool: false });
     await stage63.init({ closePool: false });
     await stage64.init({ closePool: false });
     await stage65.init({ closePool: false });
@@ -468,6 +475,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage187.init({ closePool: false });
     await stage180.init({ closePool: false });
     await stage257.init({ closePool: false });
+    await stage232.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -478,6 +486,12 @@ describe('Robinhood canonical chain capture journal', () => {
   });
 
   it('registers the complete journal contract in the runtime schema guard', async () => {
+    const admission = SCHEMA_GROUPS.find(({ key }) => key === 'stage266-robinhood-holder-local-admission');
+    const admissionConstraint = await db.query(`SELECT conname,pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint WHERE conrelid='robinhood_holder_coverage_pending'::regclass
+        AND conname IN ('rh_holder_local_admission_check','rh_holder_coverage_pending_status_check')`);
+    assert.deepEqual(schemaChecks.collectMissingConstraints(admission.tables[0],
+      new Map(admissionConstraint.rows.map(({ conname, definition }) => [conname, definition]))), []);
     const group = SCHEMA_GROUPS.find(({ key }) => (
       key === 'stage191-robinhood-canonical-chain-journal'
     ));
@@ -1098,6 +1112,146 @@ describe('Robinhood canonical chain capture journal', () => {
       data: `0x${'0'.repeat(63)}1`, ...overrides }];
     return input;
   }
+
+  async function withLocalAdmission(run) {
+    const client = await db.getClient();
+    try {
+      await client.query('DISCARD TEMP');
+      for (const table of ['token_catalog', 'robinhood_token_attributions', 'admin_blocked_tokens',
+        'robinhood_holder_token_states', 'robinhood_holder_balances', 'robinhood_holder_transfer_journal',
+        'robinhood_holder_coverage_pending', 'robinhood_holder_capture_policy', 'robinhood_holder_hot_queue',
+        'robinhood_holder_realtime_outbox', 'robinhood_holder_global_backfill_runs',
+        'robinhood_holder_global_backfill_tokens']) {
+        await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
+      }
+      await client.query(stage234.STATEMENTS[0]);
+      await client.query(stage234.STATEMENTS[2]);
+      const database = { async query(sql, params) {
+        if (database.failSql?.test(sql)) throw new Error('injected failure');
+        const result = await client.query(sql, params);
+        if (sql === 'ROLLBACK' && database.afterProof) {
+          const action = database.afterProof; database.afterProof = null; await action();
+        }
+        return result;
+      }, getClient: async () => ({ query: database.query, release() {} }) };
+      const journal = createRobinhoodChainCaptureJournal({ database, holderCoverageProtectionEnabled: true });
+      const birth = capture(); birth.events = []; birth.transactions[0].contractAddress = TOKEN;
+      await journal.commitBlock(birth);
+      const mint = holderMint(TOKEN, { transactionHash: NEXT_TX, data: `0x${'0'.repeat(63)}a` });
+      mint.block = capture(101, NEXT_HASH, HASH).block; mint.nodeHead = 103;
+      mint.transactions[0].hash = NEXT_TX; mint.transactions[0].contractAddress = null;
+      await journal.commitBlock(mint);
+      await client.query(`INSERT INTO token_catalog(chain,address,first_seen_at)
+        VALUES ('robinhood',$1,'2020-01-01')`, [TOKEN]);
+      await client.query(`INSERT INTO robinhood_holder_cursors
+        (chain,stream,next_block,safe_head,checkpoint_block,checkpoint_hash,journal_floor_block)
+        VALUES ('robinhood','live',102,101,101,$1,100)`, [NEXT_HASH]);
+      await client.query(`INSERT INTO robinhood_holder_capture_policy
+        (chain,capture_mode,coverage_generation,cutover_next_block,cutover_checkpoint_block,cutover_checkpoint_hash)
+        VALUES ('robinhood','tracked',1,102,101,$1)`, [NEXT_HASH]);
+      const seed = (budget = 2) => createRobinhoodHolderBootstrapRepository({ database,
+        localAdmissionEnabled: true }).seedNewTokens({ admittedAfter: '2026-09-01', maxInitialGapBlocks: budget });
+      const attribute = () => client.query(`INSERT INTO robinhood_token_attributions
+        (chain,token_address,creator_address,source,attribution_block,attribution_tx_hash,last_resolved_at)
+        VALUES ('robinhood',$1,$2,'rpc_direct',100,$3,NOW())`, [TOKEN, ADDRESS, TX]);
+      const replay = (fromBlock, toBlock) => createRobinhoodCanonicalHolderSource({ database, localOnly: true })
+        .readRange({ tokenAddress: TOKEN, fromBlock, toBlock });
+      const ledger = createRobinhoodHolderLedgerRepository({ database, localAdmissionEnabled: true });
+      await run({ client, database, journal, seed, attribute, replay, ledger });
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      await client.query('DISCARD TEMP'); client.release();
+    }
+  }
+
+  it('locally admits a late creation, resumes replay and delivers a duplicate-safe tail before ACK', async () => {
+    await withLocalAdmission(async ({ client, database, journal, seed, attribute, replay, ledger }) => {
+      assert.deepEqual(await seed(), []);
+      await attribute();
+      assert.deepEqual(await seed(1), []);
+      assert.equal((await seed())[0].tailCaptureFromBlock, '102');
+      assert.deepEqual(await seed(), []);
+      assert.equal((await pruneBatch(database, '101', 1)).reason, 'holder_coverage_pending');
+      const backfill = () => createRobinhoodHolderBackfillRepository({ database });
+      await backfill().commitRange(await replay('100', '100'));
+      assert.equal((await backfill().commitRange(await replay('101', '101'))).holderCount, '1');
+      const tail = capture(102, LEGACY_TX, NEXT_HASH);
+      tail.transactions[0].hash = TRANSFER_TX; tail.transactions[0].contractAddress = null;
+      tail.events = [{ ...holderMint().events[0], transactionHash: TRANSFER_TX,
+        topics: [TRANSFER_TOPIC, `0x${'0'.repeat(24)}${RECIPIENT.slice(2)}`,
+          `0x${'0'.repeat(24)}${ADDRESS.slice(2)}`], data: `0x${'0'.repeat(63)}4` }];
+      await journal.commitBlock(tail);
+      const range = await replay('102', '102');
+      const mint = (await replay('101', '101')).transfers[0];
+      for (const transfer of [range.transfers[0], mint, range.transfers[0]]) {
+        await client.query(`INSERT INTO robinhood_holder_transfer_journal
+          (token_address,block_number,block_hash,transaction_hash,transaction_index,log_index,
+           from_wallet,to_wallet,amount_raw) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+        [transfer.tokenAddress, transfer.blockNumber, transfer.blockHash, transfer.transactionHash,
+          transfer.transactionIndex, transfer.logIndex, transfer.fromWallet, transfer.toWallet, transfer.amountRaw]);
+      }
+      await client.query(`UPDATE robinhood_holder_cursors SET next_block=103,safe_head=102,
+        checkpoint_block=102,checkpoint_hash=$1,version=version+1`, [LEGACY_TX]);
+      await createRobinhoodHolderHandoffRepository({ database }).promoteAtLiveBarrier({
+        tokenAddress: TOKEN, verifiedCheckpoint: { number: '101', hash: NEXT_HASH } });
+      assert.equal((await ledger.promoteReadyShadowTokens()).status, 'idle');
+      assert.equal((await ledger.applyNextPendingEvent()).holderCount, '2');
+      database.failSql = /UPDATE robinhood_holder_coverage_pending pending/;
+      await assert.rejects(ledger.promoteReadyShadowTokens(), /injected failure/);
+      database.failSql = null;
+      assert.equal((await client.query('SELECT ledger_status FROM robinhood_holder_token_states')).rows[0].ledger_status, 'shadow');
+      assert.equal((await client.query('SELECT 1 FROM robinhood_holder_realtime_outbox')).rowCount, 0);
+      assert.equal((await ledger.promoteReadyShadowTokens()).status, 'promoted');
+      assert.equal((await client.query("SELECT 1 FROM robinhood_holder_coverage_pending WHERE status='pending'"))
+        .rowCount, 0);
+      const laterMint = holderMint(TOKEN, { transactionHash: `0x${'e'.repeat(64)}` });
+      laterMint.block = capture(103, `0x${'a'.repeat(64)}`, LEGACY_TX).block;
+      laterMint.nodeHead = 105; laterMint.transactions[0].hash = laterMint.events[0].transactionHash;
+      await journal.commitBlock(laterMint);
+      assert.deepEqual((await client.query('SELECT status,reason FROM robinhood_holder_coverage_pending')).rows,
+        [{ status: 'covered', reason: 'local_live_handoff' }]);
+      assert.equal((await ledger.promoteReadyShadowTokens()).status, 'idle');
+      assert.deepEqual((await client.query(`SELECT wallet_address,balance_raw::text
+        FROM robinhood_holder_balances ORDER BY wallet_address`)).rows,
+      [{ wallet_address: RECIPIENT, balance_raw: '6' }, { wallet_address: ADDRESS, balance_raw: '4' }]
+        .sort((a, b) => a.wallet_address.localeCompare(b.wallet_address)));
+    });
+  });
+
+  it('keeps local admission atomic, revalidates generation and yields to a locked live writer', async () => {
+    await withLocalAdmission(async ({ client, database, seed, attribute }) => {
+      await attribute();
+      const writer = await db.getClient();
+      try {
+        await writer.query('BEGIN');
+        await writer.query("SELECT 1 FROM robinhood_holder_cursors WHERE stream='live' FOR UPDATE");
+        assert.deepEqual(await seed(), []);
+      } finally { await writer.query('ROLLBACK'); writer.release(); }
+      database.failSql = /INSERT INTO robinhood_holder_token_states/;
+      await assert.rejects(seed(), /injected failure/); database.failSql = null;
+      assert.equal((await client.query('SELECT 1 FROM robinhood_holder_token_states')).rowCount, 0);
+      assert.equal((await client.query('SELECT admitted_tail_from_block FROM robinhood_holder_coverage_pending'))
+        .rows[0].admitted_tail_from_block, null);
+      database.afterProof = () => client.query('UPDATE robinhood_chain_capture_cursor SET generation=generation+1');
+      await assert.rejects(seed(), (error) => error.reason === 'generation-changed');
+      assert.equal((await client.query('SELECT 1 FROM robinhood_holder_token_states')).rowCount, 0);
+    });
+  });
+
+  it('rejects orphaned LIVE checkpoints and retains admission protection across a generation change', async () => {
+    await withLocalAdmission(async ({ client, database, seed, attribute, replay, ledger }) => {
+      await attribute(); await seed();
+      await createRobinhoodHolderBackfillRepository({ database }).commitRange(await replay('100', '101'));
+      await createRobinhoodHolderHandoffRepository({ database }).promoteAtLiveBarrier({
+        tokenAddress: TOKEN, verifiedCheckpoint: { number: '101', hash: NEXT_HASH } });
+      await client.query('UPDATE robinhood_chain_blocks SET canonical=false WHERE block_hash=$1', [NEXT_HASH]);
+      await assert.rejects(ledger.promoteReadyShadowTokens(), { code: 'canonical_projection_fence_conflict' });
+      await client.query('UPDATE robinhood_chain_blocks SET canonical=true WHERE block_hash=$1', [NEXT_HASH]);
+      await client.query('UPDATE robinhood_chain_capture_cursor SET generation=generation+1');
+      assert.equal((await ledger.promoteReadyShadowTokens()).status, 'promoted');
+      assert.equal((await client.query('SELECT 1 FROM robinhood_holder_coverage_pending')).rowCount, 1);
+    });
+  });
 
   it('replays proved local mint balances and fences a generation change before either commit', async () => {
     const journal = createRobinhoodChainCaptureJournal();
