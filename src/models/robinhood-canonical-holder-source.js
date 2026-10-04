@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('./db');
+const { assertLocalFrontier, gap, readLocalEvidence } = require('./robinhood-holder-local-proof');
 const { TRANSFER_TOPIC } = require('../services/evm-erc20-supply-delta');
 const {
   __private: { decodeTransferLog },
@@ -110,6 +111,7 @@ function decodeRows(rows, context, allowed, captureAllTransfers) {
 
 function createRobinhoodCanonicalHolderSource(options = {}) {
   const database = options.database || db;
+  const localOnly = options.localOnly === true;
   const statementTimeoutMs = Number(options.statementTimeoutMs || 0);
   if (!Number.isSafeInteger(statementTimeoutMs)
       || statementTimeoutMs < 0 || statementTimeoutMs > 60_000) {
@@ -118,13 +120,17 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
 
   async function readFrontier(client = database) {
     const result = await client.query(
-      `SELECT cursor.checkpoint_block, cursor.node_head,
+      `SELECT cursor.checkpoint_block, cursor.node_head, ${localOnly ? `cursor.next_block,
+              cursor.checkpoint_hash, cursor.generation, cursor.recovery_state,
+              (SELECT block_hash FROM robinhood_chain_blocks WHERE chain=$1 AND canonical
+                AND block_number=cursor.checkpoint_block) AS canonical_hash,` : ''}
               (SELECT block_number FROM robinhood_chain_blocks
                 WHERE chain=$1 AND canonical=TRUE ORDER BY block_number LIMIT 1) AS journal_start_block
          FROM robinhood_chain_capture_cursor cursor WHERE cursor.chain=$1`,
       [CHAIN]
     );
     if (!result.rowCount) throw sourceGap('canonical capture cursor is missing');
+    if (localOnly) assertLocalFrontier(result.rows[0]);
     return result.rows[0];
   }
 
@@ -150,6 +156,7 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
   }
 
   async function matchesCheckpoint(checkpoint = {}) {
+    if (localOnly) await readFrontier();
     const number = quantity(checkpoint.number, 'checkpoint.number').toString();
     const hash = String(checkpoint.hash || '').toLowerCase();
     if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new Error('checkpoint.hash is invalid');
@@ -160,7 +167,9 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
        ) AS matches`,
       [CHAIN, number, hash]
     );
-    return result.rows[0]?.matches === true;
+    const matches = result.rows[0]?.matches === true;
+    if (localOnly && !matches) throw gap('checkpoint-unproven');
+    return matches;
   }
 
   async function readCanonicalRange(input, maximum, label, tokenAddress = null) {
@@ -192,7 +201,9 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
           `canonical holder checkpoint ${toBlock} is missing`, 'checkpoint-missing', coverage
         );
       }
-      const events = await client.query(
+      const events = localOnly ? { rows: (await readLocalEvidence(client, fromBlock, toBlock))
+        .filter((event) => event.topic0 === TRANSFER_TOPIC
+          && (!tokenAddress || event.address === tokenAddress)) } : await client.query(
         `SELECT event.block_number, event.block_hash, event.transaction_hash,
                 event.transaction_index, event.log_index, event.address,
                 event.topics, event.data
@@ -209,6 +220,7 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
       await client.query('ROLLBACK');
       return {
         fromBlock, toBlock, rows: events.rows,
+        ...(localOnly ? { localProof: Object.freeze({ generation: String(frontier.generation) }) } : {}),
         checkpoint: Object.freeze({
           number: toBlock.toString(), hash: checkpointResult.rows[0].block_hash,
         }),
@@ -232,6 +244,7 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
       tokenAddress, fromBlock: range.fromBlock.toString(), toBlock: range.toBlock.toString(),
       nextBlock: (range.toBlock + 1n).toString(), checkpoint: range.checkpoint,
       transfers: decoded.transfers,
+      ...(localOnly ? { source: 'canonical_local', localProof: range.localProof } : {}),
       telemetry: Object.freeze({
         requests: 0, observedLogs: range.rows.length, ignoredLogs: 0,
         source: 'canonical-journal', ...telemetry,
@@ -260,6 +273,7 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
       fromBlock: range.fromBlock.toString(), toBlock: range.toBlock.toString(),
       nextBlock: (range.toBlock + 1n).toString(), scopeTokens: allowed.size,
       checkpoint: range.checkpoint, transfers: decoded.transfers,
+      ...(localOnly ? { source: 'canonical_local', localProof: range.localProof } : {}),
       telemetry: Object.freeze({
         requests: 0, splits: 0, addressSplits: 0,
         filterMode: captureAllTransfers ? 'canonical-journal-buffered' : 'canonical-journal',
@@ -278,6 +292,7 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
   }
 
   async function readReceiptRange(input = {}) {
+    if (localOnly) throw gap('independent-receipts-unavailable');
     const { fromBlock, toBlock } = boundedRange(
       input, MAX_RECEIPT_RANGE_BLOCKS, 'holder receipt'
     );
@@ -287,6 +302,7 @@ function createRobinhoodCanonicalHolderSource(options = {}) {
   }
 
   return Object.freeze({
+    localOnly,
     assertChain, getCoverage, getSafeHead, matchesCheckpoint,
     readGlobalRange, readRange, readReceiptRange,
   });

@@ -115,6 +115,9 @@ const stage265 = require('../src/utils/db-init-stage265');
 const { createRobinhoodTokenDeploymentOutboxRepository } = require('../src/models/robinhood-token-deployment-outbox');
 const { createRobinhoodHolderJournalRetention } = require('../src/models/robinhood-holder-journal-retention');
 const { inspectCoveragePending } = require('../src/models/robinhood-holder-coverage-pending');
+const { createRobinhoodCanonicalHolderSource } = require('../src/models/robinhood-canonical-holder-source');
+const { createRobinhoodHolderBackfillRepository } = require('../src/models/robinhood-holder-backfill');
+const { createRobinhoodHolderGlobalBackfillCommitRepository } = require('../src/models/robinhood-holder-global-backfill-commit');
 const { pruneBatch, pruneCanonicalStorageBatch } = require('../src/services/robinhood-chain-event-pruner');
 const { mirrorCapturedEvents } = require('../src/models/robinhood-chain-event-shadow');
 const transactionShadowCopy = require('../src/utils/copy-robinhood-chain-transaction-shadow-page');
@@ -1094,6 +1097,85 @@ describe('Robinhood canonical chain capture journal', () => {
       topics: [TRANSFER_TOPIC, ZERO_TOPIC, `0x${'0'.repeat(24)}${'8'.repeat(40)}`],
       data: `0x${'0'.repeat(63)}1`, ...overrides }];
     return input;
+  }
+
+  it('replays proved local mint balances and fences a generation change before either commit', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    const mint = holderMint();
+    mint.v3Snapshots = [{ logIndex: 0, poolAddress: LIQUIDITY_POOL, tokenAddress: TOKEN,
+      quoteAddress: ADDRESS, tokenBalanceRaw: '1', quoteBalanceRaw: '2' }];
+    await journal.commitBlock(mint);
+    const empty = capture(101, NEXT_HASH, HASH);
+    empty.transactions = []; empty.events = [];
+    await journal.commitBlock(empty);
+    const source = createRobinhoodCanonicalHolderSource({ localOnly: true });
+    const input = { tokenAddress: TOKEN, fromBlock: '100', toBlock: '101' };
+    const range = await source.readRange(input);
+    assert.deepEqual((await source.readGlobalRange({ ...input, tokenAddresses: [TOKEN] })).transfers,
+      range.transfers);
+    assert.deepEqual(await source.getSafeHead(0), { head: '103', safeHead: '101', confirmations: 0 });
+    assert.equal(await source.matchesCheckpoint(range.checkpoint), true);
+    await db.query(`INSERT INTO robinhood_holder_token_states
+      (token_address, ledger_status, deployment_block, backfill_next_block)
+      VALUES ($1,'backfilling',100,100)`, [TOKEN]);
+    const repository = createRobinhoodHolderBackfillRepository();
+    await db.query("UPDATE robinhood_chain_capture_cursor SET generation=generation+1");
+    for (const commit of [repository, createRobinhoodHolderGlobalBackfillCommitRepository()]) {
+      await assert.rejects(commit.commitRange({ ...range, runId: '1' }),
+        (error) => error.reason === 'generation-changed');
+    }
+    assert.equal((await db.query('SELECT 1 FROM robinhood_holder_balances')).rowCount, 0);
+    const result = await repository.commitRange(await source.readRange(input));
+    assert.equal(result.holderCount, '1');
+    assert.equal(result.backfillNextBlock, '102');
+    assert.deepEqual((await db.query(`SELECT wallet_address, balance_raw::text
+      FROM robinhood_holder_balances WHERE token_address=$1`, [TOKEN])).rows,
+    [{ wallet_address: RECIPIENT, balance_raw: '1' }]);
+    await assert.rejects(source.readReceiptRange(input),
+      (error) => error.reason === 'independent-receipts-unavailable');
+  });
+
+  it('keeps a proved local deficit from changing balances or the token cursor', async () => {
+    const input = holderMint(TOKEN, { topics: [TRANSFER_TOPIC,
+      `0x${'0'.repeat(24)}${RECIPIENT.slice(2)}`, ZERO_TOPIC] });
+    await createRobinhoodChainCaptureJournal().commitBlock(input);
+    await db.query(`INSERT INTO robinhood_holder_token_states
+      (token_address, ledger_status, deployment_block, backfill_next_block)
+      VALUES ($1,'backfilling',100,100)`, [TOKEN]);
+    const range = await createRobinhoodCanonicalHolderSource({ localOnly: true })
+      .readRange({ tokenAddress: TOKEN, fromBlock: '100', toBlock: '100' });
+    const result = await createRobinhoodHolderBackfillRepository().commitRange(range);
+    assert.equal(result.status, 'drift-suspected');
+    assert.deepEqual((await db.query(`SELECT ledger_status, backfill_next_block::text,
+      holder_count::text FROM robinhood_holder_token_states WHERE token_address=$1`, [TOKEN])).rows,
+    [{ ledger_status: 'backfilling', backfill_next_block: '100', holder_count: '0' }]);
+    assert.equal((await db.query('SELECT 1 FROM robinhood_holder_balances')).rowCount, 0);
+  });
+
+  for (const [name, mutate, fromBlock, toBlock, reason] of [
+    ['below floor', null, '99', '99', 'below-floor'],
+    ['above frontier', null, '103', '103', 'above-frontier'],
+    ['internal gap', "UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_number=101",
+      '100', '102', 'block-gap'],
+    ['missing event', "DELETE FROM robinhood_chain_events WHERE block_number=100",
+      '100', '102', 'capture-digest-mismatch'],
+    ['reorg checkpoint', "UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_number=102",
+      '100', '102', 'frontier-unproven'],
+    ['recovery', `UPDATE robinhood_chain_capture_cursor SET recovery_state='recovery_required',
+      recovery_plan='{}'::jsonb, recovery_detected_at=NOW()`,
+      '100', '102', 'frontier-unproven'],
+  ]) {
+    it(`blocks local ${name} without advancing holder state`, async () => {
+      const journal = createRobinhoodChainCaptureJournal();
+      await journal.commitBlock(holderMint());
+      await journal.commitBlock(capture(101, NEXT_HASH, HASH));
+      await journal.commitBlock(capture(102, LEGACY_TX, NEXT_HASH));
+      if (mutate) await db.query(mutate);
+      const source = createRobinhoodCanonicalHolderSource({ localOnly: true });
+      await assert.rejects(source.readRange({ tokenAddress: TOKEN, fromBlock, toBlock }),
+        (error) => error.code === 'canonical_holder_source_gap' && error.reason === reason);
+      assert.equal((await db.query('SELECT 1 FROM robinhood_holder_balances')).rowCount, 0);
+    });
   }
 
   it('holder coverage survives creator completion, replay and all prune paths', async () => {

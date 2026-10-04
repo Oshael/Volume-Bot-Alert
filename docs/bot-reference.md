@@ -3805,7 +3805,22 @@ continuam limitados pelo worker, cuja prioridade permanece abaixo do capture/app
 live. Checkpoint anterior e reparo por receipts continuam no RPC. Para rollback
 operacional, volte a variável para `rpc`; nenhuma migration é necessária.
 Durante replay, saldo negativo isolado gera apenas `drift-suspected` e nao move
-cursor nem balances. O executor rele o trecho ate o primeiro deficit por
+cursor nem balances. O modo opt-in `canonical_local` usa somente PostgreSQL para
+head seguro, checkpoint e replay: `ROBINHOOD_HOLDER_BACKFILL_SOURCE` no incremental/cold
+e `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_SOURCE` na campanha global (ambos default `rpc`).
+Ele exige captura em `running`, checkpoint contínuo, todos os blocos da faixa,
+encadeamento dos hashes e digest completo da captura versão 4, incluindo transações,
+eventos e snapshots V3. Retenção parcial, insumos removidos, captura antiga ou reorg
+bloqueiam sem fallback RPC. O commit usa o fence de recuperação e rejeita geração
+ou checkpoint alterados após a leitura. Cada range continua limitado a 5.000 blocos
+e cada consulta do reader a 2s; a prova lê os insumos completos de todos os tokens
+da faixa, portanto dimensione range/prefetch conforme a carga do PostgreSQL.
+No modo local, receipts independentes não estão disponíveis: déficit permanece
+`drift-unverified`/`deficit-unverified`, sem confirmar drift por releitura local.
+O worker expõe o motivo do bloqueio; a recuperação deve restaurar a evidência ou
+selecionar explicitamente o modo legado `rpc`. Voltar a `rpc` não exige migration.
+Essas opções não admitem tokens nem liberam a proteção de cobertura pendente.
+Nos modos legados, o executor rele o trecho ate o primeiro deficit por
 `eth_getBlockReceipts`; se esse replay passa, commita o trecho e recupera o token.
 Somente deficit reproduzido por receipts conta para as tres confirmacoes de
 `drifted`, espacadas em 60s por default. A excecao e uma cauda insegura cuja

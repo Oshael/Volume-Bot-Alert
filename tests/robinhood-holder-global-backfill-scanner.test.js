@@ -53,6 +53,31 @@ function adaptiveFixture({ rangeSize = 8, prefetch = 1, read, now } = {}) {
 }
 
 describe('Robinhood holder global backfill scanner', () => {
+  it('preserves the local proof through prefetch and leaves a deficit unverified', async () => {
+    const proof = { generation: '7' };
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState(), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        commitRange: async (input) => {
+          assert.deepEqual(input.localProof, proof);
+          throw Object.assign(new Error('deficit'), {
+            code: 'holder_negative_balance', tokenAddress: TOKEN, deficitBlockNumber: '100',
+          });
+        },
+        excludeToken: async () => { throw new Error('unexpected exclusion'); },
+      },
+      reader: { localOnly: true, getSafeHead: async () => ({ safeHead: '101' }),
+        readGlobalRange: async (input) => range(input.fromBlock, input.toBlock, { localProof: proof }),
+        readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+      },
+      options: { rangeSize: 1, prefetch: 2 },
+    });
+    const result = await scanner.runOnce({ throughBlock: '101' });
+    assert.equal(result.status, 'deficit-unverified');
+    assert.equal(result.reason, 'local_deficit_unverified');
+  });
   it('commits a valid prefix, halves a timed-out range and resumes without skipping prefetched blocks', async () => {
     let fail = true;
     const fixture = adaptiveFixture({ prefetch: 3, read: (input) => {

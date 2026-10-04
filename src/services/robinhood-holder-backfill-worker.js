@@ -8,7 +8,7 @@ const {
 
 const REPLAY_STATUSES = new Set([
   'idle', 'committed', 'drift-suspected', 'drift-unverified', 'drifted', 'resyncing',
-  'rpc-deferred', 'superseded',
+  'rpc-deferred', 'superseded', 'coverage-blocked',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -70,6 +70,7 @@ function buildRuntime(deps = {}) {
 function publicError(error) {
   return Object.freeze({
     code: error.code || 'holder_backfill_error',
+    ...(error.reason ? { reason: error.reason } : {}),
     message: String(error.message || error).slice(0, 500),
     at: new Date().toISOString(),
   });

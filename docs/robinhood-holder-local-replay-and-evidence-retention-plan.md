@@ -303,7 +303,7 @@ Nunca avançar watermark manualmente para liberar uma remoção.
 ## 9. Critérios finais e acompanhamento
 
 - [x] Corte 1: proteção de pendências validada, incluindo término antecipado do creator.
-- [ ] Corte 2: replay local completo e gaps bloqueados, sem RPC histórico silencioso.
+- [x] Corte 2: replay local completo e gaps bloqueados, sem RPC histórico silencioso.
 - [ ] Corte 3: inicialização tardia e entrega ao live idempotentes e recuperáveis.
 - [ ] Corte 4: descarte seguro, orçamento/alertas e operação documentados.
 - [ ] Piloto novo chega a holders `live` sem perder mint, transfers ou cobertura.

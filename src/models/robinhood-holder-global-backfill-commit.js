@@ -1,4 +1,5 @@
 const db = require('./db');
+const { fenceLocalReplay } = require('./robinhood-holder-local-proof');
 const {
   deriveHolderBalanceChanges,
   normalizeHolderTransfer,
@@ -262,6 +263,7 @@ function createRobinhoodHolderGlobalBackfillCommitRepository(options = {}) {
   async function commitRange(input = {}) {
     const range = normalizeRange(input);
     return withTransaction(database, async (client) => {
+      await fenceLocalReplay(client, input);
       await lockRun(client, range);
       const tokens = touchedTokenAddresses(range.transfers);
       await lockCohortTokens(client, range, tokens);

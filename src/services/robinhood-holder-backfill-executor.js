@@ -14,6 +14,7 @@ const DEFAULT_RECEIPT_BLOCK_LIMIT = 250;
 const DEFAULT_RECEIPT_BATCH_SIZE = 25;
 const RPC_SOURCE = 'rpc';
 const CANONICAL_RECENT_SOURCE = 'canonical_recent';
+const CANONICAL_LOCAL_SOURCE = 'canonical_local';
 const REDISTRIBUTION_ANCHOR_PRIORITY = 'redistribution_anchor_missing';
 const CANONICAL_STATEMENT_TIMEOUT_MS = 2000;
 const ROUTABLE_GAPS = new Set([
@@ -39,9 +40,9 @@ function resolveRpcProvider(env = process.env) {
 
 function normalizeBackfillSource(value) {
   const normalized = String(value || RPC_SOURCE).trim().toLowerCase();
-  if (![RPC_SOURCE, CANONICAL_RECENT_SOURCE].includes(normalized)) {
+  if (![RPC_SOURCE, CANONICAL_RECENT_SOURCE, CANONICAL_LOCAL_SOURCE].includes(normalized)) {
     const error = new Error(
-      `ROBINHOOD_HOLDER_BACKFILL_SOURCE must be ${RPC_SOURCE} or ${CANONICAL_RECENT_SOURCE}`
+      `ROBINHOOD_HOLDER_BACKFILL_SOURCE must be rpc, canonical_recent or canonical_local`
     );
     error.code = 'configuration_error';
     error.fatal = true;
@@ -232,6 +233,12 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
   }
 
   async function verifyDriftWithReceipts(suspicion, state) {
+    if (reader.localOnly) {
+      const evidence = deferDrift(state, clockMs());
+      return Object.freeze({ ...suspicion, status: 'drift-unverified',
+        reason: 'local_deficit_unverified',
+        nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString() });
+    }
     const fromBlock = BigInt(state.backfillNextBlock);
     const failedBlock = BigInt(suspicion.failedBlock);
     const receiptBlocks = failedBlock - fromBlock + 1n;
@@ -350,6 +357,10 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
         atBarrier,
       });
     } catch (error) {
+      if (reader.localOnly && error.code === 'canonical_holder_source_gap') return Object.freeze({
+        status: 'coverage-blocked', tokenAddress: state.tokenAddress, reason: error.reason,
+        replaySource: CANONICAL_LOCAL_SOURCE, safeHead: head.safeHead, atBarrier: false,
+      });
       if (error.code === 'holder_transfer_invalid_log'
           && error.tokenAddress === state.tokenAddress
           && typeof repository.markMalformed === 'function') {
@@ -371,16 +382,19 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
 
 function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
   const env = options.env || process.env;
-  const rpcClient = options.rpcClient || createEvmJsonRpcClient({
+  const sourceMode = normalizeBackfillSource(env.ROBINHOOD_HOLDER_BACKFILL_SOURCE);
+  const rpcClient = sourceMode === CANONICAL_LOCAL_SOURCE ? null : options.rpcClient || createEvmJsonRpcClient({
     providers: [resolveRpcProvider(env)],
     timeoutMs: boundedInteger(env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000, 'RPC timeout'),
     maxRetries: 1,
   });
   const database = options.database || db;
   const repository = options.repository || createRobinhoodHolderBackfillRepository({ database });
-  const rpcReader = options.rpcReader || createRobinhoodHolderTransferReader({ rpcClient });
-  const sourceMode = normalizeBackfillSource(env.ROBINHOOD_HOLDER_BACKFILL_SOURCE);
-  const reader = options.reader || (sourceMode === CANONICAL_RECENT_SOURCE
+  const rpcReader = rpcClient ? options.rpcReader || createRobinhoodHolderTransferReader({ rpcClient }) : null;
+  const reader = options.reader || (sourceMode === CANONICAL_LOCAL_SOURCE
+    ? options.canonicalReader || createRobinhoodCanonicalHolderSource({
+      database, localOnly: true, statementTimeoutMs: CANONICAL_STATEMENT_TIMEOUT_MS,
+    }) : sourceMode === CANONICAL_RECENT_SOURCE
     ? createRecentReplayReader({
       rpcReader,
       canonicalReader: options.canonicalReader || createRobinhoodCanonicalHolderSource({
@@ -389,7 +403,7 @@ function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
     })
     : rpcReader);
   return createRobinhoodHolderBackfillExecutor({
-    repository, reader,
+    repository, reader, now: options.now,
     priority: options.allowPriority === true
       ? normalizePriority(env.ROBINHOOD_HOLDER_BACKFILL_PRIORITY) : null,
     driftRecheckMs: boundedInteger(

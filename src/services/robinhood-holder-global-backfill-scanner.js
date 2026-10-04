@@ -60,9 +60,15 @@ function mergeFetchedRanges(ranges) {
   }
   const first = ranges[0];
   const last = ranges.at(-1);
+  if (ranges.some((range) => range.localProof?.generation !== first.localProof?.generation)) {
+    throw Object.assign(new Error('local holder generations differ'), {
+      code: 'canonical_holder_source_gap', reason: 'generation-changed',
+    });
+  }
   return Object.freeze({
     fromBlock: first.fromBlock, toBlock: last.toBlock, nextBlock: last.nextBlock,
     checkpoint: last.checkpoint,
+    ...(last.localProof ? { localProof: last.localProof } : {}),
     transfers: Object.freeze(ranges.flatMap((range) => range.transfers)),
   });
 }
@@ -317,6 +323,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   }
 
   async function verifyDeficit(runId, range, deficit) {
+    if (reader.localOnly) return Object.freeze({ status: 'deficit-unverified',
+      tokenAddress: deficit.tokenAddress, failedBlock: deficit.failedBlock,
+      reason: 'local_deficit_unverified' });
     let receipts;
     try {
       receipts = await readReceiptRepair(reader, range, deficit);

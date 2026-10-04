@@ -1,4 +1,5 @@
 const db = require('./db');
+const { fenceLocalReplay } = require('./robinhood-holder-local-proof');
 const {
   deriveHolderBalanceChanges,
   normalizeHolderTransfer,
@@ -364,6 +365,7 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await fenceLocalReplay(client, input);
       await lockState(client, range);
       const balances = await loadBalances(client, range);
       let computed;

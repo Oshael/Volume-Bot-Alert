@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { describe, it } = require('node:test');
 
 const {
@@ -14,6 +15,54 @@ function campaign(status, overrides = {}) {
   };
 }
 describe('Robinhood holder global backfill worker', () => {
+  it('permits an isolated local campaign without the shared RPC URL and retains the RPC gate', () => {
+    for (const source of ['canonical_local', 'rpc']) {
+      const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+        cwd: require('node:path').resolve(__dirname, '..'), encoding: 'utf8',
+        env: { ...process.env, NODE_ENV: 'test', BACKGROUND_WORKER_GROUPS: 'robinhood-holder-global',
+          ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
+          ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: CUTOFF,
+          ROBINHOOD_HOLDER_GLOBAL_BACKFILL_SOURCE: source,
+          ROBINHOOD_HOLDER_BACKFILL_ENABLED: 'false', ROBINHOOD_HOLDER_COLD_ENABLED: 'false',
+          ROBINHOOD_HOLDER_LIVE_ENABLED: 'false', ROBINHOOD_RPC_URL: '',
+        },
+      });
+      assert.equal(result.status, source === 'rpc' ? 1 : 0, result.stderr);
+      if (source === 'rpc') assert.match(result.stderr, /ROBINHOOD_RPC_URL for Robinhood holder workers/);
+    }
+  });
+
+  it('retries local initialization when the canonical frontier becomes ready', async () => {
+    let attempts = 0;
+    const worker = createRobinhoodHolderGlobalBackfillWorker({
+      logger: { warn() {} }, runtimeFactory: async () => {
+        if (++attempts === 1) throw Object.assign(new Error('not ready'), {
+          code: 'canonical_holder_source_gap', reason: 'frontier-unproven',
+        });
+        return { providerName: 'canonical_local',
+          lifecycle: { getLatestRun: async () => campaign('completed') } };
+      },
+    });
+    assert.equal(await worker.runOnce(), null);
+    assert.equal(worker.getStatus().lastError.reason, 'frontier-unproven');
+    assert.equal((await worker.runOnce()).status, 'completed');
+    assert.equal(attempts, 2);
+  });
+  it('builds a strict local runtime without resolving or constructing an RPC provider', async () => {
+    const reader = { localOnly: true, assertChain: async () => {} };
+    const runtime = await buildRuntime(normalizeOptions({ source: 'canonical_local' }), {
+      env: {}, rpcClientFactory: () => { throw new Error('unexpected RPC'); },
+      canonicalReaderFactory: (input) => {
+        assert.equal(input.localOnly, true); assert.equal(input.statementTimeoutMs, 2000);
+        return reader;
+      },
+      lifecycleFactory: () => ({}), deltaFactory: () => ({}), committerFactory: () => ({}),
+      ledgerFactory: () => ({}), scannerFactory: () => ({}), attachFactory: () => ({}),
+    });
+    assert.equal(runtime.reader, reader);
+    assert.equal(runtime.providerName, 'canonical_local');
+    assert.throws(() => normalizeOptions({ source: 'canonical_recent' }), { code: 'configuration_error' });
+  });
   it('publishes initialization and receipt RPC waits before the first tick completes', async () => {
     let clock = 1000;
     let releaseChain;

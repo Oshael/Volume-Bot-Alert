@@ -733,8 +733,10 @@ if (robinhoodHolderIntelligenceEnabled && !robinhoodHolderLiveEnabled) {
 if (robinhoodFirstBuyLiveEnabled && !robinhoodFirstBuySeedRunId) {
   missing.push('ROBINHOOD_FIRST_BUY_SEED_RUN_ID');
 }
-if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled
-      || robinhoodHolderGlobalBackfillEnabled)
+if ((((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled)
+      && String(process.env.ROBINHOOD_HOLDER_BACKFILL_SOURCE || '').trim().toLowerCase() !== 'canonical_local')
+      || robinhoodHolderLiveEnabled || (robinhoodHolderGlobalBackfillEnabled
+        && String(process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_SOURCE || '').trim().toLowerCase() !== 'canonical_local'))
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
 }
@@ -1465,6 +1467,7 @@ module.exports = {
 
   robinhoodHolderGlobalBackfillWorker: {
     enabled: robinhoodHolderGlobalBackfillEnabled,
+    source: process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_SOURCE || 'rpc',
     autoStart: parseBoolean(process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START, false),
     rollingEnabled: parseBoolean(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED, false

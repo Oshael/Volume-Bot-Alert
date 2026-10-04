@@ -18,6 +18,41 @@ function state(overrides = {}) {
 }
 
 describe('Robinhood holder backfill executor', () => {
+  it('keeps local gaps and repeated deficits blocked without receipts, RPC or isolation', async () => {
+    let clock = 0;
+    let blocked = true;
+    let commits = 0;
+    const executor = createConfiguredRobinhoodHolderBackfillExecutor({
+      env: { ROBINHOOD_HOLDER_BACKFILL_SOURCE: 'canonical_local' }, now: () => clock,
+      rpcClient: { request: async () => { throw new Error('unexpected RPC'); } },
+      repository: { getNextToken: async () => state(),
+        commitRange: async () => { commits += 1; return {
+          status: 'drift-suspected', failedBlock: '103', fingerprint: 'same',
+        }; },
+        markResyncing: async () => { throw new Error('unexpected isolation'); },
+      },
+      canonicalReader: { localOnly: true, getSafeHead: async () => ({ safeHead: '110' }),
+        matchesCheckpoint: async () => true,
+        readRange: async (input) => {
+          if (blocked) throw Object.assign(new Error('gap'), {
+            code: 'canonical_holder_source_gap', reason: 'block-gap',
+          });
+          return { ...input, source: 'canonical_local' };
+        },
+        readReceiptRange: async () => { throw new Error('unexpected local receipts'); },
+      },
+    });
+    assert.equal((await executor.runOnce()).status, 'coverage-blocked');
+    assert.equal(commits, 0);
+    blocked = false;
+    for (let index = 0; index < 4; index += 1) {
+      clock += 60_001;
+      const result = await executor.runOnce();
+      assert.equal(result.status, 'drift-unverified');
+      assert.equal(result.reason, 'local_deficit_unverified');
+    }
+    assert.equal(commits, 4);
+  });
   it('commits one confirmed bounded range and stops at the handoff barrier', async () => {
     const calls = [];
     const repository = {

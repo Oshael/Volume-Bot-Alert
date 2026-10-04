@@ -1,4 +1,5 @@
 const db = require('../models/db');
+const { createRobinhoodCanonicalHolderSource } = require('../models/robinhood-canonical-holder-source');
 const { createRobinhoodHolderGlobalDeltaRepository } = require('../models/robinhood-holder-global-delta');
 const { createRobinhoodHolderGlobalBackfillRepository } = require('../models/robinhood-holder-global-backfill');
 const { createRobinhoodHolderGlobalBackfillCommitRepository } = require('../models/robinhood-holder-global-backfill-commit');
@@ -19,6 +20,12 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 function normalizeOptions(input = {}) {
+  const source = String(input.source || 'rpc').trim().toLowerCase();
+  if (!['rpc', 'canonical_local'].includes(source)) {
+    throw Object.assign(new Error('global holder source must be rpc or canonical_local'), {
+      code: 'configuration_error',
+    });
+  }
   const enabled = input.enabled === true;
   const rollingEnabled = input.rollingEnabled === true;
   const cutoff = input.catalogCutoff == null ? null : new Date(input.catalogCutoff);
@@ -33,7 +40,7 @@ function normalizeOptions(input = {}) {
     });
   }
   return Object.freeze({
-    enabled, autoStart: input.autoStart === true,
+    enabled, source, autoStart: input.autoStart === true,
     rollingEnabled,
     catalogCutoff: cutoff?.toISOString() || null,
     intervalMs: boundedInteger(input.intervalMs, 1000, 250, 300_000, 'intervalMs'),
@@ -72,11 +79,12 @@ function normalizeOptions(input = {}) {
 async function buildRuntime(options, deps = {}) {
   const observe = (target, group) => deps.diagnostics?.wrap(target, group) || target;
   const database = deps.database || db;
-  const provider = resolveRobinhoodHolderRpcProvider(
+  const localOnly = options.source === 'canonical_local';
+  const provider = localOnly ? { name: 'canonical_local' } : resolveRobinhoodHolderRpcProvider(
     deps.env || process.env, 'robinhood-holder-global-backfill',
     'ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL'
   );
-  const rpcClient = observe(deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
+  const rpcClient = localOnly ? null : observe(deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
     providers: [provider], timeoutMs: 15_000, maxRetries: 1,
   }), 'rpc');
   const lifecycle = observe((deps.lifecycleFactory || createRobinhoodHolderGlobalBackfillRepository)({
@@ -88,7 +96,9 @@ async function buildRuntime(options, deps = {}) {
     || createRobinhoodHolderGlobalBackfillCommitRepository)({ database }), 'commit');
   const ledger = observe((deps.ledgerFactory
     || createRobinhoodHolderLedgerRepository)({ database }), 'ledger');
-  const reader = observe((deps.readerFactory || createRobinhoodHolderTransferReader)({
+  const reader = observe(localOnly ? (deps.canonicalReaderFactory || createRobinhoodCanonicalHolderSource)({
+    database, localOnly: true, statementTimeoutMs: 2000,
+  }) : (deps.readerFactory || createRobinhoodHolderTransferReader)({
     rpcClient, addressFilterLimit: options.addressFilterLimit,
     addressShardConcurrency: options.addressShardConcurrency,
   }), 'reader');
@@ -206,6 +216,7 @@ async function runCampaignTick(runtime, options) {
 function publicError(error) {
   return Object.freeze({
     code: error.code || 'holder_global_backfill_error',
+    ...(error.reason ? { reason: error.reason } : {}),
     message: String(error.message || error).slice(0, 500), at: new Date().toISOString(),
   });
 }
@@ -231,7 +242,8 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
     status.inFlight = true; status.totalRuns += 1;
     diagnostics.startTick();
     try {
-      runtimePromise ||= diagnostics.track('worker', 'initialize', {}, () => runtimeFactory(options));
+      runtimePromise ||= diagnostics.track('worker', 'initialize', {}, () => runtimeFactory(options))
+        .catch((error) => { runtimePromise = null; throw error; });
       const runtime = await runtimePromise;
       status.providerName = runtime.providerName;
       const result = await diagnostics.track('worker', 'campaignTick', {},
@@ -293,6 +305,7 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
   return Object.freeze({ getStatus: () => ({
     ...status, diagnostics: diagnostics.snapshot(),
     effectiveOptions: {
+      source: options.source,
       rangeSize: options.rangeSize, prefetch: options.prefetch,
       addressShardConcurrency: options.addressShardConcurrency, maxCommitMs: options.maxCommitMs,
     },
