@@ -1,4 +1,5 @@
 const db = require('../models/db');
+const { createRobinhoodHolderEventAdmission } = require('./robinhood-holder-event-admission');
 const {
   createRobinhoodHolderBootstrapRepository,
 } = require('../models/robinhood-holder-bootstrap');
@@ -41,6 +42,7 @@ function normalizeOptions(input = {}) {
   const enabled = input.enabled === true;
   return Object.freeze({
     enabled,
+    admissionQueueEnabled: input.admissionQueueEnabled === true,
     admittedAfter: admissionCutoff(input.admittedAfter, enabled),
     intervalMs: boundedInteger(input.intervalMs, 500, 100, 300_000, 'intervalMs'),
     maxErrorBackoffMs: boundedInteger(
@@ -123,6 +125,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
   let activeRunPromise = null;
   let running = false;
   let onFatal = null;
+  let admission = null; let wakePending = false;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
     concurrency: 1,
@@ -135,7 +138,16 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
 
   async function getRuntime() {
     if (!runtimePromise) {
-      runtimePromise = Promise.resolve(runtimeFactory()).catch((error) => {
+      runtimePromise = Promise.resolve(runtimeFactory()).then((runtime) => {
+        if (options.admissionQueueEnabled) {
+          admission = (deps.admissionFactory || createRobinhoodHolderEventAdmission)({
+            bootstrap: runtime.bootstrap, database: deps.database,
+            listenerFactory: deps.listenerFactory, onWake: wake,
+          });
+          admission.start();
+        }
+        return runtime;
+      }).catch((error) => {
         runtimePromise = null;
         throw error;
       });
@@ -150,6 +162,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     status.lastError = publicError(error);
     if (timer) cancelSchedule(timer);
     timer = null;
+    await admission?.stop();
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodHolderBackfillWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -160,10 +173,12 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     status.totalRuns += 1;
     try {
       const runtime = await getRuntime();
-      const seeded = await runtime.bootstrap.seedNewTokens({
+      const seedInput = {
         admittedAfter: options.admittedAfter, limit: options.seedLimit,
         maxInitialGapBlocks: options.maxInitialGapBlocks,
-      });
+      };
+      const seeded = admission ? await admission.runDue(seedInput)
+        : await runtime.bootstrap.seedNewTokens(seedInput);
       const settled = await Promise.allSettled(Array.from(
         { length: options.concurrency },
         (_, shardIndex) => runtime.executor.runOnce({
@@ -209,6 +224,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
   function queueNext(delayMs) {
     if (!running || status.halted) return;
     timer = schedule(async () => {
+      timer = null;
       await runOnce();
       const delay = status.consecutiveErrors
         ? Math.min(
@@ -216,9 +232,17 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
             options.intervalMs * (2 ** Math.min(status.consecutiveErrors, 8))
           )
         : options.intervalMs;
-      queueNext(delay);
+      queueNext(wakePending && !status.consecutiveErrors ? 0 : delay);
+      wakePending = false;
     }, delayMs);
     timer?.unref?.();
+  }
+
+  function wake() {
+    if (!running || status.halted || status.consecutiveErrors) return;
+    if (activeRunPromise) { wakePending = true; return; }
+    if (timer) cancelSchedule(timer);
+    timer = null; queueNext(0);
   }
 
   function start(input = {}) {
@@ -228,6 +252,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     status.enabled = options.enabled;
     status.concurrency = options.concurrency;
     if (!options.enabled) return false;
+    runtimePromise = null; admission = null; wakePending = false;
     status.halted = false;
     running = true;
     status.running = true;
@@ -241,9 +266,10 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     if (timer) cancelSchedule(timer);
     timer = null;
     if (activeRunPromise) await activeRunPromise.catch(() => {});
+    await admission?.stop();
   }
 
-  return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });
+  return Object.freeze({ getStatus: () => ({ ...status, admission: admission?.getStatus() || null }), runOnce, start, stop });
 }
 
 const worker = createRobinhoodHolderBackfillWorker();

@@ -29,6 +29,46 @@ function committed() {
 }
 
 describe('Robinhood holder backfill worker', () => {
+  it('owns event admission, coalesces wakes and restores legacy admission on rollback', async () => {
+    const clock = scheduler(); let wake; let legacy = 0; let stopped = 0; let replays = 0;
+    const worker = createRobinhoodHolderBackfillWorker({ ...clock,
+      runtimeFactory: () => ({
+        bootstrap: { seedNewTokens: async () => { legacy += 1; return []; } },
+        executor: { runOnce: async () => { replays += 1; return committed(); } },
+      }), admissionFactory: (deps) => {
+        wake = deps.onWake;
+        return { start() {}, runDue: async () => { wake(); return []; },
+          getStatus: () => ({ mode: 'events' }), stop: async () => { stopped += 1; } };
+      },
+    });
+    worker.start({ enabled: true, admittedAfter: CUTOFF, admissionQueueEnabled: true });
+    await clock.scheduled[0].callback();
+    assert.equal(legacy, 0); assert.equal(replays, 1);
+    assert.equal(clock.scheduled[1].delayMs, 0);
+    assert.equal(worker.getStatus().admission.mode, 'events');
+    await worker.stop(); assert.equal(stopped, 1);
+    worker.start({ enabled: true, admittedAfter: CUTOFF });
+    await clock.scheduled.at(-1).callback();
+    assert.equal(legacy, 1); await worker.stop();
+  });
+  it('continues replay when event admission fails and keeps the error observable', async () => {
+    const clock = scheduler(); let replays = 0;
+    const { createRobinhoodHolderEventAdmission } = require('../src/services/robinhood-holder-event-admission');
+    const worker = createRobinhoodHolderBackfillWorker({ ...clock,
+      runtimeFactory: () => ({ bootstrap: { seedNewTokens() {} },
+        executor: { runOnce: async () => { replays += 1; return committed(); } } }),
+      admissionFactory: (deps) => createRobinhoodHolderEventAdmission({ ...deps,
+        queue: { claim: async () => { throw new Error('queue timeout'); }, settle: async () => ({ deferred: 0 }) },
+        listenerFactory: () => ({ start: async () => {}, stop: async () => {} }),
+      }),
+    });
+    worker.start({ enabled: true, admittedAfter: CUTOFF, admissionQueueEnabled: true });
+    await clock.scheduled[0].callback();
+    assert.equal(replays, 1); assert.equal(worker.getStatus().totalCommittedRanges, 1);
+    assert.equal(worker.getStatus().admission.errors, 1);
+    assert.equal(worker.getStatus().admission.lastError, 'queue timeout');
+    await worker.stop();
+  });
   it('stays opt-in and admits before replaying one bounded range per tick', async () => {
     const clock = scheduler();
     const calls = [];

@@ -1,5 +1,7 @@
 const db = require('./db');
 const { seedLocalTokens } = require('./robinhood-holder-local-admission');
+const { normalizeTokenAddress } = require('../utils/token-identity');
+const { lockRobinhoodCanonicalRecoveryShared } = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const EXACT_DEPLOYMENT_SOURCES = Object.freeze([
@@ -104,10 +106,17 @@ async function fenceLiveCursor(client) {
     WHERE chain = $1 AND stream = 'live'`, [CHAIN]);
 }
 
-async function admitLiveCandidates(database, params, addresses) {
+async function admitLiveCandidates(database, params, addresses, targeted = false) {
   const client = await database.getClient();
   try {
     await client.query('BEGIN');
+    if (targeted) {
+      await lockRobinhoodCanonicalRecoveryShared(client);
+      const capture = await client.query("SELECT recovery_state FROM robinhood_chain_capture_cursor WHERE chain=$1", [CHAIN]);
+      if (capture.rows[0]?.recovery_state !== 'running') {
+        await client.query('COMMIT'); return [];
+      }
+    }
     const cursor = await client.query(
       `SELECT 1 FROM robinhood_holder_cursors
         WHERE chain = $1 AND stream = 'live' FOR UPDATE SKIP LOCKED`, [CHAIN]
@@ -155,10 +164,16 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
     );
     const params = [CHAIN, normalized.admittedAfter,
       [...EXACT_DEPLOYMENT_SOURCES], normalized.limit, normalized.maxInitialGapBlocks];
-    const candidates = await database.query(liveCandidatesSql(), params);
+    const addresses = input.tokenAddresses == null ? null
+      : [...new Set(input.tokenAddresses.map((address) => normalizeTokenAddress(CHAIN, address)))];
+    if (addresses?.length > 100) throw new Error('holder admission batch exceeds 100 addresses');
+    if (addresses && !addresses.length) return Object.freeze([]);
+    const candidates = await database.query(addresses
+      ? liveCandidatesSql(true).replace('FOR UPDATE OF attribution SKIP LOCKED', '') : liveCandidatesSql(),
+    addresses ? [...params, addresses] : params);
     if (!candidates.rows.length) return Object.freeze([]);
     const rows = await admitLiveCandidates(
-      database, params, candidates.rows.map((row) => row.token_address)
+      database, params, candidates.rows.map((row) => row.token_address), addresses !== null
     );
     return Object.freeze(rows.map(normalizeSeededRow));
   }

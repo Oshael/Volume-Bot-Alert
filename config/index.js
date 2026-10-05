@@ -554,6 +554,7 @@ const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIV
 const robinhoodHolderLocalAdmissionEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED, false
 );
+const robinhoodHolderEventAdmissionEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_EVENT_ADMISSION_ENABLED, false);
 const robinhoodHolderIntelligenceEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED, false
 );
@@ -712,6 +713,12 @@ if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
 }
 if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderGlobalCatalogCutoff) {
   missing.push('ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF');
+}
+if (robinhoodHolderEventAdmissionEnabled && (!robinhoodHolderBackfillEnabled || !robinhoodHolderLiveEnabled
+    || robinhoodHolderColdEnabled || robinhoodHolderLocalAdmissionEnabled
+    || String(process.env.ROBINHOOD_HOLDER_BACKFILL_SOURCE || 'rpc').toLowerCase() !== 'rpc'
+    || normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE) !== 'canonical_journal')) {
+  missing.push('event holder admission requires RPC incremental, canonical_journal LIVE, cold/local disabled');
 }
 if (robinhoodHolderLocalAdmissionEnabled && (!robinhoodHolderBackfillEnabled
     || robinhoodHolderColdEnabled
@@ -1433,6 +1440,7 @@ module.exports = {
 
   robinhoodHolderBackfillWorker: {
     enabled: robinhoodHolderBackfillEnabled,
+    admissionQueueEnabled: robinhoodHolderEventAdmissionEnabled,
     admittedAfter: robinhoodHolderBackfillAdmittedAfter,
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_BACKFILL_INTERVAL_MS, 500, 100, 300_000
@@ -1537,6 +1545,7 @@ module.exports = {
 
   robinhoodHolderLiveWorker: {
     enabled: robinhoodHolderLiveEnabled,
+    admissionQueueEnabled: robinhoodHolderEventAdmissionEnabled,
     localAdmissionEnabled: robinhoodHolderLocalAdmissionEnabled,
     sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(

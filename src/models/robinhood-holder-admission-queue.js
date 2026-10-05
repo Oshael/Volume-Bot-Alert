@@ -62,7 +62,7 @@ function createRobinhoodHolderAdmissionQueue(options = {}) {
       LEFT JOIN token_catalog catalog ON catalog.chain='robinhood' AND catalog.address=candidate.address
       LEFT JOIN admin_blocked_tokens blocked ON blocked.chain='robinhood' AND blocked.address=candidate.address
       WHERE state.token_address IS NOT NULL OR blocked.address IS NOT NULL
-        OR catalog.first_seen_at<$2::timestamptz`, [addresses, admittedAfter]);
+        OR catalog.first_seen_at<$2::timestamptz`, [addresses, new Date(admittedAfter).toISOString()]);
     return rows.map((row) => row.address);
   }
   async function reconcile(input = {}) {

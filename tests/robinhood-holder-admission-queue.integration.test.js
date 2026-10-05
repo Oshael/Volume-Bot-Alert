@@ -112,6 +112,15 @@ it('durably signals catalog/proof commits and preserves late proofs, retries and
     assert.deepEqual(page, { cursor: TOKEN, scanned: 1, enqueued: 0 });
     assert.deepEqual(await queue.reconcile({ after: 'z', limit: 1 }),
       { cursor: null, scanned: 0, enqueued: 0 });
+    await client.query(`INSERT INTO robinhood_token_attributions
+      (chain,token_address,source,attribution_block) VALUES ('robinhood',$1,'rpc_direct',126)`, [OTHER]);
+    const earlyProof = await queue.claim({ owner: 'out-of-order' });
+    assert.deepEqual(earlyProof.map((row) => row.token_address), [OTHER]);
+    assert.deepEqual(await queue.completedAddresses([OTHER], '2026-09-10'), []);
+    await queue.settle({ owner: 'out-of-order', tasks: earlyProof });
+    await client.query("INSERT INTO token_catalog VALUES ('robinhood',$1,'2026-09-10T00:01:00Z')", [OTHER]);
+    assert.equal((await queue.claim({ owner: 'out-of-order' }))[0].version, '2');
+    assert.deepEqual(await queue.completedAddresses([OTHER], '2026-09-10'), []);
   } finally {
     await client.query('ROLLBACK');
     for (const table of ['robinhood_holder_admission_queue', 'token_catalog',

@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const stage267 = require('../src/utils/db-init-stage267');
+const { createRobinhoodHolderAdmissionQueue } = require('../src/models/robinhood-holder-admission-queue');
+const { createRobinhoodHolderEventAdmission } = require('../src/services/robinhood-holder-event-admission');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const {
   createRobinhoodHolderBootstrapRepository,
@@ -330,6 +333,27 @@ describe('Robinhood holder bootstrap persistence', () => {
         backfillNextBlock: '240', tailCaptureFromBlock: '240',
         ledgerStatus: 'backfilling',
       }]);
+      // The event path waits through recovery and revalidates a withdrawn proof.
+      await client.query('CREATE TEMP TABLE robinhood_chain_capture_cursor (chain text,recovery_state text)');
+      await client.query("INSERT INTO robinhood_chain_capture_cursor VALUES ('robinhood','recovering')");
+      await client.query(stage267.STATEMENTS[0].replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE'));
+      await client.query("INSERT INTO robinhood_holder_admission_queue (chain,token_address) VALUES ('robinhood',$1)", [TOKENS[2]]);
+      await client.query("UPDATE robinhood_token_attributions SET source='rpc_trace',attribution_block=110 WHERE token_address=$1", [TOKENS[2]]);
+      const queue = createRobinhoodHolderAdmissionQueue({ database: { query: client.query.bind(client) } });
+      let time = Date.now();
+      const admission = createRobinhoodHolderEventAdmission({ bootstrap: repository, queue, now: () => time });
+      const eventInput = { admittedAfter: '2026-08-10', limit: 100, maxInitialGapBlocks: 50 };
+      assert.deepEqual(await admission.runDue(eventInput), []);
+      assert.equal((await client.query('SELECT COUNT(*)::int AS n FROM robinhood_holder_token_states WHERE token_address=$1', [TOKENS[2]])).rows[0].n, 0);
+      await client.query("UPDATE robinhood_chain_capture_cursor SET recovery_state='running'");
+      await client.query('UPDATE robinhood_holder_admission_queue SET next_attempt_at=NOW()'); time += 5000;
+      beforeAdmission = () => client.query("UPDATE robinhood_token_attributions SET source='blockscout' WHERE token_address=$1", [TOKENS[2]]);
+      assert.deepEqual(await admission.runDue(eventInput), []);
+      await client.query("UPDATE robinhood_token_attributions SET source='rpc_trace' WHERE token_address=$1", [TOKENS[2]]);
+      await client.query('UPDATE robinhood_holder_admission_queue SET next_attempt_at=NOW()'); time += 5000;
+      assert.deepEqual((await admission.runDue(eventInput)).map((row) => row.tokenAddress), [TOKENS[2]]);
+      assert.equal((await client.query('SELECT COUNT(*)::int AS n FROM robinhood_holder_admission_queue')).rows[0].n, 0);
+      assert.equal((await client.query('SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address=$1', [TOKENS[2]])).rows[0].ledger_status, 'backfilling');
     } finally {
       client.release();
     }

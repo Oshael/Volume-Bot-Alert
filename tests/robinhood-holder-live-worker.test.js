@@ -39,6 +39,20 @@ function completed(overrides = {}) {
 }
 
 describe('Robinhood holder live worker', () => {
+  it('requires the incremental consumer before disabling LIVE admission', () => {
+    const env = { ...process.env, NODE_ENV: 'test', ROBINHOOD_HOLDER_EVENT_ADMISSION_ENABLED: 'true',
+      ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED: 'false', ROBINHOOD_HOLDER_COLD_ENABLED: 'false',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'false', ROBINHOOD_HOLDER_LIVE_ENABLED: 'true',
+      ROBINHOOD_HOLDER_LIVE_SOURCE: 'canonical_journal', ROBINHOOD_HOLDER_BACKFILL_SOURCE: 'rpc',
+      ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '2026-09-01' };
+    for (const enabled of ['false', 'true']) {
+      const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+        cwd: require('node:path').resolve(__dirname, '..'), encoding: 'utf8',
+        env: { ...env, ROBINHOOD_HOLDER_BACKFILL_ENABLED: enabled },
+      });
+      assert.equal(result.status, enabled === 'true' ? 0 : 1, result.stderr);
+    }
+  });
   it('requires the protected local replay configuration for local admission', () => {
     const env = { ...process.env, NODE_ENV: 'test', ROBINHOOD_HOLDER_LOCAL_ADMISSION_ENABLED: 'true',
       ROBINHOOD_HOLDER_BACKFILL_ENABLED: 'true', ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '2026-09-01',
@@ -326,11 +340,12 @@ describe('Robinhood holder live worker', () => {
   });
 
   it('wires local admission without reading history on the canonical LIVE path', async () => {
+    for (const mode of ['localAdmissionEnabled', 'admissionQueueEnabled']) {
     const calls = [];
     let disabledPublisher;
     const reader = { assertChain: async () => calls.push('chain') };
     const runtime = await buildRuntime({
-      sourceMode: 'canonical_journal', localAdmissionEnabled: true,
+      sourceMode: 'canonical_journal', [mode]: true,
       rpcTimeoutMs: 9000, addressShardConcurrency: 2,
     }, {
       database: 'database',
@@ -357,7 +372,7 @@ describe('Robinhood holder live worker', () => {
     assert.equal(await disabledPublisher([]), 0);
     assert.deepEqual(calls, [
       ['canonical', { database: 'database' }], 'chain',
-      ['ledger', { database: 'database', localAdmissionEnabled: true }],
+      ['ledger', { database: 'database', ...(mode === 'localAdmissionEnabled' ? { localAdmissionEnabled: true } : {}) }],
       ['capture', {
         bootstrap: null, ledger: 'ledger', reader, sourceMode: 'canonical_journal',
       }],
@@ -366,5 +381,6 @@ describe('Robinhood holder live worker', () => {
         capture: 'capture', handoff: 'handoff', ledger: 'ledger', reader,
       }],
     ]);
+    }
   });
 });

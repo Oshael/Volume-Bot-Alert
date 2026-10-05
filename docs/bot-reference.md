@@ -3091,6 +3091,41 @@ o commit; duplicatas são colapsadas por token e a versão preserva sinais receb
 durante uma lease. A fila não inicializa saldos nem substitui os fences de admissão.
 Antes de publicar código que exige essa stage, aplique-a e valide o schema; preserve
 a fila em rollback. A proteção de cobertura local continua um contrato separado.
+`ROBINHOOD_HOLDER_EVENT_ADMISSION_ENABLED=true` (default `false`) transfere a
+admissão para a outbox no backfill incremental existente do grupo `robinhood-holders`.
+Esse modo exige incremental habilitado com fonte `rpc`, LIVE habilitado com fonte
+`canonical_journal`, cold desligado e admissão local desligada. O capture deixa de
+executar o seed integral; o backfill passa somente os endereços reclamados para a
+revalidação sob lock do cursor e fence de recovery. Recovery adia a admissão; proofs
+retiradas, bloqueios e coortes ativas são revalidados antes de inserir o estado.
+Os saldos continuam inicializados pelo replay RPC e pelo handoff existentes.
+A fila usa batches de até 100 tokens, concorrência de admissão 1, lease de 60s e
+reclaim no claim seguinte. Falta de readiness usa retry de 5s a 60s; sinais novos
+incrementam a versão e tornam o trabalho pronto, sem invalidar a lease em voo.
+O ACK de uma versão antiga devolve o sinal novo a `pending`. A chave idempotente é
+`(chain, token_address)`. Tokens já admitidos, bloqueados ou anteriores ao corte
+de catálogo são concluídos sem nova admissão; desbloqueios e remoções de state
+recriam a pendência. Proofs tardias e catálogo recebido depois da proof são atendidos
+pelos produtores transacionais. O listener compartilhado acorda a fase de admissão
+após commit; o consumidor verifica a fila vencida a cada 5s para continuidade após
+NOTIFY perdido, restart e reconexão. O watermark é a versão por token, o claim é
+ordenado por `next_attempt_at` e endereço, e falhas de execução respeitam 5s de backoff.
+Falhas da fase de admissão ficam na sua telemetria e na retentativa da fila;
+elas não interrompem a rodada de replay dos tokens já admitidos.
+Esse fallback lê somente a fila, sem varrer entidades no catálogo.
+Antes da ativação, aplique a Stage 267 e reconcilie o catálogo a partir de
+`ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER`, com a flag ainda desligada:
+`node src/utils/reconcile-robinhood-holder-admission.js --pages=100` processa até
+100 páginas de 500 identidades. A saída JSON contém o cursor de endereço; retome
+com `--after=<cursor>` até `cursor:null`. Reexecutar é idempotente e não sobrescreve
+pendências/leases existentes. Depois valide o schema, ative a flag no env exclusivo
+e reinicie somente `trendscope-worker@robinhood-holders.service` conforme o runbook.
+A lease do backfill expõe `admission`: claims, ACKs, adiamentos, reclaim, seeds,
+erros, último tempo de execução e idade do trabalho reclamado. Compare tempo SQL
+da descoberta, latência proof→admissão, avanço do replay e lag dos holders antes e
+depois. O ganho em produção exige essa comparação; menos consultas isoladamente
+não confirma melhora do fluxo. Rollback: desligue a flag e reinicie o mesmo grupo,
+preservando a fila, o corte de data e os token states.
 Cursor ocupado adia a admissão para o próximo tick, sem esperar sua liberação;
 lote vazio não inicia transação de escrita. O bootstrap continua usando os budgets
 e a cadência existentes; não cria outro polling. Quando admite ao menos um token,
