@@ -7356,16 +7356,27 @@ não consulta Archive nem recria evidência ausente. O source de redistribution 
 os bounds temporais somente em `robinhood_chain_block_anchors`; ausência e divergência
 falham fechadas como `redistribution_anchor_missing` e
 `redistribution_anchor_mismatch`, sem consultar `robinhood_chain_blocks`. O claim da fila
-congela a frontier do holder por
-`requested_version`, devolve bloco/hash/tempo ao worker e preserva a mesma lineage em
-retries, desde que ela cubra `event_through_block`; enquanto o holder estiver atrás, o
-pin permanece ausente e reparável. Um evento novo incrementa a versão, cancela a lease e
+filtra a prontidão da source frontier antes de `LIMIT` e do incremento de tentativa:
+aceita um pin completo da mesma `requested_version` cobrindo `event_through_block`,
+ou holder `live` cobrindo o evento, com hash válido e âncora durável correspondente
+ou bloco raw canônico de mesmo hash. Sem isso, a tarefa mantém status, tentativa,
+lease e `next_attempt_at`; não toma a vaga de uma tarefa pronta. Leases expiradas
+só são reclamadas com a mesma prontidão. O claim congela a frontier por versão e
+preserva bloco/hash/tempo em retries, mesmo que o holder avance. Um evento novo
+incrementa a versão, cancela a lease e
 invalida o pin anterior;
 o commit rejeita lease, versão ou frontier diferentes antes de gravar o snapshot. Implante
 1B e 1C juntos, sempre depois da Stage 241; repare as âncoras legadas antes de esperar que
 a fila drene. O worker shadow PostgreSQL-only
 consome a fila em lotes e concorrência limitados, adia tokens cujas frontiers ainda
 não estejam prontas e publica snapshot + conclusão da versão na mesma transação.
+O listener de eventos e a cadência existente reavaliam a prontidão; não há nova fila,
+varredura histórica ou serviço. `caught_up` significa que não houve tarefa elegível
+naquele ciclo; ainda pode haver backlog aguardando holders, anchors ou backoff.
+Creator, first-buy, swaps, transfers, posições e bounds de observação continuam
+validados pelo source; lacunas históricas exigem seus procedimentos de repair.
+Após implantar, compare deltas de claims, adiamentos e materializações, backlog e
+idade das tarefas, taxa de novas versões e lag dos holders em janelas equivalentes.
 
 Leituras de evidência que levam pelo menos 5 s registram
 `[RobinhoodRedistributionEvidenceSlow]` no journal com token, bounds congelados,

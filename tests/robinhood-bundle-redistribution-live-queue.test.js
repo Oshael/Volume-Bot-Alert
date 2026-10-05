@@ -27,7 +27,7 @@ it('claims a bounded batch only behind an active activation', async () => {
   assert.match(captured.sql, /FOR UPDATE OF queue SKIP LOCKED/);
   assert.match(captured.sql, /capture_robinhood_chain_block_anchor/);
   assert.match(captured.sql, /source_requested_version = CASE/);
-  assert.match(captured.sql, /live_through_block >= event_through_block/);
+  assert.match(captured.sql, /holder\.live_through_block >= queue\.event_through_block/);
   assert.equal(captured.params[2], 100);
   assert.equal(captured.params[4], 10_000);
   assert.deepEqual(result, [{ tokenAddress: TOKEN, observationFromBlock: '101',

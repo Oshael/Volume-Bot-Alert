@@ -55,10 +55,10 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
              queue.requested_version, queue.event_through_block,
              queue.source_through_block,
              queue.source_through_hash, queue.source_through_time,
-             queue.source_requested_version, holder.ledger_status,
              holder.live_through_block, holder.live_through_hash,
              anchor.block_timestamp AS holder_anchor_time,
-             canonical.block_timestamp AS canonical_time
+             canonical.block_timestamp AS canonical_time,
+             frontier.reusable AS reuse_frontier
       FROM robinhood_bundle_redistribution_queue queue
       INNER JOIN robinhood_bundle_redistribution_activations activation
         USING (chain, rule_version)
@@ -69,41 +69,42 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
        AND anchor.block_hash = holder.live_through_hash
       LEFT JOIN robinhood_chain_blocks canonical
         ON canonical.chain = holder.chain AND canonical.block_number = holder.live_through_block
-       AND canonical.canonical
+       AND canonical.canonical AND canonical.block_hash = holder.live_through_hash
+      CROSS JOIN LATERAL (
+        SELECT queue.source_requested_version = queue.requested_version
+          AND queue.source_through_block >= queue.event_through_block
+          AND queue.source_through_hash ~ '^0x[0-9a-f]{64}$'
+          AND queue.source_through_time IS NOT NULL AS reusable
+      ) frontier
       WHERE queue.chain = $1 AND queue.rule_version = $2
         AND activation.status = 'active' AND queue.next_attempt_at <= NOW()
         AND (queue.status = 'pending'
           OR (queue.status = 'leased' AND queue.lease_until <= NOW()))
+        -- Filter before LIMIT so an unready token cannot consume a slot or attempt.
+        AND (frontier.reusable OR (
+          holder.ledger_status = 'live'
+          AND holder.live_through_block >= queue.event_through_block
+          AND holder.live_through_hash ~ '^0x[0-9a-f]{64}$'
+          AND (anchor.block_timestamp IS NOT NULL OR canonical.block_timestamp IS NOT NULL)
+        ))
       ORDER BY queue.next_attempt_at, queue.updated_at
       LIMIT $3 FOR UPDATE OF queue SKIP LOCKED
     ), frozen AS MATERIALIZED (
       SELECT candidates.*,
         CASE
-          WHEN source_requested_version = requested_version
-            AND source_through_block >= event_through_block THEN source_through_block
-          WHEN ledger_status = 'live' AND live_through_block IS NOT NULL
-            AND live_through_block >= event_through_block
-            AND live_through_hash ~ '^0x[0-9a-f]{64}$'
-            AND (holder_anchor_time IS NOT NULL OR canonical_time IS NOT NULL)
-          THEN live_through_block
+          WHEN reuse_frontier THEN source_through_block
+          ELSE live_through_block
         END AS frozen_block,
         CASE
-          WHEN source_requested_version = requested_version
-            AND source_through_block >= event_through_block THEN source_through_hash
-          WHEN ledger_status = 'live' AND holder_anchor_time IS NOT NULL
-            AND live_through_block >= event_through_block
-          THEN live_through_hash
-          WHEN ledger_status = 'live' AND live_through_block >= event_through_block
-            AND canonical_time IS NOT NULL
-          THEN capture_robinhood_chain_block_anchor(
+          WHEN reuse_frontier THEN source_through_hash
+          WHEN holder_anchor_time IS NOT NULL THEN live_through_hash
+          ELSE capture_robinhood_chain_block_anchor(
             chain, live_through_block, live_through_hash
           )
         END AS frozen_hash,
         CASE
-          WHEN source_requested_version = requested_version
-            AND source_through_block >= event_through_block THEN source_through_time
-          WHEN ledger_status = 'live' AND live_through_block >= event_through_block
-          THEN COALESCE(holder_anchor_time, canonical_time)
+          WHEN reuse_frontier THEN source_through_time
+          ELSE COALESCE(holder_anchor_time, canonical_time)
         END AS frozen_time
       FROM candidates
     ) UPDATE robinhood_bundle_redistribution_queue queue SET
