@@ -106,4 +106,16 @@ describe('gmgn discovery scheduler', () => {
     assert.equal(third.rateLimited, true);
     assert.equal(errors.length, 2);
   });
+
+  it('honors vendor reset times beyond the configured maximum backoff', () => {
+    for (const [error, expected] of [
+      [{ resetAt: 400 }, 300000],
+      [{ resetAt: 400, retryAt: 401000 }, 301000],
+      [{ retryAt: 401000 }, 301000],
+    ]) {
+      assert.equal(schedulerModule.__private.calculateBackoffMs(error, {
+        now: () => 100000, backoffMinMs: 5000, backoffMaxMs: 60000,
+      }), expected);
+    }
+  });
 });

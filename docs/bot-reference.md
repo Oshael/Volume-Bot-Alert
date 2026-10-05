@@ -331,6 +331,21 @@ Papéis derivados:
 Produção deve usar processos separados. `combined` é forma de desenvolvimento
 ou rollback emergencial, não topologia normal.
 
+O cliente GMGN compartilha bloqueios HTTP 429 entre os processos do mesmo checkout
+por arquivos de prazo imutáveis em `data/gmgn/cooldown`, ignorados pelo Git.
+`GMGN_COOLDOWN_DIR` permite outro diretório; todos os consumidores que compartilham
+o IP precisam usar o mesmo caminho gravável pelo usuário dos serviços. Não use
+`/tmp` para isso quando as instâncias têm `PrivateTmp=yes`.
+O prazo pode vir de `reset_at` Unix ou do horário com fuso emitido pelo CLI.
+Durante o bloqueio, nenhum novo CLI é iniciado; consultas já em andamento podem
+terminar, e dados em cache continuam disponíveis até o TTL existente. O retry
+respeita o prazo inteiro mais 1 segundo; sem prazo válido, espera 5 minutos mais
+1 segundo. O cliente expõe `cooldown` no status; claims também expõem
+`lastRateLimitResetAt`. Discovery e claims retomam automaticamente após a pausa.
+Falhas de acesso ao diretório impedem novas chamadas e precisam ser corrigidas.
+Após atualizar esse contrato, reinicie `core` e `market`, que hospedam os
+consumidores GMGN. Não apague os arquivos para forçar retry durante um bloqueio.
+
 Grupos existentes:
 
 | Grupo | Responsabilidades principais |

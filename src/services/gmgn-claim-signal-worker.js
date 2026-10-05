@@ -21,6 +21,7 @@ function createInitialStatus() {
     lastRunDurationMs: 0,
     lastScheduledDelayMs: DEFAULT_INTERVAL_MS,
     lastError: null,
+    lastRateLimitResetAt: null,
     lastRequests: 0,
     lastSignals: 0,
     lastBaselined: 0,
@@ -146,12 +147,14 @@ async function runOnce(options = {}, meta = {}) {
 
   activeRunPromise = (async () => {
     const startedAtMs = Date.now();
+    let retryAtMs = 0;
     const summary = { requests: 0, signals: 0, baselined: 0, triggered: 0, deduped: 0, suppressed: 0 };
     status.inFlight = true;
     status.enabled = normalized.enabled;
     status.apiKeyConfigured = Boolean(normalized.apiKeyConfigured);
     status.lastRunAt = new Date(startedAtMs).toISOString();
     status.lastError = null;
+    status.lastRateLimitResetAt = null;
     status.totalRuns += 1;
 
     try {
@@ -172,6 +175,10 @@ async function runOnce(options = {}, meta = {}) {
       status.totalSuccessfulRuns += 1;
       return { skipped: false, summary };
     } catch (error) {
+      if (error?.code === 'GMGN_RATE_LIMIT') {
+        status.lastRateLimitResetAt = error.resetAt;
+        retryAtMs = Math.max(Number(error.retryAt) || 0, (Number(error.resetAt) || 0) * 1000);
+      }
       status.totalErrors += 1;
       status.lastError = normalizeErrorMessage(error);
       throw error;
@@ -179,7 +186,9 @@ async function runOnce(options = {}, meta = {}) {
       status.inFlight = false;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
-      status.lastScheduledDelayMs = computeNextDelayMs(normalized.intervalMs, startedAtMs);
+      status.lastScheduledDelayMs = Math.max(
+        computeNextDelayMs(normalized.intervalMs, startedAtMs), retryAtMs - Date.now()
+      );
       activeRunPromise = null;
     }
   })();

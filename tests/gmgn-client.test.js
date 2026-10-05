@@ -2,6 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const gmgn = require('../src/services/gmgn-client');
+const { createGmgnCooldown } = require('../src/services/gmgn-cooldown');
 
 const TOKEN_A = 'So11111111111111111111111111111111111111112';
 const TOKEN_B = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
@@ -562,6 +563,7 @@ describe('gmgn client', () => {
 
   it('throws a structured rate-limit error from CLI stderr', async () => {
     const client = gmgn.createGmgnClient({
+      cooldown: createGmgnCooldown({ directory: null }),
       apiKey: 'test-key',
       execFileImpl: async () => {
         const error = new Error('Command failed');
@@ -577,6 +579,28 @@ describe('gmgn client', () => {
         && error.code === 'GMGN_RATE_LIMIT'
         && error.resetAt === 1775184222
     );
+  });
+
+  it('normalizes rate limits from every endpoint, including cached async lookups', async () => {
+    const requests = [
+      ['fetchTrending', {}], ['fetchMarketSignal', {}],
+      ['fetchTokenInfo', { address: TOKEN_A, skipCache: true }],
+      ['fetchTokenSecurity', { address: TOKEN_A, skipCache: true }],
+      ['fetchMarketKline', { address: TOKEN_A, skipCache: true, from: 1, to: 2 }],
+    ];
+    for (const [method, request] of requests) {
+      const client = gmgn.createGmgnClient({
+        cooldown: createGmgnCooldown({ directory: null }),
+        execFileImpl: async () => {
+          const error = new Error('Command failed');
+          error.stderr = 'HTTP 429 error=RATE_LIMIT_BANNED. Rate limit resets at 2026-10-05 21:04:05 GMT+02:00 (~300s remaining).';
+          throw error;
+        },
+      });
+      await assert.rejects(client[method](request), (error) => (
+        error instanceof gmgn.GmgnRateLimitError && error.resetAt === 1791227045
+      ), method);
+    }
   });
 
   it('rejects invalid JSON output with a client error', async () => {

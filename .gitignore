@@ -8,5 +8,6 @@ node_modules/
 /AGENTS.md
 frontend/dist/
 data/coingecko/
+data/gmgn/
 Volume-Bot-Alert.git.backup/
 cookies.txt

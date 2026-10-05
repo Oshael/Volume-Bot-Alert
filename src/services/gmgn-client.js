@@ -1,5 +1,8 @@
 const { execFile } = require('node:child_process');
 const { isValidAddress } = require('../models/user-token');
+const { createGmgnCooldown } = require('./gmgn-cooldown');
+
+const defaultCooldown = createGmgnCooldown({ directory: process.env.GMGN_COOLDOWN_DIR || undefined });
 
 const DEFAULT_CLI_BIN = 'gmgn-cli';
 const DEFAULT_CHAIN = 'sol';
@@ -27,6 +30,7 @@ class GmgnRateLimitError extends GmgnCliError {
     super(message, { ...details, code: 'GMGN_RATE_LIMIT' });
     this.name = 'GmgnRateLimitError';
     this.resetAt = details.resetAt || null;
+    this.retryAt = details.retryAt || null;
   }
 }
 
@@ -174,6 +178,7 @@ function resolveClientOptions(options = {}) {
     timeoutMs: parsePositiveInteger(options.timeoutMs || process.env.GMGN_CLI_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     execFileImpl: options.execFileImpl || defaultExecFileImpl,
     riskLookupCache: options.riskLookupCache || defaultRiskLookupCache,
+    cooldown: options.cooldown || defaultCooldown,
   };
 }
 
@@ -811,12 +816,36 @@ function parseCliJson(stdout) {
 function extractResetAt(text) {
   const match = String(text || '').match(/"reset_at"\s*:\s*(\d+)|reset_at[=:]\s*(\d+)/i);
   const parsed = match ? Number(match[1] || match[2]) : null;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  const formatted = String(text || '').match(/(?:resets at|until|retry after)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} GMT[+-]\d{2}:\d{2})/i);
+  const timestampMs = formatted ? Date.parse(formatted[1]) : NaN;
+  return Number.isFinite(timestampMs) ? timestampMs / 1000 : null;
 }
 
 function isRateLimitError(error) {
   const text = `${error?.message || ''}\n${error?.stderr || ''}\n${error?.stdout || ''}`;
   return /429|rate[_ -]?limit|too many requests|RATE_LIMIT_(?:EXCEEDED|BANNED)/i.test(text);
+}
+
+async function normalizeCliError(error, cooldown) {
+  if (error instanceof GmgnCliError) return error;
+  const details = {
+    exitCode: error?.code,
+    stdout: error?.stdout || '',
+    stderr: error?.stderr || '',
+    resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
+  };
+  if (isRateLimitError(error)) {
+    try {
+      details.retryAt = await cooldown.block(details.resetAt);
+    } catch (storageError) {
+      return new GmgnCliError(`GMGN cooldown storage failed: ${storageError.message}`, {
+        ...details, code: 'GMGN_COOLDOWN_STORAGE_ERROR',
+      });
+    }
+    return new GmgnRateLimitError('GMGN CLI rate limit reached', details);
+  }
+  return new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
 }
 
 function createGmgnClient(options = {}) {
@@ -849,12 +878,22 @@ function createGmgnClient(options = {}) {
     const env = resolved.apiKey
       ? { ...process.env, GMGN_API_KEY: resolved.apiKey }
       : process.env;
-    const { stdout } = await resolved.execFileImpl(resolved.cliBin, args, {
-      env,
-      timeout: requestOptions.timeoutMs || resolved.timeoutMs,
-      maxBuffer: 1024 * 1024 * 10,
-    });
-    return parseCliJson(stdout);
+    try {
+      const retryAt = await resolved.cooldown.getUntilMs();
+      if (retryAt > resolved.cooldown.now()) {
+        throw new GmgnRateLimitError('GMGN cooldown active', {
+          resetAt: Math.ceil(retryAt / 1000), retryAt,
+        });
+      }
+      const { stdout } = await resolved.execFileImpl(resolved.cliBin, args, {
+        env,
+        timeout: requestOptions.timeoutMs || resolved.timeoutMs,
+        maxBuffer: 1024 * 1024 * 10,
+      });
+      return parseCliJson(stdout);
+    } catch (error) {
+      throw await normalizeCliError(error, resolved.cooldown);
+    }
   }
 
   async function fetchTrending(requestOptions = {}) {
@@ -863,23 +902,7 @@ function createGmgnClient(options = {}) {
     const limit = normalizeLimit(requestOptions.limit);
     const args = buildTrendingArgs({ ...requestOptions, chain, interval, limit });
 
-    try {
-      return normalizeTrendingPayload(await runCliJson(args, requestOptions), { chain, interval });
-    } catch (error) {
-      if (error instanceof GmgnCliError) {
-        throw error;
-      }
-      const details = {
-        exitCode: error?.code,
-        stdout: error?.stdout || '',
-        stderr: error?.stderr || '',
-        resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
-      };
-      if (isRateLimitError(error)) {
-        throw new GmgnRateLimitError('GMGN CLI rate limit reached', details);
-      }
-      throw new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
-    }
+    return normalizeTrendingPayload(await runCliJson(args, requestOptions), { chain, interval });
   }
 
   async function fetchTokenSecurity(requestOptions = {}) {
@@ -890,25 +913,9 @@ function createGmgnClient(options = {}) {
     }
 
     const args = buildTokenSecurityArgs({ ...requestOptions, chain, address });
-    try {
-      return runCachedCliJson('token-security', args, requestOptions, (payload) => (
-        normalizeTokenSecurityPayload(payload, { chain, address })
-      ));
-    } catch (error) {
-      if (error instanceof GmgnCliError) {
-        throw error;
-      }
-      const details = {
-        exitCode: error?.code,
-        stdout: error?.stdout || '',
-        stderr: error?.stderr || '',
-        resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
-      };
-      if (isRateLimitError(error)) {
-        throw new GmgnRateLimitError('GMGN CLI rate limit reached', details);
-      }
-      throw new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
-    }
+    return runCachedCliJson('token-security', args, requestOptions, (payload) => (
+      normalizeTokenSecurityPayload(payload, { chain, address })
+    ));
   }
 
   async function fetchTokenInfo(requestOptions = {}) {
@@ -919,25 +926,9 @@ function createGmgnClient(options = {}) {
     }
 
     const args = buildTokenInfoArgs({ ...requestOptions, chain, address });
-    try {
-      return runCachedCliJson('token-info', args, requestOptions, (payload) => (
-        normalizeTokenInfoPayload(payload, { chain, address })
-      ));
-    } catch (error) {
-      if (error instanceof GmgnCliError) {
-        throw error;
-      }
-      const details = {
-        exitCode: error?.code,
-        stdout: error?.stdout || '',
-        stderr: error?.stderr || '',
-        resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
-      };
-      if (isRateLimitError(error)) {
-        throw new GmgnRateLimitError('GMGN CLI rate limit reached', details);
-      }
-      throw new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
-    }
+    return runCachedCliJson('token-info', args, requestOptions, (payload) => (
+      normalizeTokenInfoPayload(payload, { chain, address })
+    ));
   }
 
   async function fetchMarketKline(requestOptions = {}) {
@@ -948,23 +939,7 @@ function createGmgnClient(options = {}) {
     }
 
     const args = buildMarketKlineArgs({ ...requestOptions, chain, address });
-    try {
-      return runCachedCliJson('market-kline', args, requestOptions, normalizeKlinePayload);
-    } catch (error) {
-      if (error instanceof GmgnCliError) {
-        throw error;
-      }
-      const details = {
-        exitCode: error?.code,
-        stdout: error?.stdout || '',
-        stderr: error?.stderr || '',
-        resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
-      };
-      if (isRateLimitError(error)) {
-        throw new GmgnRateLimitError('GMGN CLI rate limit reached', details);
-      }
-      throw new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
-    }
+    return runCachedCliJson('market-kline', args, requestOptions, normalizeKlinePayload);
   }
 
   async function fetchMarketSignal(requestOptions = {}) {
@@ -972,23 +947,7 @@ function createGmgnClient(options = {}) {
     const signalType = normalizeSignalType(requestOptions.signalType);
     const args = buildMarketSignalArgs({ ...requestOptions, chain, signalType });
 
-    try {
-      return normalizeClaimSignalPayload(await runCliJson(args, requestOptions), { chain, signalType });
-    } catch (error) {
-      if (error instanceof GmgnCliError) {
-        throw error;
-      }
-      const details = {
-        exitCode: error?.code,
-        stdout: error?.stdout || '',
-        stderr: error?.stderr || '',
-        resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
-      };
-      if (isRateLimitError(error)) {
-        throw new GmgnRateLimitError('GMGN CLI rate limit reached', details);
-      }
-      throw new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
-    }
+    return normalizeClaimSignalPayload(await runCliJson(args, requestOptions), { chain, signalType });
   }
 
   return {
@@ -1004,6 +963,7 @@ module.exports = {
   createGmgnClient,
   getStatus: () => ({
     riskLookupCache: defaultRiskLookupCache.getStatus(),
+    cooldown: defaultCooldown.getStatus(),
   }),
   GmgnCliError,
   GmgnRateLimitError,

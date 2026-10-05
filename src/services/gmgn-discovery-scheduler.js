@@ -135,10 +135,10 @@ function attachIntervalMetadata(token, nextToken = token) {
 }
 
 function calculateBackoffMs(error, options) {
-  const resetAt = Number(error?.resetAt);
-  if (Number.isFinite(resetAt) && resetAt > 0) {
-    const resetMs = (resetAt * 1000) - options.now();
-    return Math.max(options.backoffMinMs, Math.min(options.backoffMaxMs, resetMs));
+  const retryAt = Math.max((Number(error?.resetAt) || 0) * 1000, Number(error?.retryAt) || 0);
+  if (Number.isFinite(retryAt) && retryAt > 0) {
+    const resetMs = retryAt - options.now();
+    return Math.max(options.backoffMinMs, resetMs);
   }
   return options.backoffMinMs;
 }

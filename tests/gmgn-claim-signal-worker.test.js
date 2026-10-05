@@ -2,6 +2,7 @@ const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 const worker = require('../src/services/gmgn-claim-signal-worker');
+const { GmgnRateLimitError } = require('../src/services/gmgn-client');
 
 const TOKEN_A = 'So11111111111111111111111111111111111111112';
 const TOKEN_B = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
@@ -9,6 +10,24 @@ const TOKEN_B = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
 describe('gmgn claim signal worker', () => {
   beforeEach(() => {
     worker.__private.resetStatus();
+  });
+
+  it('waits through the vendor cooldown before scheduling another claim poll', async () => {
+    const resetAt = Math.ceil(Date.now() / 1000) + 300;
+    let calls = 0;
+    await assert.rejects(worker.runOnce({
+      enabled: true, intervalMs: 60000,
+      client: { fetchMarketSignal: async () => {
+        calls += 1;
+        throw new GmgnRateLimitError('limited', { resetAt });
+      } },
+      alertService: {},
+    }), GmgnRateLimitError);
+    const status = worker.getStatus();
+    assert.equal(calls, 1);
+    assert.equal(status.lastRateLimitResetAt, resetAt);
+    assert.ok(status.lastScheduledDelayMs >= 299000);
+    assert.equal(status.totalErrors, 1);
   });
 
   it('polls Pump and Bags claim signals and summarizes persistence decisions', async () => {
