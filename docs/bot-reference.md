@@ -3083,6 +3083,14 @@ do gap incremental configurado. Assim, uma indisponibilidade temporária do seed
 não perde tokens cujos `Transfer` já foram capturados. O gap configurado continua
 limitando a elegibilidade; todo token novo entra em `backfilling` enquanto o modo
 legado ainda preserva o buffer universal.
+A Stage 267 (`node src/utils/db-init-stage267.js`) instala a fila durável
+`robinhood_holder_admission_queue`, exigida pelo schema de runtime. Inserts RH no
+catálogo, persistência de atribuição exata, desbloqueios administrativos e remoções
+de token state sinalizam a identidade na mesma transação. `NOTIFY` é entregue após
+o commit; duplicatas são colapsadas por token e a versão preserva sinais recebidos
+durante uma lease. A fila não inicializa saldos nem substitui os fences de admissão.
+Antes de publicar código que exige essa stage, aplique-a e valide o schema; preserve
+a fila em rollback. A proteção de cobertura local continua um contrato separado.
 Cursor ocupado adia a admissão para o próximo tick, sem esperar sua liberação;
 lote vazio não inicia transação de escrita. O bootstrap continua usando os budgets
 e a cadência existentes; não cria outro polling. Quando admite ao menos um token,

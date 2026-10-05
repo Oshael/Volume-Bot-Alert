@@ -7025,6 +7025,25 @@ SCHEMA_GROUPS.push({
   }],
 });
 
+SCHEMA_GROUPS.push({
+  key: 'stage267-robinhood-holder-admission', name: 'Stage 267 Robinhood holder admission queue',
+  repair: 'node src/utils/db-init-stage267.js',
+  tables: [{ table: 'robinhood_holder_admission_queue',
+    columns: ['chain', 'token_address', 'version', 'status', 'attempt_count',
+      'next_attempt_at', 'lease_owner', 'lease_until', 'last_error', 'created_at', 'updated_at'],
+    constraints: [{ name: 'rh_holder_admission_lease_check', includes: ['pending', 'leased', 'lease_until'] }],
+    indexes: [{ name: 'idx_rh_holder_admission_due', includes: ['next_attempt_at', 'pending'] },
+      { name: 'idx_rh_holder_admission_expired', includes: ['lease_until', 'leased'] }],
+  }, { table: 'token_catalog', triggers: [{ name: 'rh_holder_admission_catalog',
+    includes: ['AFTER INSERT', 'enqueue_robinhood_holder_admission'] }] },
+  { table: 'robinhood_token_attributions', triggers: [{ name: 'rh_holder_admission_proof',
+    includes: ['attribution_block', 'enqueue_robinhood_holder_admission'] }] },
+  { table: 'admin_blocked_tokens', triggers: [{ name: 'rh_holder_admission_unblock',
+    includes: ['AFTER DELETE', 'enqueue_robinhood_holder_admission'] }] },
+  { table: 'robinhood_holder_token_states', triggers: [{ name: 'rh_holder_admission_reset',
+    includes: ['AFTER DELETE', 'enqueue_robinhood_holder_admission'] }] }],
+});
+
 const PROFILE_GROUP_KEYS = {
   test: [
     'core-auth-billing',
