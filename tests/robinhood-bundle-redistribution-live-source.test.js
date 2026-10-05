@@ -100,6 +100,30 @@ describe('Robinhood BUNDLED redistribution live source', () => {
     assert.match(calls[2].params[1], new RegExp(RECIPIENT));
   });
 
+  it('rechecks empty-interval evidence and preserves the other readiness gates', async () => {
+    for (const [proof, change, reason] of [
+      [null, {}, 'holder_frontier_unavailable'],
+      [{}, {}, null],
+      [{}, { creator_address: null }, 'creator_unavailable'],
+      [{}, { transfer_next_block: '100' }, 'transfer_frontier_behind'],
+    ]) {
+      const source = createRobinhoodBundleRedistributionLiveSource({
+        database: { async query(sql) {
+          return { rows: sql === __private.READINESS_SQL
+            ? [ready({ live_through_block: '99', ...change })] : [] };
+        } },
+        emptyProof: async (_database, input) => {
+          assert.equal(input.source_through_hash, HASH);
+          assert.equal(input.event_through_block, '100');
+          return proof;
+        },
+      });
+      const result = await source.loadToken(TOKEN, lineage());
+      assert.equal(result.reason, reason);
+      assert.equal(result.ready, reason == null);
+    }
+  });
+
   it('records the exact bounds of a slow evidence read', async () => {
     const warnings = [];
     const database = { async query(sql) {

@@ -1,6 +1,7 @@
 const db = require('./db');
 const { performance } = require('node:perf_hooks');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const { proveEmptyHolderInterval } = require('./robinhood-holder-empty-interval-proof');
 
 const CHAIN = 'robinhood';
 const PROJECTION_VERSION = 'rh_transfer_v1';
@@ -195,11 +196,11 @@ function transferReady(row, throughBlock) {
     && BigInt(row.transfer_next_block) > BigInt(throughBlock);
 }
 
-function readiness(row, tokenAddress, frontier) {
+function readiness(row, tokenAddress, frontier, emptyIntervalProven = false) {
   if (!row) return unavailable('holder_state_missing', tokenAddress);
   if (row.ledger_status !== 'live' || row.live_through_block == null
       || !HASH.test(row.live_through_hash || '')
-      || BigInt(row.live_through_block) < BigInt(frontier.blockNumber)) {
+      || (BigInt(row.live_through_block) < BigInt(frontier.blockNumber) && !emptyIntervalProven)) {
     return unavailable('holder_frontier_unavailable', tokenAddress);
   }
   if (String(row.live_through_block) === frontier.blockNumber
@@ -211,7 +212,8 @@ function readiness(row, tokenAddress, frontier) {
   if (!swapReady(row, frontier.blockNumber)) return unavailable('swap_frontier_behind', tokenAddress);
   if (!transferReady(row, frontier.blockNumber)) return unavailable('transfer_frontier_behind', tokenAddress);
   return Object.freeze({ ready: true, reason: null, tokenAddress,
-    creatorAddress: row.creator_address, frontier });
+    creatorAddress: row.creator_address, frontier,
+    ...(emptyIntervalProven ? { holderCoverage: 'empty-canonical-interval' } : {}) });
 }
 
 function sourceBuy(row) {
@@ -263,6 +265,7 @@ function actors(sources) {
 
 function createRobinhoodBundleRedistributionLiveSource(options = {}) {
   const database = options.database || db;
+  const emptyProof = options.emptyProof || proveEmptyHolderInterval;
   const now = options.now || (() => performance.now());
   const logger = options.logger || console;
   const statementTimeoutMs = Math.max(1_000,
@@ -283,7 +286,13 @@ function createRobinhoodBundleRedistributionLiveSource(options = {}) {
     const bounds = anchoredBounds(row, lineage, tokenAddress);
     if (!bounds.ready) return Object.freeze({ ...bounds, frontier: lineage.frontier,
       observationFromBlock: lineage.observation.blockNumber });
-    const state = readiness(row, tokenAddress, lineage.frontier);
+    const proof = row?.ledger_status === 'live' && row.live_through_block != null
+      && BigInt(row.live_through_block) < BigInt(lineage.frontier.blockNumber)
+      ? await emptyProof(database, { token_address: tokenAddress,
+        live_through_block: row.live_through_block, live_through_hash: row.live_through_hash,
+        event_through_block: lineage.frontier.blockNumber,
+        source_through_hash: lineage.frontier.blockHash }) : null;
+    const state = readiness(row, tokenAddress, lineage.frontier, proof != null);
     if (!state.ready) return state;
     const evidenceParams = [
       CHAIN, tokenAddress, PROJECTION_VERSION, state.frontier.blockNumber,

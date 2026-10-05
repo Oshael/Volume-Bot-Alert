@@ -1,6 +1,7 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { RULE_VERSION } = require('../utils/db-init-stage188');
+const { createEmptyHolderFrontierReader } = require('./robinhood-holder-empty-interval-proof');
 const {
   replaceRedistributionSnapshotWithClient,
 } = require('./robinhood-bundle-redistribution-snapshot');
@@ -44,26 +45,40 @@ function assertedLineage(row, input) {
 function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
   const database = options.database || db;
   const projectionFence = options.projectionFence;
+  const findEmptyFrontiers = options.findEmptyFrontiers || createEmptyHolderFrontierReader(database);
 
   async function claimBatch(input = {}) {
     const owner = String(input.owner || '').trim();
     if (!owner || owner.length > 128) throw new Error('redistribution queue owner is invalid');
     const limit = bounded(input.limit, 10, 1, 100);
     const leaseMs = bounded(input.leaseMs, 300_000, 10_000, 1_200_000);
-    const { rows } = await database.query(`WITH candidates AS MATERIALIZED (
+    const claim = (emptyProofs) => database.query(`WITH candidates AS MATERIALIZED (
       SELECT queue.chain, queue.token_address, queue.rule_version,
              queue.requested_version, queue.event_through_block,
              queue.source_through_block,
              queue.source_through_hash, queue.source_through_time,
-             holder.live_through_block, holder.live_through_hash,
-             anchor.block_timestamp AS holder_anchor_time,
-             canonical.block_timestamp AS canonical_time,
+             COALESCE(empty.through_block,holder.live_through_block) AS live_through_block,
+             COALESCE(empty.through_hash,holder.live_through_hash) AS live_through_hash,
+             CASE WHEN empty.through_block IS NULL THEN anchor.block_timestamp END AS holder_anchor_time,
+             COALESCE(empty.through_time,canonical.block_timestamp) AS canonical_time,
              frontier.reusable AS reuse_frontier
       FROM robinhood_bundle_redistribution_queue queue
       INNER JOIN robinhood_bundle_redistribution_activations activation
         USING (chain, rule_version)
       LEFT JOIN robinhood_holder_token_states holder
         ON holder.chain = queue.chain AND holder.token_address = queue.token_address
+      LEFT JOIN jsonb_to_recordset($6::jsonb) AS empty(token_address text,
+        live_through_block bigint, live_through_hash text, holder_version bigint,
+        requested_version bigint, event_through_block bigint,
+        through_block bigint, through_hash text, through_time timestamptz)
+        ON empty.token_address=holder.token_address AND empty.holder_version=holder.version
+       AND empty.live_through_block=holder.live_through_block
+       AND empty.live_through_hash=holder.live_through_hash
+       AND empty.requested_version=queue.requested_version
+       AND empty.event_through_block=queue.event_through_block
+       AND EXISTS (SELECT 1 FROM robinhood_chain_blocks block WHERE block.chain=holder.chain
+         AND block.block_hash=empty.through_hash AND block.block_number=empty.through_block
+         AND block.canonical)
       LEFT JOIN robinhood_chain_block_anchors anchor
         ON anchor.chain = holder.chain AND anchor.block_number = holder.live_through_block
        AND anchor.block_hash = holder.live_through_hash
@@ -83,9 +98,11 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
         -- Filter before LIMIT so an unready token cannot consume a slot or attempt.
         AND (frontier.reusable OR (
           holder.ledger_status = 'live'
-          AND holder.live_through_block >= queue.event_through_block
+          AND (holder.live_through_block >= queue.event_through_block
+            OR empty.through_block >= queue.event_through_block)
           AND holder.live_through_hash ~ '^0x[0-9a-f]{64}$'
-          AND (anchor.block_timestamp IS NOT NULL OR canonical.block_timestamp IS NOT NULL)
+          AND (anchor.block_timestamp IS NOT NULL OR canonical.block_timestamp IS NOT NULL
+            OR empty.through_time IS NOT NULL)
         ))
       ORDER BY queue.next_attempt_at, queue.updated_at
       LIMIT $3 FOR UPDATE OF queue SKIP LOCKED
@@ -126,7 +143,12 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
       queue.event_through_block::text, queue.requested_version::text,
       queue.source_through_block::text, queue.source_through_hash,
       queue.source_through_time, queue.source_requested_version::text,
-      queue.attempt_count`, [CHAIN, RULE_VERSION, limit, owner, leaseMs]);
+      queue.attempt_count`, [CHAIN, RULE_VERSION, limit, owner, leaseMs, JSON.stringify(emptyProofs)]);
+    let { rows } = await claim([]);
+    if (!rows.length) {
+      const emptyProofs = await findEmptyFrontiers();
+      if (emptyProofs.length) ({ rows } = await claim(emptyProofs));
+    }
     return Object.freeze(rows.map((row) => Object.freeze({
       tokenAddress: row.token_address,
       observationFromBlock: row.observation_from_block,

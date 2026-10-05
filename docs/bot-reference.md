@@ -7359,7 +7359,23 @@ falham fechadas como `redistribution_anchor_missing` e
 filtra a prontidão da source frontier antes de `LIMIT` e do incremento de tentativa:
 aceita um pin completo da mesma `requested_version` cobrindo `event_through_block`,
 ou holder `live` cobrindo o evento, com hash válido e âncora durável correspondente
-ou bloco raw canônico de mesmo hash. Sem isso, a tarefa mantém status, tentativa,
+ou bloco raw canônico de mesmo hash. Para um holder live abaixo do evento, o claim
+também aceita prova local de intervalo vazio: checkpoint anterior canônico, sequência
+contínua de até 1.000 blocos com capture version 4 e digests completos conferidos,
+nenhum Transfer do token (inclusive malformado), nenhuma pendência no holder journal,
+capturas canônica e holder cobrindo o evento, safe head suficiente e recovery running.
+A prova congela o bloco do evento na fila; não altera checkpoints, versões ou saldos
+dos holders. O source refaz a prova para o hash congelado antes de ler evidência e
+mantém todos os demais gates. Certificados do claim só valem para a versão e
+checkpoint do holder e a versão/evento do pedido examinados; o fence canônico segue
+obrigatório na publicação. Dados podados, captura antiga, gaps maiores ou forks
+continuam bloqueados e exigem recuperação da evidência, sem promoção presumida.
+O claim normal tem precedência; a prova vazia só é buscada quando ele não encontra
+tarefa elegível. O leitor examina até três candidatos por ciclo, em ordem circular de token
+com watermark em memória, orçamento de 750 ms entre provas e timeout SQL de 1 s;
+provas indisponíveis têm retry em memória após 5 s (cache limitado a 256 tokens),
+sem consumir tentativa nem impedir o claim normal. Reinício descarta esse cache.
+Não há nova fila, schema, RPC ou serviço. Sem prontidão, a tarefa mantém status, tentativa,
 lease e `next_attempt_at`; não toma a vaga de uma tarefa pronta. Leases expiradas
 só são reclamadas com a mesma prontidão. O claim congela a frontier por versão e
 preserva bloco/hash/tempo em retries, mesmo que o holder avance. Um evento novo
