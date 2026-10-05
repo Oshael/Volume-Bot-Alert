@@ -1,9 +1,11 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status: tabela unificada Robinhood e painel Top Wallets disponíveis; feed de swaps
-por wallet na API e rota direta de compras/vendas disponíveis. Atualização do
-ranking por WebSocket, tabela de maiores altas e detalhes completos de
-wallet/token ainda pendentes.
+Status conferido no checkout em 05/10/2026: Old/Recent unificados na tabela
+Robinhood; Top Wallets, API e atualização por WebSocket implementados; feed
+de compras/vendas por wallet disponível. Faltam maiores altas, detalhe completo
+da wallet/posição e conclusão do trabalho de custo, escala e consistência do
+Top Wallets descrito na seção 9. Implementação no repositório não comprova
+ativação, cobertura histórica ou desempenho em produção.
 Escopo solicitado em 16/09/2026. Este documento orienta a implementação futura;
 sua criação não autoriza deploy, migrações ou execução de todas as etapas.
 
@@ -98,8 +100,9 @@ Usar um sinal de invalidação/versionamento do ranking após o commit durável 
 fontes que alteram posições, preços ou cobertura; o cliente reconsulta o endpoint
 autenticado para obter ordem, ganhos e `asOf` consistentes. Não somar ganhos a
 partir de eventos soltos no navegador. O `market:bucket` atual é assinado por
-token e não constitui, sozinho, uma assinatura do ranking global. O contrato de
-publicação do sinal e os pontos de emissão devem ser definidos antes do código.
+token e não constitui, sozinho, uma assinatura do ranking global. Esse contrato
+já está conectado: revisões duráveis por fonte, notificação PostgreSQL após
+commit e sinal `wallet-ranking:invalidate` para reconsultar a API.
 
 Coalescer eventos e limitar recomputações/consultas para que alta frequência de
 preços não sobrecarregue a API. Ignorar sinais duplicados ou antigos, recuperar
@@ -111,6 +114,8 @@ introduzir polling periódico no caminho live; a consulta inicial e a recuperaç
 após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
+
+Status: pendente; não há tabela de altas conectada ao Radar atual.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -127,6 +132,8 @@ nunca inventar preço-base ou zero percentual.
 
 ## 5. Tabela única de tokens
 
+Status: implementada para Robinhood, incluindo preferências e filtros unificados.
+
 Substituir Old Tokens e Recent Tokens por uma única tabela paginada no servidor.
 Preservar busca, favoritos, filtros de idade/valuation, ordenações existentes,
 quantidade por página, ações e expansão de token aplicáveis ao Radar.
@@ -138,6 +145,11 @@ Não concatenar duas páginas independentes: contagem, ordem e paginação devem
 ser globais. Definir migração das preferências Recent/Old sem descartar favoritos.
 
 ## 6. Detalhe da wallet
+
+Status: parcial. `/radar/wallet/robinhood/:address` já apresenta compras/vendas
+da API `/api/robinhood/wallet-trades`, com All/Buy/Sell, paginação e retorno ao
+Radar preservando filtros em memória. Perfil, resumo, posições abertas/fechadas,
+transfers e contrapartes ainda não estão integrados nessa tela.
 
 Abrir área dedicada ao clicar na wallet do ranking. Mostrar identidade/perfil,
 rede e resumo das posições conhecidas, com cobertura e horário de atualização.
@@ -170,6 +182,9 @@ Interações indiretas e grafos de vários saltos ficam fora da primeira versão
 
 ## 7. Detalhe da posição wallet + token
 
+Status: pendente neste fluxo; componentes existentes de chart e conteúdo social
+não constituem a tela de posição descrita abaixo.
+
 Disponível ao clicar em token aberto ou fechado. Mostrar:
 
 - Identidade do perfil/wallet, token, rede, contrato e estado da posição.
@@ -193,21 +208,23 @@ wallet também não são requisito inicial sem uma fonte completa demonstrada.
 
 ## 8. Evidência no repositório e fronteiras
 
-Inspeção inicial identificou bases reutilizáveis, não prova de cobertura em produção:
+Bases conferidas no código; sua existência não prova cobertura em produção:
 
 | Base existente | Uso / lacuna a verificar |
 | --- | --- |
-| `src/services/dashboard-radar-query.js` | Idade hoje limitada a Recent/Old; precisa contrato unificado |
+| `src/services/dashboard-radar-query.js` | Contrato unificado `bucket: 'all'` implementado; preserva Recent/Old para consumidores legados |
 | `src/services/dashboard-radar-reader.js` | Composição multichain e paginação exata |
 | `src/services/robinhood-workspace-radar-reader.js` | Métricas, ordenação, idade e qualidade RH |
 | `src/models/callout-wallet-profile-read.js` | Associação EVM a Fomo/Pump; política de múltiplos vínculos |
 | `src/services/robinhood-wallet-position-domain.js` | Custo e UPNL por posição; não é ranking temporal |
+| `src/services/robinhood-wallet-ranking-*` | Domínio temporal, cobertura, composição global, API e relay implementados; limites e pendências na seção 9 |
 | `src/models/robinhood-wallet-position.js` | Projeções atuais; verificar reconstrução histórica necessária |
 | `src/models/robinhood-wallet-swap-read.js` e `robinhood-wallet-trade-read.js` | Feeds paginados por token e wallet; falta integrar posições e transfers |
 | Modelos `robinhood-wallet-transfer-*` | Evidência/classificação; verificar retenção e consulta por wallet |
+| `src/models/robinhood-wallet-ranking-publication.js` | Publicação compacta com revisão, checkpoint e geração; ainda não consumida pela API |
 | `src/models/callout-event-read.js` e `callout_thesis_archive` | Teses existentes; leitura por autor + ativo |
 | `frontend/src/services/charts/chart-wallet-buys.ts` | Investigar reaproveitamento; vendas precisam cobertura explícita |
-| `frontend/src/ui/sections/routed-sections.ts` e `ui/app-shell.ts` | Composição atual de duas tabelas |
+| `frontend/src/ui/app-shell.ts` e seções do Radar | Tabela única, Top Wallets e feed por wallet conectados; faltam altas e exploração completa de posições |
 
 Criar módulos separados para ranking, detalhe da wallet e detalhe da posição.
 Os hubs de rota/controller/shell devem receber wiring; regras contábeis, filtros
@@ -225,220 +242,186 @@ existentes; não criar polling contínuo por wallet/token para descobrir mudanç
 Qualquer exceção precisa dos limites e garantias exigidos no AGENTS.md. Nenhum
 serviço VPS novo está aprovado; se necessário, ler o runbook de serviços antes.
 
-## 9. Etapas de execução e aprovação
+## 9. Estado das entregas, pendências e execução segura
 
-### Corte 1A — contrato interno de consulta unificada
+### Estado conferido
 
-Implementado `bucket: 'all'` no normalizador compartilhado, reutilizando a
-consulta por chain e a composição paginada existentes. Aceita faixas que cruzam
-7 dias; sem máximo informado, abrange todas as idades conhecidas. Preserva os
-modos Recent/Old e não muda as chains selecionadas pelos consumidores atuais.
+A coluna de estado descreve código conectado no checkout, não deploy ou prova
+completa dos dados. A sequência original é preservada para localizar as entregas.
 
-Cobertura: limites 24h/7d, intervalo inválido, teto de paginação e composição do
-reader real com o adapter RH (I/O simulado), incluindo páginas com idades
-misturadas, contagem, ordem, identidade, filtros e isolamento de Solana. O adapter
-Solana também conserva compatibilidade com o contrato multichain. Essa validação
-não comprova plano de execução ou desempenho em PostgreSQL com dados reais.
-
-Continuação implementada no corte 1B abaixo; a tabela única já foi conectada.
-`history-bootstrap` continua restrito ao fluxo Solana.
-O corte de contrapartes continua pendente para sua etapa e não bloqueia o
-contrato unificado de tokens.
-
-### Dimensionamento e sequência
-
-Corte 1B: `POST /api/dashboard/radar-bootstrap` registrado no dashboard com
-handler/validação em `src/services/dashboard-radar-bootstrap.js`. O endpoint é
-autenticado, respeita visibilidade RH, limita o rollout à RH e reutiliza o
-reader, bloqueios do usuário, pins e serialização existentes. Validação HTTP
-em `tests/dashboard.test.js`; SQL real com tabelas temporárias em
-`tests/dashboard-radar-sql.integration.test.js`, sem migrações ou dados de
-produção. O teste SQL cobre seleção/paginação e filtros; não mede desempenho
-do catálogo de produção. O corte 2A adiciona o contrato tipado do cliente e o
-estado isolado da consulta única, com limites de paginação e identidades RH.
-O corte 2B conecta a consulta à tela: uma tabela RH usa página, contagem, busca,
-favoritos e filtros globais, com ticker verde até 7 dias e laranja acima.
-As preferências da tabela única agora são persistidas separadamente. Na primeira
-leitura de preferências antigas, favoritos ativos em Recent ou Old viram o filtro
-de favoritos único; paginação e ordem vêm de Recent, limitadas pelo contrato do
-Radar. A lista de favoritos permanece compartilhada. O frontend consulta
-`history-bootstrap` apenas para Solana, quando selecionada e pronta; no Radar
-Robinhood usa somente `radar-bootstrap`. Sem disponibilidade Robinhood, a tabela
-indica indisponibilidade. O fluxo visual foi coberto em smoke com seleção mista,
-Robinhood isolada e Robinhood indisponível. As outras áreas do plano permanecem
-pendentes.
-
-O escopo ampliado inclui Radar, consultas de wallet, contabilidade temporal,
-transfers, gráficos e conteúdo social. Estimativa preliminar: 3.500–5.500 linhas
-de código/testes, 18–28 arquivos de produção e cerca de 10–14 slices. Não é um
-orçamento fechado: o desenho contábil e a retenção histórica podem alterá-lo.
-A estimativa anterior de 1.800–2.400 linhas cobria apenas o Radar inicial.
-
-Há checkpoint de arquitetura por ultrapassar 12 arquivos de produção. Antes
-de editar código, listar arquivos concretos, fronteiras, estimativa por slice e
-validação. Cada slice tem no máximo 500 linhas adicionadas + removidas; dividir
-uma etapa funcional quando necessário, sem esconder trabalho parcial.
-
-| Ordem | Entrega | Validação principal |
+| Etapa | Estado | Entrega / pendência |
 | --- | --- | --- |
-| 0 | Fechar semântica temporal, preço-base das altas, corte de interação e cobertura dos dados | Exemplos contábeis, inspeção de schemas/índices e contratos |
-| 1 | Consulta unificada de tokens e filtros | Unidade de limites 24h/7d; integração de ordem/paginação |
-| 2 | Tabela única e escopo RH | Testes afetados, build e fluxo visual |
-| 3 | Tabela de altas e layout 50/50 | Seleção global, preço ausente, ações e responsividade |
-| 4 | Domínio/consulta do ranking e perfis | Cálculos, cobertura, desempates e integração |
-| 5 | Interface Top Wallets e seletor temporal | Filtros, estados e navegação |
-| 5a.1–5a.3 | Ranking Top Wallets ao vivo por WebSocket | Fontes duráveis, distribuição, reconexão, coalescência, cursores e cobertura |
-| 6 | Leituras da wallet: posições e swaps | Paginação, autorização existente e histórico incompleto |
-| 7 | Transfers e contrapartes | Corte USD, classificação, deduplicação e evidência |
-| 8 | Tela da wallet | Abertas/fechadas, feeds e retorno ao Radar |
-| 9 | Detalhe do token, buys/sells e teses | Consistência chart/feed, autoria e identidade multichain |
-| 10 | Integração final e referência operacional | Fluxo completo, regressões e revisão de diff |
+| 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
+| 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
+| 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
+| 3 | Pendente | Maiores altas entre tokens de até 24h e layout superior 50/50 |
+| 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
+| R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
+| 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |
+| R5a.1a / R5a.1b / R5a.2 / R5a.3 | Implementada com ressalvas | Fontes duráveis, relay e atualização do painel; custo compartilhado, escala e freshness continuam pendentes abaixo |
+| 6 / 8 | Parcial | API e tela de compras/vendas por wallet; faltam perfil, resumo e posições abertas/fechadas |
+| 7 | Pendente neste fluxo | Transfers por wallet e contrapartes com classificação, valoração histórica e corte por evento |
+| 9 | Pendente neste fluxo | Detalhe wallet + token, mini chart buy/sell, métricas, transações e teses |
+| 10 | Parcial | Referência operacional descreve o que existe; fluxo completo depende das telas e critérios restantes |
 
-No corte 4, o domínio temporal, a leitura limitada de preços de referência e a
-agregação por wallet já estão implementados. A agregação exige confirmação de
-universo completo antes de produzir uma ordem global; wallets com cobertura
-parcial não entram na soma exata. A seleção global tem travessia limitada,
-descrita abaixo. Ainda faltam o fechamento da cobertura dos eventos, a composição
-global dos dados e a consulta pública do ranking.
-Há leitura paginada de posições abertas por lote explícito de tokens e versão
-da projeção; páginas independentes não constituem um snapshot consistente nem
-provam que o universo global foi percorrido.
-O cálculo temporal também aceita posição corrente mais eventos completos da
-janela, sem exigir todo o histórico de compras da wallet; ALL usa o custo
-remanescente da projeção. Cobertura dos eventos e alinhamento da projeção
-continuam sendo pré-requisitos para publicar ganho exato.
-O leitor de eventos de janela consulta swaps e `wallet_transfer` classificados
-em lote limitado por par `(wallet, token)`. Ele informa truncamento e lacunas
-de ordenação; a cobertura da fonte continua não verificada até auditoria de
-partições, classificação e cursores.
-A auditoria também confere se as partições diárias de swaps da janela estão
-anexadas com limites corretos. Como a persistência cria partições sob demanda,
-uma partição ausente pode significar dia sem swaps ou lacuna de retenção: ela
-mantém cobertura não verificada, sem presumir qual caso ocorreu. O checkpoint
-dos cursores de swaps/transfers é conferido por número **e hash** na cadeia
-canônica, inclusive se outra hash ocupar o mesmo número após reorg.
-Uma auditoria limitada por janela verifica a presença, anexação, limites diários
-e marcação de descarte das partições brutas de transfers. Ausência de lacuna nessa
-auditoria ainda não comprova classificação, avanço dos cursores nem cobertura dos
-swaps; portanto não libera ganhos exatos.
-Uma segunda auditoria lê os cursores seed/live de swaps e transfers, verifica
-continuidade, avanço além do `asOf`, checkpoint canônico e se o bloco canônico
-de origem do seed precede o começo da janela. Se esse bloco foi removido do
-journal, o início fica não comprovado; a ausência de âncora não é tratada como
-ausência de eventos. Mesmo com essas condições satisfeitas, classificação,
-completude por token e alinhamento com a
-projeção ainda precisam ser demonstrados antes de publicar o ranking exato.
-Uma leitura limitada por pares `(wallet, token)` identifica transfers brutos da
-janela que continuam `unknown`/`unclassified` ou têm versão de classificação
-divergente. Ausência desses casos vale apenas para as linhas brutas disponíveis;
-não prova captura completa nem resolve retenção ou alinhamento da projeção.
-O serviço de composição reúne eventos e essas auditorias por par, separando
-falhas globais das falhas da wallet/token. Mesmo com pré-condições satisfeitas,
-`eventsComplete` permanece falso até existir prova da cobertura por token.
-Eventos e auditorias agora leem no mesmo snapshot PostgreSQL `REPEATABLE READ`
-somente leitura. Uma leitura de candidatos por conjunto explícito de tokens
-reúne até 20 posições abertas, preços e eventos nesse mesmo snapshot. Ela não
-prova universo global; o alinhamento temporal das posições é auditado abaixo,
-mas ainda não publica ranking ou ganho exato nesse estágio.
-O leitor de posições também oferece página global por `(token, wallet)` e versão
-da projeção, limitada e estável. Páginas chamadas separadamente continuam sem
-snapshot comum; só a travessia inteira sob uma leitura consistente poderá provar
-que o universo de candidatos foi esgotado.
-Uma travessia em snapshot somente leitura percorre até 10 páginas globais de 100
-posições abertas. Ela confirma esgotamento apenas quando a última página não tem
-continuação; ao atingir 1.000 posições com mais dados, retorna cursor e cobertura
-incompleta. Isso não comprova a cobertura histórica da projeção nem libera o
-ranking público.
-O snapshot limitado por tokens agora audita, na mesma transação, os cursores
-seed/live da projeção de posições: seed completo, continuidade, checkpoint
-canônico e horário do frontier igual ao `asOf`. Cada posição só recebe
-`projectionAligned` quando seu `through_block` não ultrapassa esse frontier.
-A auditoria não comprova cobertura de eventos, preços nem universo global;
-`rankingReady` continua falso.
+A tabela única usa somente `radar-bootstrap` para RH. `history-bootstrap`
+continua alimentando consumidores Solana quando selecionada e pronta, sem
+preencher o Radar RH com essa rede. A migração de preferências herda favoritos
+ativos de Recent ou Old e tamanho de página/ordem de Recent; favoritos continuam
+compartilhados, e preferências do Radar ficam separadas. Busca e página são
+transitórias. Limites e estados de indisponibilidade permanecem no contrato.
 
-### Cortes restantes do ranking de wallets
+### Top Wallets: o que já foi entregue
 
-Estimativa revisada de pelo menos doze cortes de até 500 linhas cada, incluindo
-código, testes e documentação. Cada corte exige autorização própria após o
-anterior. R5a foi dividido em três cortes, estimados juntos em 900–1.300 linhas.
-R2c foi redimensionado em três cortes (estimativa conjunta de 900–1.300
-linhas): o scanner global não persiste hoje o escopo dos tokens por range, logo a
-ausência de eventos não comprova uma varredura vazia. A migração aditiva é parte
-do primeiro corte autorizado. Novo subsistema ou aumento material de escopo exige
-novo redimensionamento.
+- **Contabilidade:** ALL usa quantidade/custo remanescentes; 24h/7d/30d usam
+  preço no início da janela para posições antigas e custo executado para compras
+  novas. Venda total elimina a contribuição; parcial escala a parcela restante.
+  Quantidade sem custo, preço ausente e cobertura incompleta não viram ganho exato.
+- **Cobertura:** R1, R2a/R2b e R2c.1–3 auditam alinhamento da projeção, seed/live,
+  partições, classificação, hashes e ranges por token. `eventsComplete=true`
+  exige todas as provas no mesmo snapshot. Seed não prova raw integral; ranges
+  antigos não ganham cobertura retroativa pela existência de uma migration.
+- **Frontier inclusivo:** posições e transfers podem alcançar o mesmo `asOf`
+  comprovado. Timestamp declarado precisa coincidir com o checkpoint canônico;
+  o header adjacente prova o fim inclusivo somente com timestamp posterior a
+  `asOf`, sem exigir projetar eventos futuros. Header ausente, órfão ou ainda
+  com timestamp igual mantém a cobertura incompleta.
+- **Leitura global:** R3 usa `REPEATABLE READ READ ONLY`, até 10 páginas de 100
+  posições, preços/decimais em lotes de 100 tokens e eventos em lotes de 20 pares.
+  Ao atingir o teto com mais candidatos, retorna incompletude sem ranking global.
+  O timeout de 5 s é por statement; não é orçamento total da transação/rota.
+- **Agregação:** `createOpenWalletRankingAccumulator` aceita lotes de até 100
+  posições ordenadas por wallet/token, mantém a wallet corrente e até 100 melhores
+  wallets concluídas. Wallet com qualquer posição parcial é excluída por inteiro.
+  Essa interface não remove o limite nem transforma o reader atual em streaming:
+  o caminho da API ainda reúne listas e chama o agregador compatível de listas.
+- **API/UI:** R4/R5 expõem `/api/robinhood/top-wallets` e painel com páginas de
+  25 (API aceita até 50), top 100, perfis RH opcionais, exclusões e `asOf`.
+  Cada página recompõe o ranking; fingerprint divergente retorna 409. O link
+  da wallet abre hoje o feed de compras/vendas, não todo o detalhe planejado.
+- **WebSocket:** R5a completo no código. Posições, transfers, cursores de swaps,
+  preços de 1 minuto, agregado de 5 minutos e reorg publicam revisões na mesma
+  transação das fontes, inclusive avanço vazio. Rollback não entrega notificação.
+  O relay web coalesce por fonte em 25 ms; o painel preserva período, descarta
+  cursores/respostas obsoletos, deduplica revisões e recupera após reconexão.
+  O mínimo de 250 ms entre consultas é por painel, não um limite global do banco.
+- **Publicação compacta:** Stage 260/repositório já persistem a geração atual
+  por projeção/janela, checkpoint, revisões e até 100 wallets, com payload de até
+  64 KiB. Há guarda de geração, retry, regressão e reorg. Não existe produtor
+  automático conectado; a API ainda não lê essa publicação. `isFresh=false`
+  distingue revisão avançada, e reorg/checkpoint órfão impedem ler a geração.
 
-| Corte | Entrega e fronteira | Validação principal |
-| --- | --- | --- |
-| R1 | Auditar o frontier da projeção também na travessia global, no mesmo snapshot; manter posições além do frontier como não alinhadas | Unidade de paginação/alinhamento e integração já existente do cursor |
-| R2a | Auditar partições de swaps e hash canônico dos checkpoints | Integração de partição ausente/destacada e reorg |
-| R2b | Auditar se a origem canônica do seed precede a janela | Integração de âncora ausente, origem tardia e janela válida |
-| R2c.1 | Persistir o escopo de tokens de cada range varrido por seed/live com o commit do cursor, inclusive sem eventos | Integração de range vazio, conflito e schema |
-| R2c.2 | Auditar no ranking a continuidade dos ranges por token, checkpoints canônicos e retenção do raw | Integração de lacuna, reorg e partição indisponível |
-| R2c.3 | Integrar a prova de eventos às janelas do ranking, expondo incompletude por token/janela e limites de classificação | Integração de janela completa/incompleta e classificação |
-| R3 | Compor posições globais, preços e eventos em lotes no mesmo snapshot e agregar por wallet; quando o limite de candidatos for atingido, manter ranking parcial | Unidade contábil e integração de universo completo/incompleto, limites e desempates; medir plano de consultas antes de ampliar o limite |
-| R4 | Expor consulta autenticada do ranking e enriquecimento opcional de perfis RH, com `asOf`, cobertura, exclusões e paginação determinística | Integração HTTP de autenticação, isolamento RH, resposta parcial e ordenação |
-| R5 | Interface Top Wallets 24h/7d/30d/ALL, identidade, estados de cobertura e navegação para wallet, sem apresentar parcial como exato | Teste afetado, build frontend e smoke do fluxo visível |
-| R5a.1 | Publicar invalidação versionada após commits que alteram posições, cobertura e preço agregado usado pelo ranking; incluir avanço vazio do cursor e rollback de reorg | Integração de notificação somente após commit, rollback sem publicação e fonte de preço agregado atualizada |
-| R5a.2 | Distribuir a invalidação durável aos clientes autenticados por WebSocket, com isolamento RH, coalescência e telemetria de publicação | Integração do listener/relay, autenticação/visibilidade, duplicatas e recuperação do listener |
-| R5a.3 | Atualizar automaticamente o painel no período selecionado; reconsultar snapshot após reconexão e descartar páginas de versão obsoleta sem misturar cursores | Unidade de dedupe/limite de consultas, build frontend e smoke com eventos simulados |
+### Correções anteriores que a continuação deve preservar
 
-R1 fica restrito a `robinhood-wallet-ranking-global-candidates`, ao auditor de
-`position-frontier` e ao compartilhamento da regra com `candidate-snapshot`.
-R1 foi implementado: a travessia global exige `asOf` e devolve o frontier e o
-alinhamento de cada posição, sem mudar a regra de universo completo.
-R2a e R2b foram implementados. R2c só poderá marcar `eventsComplete=true`
-quando a fonte durável comprovar o escopo por token em toda a janela, o hash
-canônico de cada range e a disponibilidade do raw necessário. O manifesto não
-cria cobertura retroativa: ranges anteriores exigem backfill comprovado. A tabela
-de swaps é durável; somente a retenção do raw de transfers limita a prova de
-eventos. R2c.1, R2c.2 e R2c.3 foram implementados: `eventsComplete` só pode
-ser verdadeiro após as verificações de janela, fontes, classificação e limite
-de eventos no mesmo snapshot.
-R2c.2 audita apenas ranges `live` como
-prova de raw: o backfill `seed` descarta eventos anteriores ao corte de
-retenção, e seu manifesto, sem proveniência adicional, não comprova
-persistência integral.
-R2c.3 liga `windowStart`/`asOf` aos blocos canônicos por busca de fronteiras
-e verifica os blocos adjacentes antes de usar o manifesto. Ranges antigos que
-dependem do seed continuam incompletos. R3 compõe o ranking interno no mesmo
-snapshot, em lotes limitados, e só ordena wallets quando a travessia global
-termina. Decimais ausentes nos swaps duráveis tornam a posição parcial. O limite
-de 1.000 posições não foi ampliado; planos de consulta e dados reais ainda
-precisam ser medidos antes disso. R4 expõe `/api/robinhood/top-wallets` com
-autenticação, paginação estável até o top 100, cobertura e perfis com vínculo RH
-explícito. R5 conecta o painel Top Wallets à API e preserva os estados de cobertura.
-R5a.1–R5a.3 são necessários para o ranking ao vivo. O mapeamento inicial aponta
-os commits da projeção de posições, dos escopos de transfers e do agregado de
-mercado como fontes; verificar os pontos de emissão e o rollback antes de editar.
-O socket de `market:bucket` por token não prova que o agregado global já está
-atualizado. Estimativas por corte: R5a.1 350–450 linhas, R5a.2 250–400 linhas,
-R5a.3 300–450 linhas. Se um corte exceder 500 linhas ou exigir migration,
-redimensionar antes de editar.
-R5a.1 foi redimensionado após identificar a necessidade de revisão durável.
-R5a.1a cria a Stage 257 e publica versões independentes para commits de
-posições e transfers, inclusive avanço vazio. R5a.1b deve cobrir cursores de
-swaps, preço de 1 minuto, agregado de mercado e rollback de reorg antes de
-considerar R5a.1 completo. Nenhuma dessas notificações substitui o snapshot
-autenticado do ranking.
-R5a.2 liga o canal ao processo web com coalescência por fonte, isolamento RH,
-telemetria e reconciliação das revisões após reconexão do listener. R5a.3 liga
-o painel ao sinal, preserva o período selecionado, descarta cursores antigos e
-limita consultas automáticas a uma partida a cada 250 ms, inclusive após
-reconexão.
-O endpoint fixa `asOf` pelo cursor de posições. Uma alteração isolada de preço
-posterior a esse frontier pode não mudar o snapshot até o cursor avançar; medir
-e resolver essa dependência antes de afirmar latência de ponta a ponta em
-milissegundos.
-R2 e R3 concentram leitura/contabilidade nos módulos de ranking; R4 conecta rota
-e perfis; R5 conecta API e UI; R5a conecta a invalidação durável ao socket e à
-consulta do painel. R2c acrescenta uma migration. Não há novo worker planejado
-para R5a; não usar polling no live.
-Estimar novamente antes de cada corte; testes com dados reais e desempenho em
-escala continuam necessários antes de publicar ganhos exatos.
+O histórico precisa ser lido pelos diffs, não apenas pelos títulos. Estas mudanças
+explicam as fronteiras atuais e impedem tratar o ranking como feature isolada:
 
-Implementar somente slices autorizados. Commitar cada slice completo por escopo,
-preservando mudanças preexistentes. Este documento não autoriza modificar os
-arquivos de repair de transfers que já estavam alterados durante a inspeção.
+| Commit | Correção / capacidade a preservar |
+| --- | --- |
+| `a194ba7e` | Reutiliza conjuntos de tokens por hash em vez de copiar o array inteiro a cada range |
+| `8049e7e8` | Persiste participação versionada por deltas e reutiliza a versão quando o conjunto não muda |
+| `05cd3969` | Aceita frontier igual a `asOf` com prova canônica/adjacente, sem esperar artificialmente uma fonte futura |
+| `202d048d` | Cria armazenamento de publicação compacta com guardas; não substitui sozinho a recomposição HTTP |
+| `ce630057` | Acrescenta acumulador de lotes ordenados com top limitado; não amplia sozinho o universo lido |
+| `25b12747` / `81f85667` | Prova global compacta e seleção pelos contratos do lote no LIVE canônico; conserva o caminho legado onde necessário |
+| `e584c5e9` / `9893e573` / `ee25a497` | Leitura, publicação e substituição auditada de escopos históricos por bitmaps, sem inferir pertencimento antigo pela lista atual |
+
+**Observações:** os diffs mostram cópia de escopo integral por range no formato
+original e as substituições acima. O caminho HTTP atual ainda repete leitura,
+auditorias e cálculo por requisição/página. O operador relatou que precisou de
+correções para tornar o fluxo usável e proteger o bot; esta revisão local não
+mediu uma janela de incidente nem confirmou configuração/rollout na VPS.
+
+**Hipóteses:** replay/auditorias repetidos por cliente, transporte de escopos e
+trabalho nas fontes podem disputar recursos com captura e demais workers.
+Comparar suas fases com waits, locks, CPU/I/O e WAL no mesmo intervalo; custo
+baixo nessas fases ou ausência de melhora do lag com redução controlada enfraquece
+cada hipótese. Não escolher uma arquitetura apenas a partir desse relato.
+
+**Causas confirmadas:** o diff demonstra a origem da repetição dos conjuntos
+históricos: o writer antigo inseria o array integral por range. Isso explica
+armazenamento redundante, mas não isola a causa de lag do bot. Nenhuma causa de
+incidente ou melhora de produção é confirmada por esta atualização documental.
+
+### Top Wallets: o que ainda falta
+
+1. **Medir o custo antes de ampliar o caminho.** Comparar ALL/24h/7d/30d no
+   corte canônico, com cardinalidade representativa e concorrência de clientes.
+   Separar seleção, preços, eventos, provas, agregação e HTTP; medir planos,
+   buffers/linhas, duração total do snapshot, memória, conexões ocupadas/esperando
+   e taxa de recomputações. Registrar lag/taxa de captura, swaps e transfers,
+   waits/locks, CPU/I/O e WAL por segundo em janelas comparáveis. Definir orçamento
+   e critério de parada a partir da baseline; testes sintéticos não provam escala.
+2. **Compartilhar resultado sem repetir replay por página/cliente.** Dimensionar
+   a composição das quatro janelas e sua ligação à publicação/API existentes.
+   Invalidações precisam coalescência e concorrência limitada também no servidor;
+   o throttle de cada navegador não protege o banco com várias sessões. Definir
+   geração, cutoff, revisões, expiração, cursores e retomada antes do wiring.
+   Não executar cálculo global dentro do commit financeiro nem manter os writers
+   bloqueados até a tela atualizar. A Stage 260 é uma base, não entrega pronta.
+3. **Ultrapassar 1.000 posições com consistência e custo comprovados.** Validar
+   leitura do universo completo em lotes, ordem exigida pelo acumulador e um
+   corte coerente de posições, preços e provas. Não basta aumentar `MAX_PAGES`,
+   abrir snapshots independentes ou unir tops por token. SQL/índices, tempo de
+   transação, retenção de versões e memória precisam caber no orçamento definido.
+4. **Evitar reconstruir as três janelas para cada alteração de preço.** O
+   [desenho de custo e escala](robinhood-wallet-ranking-consistent-generation-plan.md)
+   propõe coeficientes por par derivados do replay; isso ainda não está conectado
+   ao ranking. Avaliar somente com paridade de arredondamento, transfer sem custo,
+   fechamento/reabertura, vencimento da janela, retry/reorg e limites de bytes.
+   O desenho contém propostas e evidência sintética; suas etapas de provas/escopos
+   já evoluíram nos commits acima. Não tratá-lo integralmente como pendente nem
+   tratar coeficientes como solução de lag confirmada. Preferir a menor mudança
+   cujo ganho de custo e contrato sejam demonstrados.
+5. **Fechar freshness e dependência de preço/frontier.** A API fixa `asOf` pelo
+   cursor de posições. Revisão de preço posterior pode disparar HTTP e ainda
+   devolver o mesmo corte. Medir commit da fonte até snapshot aplicado, definir
+   o alinhamento entre fontes e explicitar atraso sem misturar cortes. Não prometer
+   latência de milissegundos só porque o WebSocket entregou a invalidação.
+6. **Completar estados e validação de ponta a ponta.** O painel mostra cobertura
+   e `asOf`, mas não tem estado próprio explícito de conexão/desatualização.
+   Validar com fontes SQL reais publicação/API/UI, reconexão, reorg, rajadas,
+   mudança de período e paginação, além do custo com o bot concorrente. Migrações,
+   flags, cobertura histórica e ativação na VPS precisam de evidência específica;
+   código ou testes locais não bastam para marcar produção como concluída.
+
+### Guardrails para qualquer entrega restante do Radar
+
+- Preservar o trabalho incremental e os formatos compactos já implementados.
+  Não voltar a carregar, transportar, hashear ou gravar o catálogo inteiro por
+  lote quando a fronteira por contratos tocados atende ao mesmo contrato.
+  Manter compatibilidade histórica/fallback e hashes, seleção e cobertura.
+- Consultas por wallet/token precisam de índices e paginação limitada, com
+  enriquecimento em lote. Evitar queries por linha, replay de histórico inteiro,
+  payloads integrais e backfill/RPC no carregamento de uma tela. A tabela de altas
+  consulta o universo elegível no servidor, com custo medido, não a página atual.
+- Novas telas consomem projeções/fontes existentes; perfil e teses são opcionais.
+  Não acrescentar trabalho social/gráfico aos commits financeiros. Separar UPNL,
+  lucro realizado e valor; preservar encerramentos e qualidade sem inventar custo.
+- Reagir após commits duráveis. Sem polling contínuo para descobrir mudanças.
+  Exceções de reconciliação/backfill exigem cursor, limites, retry, idempotência,
+  telemetria de freshness e precedência do live conforme AGENTS.md.
+- Sob carga, limitar fila, concorrência e trabalho por geração. Uma geração antiga
+  só pode continuar visível com atraso explícito e validade comprovada; reorg
+  invalidado ou fonte incompatível impedem seu uso. Não trocar cobertura por velocidade.
+- Aceitar uma otimização somente comparando a métrica primária e os guardrails
+  contra a baseline. Se o lag não melhorar, reabrir o diagnóstico. Redução de
+  tamanho, memória ou um timing intermediário não comprova melhora do bot inteiro.
+
+### Cortes e autorização
+
+Redimensionar cada entrega pendente a partir do código atual, sem reutilizar as
+estimativas antigas de R5a como orçamento de trabalho novo. Listar arquivos,
+fronteiras, linhas estimadas, risco concreto e menor validação adequada. Aplicar
+limite de 500 linhas por slice e checkpoint de arquitetura conforme AGENTS.md;
+a exceção de documentação operacional não autoriza ampliar código/schema.
+
+Este documento não autoriza todos os próximos cortes, migration, deploy, retirada
+de provas, conversão com escrita, start/restart ou novo serviço VPS. Operações
+sobre escopos existentes seguem o [rollout de transfers](robinhood-wallet-transfer-global-rollout.md)
+e os runbooks de conversão/publicação; serviços seguem `docs/new-worker-service-runbook.md`.
+Preservar mudanças preexistentes, inclusive repair de transfers. Atualizar a
+referência operacional somente quando houver comportamento implementado novo.
 
 ## 10. Critérios de aceite e validação
 
