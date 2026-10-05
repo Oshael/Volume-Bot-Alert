@@ -83,7 +83,8 @@ describe('Robinhood token creator attribution', () => {
     const transactions = [...direct, regular];
     const receipts = transactions.map((item, index) => ({
       transactionHash: item.hash, blockNumber: '0x64', blockHash: BLOCK_HASH,
-      contractAddress: index === 0 ? TOKEN : null,
+      status: index === 1 ? '0x0' : '0x1',
+      contractAddress: index < 2 ? TOKEN : null,
       logs: index === 2 ? [{
         ...launchLog('0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb'),
         transactionHash: item.hash,

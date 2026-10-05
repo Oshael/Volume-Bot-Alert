@@ -251,18 +251,22 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
   }
 
   async function upsertDeployments(client, deployments) {
-    if (!deployments.length) return;
+    if (!deployments.length) return 0;
     await client.query(
       `INSERT INTO robinhood_token_attributions (
          chain, token_address, creator_address, source, attribution_block,
          attribution_tx_hash, attribution_factory_address,
          last_attempted_at, last_resolved_at, last_error
-       ) SELECT '${CHAIN}', item.token_address, item.creator_address, item.source,
+       ) SELECT DISTINCT ON (item.token_address)
+                '${CHAIN}', item.token_address, item.creator_address, item.source,
                 item.block_number, item.transaction_hash, item.factory_address, NOW(), NOW(), NULL
          FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
-                     $5::varchar[], $6::bigint[])
+                     $5::varchar[], $6::bigint[]) WITH ORDINALITY
            AS item(token_address, creator_address, transaction_hash, source,
-                   factory_address, block_number)
+                   factory_address, block_number, evidence_order)
+         ORDER BY item.token_address,
+                  CASE WHEN item.source='launchpad_event' THEN 2 ELSE 1 END DESC,
+                  item.block_number DESC, item.evidence_order DESC
        ON CONFLICT (chain, token_address) DO UPDATE SET
          creator_address = EXCLUDED.creator_address,
          source = EXCLUDED.source,
@@ -287,6 +291,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
         deployments.map((item) => item.blockNumber),
       ]
     );
+    return new Set(deployments.map((item) => item.tokenAddress)).size;
   }
 
   async function recordCodeTransitions(inputs = []) {
@@ -364,7 +369,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     try {
       await client.query('BEGIN');
       await lockCanonicalWriter(client, blocks, true);
-      await upsertDeployments(client, deployments);
+      const attributed = await upsertDeployments(client, deployments);
       const advanced = await client.query(
         `UPDATE robinhood_direct_creator_cursors
          SET next_block = $1::bigint, safe_head = GREATEST(safe_head, $2::bigint),
@@ -382,7 +387,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
         code: 'cursor_conflict', retryable: true,
       });
       await client.query('COMMIT');
-      return { cursor: advanced.rows[0], attributed: deployments.length };
+      return { cursor: advanced.rows[0], attributed };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -409,9 +414,9 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     try {
       await client.query('BEGIN');
       await lockCanonicalWriter(client, deployments);
-      await upsertDeployments(client, deployments);
+      const attributed = await upsertDeployments(client, deployments);
       await client.query('COMMIT');
-      return Object.freeze({ attributed: deployments.length });
+      return Object.freeze({ attributed });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -430,7 +435,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      await upsertDeployments(client, deployments);
+      const attributed = await upsertDeployments(client, deployments);
       const advanced = await client.query(
         `UPDATE robinhood_direct_creator_cursors
          SET next_block = $1::bigint + 1, safe_head = GREATEST(safe_head, $2::bigint),
@@ -444,7 +449,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
         code: 'cursor_conflict', retryable: true,
       });
       await client.query('COMMIT');
-      return { cursor: advanced.rows[0], attributed: deployments.length };
+      return { cursor: advanced.rows[0], attributed };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;

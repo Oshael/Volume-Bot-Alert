@@ -99,7 +99,9 @@ async function scanBlock(client, expectedBlock) {
   }
   const directDeployments = direct.flatMap((tx) => {
     const receipt = receiptsByHash.get(tx.hash.toLowerCase());
-    if (receipt.contractAddress == null) return [];
+    if (quantity(receipt.status, 'receipt.status') !== 1n || receipt.contractAddress == null) {
+      return [];
+    }
     return [{
       tokenAddress: hex(receipt.contractAddress, 20, 'receipt.contractAddress'),
       creatorAddress: tx.from.toLowerCase(),
@@ -110,7 +112,9 @@ async function scanBlock(client, expectedBlock) {
   });
   let launchpadDeployments;
   try {
-    launchpadDeployments = receipts.flatMap((receipt) => (
+    launchpadDeployments = receipts.filter((receipt) => (
+      quantity(receipt.status, 'receipt.status') === 1n
+    )).flatMap((receipt) => (
       receipt.logs.filter(isLaunchpadCreatorLog).map(decodeLaunchpadCreatorLog)
     ));
     if (launchpadDeployments.some((item) => (

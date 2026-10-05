@@ -93,6 +93,7 @@ function createRobinhoodCanonicalDirectCreatorSource(options = {}) {
           WHERE block.chain=$1 AND block.canonical=TRUE
             AND block.block_number BETWEEN $2::bigint AND $3::bigint
             AND transaction.to_address IS NULL
+            AND transaction.receipt_succeeded=TRUE
             AND transaction.contract_address IS NOT NULL`, params
       );
       const events = await client.query(

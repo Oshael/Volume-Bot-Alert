@@ -7105,7 +7105,7 @@ escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíve
 O backfill da Stage 110 é somente uma ferramenta histórica e seus rate limits
 impedem tratá-lo como captura live. O LIVE varre todos os blocos no frontier
 seguro e persiste deployments diretos (`to = null`, `contractAddress` do receipt,
-DEV = `tx.from`) e eventos de launchpads/factories conhecidos. `CREATE`/`CREATE2`
+receipt com sucesso, DEV = `tx.from`) e eventos de launchpads/factories conhecidos. `CREATE`/`CREATE2`
 interno continua dependendo de trace quando a transação conhecida precisa ser
 resolvida. Nenhuma falha dessa trilha pode bloquear discovery, mercado ou
 ingestão de swaps. O worker do grupo `robinhood-wallet` é habilitado por padrão,
@@ -7121,6 +7121,12 @@ por bloco e aceita somente assinaturas comprovadas de Pons/NOXA e LaunchHood,
 persistindo a factory como evidência. RobinPad segue excluído por falta de ABI/logs verificáveis;
 Blockscout, `blockscout_internal`, `rpc_direct` e `rpc_trace` não podem sobrescrever
 um `launchpad_event`.
+No journal canônico, deployments diretos exigem `receipt_succeeded=true`;
+uma tentativa fracassada pode ter `contract_address` preenchido e não prova criação.
+Cada escrita de atribuição colapsa evidências repetidas por token antes do upsert,
+priorizando `launchpad_event`, depois o bloco mais recente e a última evidência
+do lote em caso de empate. O contador `attributed` conta tokens únicos submetidos.
+Falhas preservam o cursor; o replay retoma do checkpoint existente sem reset manual.
 O hotfix pós-rollout usa o contrato real `db.getClient()` para a transação atômica;
 o cursor permanece parado quando a conexão ou qualquer escrita falha.
 O backfill histórico L2 usa `npm run robinhood:launchpad-creator-backfill`, é
