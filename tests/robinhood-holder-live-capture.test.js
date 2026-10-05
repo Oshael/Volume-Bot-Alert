@@ -10,7 +10,96 @@ const HASH_C = `0x${'c'.repeat(64)}`;
 const LEGACY_POLICY = Object.freeze({ mode: 'legacy', generation: '0',
   cutoverNextBlock: null, version: 0 });
 
+function cursorRetryFixture(appendCapturedRange, bootstrap) {
+  const reads = [];
+  const ledger = {
+    getCapturePolicy: async () => LEGACY_POLICY,
+    getCursor: async () => ({ nextBlock: '100', version: 4 }),
+    getLiveCaptureScope: async () => ({ tokenAddresses: [TOKEN], coverageAudit: {} }),
+    listJournalBlockCheckpoints: async () => [],
+    quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
+    rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
+    appendCapturedRange,
+  };
+  const reader = {
+    getSafeHead: async () => ({ safeHead: '100' }),
+    matchesCheckpoint: async () => true,
+    readGlobalRange: async (input) => {
+      reads.push(input);
+      return { fromBlock: input.fromBlock, toBlock: input.toBlock,
+        nextBlock: (BigInt(input.toBlock) + 1n).toString(),
+        checkpoint: { number: input.toBlock, hash: HASH }, transfers: [], telemetry: {} };
+    },
+  };
+  return { reads, ledger, reader,
+    capture: createRobinhoodHolderLiveCapture({ ledger, reader, bootstrap }) };
+}
+
 describe('Robinhood holder global live capture', () => {
+  it('rereads the head, policy and cursor instead of replaying an obsolete range', async () => {
+    const stale = Object.assign(new Error('stale'), { code: 'holder_cursor_stale' });
+    let commits = 0;
+    const fixture = cursorRetryFixture(async ({ cursor }) => {
+      commits += 1;
+      if (commits === 1) {
+        fixture.ledger.getCursor = async () => ({ nextBlock: '102', version: 6 });
+        fixture.ledger.getCapturePolicy = async () => ({ ...LEGACY_POLICY, version: 2 });
+        fixture.reader.getSafeHead = async () => ({ safeHead: '103' });
+        throw stale;
+      }
+      assert.equal(cursor.expectedVersion, 6);
+      assert.equal(cursor.capturePolicyVersion, 2);
+      return { insertedTransfers: 0, cursorVersion: 7 };
+    });
+    const result = await fixture.capture.captureOnce();
+    assert.deepEqual(fixture.reads.map(({ fromBlock, toBlock }) => [fromBlock, toBlock]), [
+      ['100', '100'], ['102', '103'],
+    ]);
+    assert.equal(result.cursorRetries, 1);
+    assert.equal(result.nextBlock, '104');
+  });
+
+  it('bounds repeated cursor conflicts and propagates other failures without retry', async () => {
+    for (const code of ['holder_cursor_stale', 'holder_capture_policy_stale',
+      'holder_capture_conflict', 'rpc_timeout']) {
+      const error = Object.assign(new Error(code), { code });
+      const fixture = cursorRetryFixture(async () => { throw error; });
+      await assert.rejects(fixture.capture.captureOnce(), (actual) => actual === error);
+      const stale = code === 'holder_cursor_stale';
+      assert.equal(fixture.reads.length, stale ? 2 : 1);
+      assert.equal(error.cursorConflicts, stale ? 2 : undefined);
+      assert.equal(error.cursorRetries, stale ? 1 : undefined);
+    }
+  });
+
+  it('rechecks canonical continuity after a cursor conflict and fails closed', async () => {
+    let commits = 0;
+    const fixture = cursorRetryFixture(async () => {
+      commits += 1;
+      fixture.ledger.getCursor = async () => ({ nextBlock: '101', version: 5,
+        checkpointBlock: '100', checkpointHash: HASH, journalFloorBlock: '100' });
+      fixture.reader.matchesCheckpoint = async () => false;
+      throw Object.assign(new Error('stale'), { code: 'holder_cursor_stale' });
+    });
+    const result = await fixture.capture.captureOnce();
+    assert.equal(result.status, 'reorg-unrecoverable');
+    assert.equal(result.cursorConflicts, 1);
+    assert.equal(commits, 1);
+    assert.equal(fixture.reads.length, 1);
+  });
+
+  it('does not recapture after a post-commit admission failure', async () => {
+    let commits = 0;
+    const error = Object.assign(new Error('admission failed'), { code: 'holder_cursor_stale' });
+    const fixture = cursorRetryFixture(async () => {
+      commits += 1;
+      return { insertedTransfers: 0, cursorVersion: 5 };
+    }, { seedNewTokens: async () => { throw error; } });
+    await assert.rejects(fixture.capture.captureOnce(), (actual) => actual === error);
+    assert.equal(commits, 1);
+    assert.equal(fixture.reads.length, 1);
+  });
+
   it('captures one confirmed global range with optimistic cursor continuity', async () => {
     const calls = [];
     const bootstrap = { seedNewTokens: async (input) => {

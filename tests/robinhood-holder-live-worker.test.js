@@ -233,8 +233,10 @@ describe('Robinhood holder live worker', () => {
         providerName: 'robinhood-holder-live',
         runner: { captureOnce: async () => {
           attempts += 1;
-          if (attempts === 1) throw new Error('temporary RPC failure');
-          return completed();
+          if (attempts === 1) throw Object.assign(new Error('cursor conflicts exhausted'), {
+            code: 'holder_cursor_stale', cursorConflicts: 2, cursorRetries: 1,
+          });
+          return completed({ cursorConflicts: 1, cursorRetries: 1 });
         } },
       }),
     });
@@ -246,10 +248,17 @@ describe('Robinhood holder live worker', () => {
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 1000);
     assert.equal(worker.getStatus().consecutiveErrors, 1);
+    assert.equal(worker.getStatus().totalCursorConflicts, 2);
+    assert.equal(worker.getStatus().totalCursorRetries, 1);
+    assert.equal(worker.getStatus().lastError.cursorConflicts, 2);
     assert.match(warnings[0], /Tick failed/);
     await clock.scheduled[1].callback();
     assert.equal(clock.scheduled[2].delayMs, 500);
     assert.equal(worker.getStatus().consecutiveErrors, 0);
+    assert.equal(worker.getStatus().totalCursorConflicts, 3);
+    assert.equal(worker.getStatus().totalCursorRetries, 2);
+    assert.equal(worker.getStatus().lastResult.cursorRetries, 1);
+    assert.equal(worker.getStatus().totalErrors, 1);
     await worker.stop();
   });
 

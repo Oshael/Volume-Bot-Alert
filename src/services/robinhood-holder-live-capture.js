@@ -116,7 +116,7 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     });
   }
 
-  async function captureOnce(input = {}) {
+  async function captureRange(input) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
     const head = await reader.getSafeHead(confirmations);
@@ -168,12 +168,9 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     const safeHead = BigInt(head.safeHead);
     const fromBlock = cursor ? BigInt(cursor.nextBlock) : safeHead;
     if (fromBlock > safeHead) {
-      const seeded = await seedNewTokens(input);
       return Object.freeze({
         status: 'idle', nextBlock: fromBlock.toString(), safeHead: head.safeHead,
         captureMode: policy.mode,
-        seededTokens: seeded.length,
-        bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,
       });
     }
     const candidateEnd = fromBlock + BigInt(rangeSize - 1);
@@ -195,19 +192,51 @@ function createRobinhoodHolderLiveCapture(options = {}) {
         checkpoint: captured.checkpoint,
       },
     });
-    const seeded = await seedNewTokens(input);
     return Object.freeze({
       status: 'captured', captureMode: policy.mode,
       fromBlock: captured.fromBlock, toBlock: captured.toBlock,
       nextBlock: captured.nextBlock, safeHead: head.safeHead,
-      seededTokens: seeded.length,
-      bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,
       scopeTokens: captured.scopeTokens, transfers: captured.transfers.length,
       telemetry: Object.freeze({
         ...captured.telemetry, tailCoverage: scope.coverageAudit,
       }),
       ...committed,
     });
+  }
+
+  async function captureOnce(input = {}) {
+    let captured;
+    let cursorConflicts = 0;
+    let cursorRetries = 0;
+    // A changed admission scope requires a fresh read, never just a new version
+    // on the old batch. Limit retries so repeated fences cannot monopolize a tick.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        captured = await captureRange(input);
+        break;
+      } catch (error) {
+        if (error.code === 'holder_cursor_stale') cursorConflicts += 1;
+        if (error.code !== 'holder_cursor_stale' || error.fatal === true || attempt === 1) {
+          if (cursorConflicts) Object.assign(error, { cursorConflicts, cursorRetries });
+          throw error;
+        }
+        cursorRetries += 1;
+      }
+    }
+    try {
+      // Admission runs only after capture/idle succeeds; a post-commit failure
+      // must not replay an already committed capture in this retry loop.
+      if (['captured', 'idle'].includes(captured.status)) {
+        const seeded = await seedNewTokens(input);
+        captured = { ...captured, seededTokens: seeded.length,
+          bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length };
+      }
+      return Object.freeze({ ...captured,
+        ...(cursorConflicts ? { cursorConflicts, cursorRetries } : {}) });
+    } catch (error) {
+      if (cursorConflicts) Object.assign(error, { cursorConflicts, cursorRetries });
+      throw error;
+    }
   }
 
   return Object.freeze({ captureOnce });

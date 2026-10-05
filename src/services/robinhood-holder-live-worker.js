@@ -105,11 +105,18 @@ async function buildRuntime(options, deps = {}) {
   });
 }
 
+function cursorConflictMetrics(value) {
+  return value.cursorConflicts == null ? {} : {
+    cursorConflicts: value.cursorConflicts, cursorRetries: value.cursorRetries,
+  };
+}
+
 function publicError(error) {
   return error ? Object.freeze({
     code: error.code || 'holder_live_error',
     message: String(error.message || error).slice(0, 500),
     at: new Date().toISOString(),
+    ...cursorConflictMetrics(error),
   }) : null;
 }
 
@@ -137,6 +144,7 @@ function compactResult(result) {
     status: result.status || null,
     captureStatus: result.captureStatus || null,
     captureMode: nullableMetric(result.captureMode),
+    ...cursorConflictMetrics(result),
     nextBlock: result.nextBlock ?? null,
     safeHead: result.safeHead ?? null,
     capturedTransfers: numericMetric(result.capturedTransfers),
@@ -184,6 +192,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, halted: false,
     sourceMode: null, providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
+    totalCursorConflicts: 0, totalCursorRetries: 0,
     totalCapturedTransfers: 0, totalSeededTokens: 0, totalBufferedSeededTokens: 0,
     totalRawTransfersObserved: 0, totalTrackedTransfers: 0,
     totalLegacyExtraTransfers: 0,
@@ -222,6 +231,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
 
   function recordResult(result) {
     status.lastResult = compactResult(result);
+    addMetric(status, 'totalCursorConflicts', result.cursorConflicts);
+    addMetric(status, 'totalCursorRetries', result.cursorRetries);
     addMetric(status, 'totalCapturedTransfers', result.capturedTransfers);
     addMetric(status, 'totalRawTransfersObserved', result.captureTelemetry?.rawTransfersObserved);
     addMetric(status, 'totalTrackedTransfers', result.captureTelemetry?.trackedTransfers);
@@ -264,6 +275,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
       }
       return result;
     } catch (error) {
+      addMetric(status, 'totalCursorConflicts', error.cursorConflicts);
+      addMetric(status, 'totalCursorRetries', error.cursorRetries);
       status.totalErrors += 1;
       status.consecutiveErrors += 1;
       status.lastError = publicError(error);

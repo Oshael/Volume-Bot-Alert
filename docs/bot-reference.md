@@ -3146,9 +3146,9 @@ lote vazio não inicia transação de escrita. O bootstrap continua usando os bu
 e a cadência existentes; não cria outro polling. Quando admite ao menos um token,
 incrementa somente a versão do cursor para invalidar uma captura em voo com escopo
 anterior, sem avançar a fronteira de blocos.
-Essa admissão não invalida um range live em voo, pois o tópico global já
-inclui transfers de tokens ainda não admitidos. Cobertura incompleta continua
-fail-closed em `backfilling`; eventos de tokens nunca admitidos só deixam de ser
+O buffer global inclui transfers de tokens ainda não admitidos; o fence de versão
+continua invalidando a leitura de captura feita sob um escopo anterior. Cobertura
+incompleta continua fail-closed em `backfilling`; eventos de tokens nunca admitidos só deixam de ser
 elegíveis ao live quando o deployment fica abaixo tanto da janela incremental
 quanto do maior floor de cobertura retida.
 Antes de reiniciar os workers de holders com esse contrato, aplique
@@ -3500,6 +3500,15 @@ notificação perdida, com default de 5s. O modo de rollback explícito `rpc`
 preserva suas confirmações configuradas e não abre esse listener. A telemetria da
 lease expõe `totalWakeups`, `totalFallbackRuns`, `lastWakeAt`, `listenerError` e
 `captureListener`.
+Um `holder_cursor_stale` durante captura ou rewind permite somente um retry imediato
+no mesmo ciclo, relendo head, policy, cursor, checkpoint, escopo e range. O batch
+antigo nunca é reaproveitado com uma versão nova. Um segundo conflito segue o erro
+e backoff existentes; falhas de policy, evidência, RPC ou admissão após o commit
+não acionam esse retry. A lease conta `totalCursorConflicts` e `totalCursorRetries`,
+inclusive quando o retry termina em erro, e expõe `cursorConflicts`/`cursorRetries` no
+`lastResult` ou `lastError` dos ciclos afetados. Compare esses deltas com avanço do
+cursor, lag, transfers capturados e erros; menos warnings sozinho não prova melhora
+do fluxo. O backfill continua admitindo tokens com o fence transacional de versão.
 Depois de cada captura que alcançou o `safeHead`, o mesmo worker faz até
 `ROBINHOOD_HOLDER_LIVE_MAX_HANDOFFS` handoffs seriais (default 16, máximo 64),
 parando quando não há candidato ou após

@@ -41,8 +41,13 @@ function rewindHolderUpdates(captured) {
   return updates;
 }
 
-function captureModeResult(captured) {
-  return captured.captureMode == null ? {} : { captureMode: captured.captureMode };
+function captureMetadata(captured) {
+  return {
+    ...(captured.captureMode == null ? {} : { captureMode: captured.captureMode }),
+    ...(captured.cursorConflicts == null ? {} : {
+      cursorConflicts: captured.cursorConflicts, cursorRetries: captured.cursorRetries,
+    }),
+  };
 }
 
 function pendingEventFilter(excluded, preferredTokenAddress) {
@@ -490,6 +495,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     if (captured.status === 'reorg-unrecoverable') {
       return { terminal: Object.freeze({
         status: 'blocked', captureStatus: captured.status,
+        ...captureMetadata(captured),
         reason: captured.reason, checkpointBlock: captured.checkpointBlock,
         journalFloorBlock: captured.journalFloorBlock,
         checkedCheckpoints: captured.checkedCheckpoints,
@@ -507,6 +513,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       );
       return { terminal: Object.freeze({
         status: 'recovered', captureStatus: captured.status,
+        ...captureMetadata(captured),
         canonicalCheckpointBlock: captured.canonicalCheckpointBlock,
         orphanedCheckpointBlock: captured.orphanedCheckpointBlock,
         revertedEvents: Number(captured.revertedEvents) || 0,
@@ -520,6 +527,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     if (captured.status === 'malformed-token-quarantined') {
       return { terminal: Object.freeze({
         status: 'recovered', captureStatus: captured.status,
+        ...captureMetadata(captured),
         quarantinedTokenAddress: captured.tokenAddress, quarantinedTokens: 1,
         deletedBalances: Number(captured.deletedBalances) || 0,
         deletedJournalEvents: Number(captured.deletedJournalEvents) || 0,
@@ -700,7 +708,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     if (prepared.terminal) return prepared.terminal;
     return Object.freeze({
       status: 'completed', captureStatus: prepared.captured.status,
-      ...captureModeResult(prepared.captured),
+      ...captureMetadata(prepared.captured),
       capturedTransfers: Number(prepared.captured.transfers) || 0,
       ...(prepared.captured.telemetry ? {
         captureTelemetry: prepared.captured.telemetry,

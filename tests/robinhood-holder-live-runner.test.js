@@ -119,6 +119,17 @@ function harness(
 }
 
 describe('Robinhood holder live runner', () => {
+  it('preserves cursor conflict telemetry for completed and recovery captures', async () => {
+    for (const status of ['captured', 'idle', 'reorg-rewound', 'reorg-unrecoverable',
+      'malformed-token-quarantined']) {
+      const context = harness({ status, nextBlock: '101', safeHead: '100',
+        cursorConflicts: 1, cursorRetries: 1 });
+      const result = await context.runner.captureOnce();
+      assert.equal(result.cursorConflicts, 1);
+      assert.equal(result.cursorRetries, 1);
+    }
+  });
+
   it('batches ready handoffs after capture reaches the head and stops on idle', async () => {
     const context = harness({
       status: 'idle', nextBlock: '106', safeHead: '105',
