@@ -1,0 +1,81 @@
+import type { AppState } from '../../state/app-state';
+import { fetchRobinhoodRadarGainers, type GainersCoverage, type RadarGainer } from '../../services/api/robinhood-radar-gainers';
+import { createRadarGainersLoader, gainersPercent } from '../../utils/radar-gainers';
+import { robinhoodIdentities } from '../../utils/radar-unified';
+import { buildTokenExplorerUrl } from '../../utils/token-chain';
+import { bindCopyButtons, bindTokenImagePreview, fmtMoney, renderTradeTerminalMenu } from './shared';
+import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
+
+interface View { section: HTMLElement | null; loader: ReturnType<typeof createRadarGainersLoader> }
+const views = new WeakMap<AppState, View>();
+
+export function radarGainersExclusions(state: AppState) {
+  return robinhoodIdentities([...state.data.dismissedRecentIdentities, ...state.data.dismissedOldWeekIdentities,
+    ...state.data.blocklist.filter((item) => item.chain === 'robinhood')
+      .map((item) => `robinhood:${item.address}`)]).sort();
+}
+
+function inputFor(state: AppState) {
+  return { token: state.session.token, dismissedIdentities: radarGainersExclusions(state),
+    available: state.data.availableChains.includes('robinhood')
+      && state.data.chainReadiness.robinhood?.capabilities.history === true };
+}
+
+function money(value: number | null, coverage: GainersCoverage) {
+  const available = value != null && Number.isFinite(value) && value >= 0 && coverage !== 'unavailable';
+  return `<span class="radar-coverage-${escapeHtml(coverage)}" title="${escapeHtml(coverage)} coverage">${available ? `${coverage === 'partial' ? '~' : ''}${fmtMoney(value)}` : '-'}</span>`;
+}
+
+function rowHtml(row: RadarGainer, state: AppState) {
+  const address = row.identity.address;
+  const symbol = row.symbol || address.slice(0, 6);
+  const image = sanitizeOptionalHttpUrl(row.imageUrl);
+  const holder = Number.isSafeInteger(row.holderCount) && Number(row.holderCount) >= 0 && row.holderFreshness !== 'unavailable'
+    ? `${row.holderFreshness === 'stale' ? '~' : ''}${Number(row.holderCount).toLocaleString('en-US')}` : '-';
+  return `<tr data-token-identity="${escapeHtml(row.identity.key)}">
+    <td><div class="radar-gainer-token">
+      ${image ? `<img class="token-avatar" src="${escapeHtml(image)}" alt="" width="28" height="28" data-token-image-preview="true" data-token-image-preview-src="${escapeHtml(image)}" />` : `<span class="radar-top-avatar">${escapeHtml(symbol.slice(0, 2))}</span>`}
+      <div><a class="token-symbol" href="${escapeHtml(buildTokenExplorerUrl('robinhood', address))}" target="_blank" rel="noopener noreferrer" title="Open token in explorer">${escapeHtml(symbol)}</a>
+        <small class="radar-gainer-gain" title="First available price at ${escapeHtml(row.priceBasis.observedAt)}">${gainersPercent(row.priceChangePct)} since first price</small>
+        <div class="token-actions-inline"><button type="button" class="action-glyph compact-copy-button" data-action="copy-address" data-address="${address}" aria-label="Copy ${escapeHtml(symbol)} contract">⧉</button>
+        ${renderTradeTerminalMenu(address, null, null, { chain: 'robinhood', enabledTradeTerminals: state.ui.enabledRobinhoodTradeTerminals })}</div>
+      </div></div></td>
+    <td>${money(row.volume24hUsd, row.volume24hCoverage)}<small title="Volume change coverage: ${escapeHtml(row.volume24hChangeCoverage)}">${row.volume24hChangeCoverage === 'unavailable' ? '-' : gainersPercent(row.volume24hChangePct)}</small></td>
+    <td title="${escapeHtml(row.holderFreshness)} holder snapshot">${holder}</td>
+    <td>${money(row.liquidityUsd, row.liquidityCoverage)}</td></tr>`;
+}
+
+function draw(state: AppState, view: View) {
+  if (!view.section) return;
+  const { page, loading, message } = view.loader.state;
+  const body = loading ? '<p class="radar-top-message" role="status">Loading gainers…</p>'
+    : message ? `<p class="radar-top-message" role="status">${escapeHtml(message)}</p>`
+      : page?.items.length ? `<div class="radar-top-scroll"><table><thead><tr><th>Token / gain</th><th>Volume 24H</th><th>Holders</th><th>LP</th></tr></thead>
+        <tbody>${page.items.map((row) => rowHtml(row, state)).join('')}</tbody></table></div>`
+        : '<p class="radar-top-message" role="status">No verified gainers with known creation in the last 24 hours.</p>';
+  view.section.innerHTML = `<div class="legacy-bar-head radar-top-head"><span class="legacy-bar-title">TOP GAINERS</span>
+    <button type="button" data-gainers-refresh ${loading || !inputFor(state).available ? 'disabled' : ''}>Refresh</button></div>
+    <p class="radar-top-caveat">Age ≤24h · Since first available price; launch coverage may be incomplete.</p>
+    ${body}${page ? `<p class="radar-top-message">${page.items.length} of ${page.total} gainers · ${page.unpricedCount} candidate(s) without comparable prices · As of ${escapeHtml(page.asOf)}</p>` : ''}`;
+  view.section.querySelector('[data-gainers-refresh]')?.addEventListener('click', () => {
+    void view.loader.update(inputFor(state), true);
+  });
+  bindCopyButtons(view.section);
+  bindTokenImagePreview(view.section);
+}
+
+export function renderRobinhoodRadarGainersSection(state: AppState) {
+  let view = views.get(state);
+  if (!view) {
+    const created: View = { section: null, loader: createRadarGainersLoader(
+      (input, signal) => fetchRobinhoodRadarGainers(input.dismissedIdentities, input.token, signal),
+      () => draw(state, created),
+    ) };
+    views.set(state, created); view = created;
+  }
+  view.section = document.createElement('section');
+  view.section.className = 'legacy-token-bar radar-gainers';
+  draw(state, view);
+  void view.loader.update(inputFor(state));
+  return view.section;
+}

@@ -111,6 +111,8 @@ function tokenViewFixture(view, tokens = [], status = 'unavailable') {
 }
 
 const API_FIXTURES = {
+  'GET /api/robinhood/top-wallets': { __status: 503, error: 'Ranking not ready' },
+  'POST /api/robinhood/radar-gainers': { __status: 503, code: 'GAINERS_NOT_READY', error: 'Gainers not enabled' },
   'GET /api/auth/me': {
     user: {
       id: 1,
@@ -915,7 +917,9 @@ async function installApiFixtures(page, unexpectedRequests, fixtures = API_FIXTU
     const status = Number(fixture.__status || 200);
     const json = { ...fixture };
     delete json.__status;
-    await route.fulfill({ status, json });
+    const headers = json.__headers;
+    delete json.__headers;
+    await route.fulfill({ status, json, headers });
   });
 }
 
@@ -2730,6 +2734,96 @@ test('renders one globally paginated Robinhood Radar table with age colors and f
   await expect.poll(() => unifiedRadarPayloads.some((payload) => (
     payload.searchQuery === 'RADAROLD' && payload.sorts?.[0]?.mode === 'age'
   ))).toBe(true);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('renders independent Radar gainers with coverage, actions and responsive 50/50 layout', async ({ page }) => {
+  const reads = [];
+  const asOf = new Date().toISOString();
+  const gainer = (address, symbol) => ({
+    identity: { chain: 'robinhood', address, key: `robinhood:${address}` }, symbol, name: symbol,
+    imageUrl: 'javascript:alert(1)', createdAt: Date.now() - 3600000,
+    priceChangePct: '123.456789123456789', priceBasis: { type: 'first-observed-price',
+      coverage: 'available-history', observedAt: asOf },
+    volume24hUsd: 12000, volume24hCoverage: 'partial', volume24hChangePct: null,
+    volume24hChangeCoverage: 'unavailable', holderCount: 0, holderFreshness: 'fresh',
+    liquidityUsd: null, liquidityCoverage: 'unavailable',
+  });
+  const fixtures = { ...ROBINHOOD_RADAR_API_FIXTURES,
+    'POST /api/robinhood/radar-gainers': (request) => {
+      reads.push(request.postDataJSON());
+      return { chain: 'robinhood', asOf, generatedAt: asOf, total: 2, candidateCount: 4, unpricedCount: 2,
+        items: [gainer(ROBINHOOD_WATCHLIST, 'GAINRH'),
+          { ...gainer(ROBINHOOD_DEV, '<script>bad</script>'), holderCount: null,
+            holderFreshness: 'unavailable', liquidityUsd: 0, liquidityCoverage: 'complete' }] };
+    },
+  };
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  fixtures['GET /api/search/global'] = (request) => ({
+    query: new URL(request.url()).searchParams.get('q'), status: 'ready',
+    chainStates: { robinhood: { kinds: { token: 'ready' } } }, count: 0, hits: [],
+  });
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures, '/radar');
+  const gainers = page.locator('.radar-gainers');
+  await expect(gainers.locator('tbody tr')).toHaveCount(2);
+  const first = gainers.locator('tbody tr').first();
+  await expect(first).toHaveAttribute('data-token-identity', `robinhood:${ROBINHOOD_WATCHLIST}`);
+  await expect(first).toContainText('+123.46% since first price');
+  await expect(first.locator('td').nth(1)).toContainText('~$12K');
+  await expect(first.locator('td').nth(2)).toHaveText('0');
+  await expect(first.locator('td').nth(3)).toHaveText('-');
+  await expect(gainers.locator('tbody tr').last()).toContainText('<script>bad</script>');
+  await expect(gainers.locator('tbody tr').last().locator('td').nth(3)).toHaveText('$0');
+  await expect(gainers.locator('script, img[src^="javascript:"], .sparkline-wrap')).toHaveCount(0);
+  await expect(first.locator('.token-symbol')).toHaveAttribute('href', `https://robinhoodchain.blockscout.com/address/${ROBINHOOD_WATCHLIST}`);
+  await expect(first.locator('a[href*="gmgn.ai"]')).toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_WATCHLIST}`);
+  await first.getByRole('button', { name: 'Copy GAINRH contract' }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(ROBINHOOD_WATCHLIST);
+  const wallets = await page.locator('.radar-top-wallets').boundingBox();
+  const highs = await gainers.boundingBox();
+  expect(Math.abs(wallets.width - highs.width)).toBeLessThan(1);
+  expect(Math.abs(wallets.y - highs.y)).toBeLessThan(1);
+  await page.screenshot({ path: '/private/tmp/radar-gainers-desktop.png' });
+  const main = page.locator('.unified-radar-bar');
+  await main.locator('[data-radar-search]').fill('RADAROLD');
+  await main.locator('[data-radar-search]').press('Enter');
+  await expect(main.locator('tbody tr')).toHaveCount(1);
+  await expect(gainers.locator('tbody tr')).toHaveCount(2);
+  expect(reads).toEqual([{ limit: 15, dismissedIdentities: [] }]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileWallets = await page.locator('.radar-top-wallets').boundingBox();
+  const mobileHighs = await gainers.boundingBox();
+  expect(mobileHighs.y).toBeGreaterThan(mobileWallets.y + mobileWallets.height);
+  expect(mobileHighs.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: '/private/tmp/radar-gainers-mobile.png' });
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('does not retry unavailable Radar gainers on render and honors Retry-After on manual refresh', async ({ page }) => {
+  await page.addInitScript(() => {
+    const realNow = Date.now;
+    window.__gainersClockOffset = 0;
+    Date.now = () => realNow() + window.__gainersClockOffset;
+  });
+  let reads = 0;
+  const fixtures = { ...ROBINHOOD_RADAR_API_FIXTURES,
+    'POST /api/robinhood/radar-gainers': () => (++reads === 1
+      ? { __status: 503, __headers: { 'Retry-After': '20' }, code: 'GAINERS_BUSY', error: 'Busy' }
+      : { chain: 'robinhood', asOf: new Date().toISOString(), generatedAt: new Date().toISOString(),
+        total: 0, candidateCount: 0, unpricedCount: 0, items: [] }),
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures, '/radar');
+  const gainers = page.locator('.radar-gainers');
+  await expect(gainers).toContainText('temporarily unavailable');
+  await gainers.getByRole('button', { name: 'Refresh' }).click();
+  await expect(gainers).toContainText('Please wait');
+  expect(reads).toBe(1);
+  await page.evaluate(() => { window.__gainersClockOffset = 20000; });
+  await gainers.getByRole('button', { name: 'Refresh' }).click();
+  await expect(gainers).toContainText('No verified gainers');
+  expect(reads).toBe(2);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

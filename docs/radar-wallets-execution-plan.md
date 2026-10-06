@@ -116,17 +116,16 @@ após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
 
-Status: ranking, métricas e API protegida implementados; API desativada por
-padrão, e tabela de altas ainda não está conectada ao Radar atual.
+Status: ranking, métricas, API protegida e tabela 50/50 conectados no Radar;
+API desativada por padrão, ativação em produção e atualização live pendentes.
 
 O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
 em `robinhood-radar-gainers-read`: uma consulta SQL com timeout de 5 s,
 até 20 resultados (15 por padrão) e exclusões limitadas
 a 5.000 endereços. O `asOf` é alinhado ao início do minuto, como nas métricas
 existentes, e esse corte é retornado ao chamador. Seleciona todo o universo
-elegível antes do top, sem receber tokens da página principal. Não é chamado
-pelos fluxos atuais com o gate padrão desativado e não adiciona
-trabalho aos writers, RPC, backfill, polling ou frontend.
+elegível antes do top, sem receber tokens da página principal. É chamado pela
+API somente sob o gate e não adiciona trabalho aos writers, RPC, backfill ou polling.
 
 Elegibilidade exige timestamp de criação conhecido, positivo e idade entre
 zero e 24h inclusive; `first_seen_at` sozinho não prova criação recente. Exclui
@@ -209,8 +208,18 @@ traz `asOf`, `generatedAt`, `cacheAgeMs`, contagens e coverage dos campos.
 Falha não publica/cacheia lista vazia. Não há timer, RPC ou polling adicional.
 Esses limites são locais ao processo; múltiplas réplicas multiplicam a carga.
 
+O painel mostra até 15 altas na ordem do servidor, ao lado de Top Wallets em
+desktop; em mobile os painéis são empilhados, acima da tabela única. Carrega na
+abertura e após mudança de sessão/disponibilidade/exclusões, com atualização
+manual. Filtros/página da tabela principal não refazem o top. Mudanças de contexto
+cancelam e descartam respostas antigas; dados anteriores deixam de aparecer.
+Respeita intervalo mínimo local de 5 s e `Retry-After`, sem repetição automática
+nem timer de consulta. Se uma mudança ocorrer nesse intervalo, pede refresh manual.
+Volume/LP parciais levam `~`; ausência usa `-`, holders zero são preservados.
+Usa cópia de contrato, explorer e terminais RH existentes; não pede sparklines.
+
 Faltam aplicação autorizada/medição do índice, validação de cobertura de criação,
-tabela 50/50 e live. Fixtures locais não comprovam ativação ou custo em produção.
+ativação e live. Fixtures locais não comprovam ativação ou custo em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -319,7 +328,7 @@ Bases conferidas no código; sua existência não prova cobertura em produção:
 | `src/models/robinhood-wallet-ranking-publication.js` | Publicação compacta com revisão, checkpoint e geração; ainda não consumida pela API |
 | `src/models/callout-event-read.js` e `callout_thesis_archive` | Teses existentes; leitura por autor + ativo |
 | `frontend/src/services/charts/chart-wallet-buys.ts` | Investigar reaproveitamento; vendas precisam cobertura explícita |
-| `frontend/src/ui/app-shell.ts` e seções do Radar | Tabela única, Top Wallets e feed por wallet conectados; faltam altas e exploração completa de posições |
+| `frontend/src/ui/app-shell.ts` e seções do Radar | Tabela única, Top Wallets, altas 50/50 e feed por wallet conectados; faltam live das altas e exploração completa de posições |
 
 Criar módulos separados para ranking, detalhe da wallet e detalhe da posição.
 Os hubs de rota/controller/shell devem receber wiring; regras contábeis, filtros
@@ -349,7 +358,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Parcial | Ranking/métricas e API com custo compartilhado implementados, índice preparado; faltam aplicação/medição do índice, cobertura de criação, ativação, tabela 50/50 e live |
+| 3 | Parcial | Ranking/métricas, API com custo compartilhado e tabela 50/50 implementados, índice preparado; faltam aplicação/medição do índice, cobertura de criação, ativação e live |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |

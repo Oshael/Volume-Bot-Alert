@@ -2101,7 +2101,17 @@ compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstra
 A leitura interna `robinhood-radar-gainers-read` seleciona tokens Robinhood de
 criação conhecida até 24h, compara preços do mesmo mercado e limita o top a 20.
 A composição `robinhood-radar-gainers` hidrata volume, LP e holders publicados
-somente para esse lote. A tela ainda não consome esse leitor.
+somente para esse lote. No Radar, o painel mostra até 15 altas ao lado de Top
+Wallets, acima da tabela única; no mobile os dois painéis são empilhados.
+
+O frontend carrega na abertura ou mudança de sessão/disponibilidade/exclusões,
+com refresh manual; filtros/página da tabela principal não refazem o top.
+Cancela e ignora respostas antigas, limpa dados quando muda o contexto e
+respeita mínimo local de 5 s/`Retry-After`, sem retry automático ou polling.
+Mudança durante o cooldown exige refresh manual. Ainda não recebe live de altas.
+Volume/LP parciais usam `~`; valores ausentes usam `-`, sem transformar holder
+zero em ausência. Ganho é rotulado desde o primeiro preço disponível; não há
+sparkline. Ações usam contrato/explorer e terminais compatíveis com Robinhood.
 
 `POST /api/robinhood/radar-gainers` usa autenticação, origem confiável, rate limit
 da API e visibilidade RH. Exige `ROBINHOOD_RADAR_GAINERS_ENABLED=true` (default

@@ -7,6 +7,7 @@ import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { renderUnifiedRadarSection } from './sections/unified-radar-section';
 import { renderRadarWalletTradesSection } from './sections/radar-wallet-trades-section';
 import { renderRobinhoodTopWalletsSection } from './sections/robinhood-top-wallets-section';
+import { radarGainersExclusions, renderRobinhoodRadarGainersSection } from './sections/robinhood-radar-gainers-section';
 import { resolveMonitoredViewRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
@@ -261,8 +262,10 @@ export function renderAppShell(
           if (state.ui.radarWalletAddress) return [renderRadarWalletTradesSection(state, controller)];
           const overview = document.createElement('div');
           overview.className = 'radar-overview';
-          overview.append(renderRobinhoodTopWalletsSection(state, controller),
-            renderUnifiedRadarSection(state, controller));
+          const top = document.createElement('div');
+          top.className = 'radar-top-grid';
+          top.append(renderRobinhoodTopWalletsSection(state, controller), renderRobinhoodRadarGainersSection(state));
+          overview.append(top, renderUnifiedRadarSection(state, controller));
           return [overview];
         },
       );
@@ -1375,6 +1378,7 @@ function getUnifiedRadarRenderKey(state: AppState) {
   const tokens = getUnifiedRadarTokens(state);
   return JSON.stringify({
     radar: state.radar,
+    gainersExclusions: radarGainersExclusions(state),
     authToken: state.session.token,
     robinhoodAvailable: state.data.availableChains.includes('robinhood'),
     robinhoodHistoryReady: state.data.chainReadiness.robinhood?.capabilities.history,

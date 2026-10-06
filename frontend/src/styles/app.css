@@ -10211,7 +10211,17 @@ button,
 .radar-top-explorer { color: #aebbc9; text-decoration: none; }
 .radar-top-gain { color: #00ff88; font-variant-numeric: tabular-nums; }
 .radar-top-gain.is-negative { color: #ff6f78; }
-@media (min-width: 880px) { .radar-top-wallets { width: calc(50% - 6px); } }
+.radar-top-grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.radar-gainers { min-width: 0; }
+.radar-gainers [data-gainers-refresh] { background: var(--surface); color: #edf2f7; border: 1px solid rgba(255,255,255,.2); border-radius: 5px; padding: 4px 8px; }
+.radar-gainers table { width: 100%; min-width: 430px; border-collapse: collapse; }
+.radar-gainers th, .radar-gainers td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(255,255,255,.12); }
+.radar-gainers td small { display: block; color: #aebbc9; margin-top: 3px; }
+.radar-gainer-token { display: flex; align-items: center; gap: 8px; }
+.radar-gainers .token-symbol, .radar-gainers .radar-gainer-gain { color: #00ff88; }
+.radar-gainers .token-actions-inline { gap: 6px; margin-top: 4px; }
+.radar-top-grid .radar-top-scroll { max-height: 490px; overflow: auto; }
+@media (min-width: 880px) { .radar-top-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .radar-wallet-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .radar-wallet-head code { color: #d8e1ea; font-size: 12px; }
 .radar-wallet-head button, .radar-wallet-head a,

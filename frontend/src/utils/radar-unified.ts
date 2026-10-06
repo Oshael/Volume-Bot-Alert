@@ -53,7 +53,7 @@ export function createRadarUnifiedState(): RadarUnifiedState {
   };
 }
 
-function robinhoodIdentities(values: string[]): string[] {
+export function robinhoodIdentities(values: string[]): string[] {
   const identities = new Set<string>();
   for (const value of values) {
     try {
