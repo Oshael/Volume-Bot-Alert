@@ -1,8 +1,9 @@
 # Radar: ranking de wallets, tokens e exploração de posições
 
-Status conferido no checkout em 05/10/2026: Old/Recent unificados na tabela
+Status conferido no checkout em 06/10/2026: Old/Recent unificados na tabela
 Robinhood; Top Wallets, API e atualização por WebSocket implementados; feed
-de compras/vendas por wallet disponível. Faltam maiores altas, detalhe completo
+de compras/vendas por wallet e leitor interno das altas disponíveis. Faltam
+integração das maiores altas, detalhe completo
 da wallet/posição e conclusão do trabalho de custo, escala e consistência do
 Top Wallets descrito na seção 9. Implementação no repositório não comprova
 ativação, cobertura histórica ou desempenho em produção.
@@ -115,7 +116,39 @@ após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
 
-Status: pendente; não há tabela de altas conectada ao Radar atual.
+Status: leitura interna de preços/ranking implementada; API e tabela de altas
+ainda não estão conectadas ao Radar atual.
+
+O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
+em `robinhood-radar-gainers-read`: uma consulta SQL com timeout de 5 s,
+até 20 resultados (15 por padrão) e exclusões limitadas
+a 5.000 endereços. O `asOf` é alinhado ao início do minuto, como nas métricas
+existentes, e esse corte é retornado ao chamador. Seleciona todo o universo
+elegível antes do top, sem receber tokens da página principal. Não é chamado
+pelos fluxos atuais e não adiciona
+trabalho aos writers, RPC, backfill, polling ou frontend.
+
+Elegibilidade exige timestamp de criação conhecido, positivo e idade entre
+zero e 24h inclusive; `first_seen_at` sozinho não prova criação recente. Exclui
+bloqueios globais, endereços fornecidos pelo chamador e FDV conhecido a partir do teto
+vigente do catálogo. A futura API deverá fornecer os bloqueios do usuário.
+Apenas valorização positiva entra em maiores altas; perdas e preço constante
+não são altas. Contagens distinguem candidatos, altas e preços não comparáveis.
+
+A base é o primeiro `open_price_usd` positivo disponível nos buckets aceitos de
+1 minuto desde a criação. O preço atual vem do mercado de valuation já escolhido
+no agregado de 5 minutos, com observação de no máximo 15 minutos. Os dois preços
+precisam pertencer ao mesmo mercado; mudança de mercado torna a comparação
+indisponível em vez de fabricar ganho. Não busca outra base para contornar isso.
+Timestamps e mercado acompanham a base, com `coverage: 'available-history'`:
+isso não garante primeiro trade desde o lançamento nem completude histórica.
+Um único preço válido produz variação zero por comparação consigo mesmo, não
+uma alta presumida. Buckets com observações posteriores ao corte não entram.
+
+Próximo corte: medir plano/custo com cardinalidade representativa, compor volume,
+holders e LP somente para o top em lote e ligar API/tabela 50/50, preservando
+autenticação, bloqueios, disponibilidade RH e coalescência no servidor. O teste
+SQL usa fixtures temporárias; não comprova custo ou ativação em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -254,7 +287,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Pendente | Maiores altas entre tokens de até 24h e layout superior 50/50 |
+| 3 | Parcial | Leitura interna das altas implementada; faltam medição de custo, API, métricas do top e tabela 50/50 |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |
