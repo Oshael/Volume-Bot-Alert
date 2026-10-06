@@ -2096,6 +2096,27 @@ Continuam valendo até 100 itens por página e prefixo de até 500 por chain.
 Os modos `recent`/`oldWeek`, defaults e seleção explícita de chains continuam
 compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstrap`.
 
+### Índice de criação para maiores altas do Radar
+
+A leitura interna `robinhood-radar-gainers-read` seleciona tokens Robinhood de
+criação conhecida até 24h, compara preços do mesmo mercado e limita o top a 20.
+A composição `robinhood-radar-gainers` hidrata volume, LP e holders publicados
+somente para esse lote. API/tela ainda não consomem esse leitor.
+
+Antes de conectar esse caminho em produção, aplicar mediante autorização
+`node src/utils/db-init-stage268.js` e validar o custo. A migration cria
+`idx_token_catalog_rh_creation_address` concorrentemente fora de transação,
+com lock timeout de 1 s e statement timeout de 120 s. O índice contém somente
+RH com criação positiva; aumenta o custo de manutenção nesses registros.
+O runtime schema check exige o índice. Se um build interrompido deixar índice
+inválido, inspecionar `pg_index.indisvalid/indisready`; nova execução com
+`IF NOT EXISTS` não o repara. Recuperar explicitamente antes de tentar novamente.
+
+Para medir sem alterar dados, executar
+`node src/utils/explain-robinhood-radar-gainers.js plan [asOf]`; `analyze` executa
+o SELECT com timeout 5 s e retorna métricas compactas de custo/cardinalidade.
+As consultas ficam em `REPEATABLE READ READ ONLY`, com lock timeout de 500 ms.
+
 `POST /api/dashboard/radar-bootstrap` expõe a lista unificada com autenticação,
 rate limit e validação de origem existentes. O rollout aceita somente
 `chains: ['robinhood']` (também o default), sujeito a

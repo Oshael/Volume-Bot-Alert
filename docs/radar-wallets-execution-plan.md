@@ -116,7 +116,7 @@ após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
 
-Status: leitura interna de preços/ranking implementada; API e tabela de altas
+Status: leitura interna de preços/ranking e composição de métricas implementadas; API e tabela de altas
 ainda não estão conectadas ao Radar atual.
 
 O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
@@ -145,10 +145,53 @@ isso não garante primeiro trade desde o lançamento nem completude histórica.
 Um único preço válido produz variação zero por comparação consigo mesmo, não
 uma alta presumida. Buckets com observações posteriores ao corte não entram.
 
-Próximo corte: medir plano/custo com cardinalidade representativa, compor volume,
-holders e LP somente para o top em lote e ligar API/tabela 50/50, preservando
-autenticação, bloqueios, disponibilidade RH e coalescência no servidor. O teste
-SQL usa fixtures temporárias; não comprova custo ou ativação em produção.
+`createRobinhoodRadarGainersService().getGainers` compõe volume 24h/coverage e
+LP pelos leitores do workspace, e holders pelo resumo publicado, somente para
+os até 20 vencedores. Faz uma chamada em lote por fonte; lista vazia não hidrata.
+Preserva ordem, valores decimais, base e preço do ranking. Cada statement tem
+timeout de 5 s; isso não é orçamento total nem coalescência de requisições.
+Ausência/falha de fonte não fabrica zero. Holder/LP com projeção posterior ao
+`asOf` ficam indisponíveis, sem buscar snapshots antigos. Timestamps e cobertura
+das projeções acompanham os valores; não são snapshot transacional conjunto.
+Volume 24h conserva cobertura parcial para histórico curto; sua comparação
+percentual fica indisponível, pois não há base comparável comprovada.
+
+A Stage 268 prepara índice parcial de criação conhecida RH no catálogo, com
+build concorrente, lock timeout de 1 s e limite de 120 s. O schema check runtime
+verifica sua definição; a migration recusa índice inválido deixado por tentativa
+anterior. Não foi aplicada na VPS. Índice inválido exige inspeção/recuperação
+explícita; `IF NOT EXISTS` sozinho não repara build interrompido.
+Limites de idade na consulta são `bigint`, como a coluna: o cast implícito da
+coluna para `numeric` no leitor anterior impedia o uso desse índice.
+
+Medição read-only em `volume_alert`, 06/10/2026 às 21:00 UTC: 504.499 tokens RH,
+zero candidatos no corte 21:00 UTC, execução 691 ms, 144.651 shared hits e zero
+shared reads. Às 21:05 UTC, corte histórico 02/10/2026 19:19 UTC com 63 candidatos:
+573 ms, 145.284 shared hits e 526 shared reads. Ambos os planos varreram catálogo;
+as buscas de preços do segundo usaram índices. São amostras individuais anteriores
+ao índice, sem prova de causa de lag ou de melhora em produção. Só 6.102 tokens RH
+tinham criação positiva conhecida; o timestamp mais recente era 02/10/2026 19:18:44
+UTC. First-seen não substitui essa lacuna de cobertura.
+
+Na mesma janela histórica, leituras adicionais limitadas aos 15 vencedores
+retornaram 15 linhas por fonte: seleção 871 ms, volume/LP 454 ms e holders 20 ms
+(tempo de chamada observado na VPS web, incluindo acesso ao banco). Não são
+medidas de concorrência nem evidência de baixo custo por todos os clientes.
+Fixture PostgreSQL local: 500.100 registros de catálogo, 100 candidatos e 72.200
+buckets de minuto. Antes/depois do índice com limites tipados: 214,0/5,0 ms,
+resultados idênticos; acesso ao catálogo passou de seq scan de 6.175 páginas
+locais para index scan de 7 páginas. Cache/ambiente são locais; essa redução
+de páginas não estabelece ganho de desempenho no bot em produção.
+
+`node src/utils/explain-robinhood-radar-gainers.js plan [asOf]` gera plano compacto;
+`analyze` executa o SELECT em `REPEATABLE READ READ ONLY`, com statement timeout
+5 s e lock timeout 500 ms. O relatório inclui horário, cardinalidade, loops,
+índices, hits, reads e spill. A contagem de catálogo é uma consulta separada;
+seu custo não entra no tempo de execução informado do ranking.
+
+Próximo corte: validar custo após aplicação autorizada do índice, limitar e
+coalescer consultas na API autenticada, preservar bloqueios/disponibilidade RH
+e ligar tabela 50/50. Fixtures locais não comprovam ativação ou custo em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -287,7 +330,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Parcial | Leitura interna das altas implementada; faltam medição de custo, API, métricas do top e tabela 50/50 |
+| 3 | Parcial | Ranking/métricas internos e índice preparado; faltam aplicação/medição do índice, API com custo compartilhado, tabela 50/50 e live |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |

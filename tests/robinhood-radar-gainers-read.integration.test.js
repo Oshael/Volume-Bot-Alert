@@ -1,12 +1,16 @@
 process.env.NODE_ENV = 'test';
 const assert = require('node:assert/strict');
-const { it } = require('node:test');
+const { it, after } = require('node:test');
+const { randomUUID } = require('node:crypto');
+const stage268 = require('../src/utils/db-init-stage268');
+const { summarizePlan } = require('../src/utils/explain-robinhood-radar-gainers');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { createRobinhoodRadarGainersReadRepository } = require('../src/models/robinhood-radar-gainers-read');
 
 const AS_OF = '2026-10-06T12:00:00.000Z';
 const address = (id) => `0x${id.toString(16).padStart(40, '0')}`;
+after(() => db.pool.end());
 
 async function setup(client) {
   await client.query(`CREATE TEMP TABLE token_catalog (
@@ -128,6 +132,74 @@ it('selects global young-token gainers with comparable first prices, exclusions 
   } finally {
     await client.query('ROLLBACK');
     client.release();
-    await db.pool.end();
+  }
+});
+
+it('measures an indexed candidate universe with realistic market density without changing winners', async (t) => {
+  await assertUsingTestDatabase(db);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN'); await setup(client);
+    await client.query("SET LOCAL statement_timeout='30s'");
+    await client.query('SET LOCAL jit=off');
+    await client.query(`INSERT INTO token_catalog SELECT 'robinhood',
+      '0x'||lpad(to_hex(id),40,'0'), 'OLD', NULL, NULL, 1700000000000
+      FROM generate_series(10000,509999) id`);
+    for (let id = 1; id <= 100; id += 1) await seed(client, id, { ageHours: 12, current: id + 1 });
+    await client.query(`INSERT INTO robinhood_market_buckets_1m
+      SELECT chain, token_address, protocol, market_key, bucket_ts - n*INTERVAL '1 minute',
+        first_observed_at - n*INTERVAL '1 minute', last_observed_at - n*INTERVAL '1 minute',
+        1, 0, 1, 0, 1, 1, 10000
+      FROM robinhood_market_buckets_1m CROSS JOIN generate_series(1,720) n
+      WHERE last_block_number=2`);
+    for (const table of ['token_catalog','robinhood_market_buckets_1m','robinhood_market_buckets_agg']) {
+      await client.query(`ANALYZE ${table}`);
+    }
+    await client.query("SET LOCAL statement_timeout='5s'");
+    let measured;
+    const reader = createRobinhoodRadarGainersReadRepository({ database: {
+      async queryWithStatementTimeout(sql, params) {
+        measured = summarizePlan((await client.query(
+          `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON) ${sql}`, params
+        )).rows[0]['QUERY PLAN'][0]);
+        return client.query(sql, params);
+      },
+    } });
+    const before = await reader.getGainers({ asOf: AS_OF });
+    const baseline = measured;
+    await client.query(stage268.STATEMENTS[0].replace('CONCURRENTLY ', ''));
+    const indexed = await reader.getGainers({ asOf: AS_OF });
+    assert.deepEqual(indexed, before);
+    assert.equal(indexed.candidateCount, 100);
+    assert.ok(measured.scans.some((scan) => scan.index === stage268.INDEX_NAME));
+    assert.ok(!measured.scans.some((scan) => scan.table === 'token_catalog' && scan.type === 'Seq Scan'));
+    t.diagnostic(JSON.stringify({ fixture: { catalog: 500100, candidates: 100, minuteBuckets: 72200 },
+      baseline, indexed: measured, limitation: 'local temporary fixture; no production speedup established' }));
+  } finally { await client.query('ROLLBACK'); client.release(); }
+});
+
+it('builds the concurrent migration idempotently in an isolated test schema and rejects an invalid index', async () => {
+  await assertUsingTestDatabase(db);
+  const client = await db.getClient();
+  const schema = `radar_gainers_${randomUUID().replaceAll('-', '')}`;
+  try {
+    await client.query(`CREATE SCHEMA ${schema}`); await client.query(`SET search_path TO ${schema}`);
+    await client.query('CREATE TABLE token_catalog(chain varchar, address varchar, last_token_created_at_ms bigint)');
+    const options = { closePool: false, database: { async getClient() {
+      return { query: client.query.bind(client), release() {} };
+    } } };
+    await stage268.init(options); await stage268.init(options);
+    const { rows } = await client.query(`SELECT pg_get_indexdef(indexrelid) AS definition FROM pg_index
+      WHERE indexrelid=to_regclass($1)`, [stage268.INDEX_NAME]);
+    assert.match(rows[0].definition, /last_token_created_at_ms, address/);
+    assert.match(rows[0].definition, /robinhood.*last_token_created_at_ms > 0/);
+    await client.query(`DROP INDEX ${stage268.INDEX_NAME}`);
+    await client.query(`INSERT INTO token_catalog VALUES ('robinhood','duplicate',1),('robinhood','duplicate',1)`);
+    await assert.rejects(client.query(`CREATE UNIQUE INDEX CONCURRENTLY ${stage268.INDEX_NAME}
+      ON token_catalog(address)`), { code: '23505' });
+    await assert.rejects(stage268.init(options), /is invalid/);
+  } finally {
+    await client.query('SET search_path TO public');
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); client.release();
   }
 });

@@ -7044,6 +7044,15 @@ SCHEMA_GROUPS.push({
     includes: ['AFTER DELETE', 'enqueue_robinhood_holder_admission'] }] }],
 });
 
+SCHEMA_GROUPS.push({
+  key: 'stage268-robinhood-radar-creation-index', name: 'Stage 268 Robinhood Radar creation index',
+  repair: 'node src/utils/db-init-stage268.js',
+  tables: [{ table: 'token_catalog', indexes: [{
+    name: 'idx_token_catalog_rh_creation_address',
+    includes: ['last_token_created_at_ms', 'address', 'robinhood', '> 0'],
+  }] }],
+});
+
 const PROFILE_GROUP_KEYS = {
   test: [
     'core-auth-billing',

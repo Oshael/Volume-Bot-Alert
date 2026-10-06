@@ -16,8 +16,8 @@ const SQL = `WITH candidates AS MATERIALIZED (
   WHERE tc.chain = 'robinhood'
     AND tc.last_token_created_at_ms > 0
     AND tc.last_token_created_at_ms BETWEEN
-      EXTRACT(EPOCH FROM $1::timestamptz - INTERVAL '24 hours') * 1000
-      AND EXTRACT(EPOCH FROM $1::timestamptz) * 1000
+      (EXTRACT(EPOCH FROM $1::timestamptz - INTERVAL '24 hours') * 1000)::bigint
+      AND (EXTRACT(EPOCH FROM $1::timestamptz) * 1000)::bigint
     AND tc.address <> ALL($2::varchar[])
     AND NOT EXISTS (SELECT 1 FROM admin_blocked_tokens blocked
       WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address)
