@@ -1342,6 +1342,10 @@ module.exports = {
     enabled: parseBoolean(process.env.ROBINHOOD_USER_VISIBILITY_ENABLED, false),
   },
 
+  robinhoodRadarGainers: {
+    enabled: parseBoolean(process.env.ROBINHOOD_RADAR_GAINERS_ENABLED, false),
+  },
+
   robinhoodTokenViews: {
     lifecycleEnabled: parseBoolean(process.env.ROBINHOOD_LIFECYCLE_READ_ENABLED, false),
   },

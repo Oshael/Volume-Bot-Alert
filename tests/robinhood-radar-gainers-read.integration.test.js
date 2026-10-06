@@ -7,6 +7,7 @@ const { summarizePlan } = require('../src/utils/explain-robinhood-radar-gainers'
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { createRobinhoodRadarGainersReadRepository } = require('../src/models/robinhood-radar-gainers-read');
+const { createRobinhoodRadarGainersPage } = require('../src/services/robinhood-radar-gainers-page');
 
 const AS_OF = '2026-10-06T12:00:00.000Z';
 const address = (id) => `0x${id.toString(16).padStart(40, '0')}`;
@@ -58,6 +59,38 @@ async function seed(client, id, options = {}) {
   [token, market, current, options.current ?? 2, options.fdv ?? 10000]);
   return token;
 }
+
+it('applies persisted user/global blocks and dismissals before selecting the personalized top', async () => {
+  await assertUsingTestDatabase(db);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    await setup(client);
+    await client.query(`CREATE TEMP TABLE user_blocklist
+      (user_id int, chain varchar, address varchar) ON COMMIT DROP`);
+    for (let id = 1; id <= 4; id += 1) await seed(client, id, { current: 10 - id });
+    await client.query(`INSERT INTO user_blocklist VALUES
+      (22, 'robinhood', $1), (42, 'robinhood', $2), (22, 'base', $3)`,
+    [address(1), address(2), address(4)]);
+    await client.query(`INSERT INTO admin_blocked_tokens VALUES ('robinhood', $1)`, [address(3)]);
+    let time = Date.parse(AS_OF) + 45000;
+    const database = { queryWithStatementTimeout: (sql, params) => client.query(sql, params) };
+    const page = createRobinhoodRadarGainersPage({ database, now: () => time,
+      service: createRobinhoodRadarGainersReadRepository({ database }) });
+    const first = await page.list(22, { dismissedIdentities: [`robinhood:${address(4)}`] });
+    assert.deepEqual(first.items.map((item) => item.identity.address), [address(2)]);
+    time += 5000;
+    const second = await page.list(42);
+    assert.deepEqual(second.items.map((item) => item.identity.address), [address(1), address(4)]);
+    await client.query(`INSERT INTO user_blocklist VALUES (22, 'robinhood', $1)`, [address(2)]);
+    time += 5000;
+    const changed = await page.list(22);
+    assert.deepEqual(changed.items.map((item) => item.identity.address), [address(4)]);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
 
 it('selects global young-token gainers with comparable first prices, exclusions and stable ties', async (t) => {
   await assertUsingTestDatabase(db);

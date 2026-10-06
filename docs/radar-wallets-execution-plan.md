@@ -116,8 +116,8 @@ após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
 
-Status: leitura interna de preços/ranking e composição de métricas implementadas; API e tabela de altas
-ainda não estão conectadas ao Radar atual.
+Status: ranking, métricas e API protegida implementados; API desativada por
+padrão, e tabela de altas ainda não está conectada ao Radar atual.
 
 O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
 em `robinhood-radar-gainers-read`: uma consulta SQL com timeout de 5 s,
@@ -125,13 +125,13 @@ até 20 resultados (15 por padrão) e exclusões limitadas
 a 5.000 endereços. O `asOf` é alinhado ao início do minuto, como nas métricas
 existentes, e esse corte é retornado ao chamador. Seleciona todo o universo
 elegível antes do top, sem receber tokens da página principal. Não é chamado
-pelos fluxos atuais e não adiciona
+pelos fluxos atuais com o gate padrão desativado e não adiciona
 trabalho aos writers, RPC, backfill, polling ou frontend.
 
 Elegibilidade exige timestamp de criação conhecido, positivo e idade entre
 zero e 24h inclusive; `first_seen_at` sozinho não prova criação recente. Exclui
 bloqueios globais, endereços fornecidos pelo chamador e FDV conhecido a partir do teto
-vigente do catálogo. A futura API deverá fornecer os bloqueios do usuário.
+vigente do catálogo. A API fornece os bloqueios atuais do usuário e descartes.
 Apenas valorização positiva entra em maiores altas; perdas e preço constante
 não são altas. Contagens distinguem candidatos, altas e preços não comparáveis.
 
@@ -189,9 +189,28 @@ de páginas não estabelece ganho de desempenho no bot em produção.
 índices, hits, reads e spill. A contagem de catálogo é uma consulta separada;
 seu custo não entra no tempo de execução informado do ranking.
 
-Próximo corte: validar custo após aplicação autorizada do índice, limitar e
-coalescer consultas na API autenticada, preservar bloqueios/disponibilidade RH
-e ligar tabela 50/50. Fixtures locais não comprovam ativação ou custo em produção.
+`POST /api/robinhood/radar-gainers` exige autenticação, origem confiável,
+visibilidade RH e `ROBINHOOD_RADAR_GAINERS_ENABLED=true` (default false).
+Aceita apenas `limit` numérico de 1–20 (default 15) e `dismissedIdentities`
+canônicas RH. Não aceita cutoff histórico, usuário, filtros da tabela principal
+ou query params. Lê bloqueios do usuário com timeout 1 s e limite 5.001 para
+detectar excesso; a união com descartes não pode superar 5.000 exclusões.
+Ranking e hidratação calculam até 20; o limite solicitado só recorta a resposta.
+
+O servidor compartilha cálculo/cache por minuto e conjunto normalizado de
+exclusões, nunca filtra um top global já truncado para obter o top do usuário.
+Por processo: um cálculo ativo, até 32 pedidos aguardando esse mesmo cálculo,
+sem fila para outros conjuntos, intervalo mínimo de 5 s entre inícios, cache
+de 5 s após conclusão com até 32 entradas e backoff de 10 s após falha de fonte.
+Saturação retorna 503 `GAINERS_BUSY` com `Retry-After`, sem consultas adicionais
+de ranking. Bloqueios do usuário são relidos a cada pedido; bloqueios globais
+participam do SQL; o cache acrescenta até 5 s à latência dessas mudanças. A resposta
+traz `asOf`, `generatedAt`, `cacheAgeMs`, contagens e coverage dos campos.
+Falha não publica/cacheia lista vazia. Não há timer, RPC ou polling adicional.
+Esses limites são locais ao processo; múltiplas réplicas multiplicam a carga.
+
+Faltam aplicação autorizada/medição do índice, validação de cobertura de criação,
+tabela 50/50 e live. Fixtures locais não comprovam ativação ou custo em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -330,7 +349,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Parcial | Ranking/métricas internos e índice preparado; faltam aplicação/medição do índice, API com custo compartilhado, tabela 50/50 e live |
+| 3 | Parcial | Ranking/métricas e API com custo compartilhado implementados, índice preparado; faltam aplicação/medição do índice, cobertura de criação, ativação, tabela 50/50 e live |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |

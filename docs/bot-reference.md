@@ -2096,12 +2096,31 @@ Continuam valendo até 100 itens por página e prefixo de até 500 por chain.
 Os modos `recent`/`oldWeek`, defaults e seleção explícita de chains continuam
 compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstrap`.
 
-### Índice de criação para maiores altas do Radar
+### Maiores altas do Radar
 
 A leitura interna `robinhood-radar-gainers-read` seleciona tokens Robinhood de
 criação conhecida até 24h, compara preços do mesmo mercado e limita o top a 20.
 A composição `robinhood-radar-gainers` hidrata volume, LP e holders publicados
-somente para esse lote. API/tela ainda não consomem esse leitor.
+somente para esse lote. A tela ainda não consome esse leitor.
+
+`POST /api/robinhood/radar-gainers` usa autenticação, origem confiável, rate limit
+da API e visibilidade RH. Exige `ROBINHOOD_RADAR_GAINERS_ENABLED=true` (default
+false); ativar somente após Stage 268, medição de custo e validação de cobertura
+de criação. Body: `limit` numérico 1–20 (15) e `dismissedIdentities` canônicas RH.
+Não aceita query params, `asOf` ou usuário fornecido pelo cliente. Lê bloqueios
+do usuário a cada pedido (timeout 1 s, máximo 5.000); união com descartes também
+é limitada a 5.000, aplicada antes do top. Seleção/hidratação têm timeout de 5 s
+por statement, sem orçamento total da requisição.
+
+Compartilha cálculo por cutoff de minuto e conjunto normalizado de exclusões.
+Por processo: um cálculo ativo, até 32 pedidos aguardando o mesmo cálculo,
+nenhuma fila para conjuntos diferentes, mínimo 5 s entre inícios, cache 5 s
+após conclusão (máximo 32 entradas), backoff 10 s após falha. Réplicas adicionais
+multiplicam esses limites. Saturação retorna 503 `GAINERS_BUSY` com `Retry-After`;
+falha de fonte retorna 503 `GAINERS_UNAVAILABLE`, sem publicar vazio ou erro SQL.
+Gate desativado retorna 503 `GAINERS_NOT_READY`. Resposta `no-store` inclui
+`asOf`, `generatedAt`, `cacheAgeMs`, contagens e coverage; bloqueios globais
+têm até 5 s adicionais de latência devido ao cache. Não adiciona polling ou worker.
 
 Antes de conectar esse caminho em produção, aplicar mediante autorização
 `node src/utils/db-init-stage268.js` e validar o custo. A migration cria
