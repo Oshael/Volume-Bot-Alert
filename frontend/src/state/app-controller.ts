@@ -126,6 +126,7 @@ import {
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent, type MarketLiquidityUpdateEvent, type RobinhoodHolderCountEvent, type RobinhoodHolderInvalidateEvent } from '../services/socket/client';
 import { invalidateRobinhoodTopWalletsSection, recoverRobinhoodTopWalletsSection } from '../ui/sections/robinhood-top-wallets-section';
+import { invalidateRobinhoodRadarGainersSection, recoverRobinhoodRadarGainersSection, updateRobinhoodRadarGainersConnection } from '../ui/sections/robinhood-radar-gainers-section';
 import {
   recordAlertApplied,
   recordHolderApplied,
@@ -10177,11 +10178,14 @@ export function createAppController(): AppController {
     bindSocketLifecycle({
       onWalletRankingInvalidate(event) {
         invalidateRobinhoodTopWalletsSection(state, event);
+        invalidateRobinhoodRadarGainersSection(state, event);
       },
       onWalletRankingRecover() {
         recoverRobinhoodTopWalletsSection(state);
+        recoverRobinhoodRadarGainersSection(state);
       },
       onStatus(message) {
+        updateRobinhoodRadarGainersConnection(state, message);
         if (Date.now() < suppressSocketStatusNoticeUntil && message.startsWith('Socket disconnected:')) {
           return;
         }

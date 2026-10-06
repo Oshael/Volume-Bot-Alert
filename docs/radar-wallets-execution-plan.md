@@ -2,8 +2,8 @@
 
 Status conferido no checkout em 06/10/2026: Old/Recent unificados na tabela
 Robinhood; Top Wallets, API e atualização por WebSocket implementados; feed
-de compras/vendas por wallet e leitor interno das altas disponíveis. Faltam
-integração das maiores altas, detalhe completo
+de compras/vendas por wallet e maiores altas com API, tabela e live disponíveis.
+Faltam ativação/validação das altas em produção, detalhe completo
 da wallet/posição e conclusão do trabalho de custo, escala e consistência do
 Top Wallets descrito na seção 9. Implementação no repositório não comprova
 ativação, cobertura histórica ou desempenho em produção.
@@ -116,8 +116,8 @@ após reconexão usam HTTP.
 
 ## 4. Maiores altas entre tokens novos
 
-Status: ranking, métricas, API protegida e tabela 50/50 conectados no Radar;
-API desativada por padrão, ativação em produção e atualização live pendentes.
+Status: ranking, métricas, API protegida, tabela 50/50 e live conectados no Radar;
+API desativada por padrão, ativação e validação em produção pendentes.
 
 O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
 em `robinhood-radar-gainers-read`: uma consulta SQL com timeout de 5 s,
@@ -210,16 +210,36 @@ Esses limites são locais ao processo; múltiplas réplicas multiplicam a carga.
 
 O painel mostra até 15 altas na ordem do servidor, ao lado de Top Wallets em
 desktop; em mobile os painéis são empilhados, acima da tabela única. Carrega na
-abertura e após mudança de sessão/disponibilidade/exclusões, com atualização
-manual. Filtros/página da tabela principal não refazem o top. Mudanças de contexto
+abertura e após mudança de sessão/disponibilidade/exclusões, com refresh manual.
+Filtros/página da tabela principal não refazem o top. Mudanças de contexto
 cancelam e descartam respostas antigas; dados anteriores deixam de aparecer.
-Respeita intervalo mínimo local de 5 s e `Retry-After`, sem repetição automática
-nem timer de consulta. Se uma mudança ocorrer nesse intervalo, pede refresh manual.
+Respeita intervalo mínimo local de 5 s e `Retry-After`; mudanças durante o
+cooldown ficam pendentes para o painel visível.
 Volume/LP parciais levam `~`; ausência usa `-`, holders zero são preservados.
 Usa cópia de contrato, explorer e terminais RH existentes; não pede sparklines.
 
+O live reutiliza `prices`/`reorg` do `wallet-ranking:invalidate`, publicados após
+commit dos buckets/agregados e recuperação canônica. Não depende de assinatura
+dos tokens da página. Watermarks por fonte ignoram duplicatas/replay antigo;
+eventos exclusivos de wallets não recalculam altas. Rajadas de preços mantêm
+uma consulta pendente, na próxima virada de minuto do cutoff. Reorg limpa e
+cancela a geração anterior imediatamente; cache e cálculo da API usam a revisão
+de reorg observada pelo listener, inclusive na reconciliação de sua conexão.
+Uma geração que atravessa essa revisão retorna busy, sem publicação/cache.
+
+Consultas live requerem painel conectado ao DOM e aba visível. Reconexão e
+retorno ao painel/aba recuperam dados, com uma única tentativa adicional após
+falha e respeitando cooldown/backoff; depois exigem novo evento ou refresh manual.
+Há um timer de coalescência e um deadline de freshness de 2 min que só sinaliza
+snapshot antigo, sem HTTP. Não há consulta periódica para descobrir mudanças.
+Conexão/desatualização e `asOf` aparecem na tela. Idade e elegibilidade continuam
+relativas ao cutoff; sem eventos, o snapshot pode envelhecer. Mudanças isoladas
+de catálogo, LP ou holders entram no próximo refresh de preço/manual/recuperação;
+não há evento global próprio para todas essas fontes neste fluxo.
+
 Faltam aplicação autorizada/medição do índice, validação de cobertura de criação,
-ativação e live. Fixtures locais não comprovam ativação ou custo em produção.
+ativação e validação com fontes reais/concorrência. Fixtures locais não comprovam
+ativação ou custo em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -328,7 +348,7 @@ Bases conferidas no código; sua existência não prova cobertura em produção:
 | `src/models/robinhood-wallet-ranking-publication.js` | Publicação compacta com revisão, checkpoint e geração; ainda não consumida pela API |
 | `src/models/callout-event-read.js` e `callout_thesis_archive` | Teses existentes; leitura por autor + ativo |
 | `frontend/src/services/charts/chart-wallet-buys.ts` | Investigar reaproveitamento; vendas precisam cobertura explícita |
-| `frontend/src/ui/app-shell.ts` e seções do Radar | Tabela única, Top Wallets, altas 50/50 e feed por wallet conectados; faltam live das altas e exploração completa de posições |
+| `frontend/src/ui/app-shell.ts` e seções do Radar | Tabela única, Top Wallets, altas 50/50 com live e feed por wallet conectados; falta exploração completa de posições |
 
 Criar módulos separados para ranking, detalhe da wallet e detalhe da posição.
 Os hubs de rota/controller/shell devem receber wiring; regras contábeis, filtros
@@ -358,7 +378,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Parcial | Ranking/métricas, API com custo compartilhado e tabela 50/50 implementados, índice preparado; faltam aplicação/medição do índice, cobertura de criação, ativação e live |
+| 3 | Parcial | Ranking/métricas, API com custo compartilhado, tabela 50/50 e live implementados, índice preparado; faltam aplicação/medição do índice, cobertura de criação e validação/ativação em produção |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |

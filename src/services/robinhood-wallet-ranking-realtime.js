@@ -4,6 +4,7 @@ const { CHANNEL } = require('../models/robinhood-wallet-ranking-invalidation');
 const { isRobinhoodUserVisible } = require('../utils/token-chain-availability');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const { advanceGainersReorgRevision } = require('./robinhood-radar-gainers-generation');
 
 const SOURCES = new Set(['positions', 'transfers', 'swaps', 'prices', 'reorg']);
 const COALESCE_MS = 25;
@@ -71,6 +72,7 @@ function createRobinhoodWalletRankingRealtime(deps = {}) {
     }
     if (pending.has(revision.source)) stats.coalesced += 1;
     latest.set(revision.source, revision.version);
+    if (revision.source === 'reorg') advanceGainersReorgRevision(revision.version);
     pending.set(revision.source, {
       version: revision.version.toString(), receivedAt: now(),
     });

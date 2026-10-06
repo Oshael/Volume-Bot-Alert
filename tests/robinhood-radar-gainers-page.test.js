@@ -12,11 +12,13 @@ const items = Array.from({ length: 20 }, (_, i) => ({
 function harness() {
   let time = START;
   let blocked = [];
+  let reorgRevision = '0';
   let source = async (query) => ({ chain: 'robinhood', asOf: query.asOf,
     limit: 20, total: 25, candidateCount: 30, unpricedCount: 5, items });
   const calls = [];
   const reads = [];
   const page = createRobinhoodRadarGainersPage({ now: () => time,
+    getReorgRevision: () => reorgRevision,
     service: { getGainers(query) { calls.push(query); return source(query); } },
     database: { async queryWithStatementTimeout(_sql, params, timeout) {
       assert.equal(timeout, 1000);
@@ -25,7 +27,8 @@ function harness() {
     } },
   });
   return { page, calls, reads, advance(ms) { time += ms; },
-    block(values) { blocked = values; }, source(value) { source = value; } };
+    block(values) { blocked = values; }, source(value) { source = value; },
+    reorg() { reorgRevision = String(BigInt(reorgRevision) + 1n); } };
 }
 
 it('shares equivalent users/limits, normalizes exclusions before selection and expires cached reads', async () => {
@@ -94,6 +97,26 @@ it('clears failed work, backs off and never fabricates/cache-publishes an empty 
   h.source(async (query) => ({ chain: 'robinhood', asOf: query.asOf, total: 0, items: [] }));
   assert.equal((await h.page.list(1)).total, 0);
   assert.equal(h.calls.length, 2);
+});
+
+it('cannot reuse or publish a snapshot from before a durably observed reorg', async () => {
+  const h = harness();
+  await h.page.list(1);
+  h.reorg();
+  await assert.rejects(h.page.list(1), { code: 'GAINERS_BUSY' });
+  h.advance(5000);
+  let release;
+  h.source(() => new Promise((resolve) => { release = resolve; }));
+  const pending = h.page.list(1);
+  await new Promise(setImmediate);
+  h.reorg();
+  const rejected = assert.rejects(pending, { code: 'GAINERS_BUSY' });
+  release({ chain: 'robinhood', asOf: h.calls[1].asOf, total: 0, items: [] });
+  await rejected;
+  h.advance(5000);
+  h.source(async (query) => ({ chain: 'robinhood', asOf: query.asOf, total: 0, items: [] }));
+  assert.equal((await h.page.list(1)).total, 0);
+  assert.equal(h.calls.length, 3);
 });
 
 it('rejects malformed, cross-chain, historical and oversized requests before database work', async () => {

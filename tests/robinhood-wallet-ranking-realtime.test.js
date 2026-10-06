@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { getGainersReorgRevision } = require('../src/services/robinhood-radar-gainers-generation');
 const { describe, it } = require('node:test');
 const {
   CHANNEL, createRobinhoodWalletRankingRealtime,
@@ -80,6 +81,9 @@ describe('Robinhood wallet ranking realtime relay', () => {
     assert.equal(test.runtime.getStatus().duplicates, 1);
     assert.equal(test.runtime.getStatus().invalid, 2);
     assert.equal(test.runtime.getStatus().lastRelayMs, 8);
+    const reorg = String(BigInt(getGainersReorgRevision()) + 1n);
+    assert.equal(test.notify({ chain: 'robinhood', source: 'reorg', version: reorg }), true);
+    assert.equal(getGainersReorgRevision(), reorg);
     await test.runtime.stop();
   });
 

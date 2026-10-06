@@ -8,6 +8,22 @@ import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 
 interface View { section: HTMLElement | null; loader: ReturnType<typeof createRadarGainersLoader> }
 const views = new WeakMap<AppState, View>();
+const connections = new WeakMap<AppState, boolean>();
+
+export function invalidateRobinhoodRadarGainersSection(state: AppState, payload: unknown) {
+  views.get(state)?.loader.invalidate(payload);
+}
+
+export function recoverRobinhoodRadarGainersSection(state: AppState) {
+  views.get(state)?.loader.recover();
+}
+
+export function updateRobinhoodRadarGainersConnection(state: AppState, message: string) {
+  if (message !== 'Socket connected.' && !/^Socket (disconnected|error):/.test(message)) return;
+  const connected = message === 'Socket connected.';
+  connections.set(state, connected);
+  views.get(state)?.loader.connection(connected);
+}
 
 export function radarGainersExclusions(state: AppState) {
   return robinhoodIdentities([...state.data.dismissedRecentIdentities, ...state.data.dismissedOldWeekIdentities,
@@ -47,7 +63,7 @@ function rowHtml(row: RadarGainer, state: AppState) {
 
 function draw(state: AppState, view: View) {
   if (!view.section) return;
-  const { page, loading, message } = view.loader.state;
+  const { page, loading, message, connected, stale } = view.loader.state;
   const body = loading ? '<p class="radar-top-message" role="status">Loading gainers…</p>'
     : message ? `<p class="radar-top-message" role="status">${escapeHtml(message)}</p>`
       : page?.items.length ? `<div class="radar-top-scroll"><table><thead><tr><th>Token / gain</th><th>Volume 24H</th><th>Holders</th><th>LP</th></tr></thead>
@@ -56,6 +72,8 @@ function draw(state: AppState, view: View) {
   view.section.innerHTML = `<div class="legacy-bar-head radar-top-head"><span class="legacy-bar-title">TOP GAINERS</span>
     <button type="button" data-gainers-refresh ${loading || !inputFor(state).available ? 'disabled' : ''}>Refresh</button></div>
     <p class="radar-top-caveat">Age ≤24h · Since first available price; launch coverage may be incomplete.</p>
+    <p class="radar-top-message" data-gainers-live role="status">${!connected ? 'Live disconnected · snapshot may be outdated.'
+      : stale ? 'Live connected · snapshot may be outdated.' : 'Live connected · updates grouped by minute.'}</p>
     ${body}${page ? `<p class="radar-top-message">${page.items.length} of ${page.total} gainers · ${page.unpricedCount} candidate(s) without comparable prices · As of ${escapeHtml(page.asOf)}</p>` : ''}`;
   view.section.querySelector('[data-gainers-refresh]')?.addEventListener('click', () => {
     void view.loader.update(inputFor(state), true);
@@ -70,12 +88,18 @@ export function renderRobinhoodRadarGainersSection(state: AppState) {
     const created: View = { section: null, loader: createRadarGainersLoader(
       (input, signal) => fetchRobinhoodRadarGainers(input.dismissedIdentities, input.token, signal),
       () => draw(state, created),
+      Date.now, { visible: () => created.section?.isConnected === true && document.visibilityState === 'visible' },
     ) };
+    created.loader.connection(connections.get(state) === true);
+    document.addEventListener('visibilitychange', () => created.loader.resume());
     views.set(state, created); view = created;
   }
+  const returning = view.section?.isConnected !== true;
   view.section = document.createElement('section');
   view.section.className = 'legacy-token-bar radar-gainers';
   draw(state, view);
   void view.loader.update(inputFor(state));
+  const current = view;
+  queueMicrotask(() => current.loader.resume(returning));
   return view.section;
 }

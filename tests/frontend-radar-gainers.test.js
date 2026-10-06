@@ -88,3 +88,97 @@ it('rejects a cross-chain or unbounded top and prevents oversized requests', asy
   )) });
   assert.match(loader.state.message, /Too many/);
 });
+
+function liveHarness(source) {
+  let time = Date.parse('2026-10-06T12:00:45Z');
+  let visible = true;
+  let sequence = 0;
+  const timers = new Map();
+  const calls = [];
+  const loader = createRadarGainersLoader(async (query, signal) => {
+    calls.push({ query, signal });
+    return source ? source(calls.length) : { ...page(), asOf: new Date(Math.floor(time / 60000) * 60000).toISOString() };
+  }, () => {}, () => time, { visible: () => visible,
+    setTimer(callback, delay) { const id = ++sequence; timers.set(id, { callback, at: time + delay }); return id; },
+    clearTimer(id) { timers.delete(id); },
+  });
+  return { loader, calls, timers, visible(value) { visible = value; loader.resume(); },
+    async tick(ms) {
+      time += ms;
+      for (const [id, timer] of [...timers]) {
+        if (timer.at > time || !timers.has(id)) continue;
+        timers.delete(id); timer.callback();
+      }
+      await new Promise(setImmediate);
+    },
+  };
+}
+const invalidation = (revisions) => ({ type: 'wallet-ranking:invalidate', chain: 'robinhood',
+  version: 1, revisions, publishedAt: '2026-10-06T12:00:45Z' });
+
+it('coalesces global price bursts at the next cutoff without polling or reacting to wallet-only revisions', async () => {
+  const h = liveHarness();
+  await h.loader.update(input);
+  h.loader.connection(true);
+  assert.equal(h.loader.invalidate(invalidation({ positions: '100' })), false);
+  for (let version = 1; version <= 100; version += 1) h.loader.invalidate(invalidation({ prices: String(version) }));
+  assert.equal(h.loader.invalidate(invalidation({ prices: '100' })), false);
+  assert.equal(h.loader.invalidate(invalidation({ prices: '2' })), false);
+  assert.equal(h.loader.invalidate({ ...invalidation({ prices: '101' }), chain: 'solana' }), false);
+  assert.equal(h.timers.size, 2); // One pending refresh, one display-only freshness deadline.
+  assert.equal(h.loader.state.stale, true);
+  await h.tick(14000); assert.equal(h.calls.length, 1);
+  await h.tick(1000); assert.equal(h.calls.length, 2);
+  assert.equal(h.loader.state.page.asOf, '2026-10-06T12:01:00.000Z');
+  assert.equal(h.loader.state.stale, false);
+  await h.tick(120000);
+  assert.equal(h.loader.state.stale, true);
+  assert.equal(h.calls.length, 2); // Expiration never discovers changes through HTTP.
+  h.loader.resume(false); await h.tick(0);
+  assert.equal(h.calls.length, 2); // A normal render is not a return to the panel.
+  h.visible(false); h.visible(true); await h.tick(0);
+  assert.equal(h.calls.length, 3);
+});
+
+it('clears reorg-invalid snapshots, ignores old in-flight responses and recovers a missed revision', async () => {
+  const releases = [];
+  const h = liveHarness((call) => call === 1 ? page() : new Promise((resolve) => { releases.push(resolve); }));
+  await h.loader.update(input);
+  h.loader.invalidate(invalidation({ prices: '1' }));
+  await h.tick(15000);
+  h.loader.invalidate(invalidation({ reorg: '4' }));
+  assert.equal(h.loader.state.page, null);
+  assert.equal(h.calls[1].signal.aborted, true);
+  await h.tick(5000); assert.equal(h.calls.length, 3);
+  releases[0](page()); await h.tick(0);
+  assert.equal(h.loader.state.page, null);
+  releases[1]({ ...page(), items: [], total: 0 }); await h.tick(0);
+  assert.deepEqual(h.loader.state.page.items, []);
+  assert.equal(h.loader.invalidate(invalidation({ reorg: '3' })), false);
+  h.loader.connection(false);
+  h.loader.recover();
+  assert.equal(h.loader.state.page, null);
+  await h.tick(5000); assert.equal(h.calls.length, 4);
+  releases[2](page()); await h.tick(0);
+  h.loader.connection(true);
+  assert.equal(h.loader.state.connected, true);
+});
+
+it('pauses hidden panels, respects live Retry-After and stops after one recovery retry', async () => {
+  const h = liveHarness((call) => {
+    if (call > 1) throw Object.assign(new Error('busy'), { retryAfterMs: 20000 });
+    return page();
+  });
+  await h.loader.update(input);
+  h.loader.invalidate(invalidation({ prices: '1' }));
+  h.visible(false);
+  await h.tick(15000); assert.equal(h.calls.length, 1);
+  h.visible(true); await h.tick(0); assert.equal(h.calls.length, 2);
+  await h.tick(19999); assert.equal(h.calls.length, 2);
+  await h.tick(1); assert.equal(h.calls.length, 3);
+  await h.tick(300000); assert.equal(h.calls.length, 3);
+  assert.match(h.loader.state.message, /temporarily unavailable/);
+  h.loader.invalidate(invalidation({ prices: '2' }));
+  await h.loader.update({ ...input, available: false });
+  await h.tick(60000); assert.equal(h.calls.length, 3);
+});

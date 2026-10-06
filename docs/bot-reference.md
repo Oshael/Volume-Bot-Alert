@@ -2106,9 +2106,18 @@ Wallets, acima da tabela única; no mobile os dois painéis são empilhados.
 
 O frontend carrega na abertura ou mudança de sessão/disponibilidade/exclusões,
 com refresh manual; filtros/página da tabela principal não refazem o top.
-Cancela e ignora respostas antigas, limpa dados quando muda o contexto e
-respeita mínimo local de 5 s/`Retry-After`, sem retry automático ou polling.
-Mudança durante o cooldown exige refresh manual. Ainda não recebe live de altas.
+Cancela respostas antigas e respeita mínimo local de 5 s/`Retry-After`.
+O live consome revisões globais `prices`/`reorg` do `wallet-ranking:invalidate`
+após commit. Ignora duplicatas/versões antigas e alterações exclusivas de wallets;
+coalesce preços na próxima virada do minuto, com uma consulta pendente. Reorg
+limpa a tela e impede cache/publicação de cálculo anterior à revisão observada
+pelo listener; sua reconciliação também avança essa revisão.
+Consultas live só ocorrem com painel/aba visíveis. Reconexão e retorno recuperam
+snapshot; após falha há no máximo uma tentativa adicional, sob cooldown/backoff,
+até novo evento ou refresh manual. Conexão/desatualização e cutoff são visíveis;
+deadline de 2 min marca snapshot antigo sem HTTP. Sem eventos, dados podem
+envelhecer: idade/elegibilidade são do `asOf`, e mudanças isoladas de catálogo,
+LP/holders entram no próximo refresh. Não há polling periódico nem novo serviço.
 Volume/LP parciais usam `~`; valores ausentes usam `-`, sem transformar holder
 zero em ausência. Ganho é rotulado desde o primeiro preço disponível; não há
 sparkline. Ações usam contrato/explorer e terminais compatíveis com Robinhood.

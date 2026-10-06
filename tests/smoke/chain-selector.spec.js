@@ -2828,6 +2828,57 @@ test('does not retry unavailable Radar gainers on render and honors Retry-After 
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('refreshes Radar gainers from global committed signals and recovers after reconnect', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-06T12:00:45Z') });
+  const socketScenario = { socket: null, clientFrames: [] };
+  let reads = 0;
+  const gainer = {
+    identity: { chain: 'robinhood', address: ROBINHOOD_WATCHLIST, key: `robinhood:${ROBINHOOD_WATCHLIST}` },
+    symbol: 'LIVEGAIN', name: 'Live gain', imageUrl: null, createdAt: Date.parse('2026-10-06T11:00:00Z'),
+    priceChangePct: '250.25', priceBasis: { type: 'first-observed-price', coverage: 'available-history',
+      observedAt: '2026-10-06T11:00:00Z' }, volume24hUsd: 12000, volume24hCoverage: 'complete',
+    volume24hChangePct: null, volume24hChangeCoverage: 'unavailable',
+    holderCount: 0, holderFreshness: 'fresh', liquidityUsd: 1000, liquidityCoverage: 'complete',
+  };
+  const fixtures = { ...ROBINHOOD_RADAR_API_FIXTURES,
+    'POST /api/robinhood/radar-gainers': () => {
+      reads += 1;
+      const asOf = reads === 1 ? '2026-10-06T12:00:00Z' : '2026-10-06T12:01:00Z';
+      const items = reads === 1 || reads === 3 ? [] : [gainer];
+      return { chain: 'robinhood', asOf, generatedAt: asOf, total: items.length,
+        candidateCount: items.length, unpricedCount: 0, items };
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures, '/radar', socketScenario);
+  const gainers = page.locator('.radar-gainers');
+  await expect(gainers).toContainText('No verified gainers');
+  await expect(gainers.locator('[data-gainers-live]')).toContainText('Live connected');
+  const signal = (revisions) => ({ type: 'wallet-ranking:invalidate', chain: 'robinhood', version: 1,
+    revisions, publishedAt: '2026-10-06T12:00:45Z' });
+  for (const revisions of [{ positions: '10' }, { prices: '2' }, { prices: '1' }, { prices: '2' }]) {
+    sendSocketEvent(socketScenario, 'wallet-ranking:invalidate', signal(revisions));
+  }
+  await expect(gainers.locator('[data-gainers-live]')).toContainText('snapshot may be outdated');
+  expect(reads).toBe(1);
+  await page.clock.fastForward(16000);
+  await expect(gainers).toContainText('LIVEGAIN');
+  await expect(gainers).toContainText('+250.25%');
+  expect(reads).toBe(2);
+  sendSocketEvent(socketScenario, 'wallet-ranking:invalidate', signal({ reorg: '1' }));
+  await expect(gainers.locator('tbody tr')).toHaveCount(0);
+  await page.clock.fastForward(5100);
+  await expect.poll(() => reads).toBe(3);
+  await expect(gainers).toContainText('No verified gainers');
+  await socketScenario.socket.close();
+  await expect(gainers.locator('[data-gainers-live]')).toContainText('Live disconnected');
+  await page.clock.fastForward(5100);
+  await expect(gainers).toContainText('LIVEGAIN');
+  await expect(gainers.locator('[data-gainers-live]')).toContainText('Live connected');
+  expect(reads).toBe(4);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('refreshes the selected Top Wallets period from socket without reusing an old page cursor', async ({ page }) => {
   const socketScenario = { socket: null, clientFrames: [] };
   const reads = [];

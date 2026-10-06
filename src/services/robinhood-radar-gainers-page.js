@@ -3,6 +3,7 @@ const db = require('../models/db');
 const { normalizeTokenAddress, parseTokenIdentityKey } = require('../utils/token-identity');
 const { normalizeAsOf } = require('./workspace-window-metrics');
 const { createRobinhoodRadarGainersService } = require('./robinhood-radar-gainers');
+const { getGainersReorgRevision } = require('./robinhood-radar-gainers-generation');
 
 const CACHE_TTL_MS = 5000;
 const MIN_REFRESH_MS = 5000;
@@ -45,6 +46,7 @@ function createRobinhoodRadarGainersPage(options = {}) {
   const service = options.service || createRobinhoodRadarGainersService();
   const database = options.database || db;
   const now = options.now || Date.now;
+  const getReorgRevision = options.getReorgRevision || getGainersReorgRevision;
   const loadBlockedAddresses = options.loadBlockedAddresses || (async (userId) => {
     const { rows } = await database.queryWithStatementTimeout(
       `SELECT address FROM user_blocklist WHERE user_id = $1 AND chain = 'robinhood' LIMIT 5001`,
@@ -79,10 +81,10 @@ function createRobinhoodRadarGainersPage(options = {}) {
     return value;
   }
 
-  function read(query) {
+  function read(query, reorgRevision) {
     const currentTime = now();
     const key = createHash('sha256').update(JSON.stringify([
-      query.asOf, query.excludedAddresses,
+      query.asOf, query.excludedAddresses, reorgRevision,
     ])).digest('hex');
     const cached = cache.get(key);
     if (cached?.expiresAt > currentTime) return Promise.resolve(cached.page);
@@ -93,9 +95,12 @@ function createRobinhoodRadarGainersPage(options = {}) {
     const state = { key, waiters: 0, promise: null };
     active = state;
     state.promise = Promise.resolve().then(() => service.getGainers(query))
-      .then((page) => remember(key, page))
+      .then((page) => {
+        if (getReorgRevision() !== reorgRevision) throw busy();
+        return remember(key, page);
+      })
       .catch((error) => {
-        nextAllowedAt = now() + ERROR_BACKOFF_MS;
+        if (error.code !== 'GAINERS_BUSY') nextAllowedAt = now() + ERROR_BACKOFF_MS;
         throw error;
       }).finally(() => { active = null; });
     return join(state);
@@ -113,8 +118,10 @@ function createRobinhoodRadarGainersPage(options = {}) {
       if (excludedAddresses.length > MAX_EXCLUSIONS) {
         throw failure('INVALID_GAINERS_REQUEST', 'Combined exclusions cannot exceed 5000');
       }
+      const reorgRevision = getReorgRevision();
       const page = await read({ asOf: normalizeAsOf(new Date(now())).toISOString(),
-        excludedAddresses, limit: 20 });
+        excludedAddresses, limit: 20 }, reorgRevision);
+      if (getReorgRevision() !== reorgRevision) throw busy();
       const items = page.items.slice(0, limit);
       return { ...page, limit, items, hasMore: page.total > items.length,
         cacheAgeMs: Math.max(0, now() - Date.parse(page.generatedAt)) };
