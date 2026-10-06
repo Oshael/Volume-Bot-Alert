@@ -125,11 +125,17 @@ até 20 resultados (15 por padrão) e exclusões limitadas
 a 5.000 endereços. O `asOf` é alinhado ao início do minuto, como nas métricas
 existentes, e esse corte é retornado ao chamador. Seleciona todo o universo
 elegível antes do top, sem receber tokens da página principal. É chamado pela
-API somente sob o gate e não adiciona trabalho aos writers, RPC, backfill ou polling.
+API somente sob o gate. A projeção de idade usa o lote de catálogo existente,
+sem RPC, backfill ou polling novos.
 
 Elegibilidade exige timestamp de criação conhecido, positivo e idade entre
-zero e 24h inclusive; `first_seen_at` sozinho não prova criação recente. Exclui
-bloqueios globais, endereços fornecidos pelo chamador e FDV conhecido a partir do teto
+zero e 24h inclusive; `first_seen_at` sozinho não prova criação recente. O campo
+de catálogo precisa coincidir com o timestamp do bloco canônico da atribuição
+verificada (`rpc_direct`, `rpc_trace`, `blockscout_internal`, `launchpad_event`),
+com transação correspondente e receipt bem-sucedido. Para deployment direto,
+o receipt deve criar exatamente esse contrato. Hint Blockscout, transição de
+código sem deployment exato, pool discovery e âncora órfã/ausente não bastam.
+Exclui bloqueios globais, endereços fornecidos pelo chamador e FDV conhecido a partir do teto
 vigente do catálogo. A API fornece os bloqueios atuais do usuário e descartes.
 Apenas valorização positiva entra em maiores altas; perdas e preço constante
 não são altas. Contagens distinguem candidatos, altas e preços não comparáveis.
@@ -155,11 +161,30 @@ das projeções acompanham os valores; não são snapshot transacional conjunto.
 Volume 24h conserva cobertura parcial para histórico curto; sua comparação
 percentual fica indisponível, pois não há base comparável comprovada.
 
+`applyLiveSnapshots` deriva a criação na mesma escrita do lote já existente,
+limitado a 100 contratos tocados; `projectDashboardSnapshot` usa a mesma prova
+e deixa de gravar descoberta do pool como criação. Consultas por identidade
+usam os índices de atribuição/bloco/transação existentes. O layout de transações
+é detectado uma vez por runner; no particionado, altura do deployment restringe
+as partições. Reiniciar consumidores após cutover/rollback de layout. Evidência
+ausente não apaga um campo antigo, mas o ranking só aceita sua coincidência com a prova
+canônica atual. Eventos duplicados ou atrasados não substituem nascimento por
+first-seen. A atribuição precisa estar comprometida antes da escrita do catálogo;
+se chegar depois, o próximo preço/repair frio preenche. O reorg do ranking já
+limpa gerações; a validação por bloco e tx impede reutilizar altura com hash órfão.
+
+Não requer migration nova nem backfill. Novos tokens entram conforme houver
+prova e preço; não é necessário aguardar 24h para o primeiro resultado. Após
+publicar, reiniciar web e `trendscope-worker@robinhood-derived.service`, que
+hospeda o sink de catálogo e reparo frio, e medir preenchimento/custo real.
+Não ativar a API apenas por esperar o relógio: timestamps e preços são necessários.
+
 A Stage 268 prepara índice parcial de criação conhecida RH no catálogo, com
 build concorrente, lock timeout de 1 s e limite de 120 s. O schema check runtime
 verifica sua definição; a migration recusa índice inválido deixado por tentativa
-anterior. Não foi aplicada na VPS. Índice inválido exige inspeção/recuperação
-explícita; `IF NOT EXISTS` sozinho não repara build interrompido.
+anterior. Aplicação e plano indexado foram conferidos na VPS em 06/10/2026.
+Índice inválido exige inspeção/recuperação explícita; `IF NOT EXISTS` sozinho
+não repara build interrompido.
 Limites de idade na consulta são `bigint`, como a coluna: o cast implícito da
 coluna para `numeric` no leitor anterior impedia o uso desse índice.
 
@@ -186,7 +211,9 @@ de páginas não estabelece ganho de desempenho no bot em produção.
 `analyze` executa o SELECT em `REPEATABLE READ READ ONLY`, com statement timeout
 5 s e lock timeout 500 ms. O relatório inclui horário, cardinalidade, loops,
 índices, hits, reads e spill. A contagem de catálogo é uma consulta separada;
-seu custo não entra no tempo de execução informado do ranking.
+seu custo não entra no tempo de execução informado do ranking. `young_tokens`
+conta datas armazenadas nessa janela, antes da prova canônica; não comprova,
+sozinho, candidatos elegíveis ou completude de criação.
 
 `POST /api/robinhood/radar-gainers` exige autenticação, origem confiável,
 visibilidade RH e `ROBINHOOD_RADAR_GAINERS_ENABLED=true` (default false).
@@ -237,9 +264,8 @@ relativas ao cutoff; sem eventos, o snapshot pode envelhecer. Mudanças isoladas
 de catálogo, LP ou holders entram no próximo refresh de preço/manual/recuperação;
 não há evento global próprio para todas essas fontes neste fluxo.
 
-Faltam aplicação autorizada/medição do índice, validação de cobertura de criação,
-ativação e validação com fontes reais/concorrência. Fixtures locais não comprovam
-ativação ou custo em produção.
+Faltam deploy/validação da criação canônica, ativação e custo após seu preenchimento.
+Fixtures locais não comprovam ativação ou custo em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -378,7 +404,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Parcial | Ranking/métricas, API com custo compartilhado, tabela 50/50 e live implementados, índice preparado; faltam aplicação/medição do índice, cobertura de criação e validação/ativação em produção |
+| 3 | Parcial | Ranking/métricas, API com custo compartilhado, tabela 50/50 e live implementados, índice validado; falta publicar a correção de idade canônica e validar cobertura/custo/ativação em produção |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |

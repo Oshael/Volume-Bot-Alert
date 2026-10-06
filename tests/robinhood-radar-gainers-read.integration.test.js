@@ -8,6 +8,7 @@ const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { createRobinhoodRadarGainersReadRepository } = require('../src/models/robinhood-radar-gainers-read');
 const { createRobinhoodRadarGainersPage } = require('../src/services/robinhood-radar-gainers-page');
+const catalog = require('../src/models/robinhood-catalog');
 
 const AS_OF = '2026-10-06T12:00:00.000Z';
 const address = (id) => `0x${id.toString(16).padStart(40, '0')}`;
@@ -16,7 +17,28 @@ after(() => db.pool.end());
 async function setup(client) {
   await client.query(`CREATE TEMP TABLE token_catalog (
     chain varchar, address varchar, symbol text, name text,
-    last_image_url text, last_token_created_at_ms bigint
+    last_image_url text, last_token_created_at_ms bigint,
+    source text, first_seen_at timestamptz, last_seen_at timestamptz,
+    last_price numeric, last_fdv numeric, is_active_monitor_candidate boolean,
+    eligible_for_monitoring boolean, eligibility_state text, suppressed_reason text,
+    monitor_priority text, last_vol_5m numeric, last_vol_1h numeric, last_vol_6h numeric,
+    last_vol_24h numeric, last_liquidity_usd numeric, last_pair_address text, last_dex_id text,
+    last_price_change_1h numeric, last_price_change_6h numeric, last_price_change_24h numeric,
+    PRIMARY KEY(chain, address)
+  ) ON COMMIT DROP`);
+  await client.query(`CREATE TEMP TABLE robinhood_token_attributions (
+    chain varchar, token_address varchar, source text, creator_address varchar,
+    attribution_block bigint, attribution_tx_hash varchar, attribution_factory_address varchar,
+    PRIMARY KEY(chain, token_address)
+  ) ON COMMIT DROP`);
+  await client.query(`CREATE TEMP TABLE robinhood_chain_blocks (
+    chain varchar, block_number bigint, block_hash varchar, canonical boolean,
+    block_timestamp timestamptz, PRIMARY KEY(chain,block_hash)
+  ) ON COMMIT DROP`);
+  await client.query(`CREATE UNIQUE INDEX ON robinhood_chain_blocks(chain,block_number) WHERE canonical`);
+  await client.query(`CREATE TEMP TABLE robinhood_chain_transactions (
+    chain varchar, block_hash varchar, transaction_hash varchar, receipt_succeeded boolean,
+    to_address varchar, contract_address varchar, PRIMARY KEY(chain,block_hash,transaction_hash)
   ) ON COMMIT DROP`);
   await client.query(`CREATE TEMP TABLE admin_blocked_tokens (chain varchar, address varchar) ON COMMIT DROP`);
   await client.query(`CREATE TEMP TABLE robinhood_market_buckets_agg (
@@ -42,8 +64,16 @@ async function seed(client, id, options = {}) {
   const baseline = new Date(birth + 60000);
   const current = new Date(Date.parse(AS_OF) - (options.currentMinutes ?? (options.stale ? 16 : 1)) * 60000);
   const market = options.changedMarket ? 'other' : 'primary';
-  await client.query(`INSERT INTO token_catalog VALUES ($1, $2, 'GAIN', 'Gainer', NULL, $3)`,
+  await client.query(`INSERT INTO token_catalog(chain,address,symbol,name,last_token_created_at_ms)
+    VALUES ($1, $2, 'GAIN', 'Gainer', $3)`,
     [options.chain ?? 'robinhood', token, options.unknownAge ? null : birth]);
+  const hash = `0x${id.toString(16).padStart(64, '0')}`;
+  await client.query(`INSERT INTO robinhood_token_attributions VALUES
+    ('robinhood',$1,'rpc_direct',$1,$2,$3,NULL)`, [token, id, hash]);
+  await client.query(`INSERT INTO robinhood_chain_blocks VALUES
+    ('robinhood',$1,$2,TRUE,$3)`, [id, hash, new Date(birth)]);
+  await client.query(`INSERT INTO robinhood_chain_transactions VALUES
+    ('robinhood',$1,$1,TRUE,NULL,$2)`, [hash, token]);
   await client.query(`INSERT INTO robinhood_market_buckets_agg VALUES
     ('robinhood', $1, 5, 1, date_bin('5 minutes', $2::timestamptz, '1970-01-01'::timestamptz),
      $2, 'uniswap-v3', $3)`,
@@ -59,6 +89,90 @@ async function seed(client, id, options = {}) {
   [token, market, current, options.current ?? 2, options.fdv ?? 10000]);
   return token;
 }
+
+it('fills only touched live tokens from canonical creation and rejects legacy ages, orphan/replayed evidence', async () => {
+  await assertUsingTestDatabase(db);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN'); await setup(client);
+    for (let id = 1; id <= 8; id += 1) await seed(client, id, { unknownAge: true });
+    await client.query(`UPDATE robinhood_chain_blocks SET block_timestamp='2026-10-06 09:00+00'
+      WHERE block_number=1`);
+    await client.query(`UPDATE robinhood_token_attributions SET source='blockscout' WHERE token_address=$1`, [address(2)]);
+    await client.query(`UPDATE robinhood_token_attributions SET attribution_tx_hash=$1 WHERE token_address=$2`,
+      [`0x${'f'.repeat(64)}`, address(3)]);
+    await client.query(`UPDATE robinhood_chain_transactions SET receipt_succeeded=FALSE WHERE contract_address=$1`, [address(4)]);
+    await client.query(`UPDATE robinhood_chain_transactions SET contract_address=$1 WHERE contract_address=$2`, [address(999), address(8)]);
+    const snapshots = [1,2,3,4,8].map((id) => ({ address: address(id), observedAt: '2026-10-06T11:59:00Z',
+      priceUsd: 2, fdvUsd: 10000 }));
+    const runner = { query: client.query.bind(client) };
+    await catalog.applyLiveSnapshots(snapshots, runner);
+    await catalog.applyLiveSnapshots(snapshots, runner); // replay preserves canonical birth
+    const rows = (await client.query(`SELECT address,last_token_created_at_ms::text AS birth FROM token_catalog ORDER BY address`)).rows;
+    assert.equal(rows[0].birth, String(Date.parse('2026-10-06T09:00:00Z')));
+    assert.ok(rows.slice(1).every((row) => row.birth === null)); // no sweep/backfill
+    const reader = createRobinhoodRadarGainersReadRepository({ database: {
+      queryWithStatementTimeout: (sql, params) => client.query(sql, params),
+    } });
+    assert.deepEqual((await reader.getGainers({ asOf: AS_OF })).items.map((row) => row.identity.address), [address(1)]);
+    await client.query(`UPDATE token_catalog SET last_token_created_at_ms=$1 WHERE address=$2`,
+      [Date.parse('2026-10-06T11:05:00Z'), address(5)]); // plausible pool age is not proof
+    assert.equal((await reader.getGainers({ asOf: AS_OF })).candidateCount, 1);
+    await client.query(`UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_number=1`);
+    assert.equal((await reader.getGainers({ asOf: AS_OF })).candidateCount, 0);
+    await client.query(`INSERT INTO robinhood_chain_blocks VALUES
+      ('robinhood',1,$1,TRUE,'2026-10-06 10:00+00')`, [`0x${'e'.repeat(64)}`]);
+    assert.equal((await reader.getGainers({ asOf: AS_OF })).candidateCount, 0); // reused height, wrong tx/hash
+    await client.query(`UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1`, [`0x${'e'.repeat(64)}`]);
+    await client.query(`UPDATE robinhood_chain_blocks SET canonical=TRUE WHERE block_number=1 AND block_hash<>$1`, [`0x${'e'.repeat(64)}`]);
+    const snapshot = { tokenAddress: address(1), protocol: 'uniswap-v3', marketKey: `robinhood:uniswap-v3:${address(99)}`,
+      discoveredAt: '2026-10-06T11:05:00Z', lastObservedAt: '2026-10-06T11:59:00Z', lastPriceUsd: '2', lastFdvUsd: '10000' };
+    await catalog.projectDashboardSnapshot(snapshot, runner);
+    assert.equal((await reader.getGainers({ asOf: AS_OF })).items[0].createdAt, Date.parse('2026-10-06T09:00:00Z'));
+    await catalog.projectDashboardSnapshot({ ...snapshot, tokenAddress: address(2) }, runner);
+    assert.equal((await client.query('SELECT last_token_created_at_ms FROM token_catalog WHERE address=$1', [address(2)])).rows[0].last_token_created_at_ms, null);
+    await client.query(`UPDATE robinhood_token_attributions SET source='rpc_trace', attribution_factory_address=$1 WHERE token_address=$2`, [address(99), address(6)]);
+    await client.query(`UPDATE robinhood_chain_transactions SET contract_address=NULL,to_address=$1 WHERE contract_address=$2`, [address(99), address(6)]);
+    await catalog.projectDashboardSnapshot({ ...snapshot, tokenAddress: address(6) }, runner);
+    assert.equal((await client.query('SELECT last_token_created_at_ms::text AS birth FROM token_catalog WHERE address=$1', [address(6)])).rows[0].birth,
+      String(Date.parse('2026-10-06T11:00:00Z')));
+  } finally { await client.query('ROLLBACK'); client.release(); }
+});
+
+it('accepts the partitioned transaction layout with pruning and without changing canonical birth', async () => {
+  await assertUsingTestDatabase(db);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN'); await setup(client);
+    await seed(client, 1);
+    await client.query('ALTER TABLE pg_temp.robinhood_chain_transactions RENAME TO birth_transactions_old');
+    await client.query(`CREATE TEMP TABLE robinhood_chain_transactions (
+      chain varchar, block_hash varchar, transaction_hash varchar, receipt_succeeded boolean,
+      to_address varchar, contract_address varchar, block_number bigint,
+      PRIMARY KEY(chain,block_number,block_hash,transaction_hash)
+    ) PARTITION BY RANGE(block_number)`);
+    for (let start = 0; start < 10000; start += 1000) {
+      await client.query(`CREATE TEMP TABLE birth_tx_${start} PARTITION OF robinhood_chain_transactions
+        FOR VALUES FROM (${start}) TO (${start+1000})`);
+    }
+    await client.query(`INSERT INTO robinhood_chain_transactions SELECT transaction.*,block.block_number
+      FROM birth_transactions_old transaction JOIN robinhood_chain_blocks block USING(chain,block_hash)`);
+    let plan;
+    const reader = createRobinhoodRadarGainersReadRepository({ database: {
+      async queryWithStatementTimeout(sql, params) {
+        if (sql.startsWith('SELECT relation.relkind')) return client.query(sql, params);
+        plan = summarizePlan((await client.query('EXPLAIN (ANALYZE, FORMAT JSON) '+sql, params)).rows[0]['QUERY PLAN'][0]);
+        return client.query(sql, params);
+      },
+    } });
+    const page = await reader.getGainers({ asOf: AS_OF });
+    assert.equal(page.items[0].createdAt, Date.parse('2026-10-06T11:00:00Z'));
+    const active = plan.scans.filter((scan) => scan.table.startsWith('birth_tx_') && scan.loops > 0);
+    assert.equal(active.length, 1);
+    assert.equal(active[0].table, 'birth_tx_0');
+    assert.equal(active[0].loops, 1);
+  } finally { await client.query('ROLLBACK'); client.release(); }
+});
 
 it('applies persisted user/global blocks and dismissals before selecting the personalized top', async () => {
   await assertUsingTestDatabase(db);
@@ -175,7 +289,7 @@ it('measures an indexed candidate universe with realistic market density without
     await client.query('BEGIN'); await setup(client);
     await client.query("SET LOCAL statement_timeout='30s'");
     await client.query('SET LOCAL jit=off');
-    await client.query(`INSERT INTO token_catalog SELECT 'robinhood',
+    await client.query(`INSERT INTO token_catalog(chain,address,symbol,name,last_image_url,last_token_created_at_ms) SELECT 'robinhood',
       '0x'||lpad(to_hex(id),40,'0'), 'OLD', NULL, NULL, 1700000000000
       FROM generate_series(10000,509999) id`);
     for (let id = 1; id <= 100; id += 1) await seed(client, id, { ageHours: 12, current: id + 1 });
@@ -192,6 +306,7 @@ it('measures an indexed candidate universe with realistic market density without
     let measured;
     const reader = createRobinhoodRadarGainersReadRepository({ database: {
       async queryWithStatementTimeout(sql, params) {
+        if (sql.startsWith('SELECT relation.relkind')) return client.query(sql, params);
         measured = summarizePlan((await client.query(
           `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON) ${sql}`, params
         )).rows[0]['QUERY PLAN'][0]);

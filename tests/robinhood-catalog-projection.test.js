@@ -38,6 +38,7 @@ describe('Robinhood dashboard catalog projection', () => {
       fdvUsd: 600000,
     }], {
       async query(sql, params) {
+        if (sql.startsWith('SELECT relation.relkind')) return { rows: [{ partitioned: false }] };
         calls.push({ sql, params });
         return { rowCount: 1 };
       },
@@ -49,6 +50,8 @@ describe('Robinhood dashboard catalog projection', () => {
     assert.match(calls[0].sql, /EXCLUDED\.last_seen_at >= token_catalog\.last_seen_at/);
     assert.match(calls[0].sql, /eligibility_state = 'robinhood-staged'/);
     assert.doesNotMatch(calls[0].sql, /last_mcap/);
+    assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
+    assert.match(calls[0].sql, /last_token_created_at_ms = COALESCE\(EXCLUDED\.last_token_created_at_ms/);
     assert.deepEqual(JSON.parse(calls[0].params[0]), [{
       address: TOKEN,
       observedAt: '2026-07-18T18:00:00.500Z',
@@ -142,6 +145,7 @@ describe('Robinhood dashboard catalog projection', () => {
     const calls = [];
     const row = await catalog.projectDashboardSnapshot(snapshot(), {
       async query(sql, params) {
+        if (sql.startsWith('SELECT relation.relkind')) return { rows: [{ partitioned: false }] };
         calls.push({ sql, params });
         return { rows: [{ chain: 'robinhood', address: params[0] }] };
       },
@@ -158,6 +162,8 @@ describe('Robinhood dashboard catalog projection', () => {
       MARKET_ADDRESS, 'uniswap-v3',
     ]);
     assert.equal(calls[0].params[12], '-2.5');
+    assert.equal(calls[0].params.length, 15); // Pool discovery no longer supplies creation.
+    assert.match(calls[0].sql, /attribution\.attribution_tx_hash/);
   });
 
   it('keeps a V4 pool id out of the pair-address column', () => {

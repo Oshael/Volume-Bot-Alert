@@ -1,5 +1,6 @@
 const db = require('../models/db');
 const { createRobinhoodRadarGainersReadRepository } = require('../models/robinhood-radar-gainers-read');
+const { transactionPartitioned } = require('../models/robinhood-token-creation-sql');
 
 function summarizePlan(plan) {
   const scans = [];
@@ -29,7 +30,8 @@ async function explainGainers({ asOf, mode = 'plan' } = {}, database = db) {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     await client.query("SET LOCAL statement_timeout = '5s'");
     await client.query("SET LOCAL lock_timeout = '500ms'");
-    const reader = createRobinhoodRadarGainersReadRepository({ database: {
+    const reader = createRobinhoodRadarGainersReadRepository({
+      transactionPartitioned: await transactionPartitioned(client), database: {
       async queryWithStatementTimeout(sql, params) {
         const meta = (await client.query(`SELECT NOW() AS measured_at, current_database() AS database,
           COUNT(*) FILTER (WHERE chain = 'robinhood')::int AS catalog_tokens,

@@ -2,6 +2,7 @@ const db = require('./db');
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
 const { normalizeAsOf } = require('../services/workspace-window-metrics');
 const { MAX_CATALOG_FDV_USD } = require('../services/robinhood-catalog-fdv-policy');
+const { canonicalTokenCreationSql, transactionPartitioned } = require('./robinhood-token-creation-sql');
 
 const TIMEOUT_MS = 5000;
 const MAX_LIMIT = 20;
@@ -19,6 +20,7 @@ const SQL = `WITH candidates AS MATERIALIZED (
       (EXTRACT(EPOCH FROM $1::timestamptz - INTERVAL '24 hours') * 1000)::bigint
       AND (EXTRACT(EPOCH FROM $1::timestamptz) * 1000)::bigint
     AND tc.address <> ALL($2::varchar[])
+    AND tc.last_token_created_at_ms = (__CANONICAL_TOKEN_CREATION__)
     AND NOT EXISTS (SELECT 1 FROM admin_blocked_tokens blocked
       WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address)
 ), points AS MATERIALIZED (
@@ -122,7 +124,9 @@ function createRobinhoodRadarGainersReadRepository(options = {}) {
   return {
     async getGainers(input = {}) {
       const { asOf, limit, excluded } = normalizeInput(input);
-      const result = await database.queryWithStatementTimeout(SQL, [asOf, excluded, limit], TIMEOUT_MS);
+      const partitioned = options.transactionPartitioned ?? await transactionPartitioned(database);
+      const sql = SQL.replace('__CANONICAL_TOKEN_CREATION__', canonicalTokenCreationSql('tc.address', '$1', partitioned));
+      const result = await database.queryWithStatementTimeout(sql, [asOf, excluded, limit], TIMEOUT_MS);
       const row = result.rows[0];
       return { chain: 'robinhood', asOf: asOf.toISOString(), limit,
         candidateCount: row.candidate_count, unpricedCount: row.unpriced_count,

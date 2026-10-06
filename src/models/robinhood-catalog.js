@@ -1,5 +1,6 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const { canonicalTokenCreationSql, transactionPartitioned } = require('./robinhood-token-creation-sql');
 const { normalizeText, sanitizeAssetUrl, sanitizeHttpUrl } = require('../utils/url-safety');
 const {
   isCatalogFdvExcluded,
@@ -113,6 +114,7 @@ async function applyLiveSnapshots(inputs, runner = db) {
     .filter((snapshot) => !isCatalogFdvExcluded(snapshot.fdvUsd));
   if (!snapshots.length) return 0;
   if (snapshots.length > 100) throw new Error('Robinhood live catalog batch exceeds 100 tokens');
+  const partitioned = await transactionPartitioned(runner);
   const result = await runner.query(
     `WITH input AS (
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
@@ -122,20 +124,22 @@ async function applyLiveSnapshots(inputs, runner = db) {
      )
      INSERT INTO token_catalog (
        chain, address, source, first_seen_at, last_seen_at,
-       last_price, last_fdv,
+       last_price, last_fdv, last_token_created_at_ms,
        is_active_monitor_candidate, eligible_for_monitoring,
        eligibility_state, suppressed_reason, monitor_priority
      )
      SELECT
-       'robinhood', address, 'robinhood-onchain', "observedAt", "observedAt",
-       "priceUsd", "fdvUsd",
+       'robinhood', input.address, 'robinhood-onchain', "observedAt", "observedAt",
+       "priceUsd", "fdvUsd", creation.created_at_ms,
        FALSE, FALSE, 'robinhood-dashboard-active',
        'robinhood-workspace-read-only', 'dormant'
      FROM input
+     LEFT JOIN LATERAL (${canonicalTokenCreationSql('input.address', 'input."observedAt"', partitioned)}) creation ON TRUE
      ON CONFLICT (chain, address) DO UPDATE SET
        source = 'robinhood-onchain',
        first_seen_at = LEAST(token_catalog.first_seen_at, EXCLUDED.first_seen_at),
        last_seen_at = GREATEST(token_catalog.last_seen_at, EXCLUDED.last_seen_at),
+       last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
        last_price = CASE WHEN EXCLUDED.last_seen_at >= token_catalog.last_seen_at
          THEN COALESCE(EXCLUDED.last_price, token_catalog.last_price)
          ELSE token_catalog.last_price END,
@@ -212,6 +216,7 @@ async function stageSnapshot(input, runner = db) {
 async function projectDashboardSnapshot(input, runner = db) {
   const snapshot = normalizeDashboardSnapshot(input);
   if (isCatalogFdvExcluded(snapshot.fdvUsd)) return null;
+  const partitioned = await transactionPartitioned(runner);
   const { rows } = await runner.query(
     `INSERT INTO token_catalog (
        chain, address, source, first_seen_at, last_seen_at,
@@ -226,7 +231,7 @@ async function projectDashboardSnapshot(input, runner = db) {
        $4, $5, $6, $7, $8,
        $9, $10, $11, $12,
        $13, $14, $15,
-       $16, FALSE,
+       (${canonicalTokenCreationSql('$1::varchar', '$3', partitioned)}), FALSE,
        FALSE, 'robinhood-dashboard-active', 'robinhood-workspace-read-only',
        'dormant'
      )
@@ -262,10 +267,7 @@ async function projectDashboardSnapshot(input, runner = db) {
          THEN EXCLUDED.last_price_change_6h ELSE token_catalog.last_price_change_6h END,
        last_price_change_24h = CASE WHEN EXCLUDED.last_seen_at >= token_catalog.last_seen_at
          THEN EXCLUDED.last_price_change_24h ELSE token_catalog.last_price_change_24h END,
-       last_token_created_at_ms = LEAST(
-         COALESCE(token_catalog.last_token_created_at_ms, EXCLUDED.last_token_created_at_ms),
-         EXCLUDED.last_token_created_at_ms
-       ),
+       last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
        is_active_monitor_candidate = FALSE,
        eligible_for_monitoring = FALSE,
        eligibility_state = CASE
@@ -296,7 +298,6 @@ async function projectDashboardSnapshot(input, runner = db) {
       snapshot.priceChange1hPct,
       snapshot.priceChange6hPct,
       snapshot.priceChange24hPct,
-      snapshot.firstSeenAt.getTime(),
     ]
   );
   return rows[0] || null;

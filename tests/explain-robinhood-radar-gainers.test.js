@@ -10,6 +10,7 @@ it('measures the real ranking SQL in a bounded read-only transaction and preserv
     const database = { async getClient() { return {
       async query(sql) {
         calls.push(sql);
+        if (sql.startsWith('SELECT relation.relkind')) return { rows: [{ partitioned: false }] };
         if (sql.startsWith('SELECT NOW()')) return { rows: [{ catalog_tokens: 500000, young_tokens: 100 }] };
         if (sql.startsWith('EXPLAIN')) {
           if (mode === 'failure') throw Object.assign(new Error('timeout'), { code: '57014' });

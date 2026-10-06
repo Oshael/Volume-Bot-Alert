@@ -2100,6 +2100,20 @@ compatíveis. Esse contrato interno não altera o payload HTTP `history-bootstra
 
 A leitura interna `robinhood-radar-gainers-read` seleciona tokens Robinhood de
 criação conhecida até 24h, compara preços do mesmo mercado e limita o top a 20.
+A idade exige que `last_token_created_at_ms` coincida com o timestamp do bloco
+canônico da atribuição exata, ligada à transação com receipt bem-sucedido.
+Aceita `rpc_direct`, `rpc_trace`, `blockscout_internal`, `launchpad_event`; no
+direto, receipt deve criar esse contrato. Pool discovery, hint Blockscout,
+transição de código sem deployment e âncora ausente/órfã não provam nascimento.
+O lote live de catálogo (até 100 contratos) e a projeção fria usam essa prova
+na escrita existente, sem RPC ou sweep. Detectam o layout de transações uma vez
+por runner e restringem a altura no particionado; reiniciar esses consumidores
+após cutover/rollback do layout. Não apagam datas antigas quando falta
+evidência, mas o ranking as rejeita sem coincidência canônica. Atribuição que
+chega depois do preço entra no próximo preço/reparo frio. Dados anteriores não
+recebem backfill; a cobertura cresce conforme os tokens são tocados. Não há
+migration nova. Esse código roda no `robinhood-derived`; após publicar a correção
+de idade, reiniciar sua instância na VPS2 e o web na VPS1, e medir cobertura/custo.
 A composição `robinhood-radar-gainers` hidrata volume, LP e holders publicados
 somente para esse lote. No Radar, o painel mostra até 15 altas ao lado de Top
 Wallets, acima da tabela única; no mobile os dois painéis são empilhados.

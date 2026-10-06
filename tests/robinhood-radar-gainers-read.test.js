@@ -1,6 +1,22 @@
 const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const { createRobinhoodRadarGainersReadRepository } = require('../src/models/robinhood-radar-gainers-read');
+const { canonicalTokenCreationSql, transactionPartitioned } = require('../src/models/robinhood-token-creation-sql');
+
+it('shares successful layout detection, retries failed detection and prunes only partitioned transactions', async () => {
+  let reads = 0;
+  const database = { async queryWithStatementTimeout(_sql, _params, timeout) {
+    assert.equal(timeout, 5000); reads += 1;
+    if (reads === 1) throw new Error('database unavailable');
+    return { rows: [{ partitioned: true }] };
+  } };
+  await assert.rejects(transactionPartitioned(database), /database unavailable/);
+  assert.deepEqual(await Promise.all([transactionPartitioned(database), transactionPartitioned(database)]), [true,true]);
+  assert.equal(reads, 2);
+  assert.match(canonicalTokenCreationSql('token.address','$1',true), /transaction.block_number=block.block_number/);
+  assert.doesNotMatch(canonicalTokenCreationSql('token.address','$1',false), /transaction.block_number/);
+  await assert.rejects(transactionPartitioned({ async query() { return { rows: [] }; } }), /layout is unavailable/);
+});
 
 it('rejects invalid gainers limits, cutoffs and unbounded or invalid exclusions before I/O', async () => {
   const reader = createRobinhoodRadarGainersReadRepository({
