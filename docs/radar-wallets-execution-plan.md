@@ -117,7 +117,10 @@ após reconexão usam HTTP.
 ## 4. Maiores altas entre tokens novos
 
 Status: ranking, métricas, API protegida, tabela 50/50 e live conectados no Radar;
-API desativada por padrão, ativação e validação em produção pendentes.
+API opt-in ativada na VPS1 em 07/10/2026; índice e preenchimento de criação
+conferidos. Otimização da seleção preparada localmente; deploy e validação do
+custo com mais candidatos/usuários ainda pendentes. Tratamento temporal de
+holders/LP permanece pendente.
 
 O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
 em `robinhood-radar-gainers-read`: uma consulta SQL com timeout de 5 s,
@@ -187,6 +190,36 @@ anterior. Aplicação e plano indexado foram conferidos na VPS em 06/10/2026.
 não repara build interrompido.
 Limites de idade na consulta são `bigint`, como a coluna: o cast implícito da
 coluna para `numeric` no leitor anterior impedia o uso desse índice.
+
+Diagnóstico de custo em 07/10/2026, 04:18:50–04:19:00 UTC, banco `volume_alert`:
+comparação read-only do código anterior e otimizado no mesmo snapshot
+`REPEATABLE READ`, cutoff 04:18 UTC, ordem anterior/novo/novo/anterior. Os quatro
+resultados foram idênticos: 518 candidatos, 450 não comparáveis, 56 altas e 20
+vencedores. **Observações:** seleção anterior 4.469 ms na primeira leitura e
+1.655 ms na repetição; nova 376/342 ms. A primeira leitura teve espera de disco,
+portanto não atribuir sua diferença inteira à consulta. Comparação aquecida
+reduziu a seleção em aproximadamente 77–79%; composição nova com volume/LP e
+holders levou 474 ms. São poucas amostras, sem garantia para mais usuários ou
+candidatos.
+
+**Causa confirmada do custo evitável:** o `LATERAL ... LIMIT 1` de valuation
+escolhia o índice global de tempo e repetia a busca para cada candidato.
+Planos reais com `TIMING OFF`, ambos sem shared reads, mostraram 518 varreduras
+de agregados antes e uma depois; acessos totais a páginas caíram de 1.297.183
+para 18.339, com execução de 2.200 para 354 ms. A consulta passa a resolver
+valuation em conjunto materializado, mantendo apenas o agregado válido mais
+recente por contrato e as mesmas regras de frescura/cutoff/mercado. Usa índices
+existentes; sem schema, RPC, novo worker ou alteração de projeções. O teste
+local reproduziu 1.510.000 linhas examinadas para 100 candidatos antes da
+correção e limita esse trabalho sem depender da escolha do índice por token.
+
+**Guardrails:** captura avançou 98 blocos na janela, idade 0,791→0,859 s;
+zero novos deadlocks, nenhum bloqueio do backend observado e zero aumento de
+temporários no banco. Isso não prova melhora de latência do bot inteiro. A causa
+do timeout isolado anterior de 5 s não foi completamente determinada; cache,
+I/O concorrente e compilação JIT ainda podem contribuir para variação.
+Publicar essa otimização e reiniciar somente `trendscope-web.service` na VPS1;
+validar o caminho HTTP/live e o custo com crescimento de cobertura após deploy.
 
 Medição read-only em `volume_alert`, 06/10/2026 às 21:00 UTC: 504.499 tokens RH,
 zero candidatos no corte 21:00 UTC, execução 691 ms, 144.651 shared hits e zero

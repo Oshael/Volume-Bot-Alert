@@ -238,6 +238,13 @@ it('selects global young-token gainers with comparable first prices, exclusions 
       ('robinhood', $1, 'uniswap-v2', 'other', '2026-10-06 11:59+00',
        '2026-10-06 11:59+00', '2026-10-06 11:59+00', 2, 1, 2, 1, 999, 999, 10000)`,
     [address(25)]);
+    await client.query(`INSERT INTO robinhood_market_buckets_agg VALUES
+      ('robinhood', $1, 5, 1, '2026-10-06 12:00+00', '2026-10-06 12:01+00', 'uniswap-v2', 'future'),
+      ('robinhood', $2, 5, 1, '2026-10-06 11:50+00', '2026-10-06 11:54+00', 'uniswap-v3', 'primary')`,
+    [address(25), address(35)]);
+    await client.query(`INSERT INTO robinhood_market_buckets_1m VALUES
+      ('robinhood', $1, 'uniswap-v3', 'primary', '2026-10-06 11:58+00',
+       '2026-10-06 11:58+00', '2026-10-06 11:58+00', 2, 0, 2, 0, 999, 999, 10000)`, [address(35)]);
     const page = await reader.getGainers({ asOf: AS_OF, limit: 3,
       excludedAddresses: [excluded, excluded.toUpperCase()] });
     assert.equal(page.total, 27);
@@ -299,6 +306,18 @@ it('measures an indexed candidate universe with realistic market density without
         1, 0, 1, 0, 1, 1, 10000
       FROM robinhood_market_buckets_1m CROSS JOIN generate_series(1,720) n
       WHERE last_block_number=2`);
+    // The production planner can prefer the global time index even with a token index.
+    // Exercise that access path with unrelated recent markets and mostly unpriced candidates.
+    await client.query(`INSERT INTO robinhood_market_buckets_agg
+      SELECT 'robinhood', '0x'||lpad(to_hex(id),40,'0'), 5, 1,
+        '2026-10-06 11:55+00', '2026-10-06 11:59+00', 'uniswap-v3', 'unrelated'
+      FROM generate_series(10000,24999) id`);
+    await client.query(`UPDATE robinhood_market_buckets_agg
+      SET bucket_ts='2026-10-06 11:40+00', last_observed_at='2026-10-06 11:44+00'
+      WHERE token_address=ANY($1::varchar[])`,
+    [Array.from({ length: 100 }, (_, i) => i + 1).filter((id) => id % 5).map(address)]);
+    await client.query(`CREATE INDEX gainers_fixture_agg_cleanup
+      ON robinhood_market_buckets_agg(granularity_minutes, bucket_ts)`);
     for (const table of ['token_catalog','robinhood_market_buckets_1m','robinhood_market_buckets_agg']) {
       await client.query(`ANALYZE ${table}`);
     }
@@ -321,6 +340,17 @@ it('measures an indexed candidate universe with realistic market density without
     assert.equal(indexed.candidateCount, 100);
     assert.ok(measured.scans.some((scan) => scan.index === stage268.INDEX_NAME));
     assert.ok(!measured.scans.some((scan) => scan.table === 'token_catalog' && scan.type === 'Seq Scan'));
+    // Keep the global path as the only aggregate index for a deterministic regression.
+    const tokenIndex = (await client.query(`SELECT indexrelid::regclass::text AS name FROM pg_index
+      WHERE indrelid='pg_temp.robinhood_market_buckets_agg'::regclass
+        AND pg_get_indexdef(indexrelid) LIKE '%chain, token_address, granularity_minutes%'`)).rows[0].name;
+    await client.query(`DROP INDEX ${tokenIndex}`);
+    const globalPath = await reader.getGainers({ asOf: AS_OF });
+    assert.deepEqual(globalPath, indexed);
+    assert.equal(globalPath.unpricedCount, 80);
+    const aggregateScans = measured.scans.filter((scan) => scan.table === 'robinhood_market_buckets_agg');
+    const examined = aggregateScans.reduce((sum, scan) => sum + (scan.rows + scan.removed) * scan.loops, 0);
+    assert.ok(examined <= 15100 * 2, `aggregate work must not multiply by candidates: ${examined} rows`);
     t.diagnostic(JSON.stringify({ fixture: { catalog: 500100, candidates: 100, minuteBuckets: 72200 },
       baseline, indexed: measured, limitation: 'local temporary fixture; no production speedup established' }));
   } finally { await client.query('ROLLBACK'); client.release(); }

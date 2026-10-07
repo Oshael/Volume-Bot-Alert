@@ -23,6 +23,20 @@ const SQL = `WITH candidates AS MATERIALIZED (
     AND tc.last_token_created_at_ms = (__CANONICAL_TOKEN_CREATION__)
     AND NOT EXISTS (SELECT 1 FROM admin_blocked_tokens blocked
       WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address)
+), valuations AS MATERIALIZED (
+  -- Resolve the recent valuation set once. A per-token LIMIT can select the
+  -- global time index and rescan unrelated buckets for every candidate.
+  SELECT DISTINCT ON (candidate.address) candidate.address,
+    bucket.valuation_protocol, bucket.valuation_market_key
+  FROM candidates candidate
+  JOIN robinhood_market_buckets_agg bucket
+    ON bucket.chain = 'robinhood' AND bucket.token_address = candidate.address
+      AND bucket.granularity_minutes = 5 AND bucket.source_granularity_minutes = 1
+      AND bucket.bucket_ts >= date_bin(INTERVAL '5 minutes',
+        $1::timestamptz - INTERVAL '15 minutes', '1970-01-01'::timestamptz)
+      AND bucket.bucket_ts <= $1::timestamptz
+      AND bucket.last_observed_at BETWEEN $1::timestamptz - INTERVAL '15 minutes' AND $1::timestamptz
+  ORDER BY candidate.address, bucket.bucket_ts DESC
 ), points AS MATERIALIZED (
   SELECT candidate.*, first_price.open_price_usd AS first_price_usd,
     first_price.first_observed_at, first_price.protocol AS first_protocol,
@@ -46,17 +60,7 @@ const SQL = `WITH candidates AS MATERIALIZED (
       bucket.protocol, bucket.market_key
     LIMIT 1
   ) first_price ON TRUE
-  LEFT JOIN LATERAL (
-    SELECT bucket.valuation_protocol, bucket.valuation_market_key
-    FROM robinhood_market_buckets_agg bucket
-    WHERE bucket.chain = 'robinhood' AND bucket.token_address = candidate.address
-      AND bucket.granularity_minutes = 5 AND bucket.source_granularity_minutes = 1
-      AND bucket.bucket_ts >= date_bin(INTERVAL '5 minutes',
-        $1::timestamptz - INTERVAL '15 minutes', '1970-01-01'::timestamptz)
-      AND bucket.bucket_ts <= $1::timestamptz
-      AND bucket.last_observed_at BETWEEN $1::timestamptz - INTERVAL '15 minutes' AND $1::timestamptz
-    ORDER BY bucket.bucket_ts DESC LIMIT 1
-  ) valuation ON TRUE
+  LEFT JOIN valuations valuation ON valuation.address = candidate.address
   LEFT JOIN LATERAL (
     SELECT bucket.close_price_usd, bucket.last_observed_at, bucket.close_fdv_usd
     FROM robinhood_market_buckets_1m bucket

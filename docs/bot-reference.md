@@ -2118,6 +2118,15 @@ A composição `robinhood-radar-gainers` hidrata volume, LP e holders publicados
 somente para esse lote. No Radar, o painel mostra até 15 altas ao lado de Top
 Wallets, acima da tabela única; no mobile os dois painéis são empilhados.
 
+O leitor resolve o mercado de valuation de todos os candidatos em um conjunto
+materializado, escolhendo o agregado válido mais recente por contrato. Evita
+repetir uma varredura do índice global de tempo para cada candidato. Conserva
+o cutoff, a frescura de 15 min e o mesmo mercado entre base/preço atual. O limite
+de 20 restringe a hidratação, não o universo que precisa ser ranqueado; medir
+cardinalidade e custo conforme a cobertura de criação cresce. Essa consulta usa
+os índices existentes, sem migration ou alteração de writers. Sua publicação
+exige reiniciar somente o web; validar custo e resultados após o deploy.
+
 O frontend carrega na abertura ou mudança de sessão/disponibilidade/exclusões,
 com refresh manual; filtros/página da tabela principal não refazem o top.
 Cancela respostas antigas e respeita mínimo local de 5 s/`Retry-After`.
