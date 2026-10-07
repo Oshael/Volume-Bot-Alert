@@ -97,7 +97,9 @@ SELECT (SELECT COUNT(*)::int FROM scored) AS candidate_count,
   ) ORDER BY change_pct DESC, address COLLATE "C") FROM winners), '[]'::jsonb) AS items`;
 
 function normalizeInput(input) {
-  const asOf = normalizeAsOf(input.asOf);
+  const cutoff = input.asOf ?? new Date();
+  const asOf = normalizeAsOf(cutoff);
+  if (input.live === true) asOf.setTime(new Date(cutoff).getTime());
   const limit = input.limit ?? 15;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
     throw new Error(`gainers limit must be between 1 and ${MAX_LIMIT}`);
@@ -123,6 +125,25 @@ function mapItem(item) {
   };
 }
 
+async function queryLiveRanking(database, sql, params) {
+  const client = await database.getClient();
+  const startedAt = Date.now();
+  try {
+    await client.query('BEGIN READ ONLY');
+    await client.query("SET LOCAL statement_timeout = '5s'");
+    // Measured compilation cost dominates this indexed live read.
+    // Keep the setting local to this transaction, including rollback/release.
+    await client.query('SET LOCAL jit = off');
+    const result = await client.query(sql, params);
+    await client.query('COMMIT');
+    database.logSlowQuery?.(sql, Date.now() - startedAt);
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally { client.release(); }
+}
+
 function createRobinhoodRadarGainersReadRepository(options = {}) {
   const database = options.database || db;
   return {
@@ -130,7 +151,10 @@ function createRobinhoodRadarGainersReadRepository(options = {}) {
       const { asOf, limit, excluded } = normalizeInput(input);
       const partitioned = options.transactionPartitioned ?? await transactionPartitioned(database);
       const sql = SQL.replace('__CANONICAL_TOKEN_CREATION__', canonicalTokenCreationSql('tc.address', '$1', partitioned));
-      const result = await database.queryWithStatementTimeout(sql, [asOf, excluded, limit], TIMEOUT_MS);
+      const params = [asOf, excluded, limit];
+      const result = input.live === true && typeof database.getClient === 'function'
+        ? await queryLiveRanking(database, sql, params)
+        : await database.queryWithStatementTimeout(sql, params, TIMEOUT_MS);
       const row = result.rows[0];
       return { chain: 'robinhood', asOf: asOf.toISOString(), limit,
         candidateCount: row.candidate_count, unpricedCount: row.unpriced_count,

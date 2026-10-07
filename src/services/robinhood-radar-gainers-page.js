@@ -1,12 +1,11 @@
 const { createHash } = require('node:crypto');
 const db = require('../models/db');
 const { normalizeTokenAddress, parseTokenIdentityKey } = require('../utils/token-identity');
-const { normalizeAsOf } = require('./workspace-window-metrics');
 const { createRobinhoodRadarGainersService } = require('./robinhood-radar-gainers');
-const { getGainersReorgRevision } = require('./robinhood-radar-gainers-generation');
+const { getGainersReorgRevision, getGainersPriceRevision } = require('./robinhood-radar-gainers-generation');
 
 const CACHE_TTL_MS = 5000;
-const MIN_REFRESH_MS = 5000;
+const MIN_REFRESH_MS = 500;
 const ERROR_BACKOFF_MS = 10000;
 const MAX_CACHE_ENTRIES = 32;
 const MAX_WAITERS = 32;
@@ -47,6 +46,7 @@ function createRobinhoodRadarGainersPage(options = {}) {
   const database = options.database || db;
   const now = options.now || Date.now;
   const getReorgRevision = options.getReorgRevision || getGainersReorgRevision;
+  const getPriceRevision = options.getPriceRevision || getGainersPriceRevision;
   const loadBlockedAddresses = options.loadBlockedAddresses || (async (userId) => {
     const { rows } = await database.queryWithStatementTimeout(
       `SELECT address FROM user_blocklist WHERE user_id = $1 AND chain = 'robinhood' LIMIT 5001`,
@@ -81,10 +81,10 @@ function createRobinhoodRadarGainersPage(options = {}) {
     return value;
   }
 
-  function read(query, reorgRevision) {
+  function read(query, reorgRevision, priceRevision) {
     const currentTime = now();
     const key = createHash('sha256').update(JSON.stringify([
-      query.asOf, query.excludedAddresses, reorgRevision,
+      query.excludedAddresses, reorgRevision, priceRevision,
     ])).digest('hex');
     const cached = cache.get(key);
     if (cached?.expiresAt > currentTime) return Promise.resolve(cached.page);
@@ -119,8 +119,8 @@ function createRobinhoodRadarGainersPage(options = {}) {
         throw failure('INVALID_GAINERS_REQUEST', 'Combined exclusions cannot exceed 5000');
       }
       const reorgRevision = getReorgRevision();
-      const page = await read({ asOf: normalizeAsOf(new Date(now())).toISOString(),
-        excludedAddresses, limit: 20 }, reorgRevision);
+      const page = await read({ asOf: new Date(now()).toISOString(), live: true,
+        excludedAddresses, limit: 20 }, reorgRevision, getPriceRevision());
       if (getReorgRevision() !== reorgRevision) throw busy();
       const items = page.items.slice(0, limit);
       return { ...page, limit, items, hasMore: page.total > items.length,

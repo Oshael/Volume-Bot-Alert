@@ -71,7 +71,21 @@ it('respects retry delay across renders/identity changes and recovers only on ma
   await short.update(input);
   time += 1000;
   await short.update(input, true);
-  assert.equal(shortCalls, 1);
+  assert.equal(shortCalls, 2);
+});
+
+it('keeps the visible ranking while a price refresh is in flight and coalesces its catch-up', async () => {
+  const releases = [];
+  const h = liveHarness((call) => call === 1 ? page() : new Promise((resolve) => releases.push(resolve)));
+  await h.loader.update(input);
+  h.loader.invalidate(invalidation({ prices: '1' })); await h.tick(500);
+  assert.equal(h.loader.state.page.items[0].identity.address, address);
+  assert.equal(h.loader.state.loading, true);
+  for (let version = 2; version <= 100; version += 1) h.loader.invalidate(invalidation({ prices: String(version) }));
+  releases[0](page()); await h.tick(0);
+  assert.equal(h.calls.length, 2);
+  await h.tick(500); assert.equal(h.calls.length, 3);
+  releases[1](page()); await h.tick(0);
 });
 
 it('rejects a cross-chain or unbounded top and prevents oversized requests', async () => {
@@ -97,7 +111,7 @@ function liveHarness(source) {
   const calls = [];
   const loader = createRadarGainersLoader(async (query, signal) => {
     calls.push({ query, signal });
-    return source ? source(calls.length) : { ...page(), asOf: new Date(Math.floor(time / 60000) * 60000).toISOString() };
+    return source ? source(calls.length) : { ...page(), asOf: new Date(time).toISOString() };
   }, () => {}, () => time, { visible: () => visible,
     setTimer(callback, delay) { const id = ++sequence; timers.set(id, { callback, at: time + delay }); return id; },
     clearTimer(id) { timers.delete(id); },
@@ -116,7 +130,7 @@ function liveHarness(source) {
 const invalidation = (revisions) => ({ type: 'wallet-ranking:invalidate', chain: 'robinhood',
   version: 1, revisions, publishedAt: '2026-10-06T12:00:45Z' });
 
-it('coalesces global price bursts at the next cutoff without polling or reacting to wallet-only revisions', async () => {
+it('coalesces committed price bursts within the same minute without polling or wallet-only refreshes', async () => {
   const h = liveHarness();
   await h.loader.update(input);
   h.loader.connection(true);
@@ -127,9 +141,9 @@ it('coalesces global price bursts at the next cutoff without polling or reacting
   assert.equal(h.loader.invalidate({ ...invalidation({ prices: '101' }), chain: 'solana' }), false);
   assert.equal(h.timers.size, 2); // One pending refresh, one display-only freshness deadline.
   assert.equal(h.loader.state.stale, true);
-  await h.tick(14000); assert.equal(h.calls.length, 1);
-  await h.tick(1000); assert.equal(h.calls.length, 2);
-  assert.equal(h.loader.state.page.asOf, '2026-10-06T12:01:00.000Z');
+  await h.tick(499); assert.equal(h.calls.length, 1);
+  await h.tick(1); assert.equal(h.calls.length, 2);
+  assert.equal(h.loader.state.page.asOf, '2026-10-06T12:00:45.500Z');
   assert.equal(h.loader.state.stale, false);
   await h.tick(120000);
   assert.equal(h.loader.state.stale, true);

@@ -75,7 +75,7 @@ export function createRadarGainersLoader(
   }
 
   function queue(urgent: boolean) {
-    const due = urgent ? now() : (Math.floor(now() / 60000) + 1) * 60000;
+    const due = now();
     const previous = pendingAt;
     const wasStale = state.stale;
     pendingAt = Math.min(pendingAt ?? Infinity, due);
@@ -122,8 +122,8 @@ export function createRadarGainersLoader(
     cancelTimer(); pendingAt = null;
     const current = ++revision;
     request = new AbortController();
-    blockedUntil = now() + 5000;
-    state.loading = true; state.page = null; state.message = null; state.stale = true; changed();
+    blockedUntil = now() + 500;
+    state.loading = true; state.message = null; state.stale = true; changed();
     try {
       const page = await fetchPage(input, request.signal);
       if (current !== revision) return;

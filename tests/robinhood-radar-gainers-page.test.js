@@ -13,12 +13,14 @@ function harness() {
   let time = START;
   let blocked = [];
   let reorgRevision = '0';
+  let priceRevision = '0';
   let source = async (query) => ({ chain: 'robinhood', asOf: query.asOf,
     limit: 20, total: 25, candidateCount: 30, unpricedCount: 5, items });
   const calls = [];
   const reads = [];
   const page = createRobinhoodRadarGainersPage({ now: () => time,
     getReorgRevision: () => reorgRevision,
+    getPriceRevision: () => priceRevision,
     service: { getGainers(query) { calls.push(query); return source(query); } },
     database: { async queryWithStatementTimeout(_sql, params, timeout) {
       assert.equal(timeout, 1000);
@@ -28,7 +30,8 @@ function harness() {
   });
   return { page, calls, reads, advance(ms) { time += ms; },
     block(values) { blocked = values; }, source(value) { source = value; },
-    reorg() { reorgRevision = String(BigInt(reorgRevision) + 1n); } };
+    reorg() { reorgRevision = String(BigInt(reorgRevision) + 1n); },
+    price() { priceRevision = String(BigInt(priceRevision) + 1n); } };
 }
 
 it('shares equivalent users/limits, normalizes exclusions before selection and expires cached reads', async () => {
@@ -40,7 +43,7 @@ it('shares equivalent users/limits, normalizes exclusions before selection and e
   assert.equal(first.hasMore, true);
   assert.equal(first.items[0].priceChangePct, items[0].priceChangePct);
   assert.equal(first.candidateCount, 30);
-  assert.deepEqual(h.calls[0], { asOf: '2026-10-06T12:00:00.000Z',
+  assert.deepEqual(h.calls[0], { asOf: '2026-10-06T12:00:45.000Z', live: true,
     excludedAddresses: [address(23), address(24)], limit: 20 });
   h.advance(1000);
   const second = await h.page.list(20, { dismissedIdentities: [`robinhood:${address(24)}`] });
@@ -59,11 +62,11 @@ it('shares equivalent users/limits, normalizes exclusions before selection and e
   const boundary = harness();
   boundary.advance(14000);
   await boundary.page.list(1);
-  boundary.advance(1000); // Never reuse the prior minute, even before its TTL expires.
-  await assert.rejects(boundary.page.list(1), { code: 'GAINERS_BUSY', retryAfterSeconds: 4 });
-  boundary.advance(4000);
+  boundary.advance(250); boundary.price(); // A committed price supersedes the cached generation.
+  await assert.rejects(boundary.page.list(1), { code: 'GAINERS_BUSY', retryAfterSeconds: 1 });
+  boundary.advance(250);
   await boundary.page.list(1);
-  assert.equal(boundary.calls[1].asOf, '2026-10-06T12:01:00.000Z');
+  assert.equal(boundary.calls[1].asOf, '2026-10-06T12:00:59.500Z');
 });
 
 it('bounds simultaneous waiters, rejects other exclusions without queueing and keeps changes isolated', async () => {
@@ -79,13 +82,26 @@ it('bounds simultaneous waiters, rejects other exclusions without queueing and k
   release({ chain: 'robinhood', asOf: h.calls[0].asOf, total: 0, items: [] });
   assert.equal((await Promise.all(pending)).length, 32);
   h.block([address(25)]);
-  await assert.rejects(h.page.list(0), { code: 'GAINERS_BUSY', retryAfterSeconds: 5 });
+  await assert.rejects(h.page.list(0), { code: 'GAINERS_BUSY', retryAfterSeconds: 1 });
   h.advance(5000);
   h.source(async (query) => ({ chain: 'robinhood', asOf: query.asOf, total: 0, items: [] }));
   const empty = await h.page.list(0);
   assert.deepEqual(h.calls[1].excludedAddresses, [address(25)]);
   assert.deepEqual(empty.items, []);
   assert.equal(empty.hasMore, false);
+});
+
+it('publishes an honest in-flight price snapshot and catches up without waiting for the next minute', async () => {
+  const h = harness(); let release;
+  h.source(() => new Promise((resolve) => { release = resolve; }));
+  const pending = h.page.list(1); await new Promise(setImmediate);
+  h.price();
+  release({ chain: 'robinhood', asOf: h.calls[0].asOf, total: 0, items: [] });
+  assert.equal((await pending).asOf, '2026-10-06T12:00:45.000Z');
+  h.advance(500);
+  h.source(async (query) => ({ chain: 'robinhood', asOf: query.asOf, total: 0, items: [] }));
+  assert.equal((await h.page.list(1)).asOf, '2026-10-06T12:00:45.500Z');
+  assert.equal(h.calls.length, 2);
 });
 
 it('clears failed work, backs off and never fabricates/cache-publishes an empty success', async () => {

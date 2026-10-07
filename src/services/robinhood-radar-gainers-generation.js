@@ -1,11 +1,15 @@
-let reorgRevision = 0n;
+const revisions = { prices: 0n, reorg: 0n };
 
-function advanceGainersReorgRevision(version) {
-  if (version > reorgRevision) reorgRevision = version;
+function advanceGainersRevision(source, version) {
+  if (Object.hasOwn(revisions, source) && version > revisions[source]) revisions[source] = version;
 }
 
 function getGainersReorgRevision() {
-  return reorgRevision.toString();
+  return revisions.reorg.toString();
 }
 
-module.exports = { advanceGainersReorgRevision, getGainersReorgRevision };
+function getGainersPriceRevision() {
+  return revisions.prices.toString();
+}
+
+module.exports = { advanceGainersRevision, getGainersReorgRevision, getGainersPriceRevision };

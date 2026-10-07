@@ -1,9 +1,11 @@
+process.env.NODE_ENV = 'test';
 const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const express = require('express');
 const request = require('supertest');
 const { createRobinhoodRadarGainersRouter } = require('../src/routes/robinhood-radar-gainers');
 const { createRobinhoodRadarGainersPage } = require('../src/services/robinhood-radar-gainers-page');
+const { radarGainersLimiter, defaultApiLimiter } = require('../src/middleware/rate-limit');
 
 const PATH = '/api/robinhood/radar-gainers';
 const address = (n) => `0x${n.toString(16).padStart(40, '0')}`;
@@ -64,7 +66,7 @@ it('uses authenticated user exclusions before top selection and preserves publis
   const response = await request(h.app).post(PATH).set('Authorization', 'test')
     .send({ limit: 1, dismissedIdentities: [`robinhood:${address(2)}`] }).expect(200);
   assert.deepEqual(h.blockedUsers, [123]);
-  assert.deepEqual(h.calls[0], { asOf: '2026-10-06T12:00:00.000Z',
+  assert.deepEqual(h.calls[0], { asOf: '2026-10-06T12:00:45.000Z', live: true,
     excludedAddresses: [address(1), address(2)], limit: 20 });
   assert.equal(response.headers['cache-control'], 'no-store');
   assert.equal(response.body.limit, 1);
@@ -73,6 +75,25 @@ it('uses authenticated user exclusions before top selection and preserves publis
   assert.equal(response.body.items[0].priceChangePct, '10.0000000000001');
   assert.equal(response.body.items[0].volume24hChangePct, null);
   assert.equal(response.body.items[0].priceBasis.coverage, 'available-history');
+});
+
+it('allows the live refresh budget, bounds excess and isolates it from other API calls and sessions', async () => {
+  const h = harness();
+  const app = express();
+  app.use(PATH, radarGainersLimiter);
+  app.use(h.app);
+  app.get('/api/other', defaultApiLimiter, (_req, res) => res.json({ ok: true }));
+  const session = 'Bearer radar-gainers-rate-test';
+  for (let count = 0; count < 180; count += 1) {
+    await request(app).post(PATH).set('Authorization', session).send({}).expect(200);
+  }
+  const limited = await request(app).post(PATH).set('Authorization', session).send({}).expect(429);
+  assert.equal(limited.headers['ratelimit-limit'], '180');
+  assert.equal(limited.headers['ratelimit-policy'], '180;w=60');
+  assert.ok(Number(limited.headers['retry-after']) > 0);
+  assert.equal(h.calls.length, 1);
+  await request(app).get('/api/other').set('Authorization', session).expect(200);
+  await request(app).post(PATH).set('Authorization', `${session}-other`).send({}).expect(200);
 });
 
 it('returns controlled errors without leaking source failures or accepting client user/cutoff', async () => {

@@ -57,24 +57,24 @@ function rowHtml(row: RadarGainer, state: AppState) {
         ${renderTradeTerminalMenu(address, null, null, { chain: 'robinhood', enabledTradeTerminals: state.ui.enabledRobinhoodTradeTerminals })}</div>
       </div></div></td>
     <td>${money(row.volume24hUsd, row.volume24hCoverage)}<small title="Volume change coverage: ${escapeHtml(row.volume24hChangeCoverage)}">${row.volume24hChangeCoverage === 'unavailable' ? '-' : gainersPercent(row.volume24hChangePct)}</small></td>
-    <td title="${escapeHtml(row.holderFreshness)} holder snapshot">${holder}</td>
-    <td>${money(row.liquidityUsd, row.liquidityCoverage)}</td></tr>`;
+    <td title="${escapeHtml(row.holderFreshness)} holder snapshot · Observed ${escapeHtml(row.holderObservedAt || '-')} · Checked ${escapeHtml(row.holderCheckedAt || '-')}">${holder}</td>
+    <td title="Updated ${escapeHtml(row.liquidityProjectionCommittedAt || '-')}">${money(row.liquidityUsd, row.liquidityCoverage)}</td></tr>`;
 }
 
 function draw(state: AppState, view: View) {
   if (!view.section) return;
   const { page, loading, message, connected, stale } = view.loader.state;
-  const body = loading ? '<p class="radar-top-message" role="status">Loading gainers…</p>'
-    : message ? `<p class="radar-top-message" role="status">${escapeHtml(message)}</p>`
-      : page?.items.length ? `<div class="radar-top-scroll"><table><thead><tr><th>Token / gain</th><th>Volume 24H</th><th>Holders</th><th>LP</th></tr></thead>
-        <tbody>${page.items.map((row) => rowHtml(row, state)).join('')}</tbody></table></div>`
-        : '<p class="radar-top-message" role="status">No verified gainers with known creation in the last 24 hours.</p>';
+  const notice = message ? `<p class="radar-top-message" role="status">${escapeHtml(message)}</p>`
+    : loading && !page ? '<p class="radar-top-message" role="status">Loading gainers…</p>' : '';
+  const body = page?.items.length ? `<div class="radar-top-scroll"><table><thead><tr><th>Token / gain</th><th>Volume 24H</th><th>Holders</th><th>LP</th></tr></thead>
+    <tbody>${page.items.map((row) => rowHtml(row, state)).join('')}</tbody></table></div>`
+    : page ? '<p class="radar-top-message" role="status">No verified gainers with known creation in the last 24 hours.</p>' : '';
   view.section.innerHTML = `<div class="legacy-bar-head radar-top-head"><span class="legacy-bar-title">TOP GAINERS</span>
     <button type="button" data-gainers-refresh ${loading || !inputFor(state).available ? 'disabled' : ''}>Refresh</button></div>
     <p class="radar-top-caveat">Age ≤24h · Since first available price; launch coverage may be incomplete.</p>
     <p class="radar-top-message" data-gainers-live role="status">${!connected ? 'Live disconnected · snapshot may be outdated.'
-      : stale ? 'Live connected · snapshot may be outdated.' : 'Live connected · updates grouped by minute.'}</p>
-    ${body}${page ? `<p class="radar-top-message">${page.items.length} of ${page.total} gainers · ${page.unpricedCount} candidate(s) without comparable prices · As of ${escapeHtml(page.asOf)}</p>` : ''}`;
+      : loading ? 'Live connected · updating…' : stale ? 'Live connected · snapshot may be outdated.' : 'Live connected · updates on price changes.'}</p>
+    ${notice}${body}${page ? `<p class="radar-top-message">${page.items.length} of ${page.total} gainers · ${page.unpricedCount} candidate(s) without comparable prices · Ranking as of ${escapeHtml(page.asOf)}${page.volumeAsOf ? ` · Volume window ends ${escapeHtml(page.volumeAsOf)}` : ''}</p>` : ''}`;
   view.section.querySelector('[data-gainers-refresh]')?.addEventListener('click', () => {
     void view.loader.update(inputFor(state), true);
   });

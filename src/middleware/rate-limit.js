@@ -116,6 +116,12 @@ const defaultApiLimiter = buildLimiter({
   keyGenerator: userScopedKeyGenerator,
 });
 
+const radarGainersLimiter = buildLimiter({
+  ...config.robinhoodRadarGainers.rateLimit,
+  name: 'radar-gainers',
+  keyGenerator: userScopedKeyGenerator,
+});
+
 const healthLimiter = buildLimiter({
   ...config.healthRateLimit,
   name: 'health',
@@ -192,6 +198,7 @@ module.exports = {
   authEmailLimiter,
   authOtpLimiter,
   defaultApiLimiter,
+  radarGainersLimiter,
   healthLimiter,
   dashboardLimiter,
   marketTickerLimiter,

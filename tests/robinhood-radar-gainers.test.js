@@ -69,3 +69,21 @@ it('skips empty hydration, rejects an oversized top and propagates source failur
   selected = page;
   await assert.rejects(service.getGainers(), { code: '57014' });
 });
+
+it('shows latest published live metrics with their timestamps and an independent volume cutoff', async () => {
+  const asOf = '2026-10-06T12:00:45.123Z', committedAt = '2026-10-06T12:00:46.000Z';
+  const service = createRobinhoodRadarGainersService({ now: () => Date.parse(committedAt),
+    ranking: { async getGainers() { return { ...page, asOf, items: page.items.slice(0, 1) }; } },
+    windows: { async getMetricsByAddresses(input) {
+      assert.equal(input.asOf, AS_OF);
+      return [metric(addresses[0], { liquidityProjectionCommittedAt: committedAt })];
+    } }, holders: { async getPublishedSummaries() { return [{ tokenAddress: addresses[0],
+      holderCount: 0, source: 'ledger_live', observedAt: committedAt, checkedAt: committedAt }]; } },
+  });
+  const result = await service.getGainers({ live: true });
+  assert.equal(result.asOf, asOf); assert.equal(result.volumeAsOf, AS_OF);
+  assert.equal(result.items[0].holderCount, 0); assert.equal(result.items[0].holderFreshness, 'fresh');
+  assert.equal(result.items[0].holderObservedAt, committedAt);
+  assert.equal(result.items[0].liquidityUsd, 1000);
+  assert.equal(result.items[0].liquidityProjectionCommittedAt, committedAt);
+});

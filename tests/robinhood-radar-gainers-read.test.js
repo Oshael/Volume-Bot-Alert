@@ -40,3 +40,29 @@ it('propagates a timeout instead of returning a fabricated empty ranking', async
   });
   await assert.rejects(reader.getGainers(), { code: '57014' });
 });
+
+it('bounds live reads with a transaction-local JIT setting and releases clients after success or timeout', async () => {
+  for (const fail of [false, true]) {
+    const statements = []; let released = false; let cutoff;
+    const reader = createRobinhoodRadarGainersReadRepository({ transactionPartitioned: false, database: {
+      async getClient() { return { release() { released = true; }, async query(sql, params) {
+        statements.push(sql);
+        if (params) {
+          cutoff = params[0];
+          if (fail) throw Object.assign(new Error('timeout'), { code: '57014' });
+          return { rows: [{ candidate_count: 0, unpriced_count: 0, total: 0, items: [] }] };
+        }
+        return { rows: [] };
+      } }; },
+    } });
+    const pending = reader.getGainers({ asOf: '2026-10-06T12:00:45.123Z', live: true });
+    if (fail) await assert.rejects(pending, { code: '57014' });
+    else assert.equal((await pending).asOf, '2026-10-06T12:00:45.123Z');
+    assert.equal(cutoff.toISOString(), '2026-10-06T12:00:45.123Z');
+    assert.ok(statements.includes('BEGIN READ ONLY'));
+    assert.ok(statements.includes("SET LOCAL statement_timeout = '5s'"));
+    assert.ok(statements.includes('SET LOCAL jit = off'));
+    assert.equal(statements.at(-1), fail ? 'ROLLBACK' : 'COMMIT');
+    assert.equal(released, true);
+  }
+});

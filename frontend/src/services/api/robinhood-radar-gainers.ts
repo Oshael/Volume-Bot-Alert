@@ -15,12 +15,16 @@ export interface RadarGainer {
   volume24hChangeCoverage: GainersCoverage;
   liquidityUsd: number | null;
   liquidityCoverage: GainersCoverage;
+  liquidityProjectionCommittedAt?: string | null;
   holderCount: number | null;
   holderFreshness: 'fresh' | 'stale' | 'unavailable';
+  holderObservedAt?: string | null;
+  holderCheckedAt?: string | null;
 }
 export interface RadarGainersPage {
   chain: 'robinhood';
   asOf: string;
+  volumeAsOf?: string;
   generatedAt: string;
   total: number;
   candidateCount: number;

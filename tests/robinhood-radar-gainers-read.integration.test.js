@@ -174,6 +174,28 @@ it('accepts the partitioned transaction layout with pruning and without changing
   } finally { await client.query('ROLLBACK'); client.release(); }
 });
 
+it('reads a committed intra-minute price immediately while preserving historical cutoff behavior', async () => {
+  await assertUsingTestDatabase(db);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN'); await setup(client); await seed(client, 1);
+    await client.query(`INSERT INTO robinhood_market_buckets_agg VALUES
+      ('robinhood',$1,5,1,'2026-10-06 12:00+00','2026-10-06 12:00:20+00','uniswap-v3','primary')`, [address(1)]);
+    await client.query(`INSERT INTO robinhood_market_buckets_1m VALUES
+      ('robinhood',$1,'uniswap-v3','primary','2026-10-06 12:00+00',
+       '2026-10-06 12:00:20+00','2026-10-06 12:00:20+00',3,0,3,0,3,3,10000)`, [address(1)]);
+    const reader = createRobinhoodRadarGainersReadRepository({ database: {
+      queryWithStatementTimeout: (sql, params) => client.query(sql, params),
+    } });
+    const input = { asOf: '2026-10-06T12:00:45.123Z', live: true };
+    const latest = await reader.getGainers(input);
+    assert.equal(latest.asOf, input.asOf); assert.equal(latest.items[0].priceUsd, '3');
+    assert.equal(Number(latest.items[0].priceChangePct), 200);
+    assert.equal((await reader.getGainers({ ...input, asOf: '2026-10-06T12:00:19Z' })).items[0].priceUsd, '2');
+    assert.equal((await reader.getGainers({ asOf: input.asOf })).items[0].priceUsd, '2');
+  } finally { await client.query('ROLLBACK'); client.release(); }
+});
+
 it('applies persisted user/global blocks and dismissals before selecting the personalized top', async () => {
   await assertUsingTestDatabase(db);
   const client = await db.getClient();
@@ -296,9 +318,12 @@ it('measures an indexed candidate universe with realistic market density without
     await client.query('BEGIN'); await setup(client);
     await client.query("SET LOCAL statement_timeout='30s'");
     await client.query('SET LOCAL jit=off');
-    await client.query(`INSERT INTO token_catalog(chain,address,symbol,name,last_image_url,last_token_created_at_ms) SELECT 'robinhood',
-      '0x'||lpad(to_hex(id),40,'0'), 'OLD', NULL, NULL, 1700000000000
-      FROM generate_series(10000,509999) id`);
+    // Bound fixture loading separately from the unchanged 5s ranking budget.
+    for (let start = 10000; start < 510000; start += 50000) {
+      await client.query(`INSERT INTO token_catalog(chain,address,symbol,name,last_image_url,last_token_created_at_ms)
+        SELECT 'robinhood', '0x'||lpad(to_hex(id),40,'0'), 'OLD', NULL, NULL, 1700000000000
+        FROM generate_series($1::int,$2::int) id`, [start, start + 49999]);
+    }
     for (let id = 1; id <= 100; id += 1) await seed(client, id, { ageHours: 12, current: id + 1 });
     await client.query(`INSERT INTO robinhood_market_buckets_1m
       SELECT chain, token_address, protocol, market_key, bucket_ts - n*INTERVAL '1 minute',

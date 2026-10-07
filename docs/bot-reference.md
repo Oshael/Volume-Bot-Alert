@@ -2117,6 +2117,13 @@ de idade, reiniciar sua instância na VPS2 e o web na VPS1, e medir cobertura/cu
 A composição `robinhood-radar-gainers` hidrata volume, LP e holders publicados
 somente para esse lote. No Radar, o painel mostra até 15 altas ao lado de Top
 Wallets, acima da tabela única; no mobile os dois painéis são empilhados.
+Na API live, `asOf` é o horário exato da leitura, incluindo milissegundos:
+preços aceitos no minuto atual podem mudar a ordem imediatamente após commit.
+O modo histórico interno conserva o alinhamento por minuto. Volume mantém seu
+contrato de buckets completos, com `volumeAsOf` separado. Holder/LP live usam
+as últimas projeções publicadas, com seus timestamps próprios; não formam um
+snapshot histórico conjunto. O filtro de projeções posteriores ao cutoff fica
+restrito ao modo histórico. Freshness de holders live usa o horário da composição.
 
 O leitor resolve o mercado de valuation de todos os candidatos em um conjunto
 materializado, escolhendo o agregado válido mais recente por contrato. Evita
@@ -2126,13 +2133,18 @@ de 20 restringe a hidratação, não o universo que precisa ser ranqueado; medir
 cardinalidade e custo conforme a cobertura de criação cresce. Essa consulta usa
 os índices existentes, sem migration ou alteração de writers. Sua publicação
 exige reiniciar somente o web; validar custo e resultados após o deploy.
+A seleção live usa uma transação read-only própria, timeout de 5 s e `jit=off`
+somente nessa transação, com rollback/release em falha. Essa configuração evita
+compilação repetida nessa leitura sem alterar o JIT das demais consultas.
 
 O frontend carrega na abertura ou mudança de sessão/disponibilidade/exclusões,
 com refresh manual; filtros/página da tabela principal não refazem o top.
-Cancela respostas antigas e respeita mínimo local de 5 s/`Retry-After`.
+Cancela respostas de contextos antigos e respeita mínimo local de 500 ms/`Retry-After`.
 O live consome revisões globais `prices`/`reorg` do `wallet-ranking:invalidate`
-após commit. Ignora duplicatas/versões antigas e alterações exclusivas de wallets;
-coalesce preços na próxima virada do minuto, com uma consulta pendente. Reorg
+após commit. Ignora duplicatas/versões antigas e alterações exclusivas de wallets.
+Reage a preços sem esperar a virada do minuto, mantendo uma consulta pendente
+sob cooldown. Conserva a tabela durante o refresh e mostra estado de atualização;
+eventos recebidos durante a consulta deixam um único refresh pendente. Reorg
 limpa a tela e impede cache/publicação de cálculo anterior à revisão observada
 pelo listener; sua reconciliação também avança essa revisão.
 Consultas live só ocorrem com painel/aba visíveis. Reconexão e retorno recuperam
@@ -2145,8 +2157,10 @@ Volume/LP parciais usam `~`; valores ausentes usam `-`, sem transformar holder
 zero em ausência. Ganho é rotulado desde o primeiro preço disponível; não há
 sparkline. Ações usam contrato/explorer e terminais compatíveis com Robinhood.
 
-`POST /api/robinhood/radar-gainers` usa autenticação, origem confiável, rate limit
-da API e visibilidade RH. Exige `ROBINHOOD_RADAR_GAINERS_ENABLED=true` (default
+`POST /api/robinhood/radar-gainers` usa autenticação, origem confiável, visibilidade
+RH e rate limit exclusivo por sessão/IP: 180 pedidos/min por padrão, configurável
+por `ROBINHOOD_RADAR_GAINERS_RATE_LIMIT_MAX_REQUESTS` (1–3.600). Não consome o
+orçamento geral da API. Exige `ROBINHOOD_RADAR_GAINERS_ENABLED=true` (default
 false); ativar somente após Stage 268, medição de custo e validação de cobertura
 de criação. Body: `limit` numérico 1–20 (15) e `dismissedIdentities` canônicas RH.
 Não aceita query params, `asOf` ou usuário fornecido pelo cliente. Lê bloqueios
@@ -2154,15 +2168,22 @@ do usuário a cada pedido (timeout 1 s, máximo 5.000); união com descartes tam
 é limitada a 5.000, aplicada antes do top. Seleção/hidratação têm timeout de 5 s
 por statement, sem orçamento total da requisição.
 
-Compartilha cálculo por cutoff de minuto e conjunto normalizado de exclusões.
+Compartilha cálculo por revisões de preço/reorg e conjunto normalizado de exclusões.
 Por processo: um cálculo ativo, até 32 pedidos aguardando o mesmo cálculo,
-nenhuma fila para conjuntos diferentes, mínimo 5 s entre inícios, cache 5 s
+nenhuma fila para conjuntos diferentes, mínimo 500 ms entre inícios, cache 5 s
 após conclusão (máximo 32 entradas), backoff 10 s após falha. Réplicas adicionais
 multiplicam esses limites. Saturação retorna 503 `GAINERS_BUSY` com `Retry-After`;
 falha de fonte retorna 503 `GAINERS_UNAVAILABLE`, sem publicar vazio ou erro SQL.
 Gate desativado retorna 503 `GAINERS_NOT_READY`. Resposta `no-store` inclui
-`asOf`, `generatedAt`, `cacheAgeMs`, contagens e coverage; bloqueios globais
-têm até 5 s adicionais de latência devido ao cache. Não adiciona polling ou worker.
+`asOf`, `volumeAsOf` quando há hidratação, `generatedAt`, `cacheAgeMs`, contagens
+e coverage; bloqueios globais têm até 5 s adicionais de latência devido ao cache.
+Não adiciona polling ou worker.
+Revisão de preço nova invalida o cache mesmo dentro do minuto. Uma consulta em
+voo pode terminar com seu `asOf` original; a próxima revisão pede novo cálculo,
+sem descartar indefinidamente resultados sob fluxo contínuo. Reorg impede sua
+publicação. O limite de dois inícios/s é global por processo, não por usuário.
+Publicar backend e assets frontend juntos e reiniciar o web. Validar HTTP/live,
+custo e lag conforme candidatos/usuários crescem; não requer restart de workers.
 
 Antes de conectar esse caminho em produção, aplicar mediante autorização
 `node src/utils/db-init-stage268.js` e validar o custo. A migration cria

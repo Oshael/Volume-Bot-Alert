@@ -118,15 +118,17 @@ após reconexão usam HTTP.
 
 Status: ranking, métricas, API protegida, tabela 50/50 e live conectados no Radar;
 API opt-in ativada na VPS1 em 07/10/2026; índice e preenchimento de criação
-conferidos. Otimização da seleção preparada localmente; deploy e validação do
-custo com mais candidatos/usuários ainda pendentes. Tratamento temporal de
-holders/LP permanece pendente.
+conferidos. Otimização em lote da seleção já publicada. Correção realtime com
+cutoff exato, intervalo de 500 ms e métricas live preparada localmente; faltam
+deploy, validação HTTP/live e custo com mais candidatos/usuários.
 
 O primeiro corte usa `createRobinhoodRadarGainersReadRepository().getGainers`
 em `robinhood-radar-gainers-read`: uma consulta SQL com timeout de 5 s,
 até 20 resultados (15 por padrão) e exclusões limitadas
-a 5.000 endereços. O `asOf` é alinhado ao início do minuto, como nas métricas
-existentes, e esse corte é retornado ao chamador. Seleciona todo o universo
+a 5.000 endereços. O `asOf` histórico interno é alinhado ao início do minuto;
+na API live é o horário exato da leitura, incluindo milissegundos, retornado
+ao chamador. Preços aceitos no minuto atual entram sem aguardar sua virada.
+Seleciona todo o universo
 elegível antes do top, sem receber tokens da página principal. É chamado pela
 API somente sob o gate. A projeção de idade usa o lote de catálogo existente,
 sem RPC, backfill ou polling novos.
@@ -158,9 +160,12 @@ LP pelos leitores do workspace, e holders pelo resumo publicado, somente para
 os até 20 vencedores. Faz uma chamada em lote por fonte; lista vazia não hidrata.
 Preserva ordem, valores decimais, base e preço do ranking. Cada statement tem
 timeout de 5 s; isso não é orçamento total nem coalescência de requisições.
-Ausência/falha de fonte não fabrica zero. Holder/LP com projeção posterior ao
-`asOf` ficam indisponíveis, sem buscar snapshots antigos. Timestamps e cobertura
-das projeções acompanham os valores; não são snapshot transacional conjunto.
+Ausência/falha de fonte não fabrica zero. O volume conserva buckets completos
+e informa seu corte próprio em `volumeAsOf`. No live, holder/LP usam as últimas
+projeções publicadas, com timestamps próprios; freshness de holders é avaliada
+na composição. No modo histórico, projeções posteriores ao `asOf` permanecem
+indisponíveis, sem buscar snapshots antigos. As fontes não formam snapshot
+transacional conjunto.
 Volume 24h conserva cobertura parcial para histórico curto; sua comparação
 percentual fica indisponível, pois não há base comparável comprovada.
 
@@ -218,8 +223,21 @@ zero novos deadlocks, nenhum bloqueio do backend observado e zero aumento de
 temporários no banco. Isso não prova melhora de latência do bot inteiro. A causa
 do timeout isolado anterior de 5 s não foi completamente determinada; cache,
 I/O concorrente e compilação JIT ainda podem contribuir para variação.
-Publicar essa otimização e reiniciar somente `trendscope-web.service` na VPS1;
-validar o caminho HTTP/live e o custo com crescimento de cobertura após deploy.
+Essa otimização foi conferida no código publicado na VPS1. Seguem pendentes
+validação HTTP/live e custo com crescimento de cobertura após a correção realtime.
+
+**Observações de JIT:** comparação read-only em 07/10/2026, 04:34:01–04:34:04
+UTC, no mesmo snapshot e cutoff 04:34 UTC, com 539 candidatos e 20 vencedores.
+Ordem JIT on/off/off/on: 1.517/80/57/362 ms, resultados idênticos. A primeira
+leitura teve I/O e não é baseline aquecida. Planos aquecidos `TIMING OFF`, sem
+shared reads: on 338 ms com 432 funções JIT, off 50 ms e cerca de 18,5 mil shared hits em ambos.
+**Causa confirmada desse custo de seleção:** a comparação controlada confirma
+custo evitável de compilação JIT para essa cardinalidade. A seleção live passa
+a usar `SET LOCAL jit=off` em transação read-only própria com timeout de 5 s e
+rollback/release; não altera configurações globais nem writers. Composição sem
+JIT levou 147 ms. **Guardrails:** captura avançou 31 blocos e não houve novo
+deadlock na janela. Isso não determina a causa do timeout anterior nem garante
+custo sob realtime contínuo; medir após deploy com candidatos/usuários reais.
 
 Medição read-only em `volume_alert`, 06/10/2026 às 21:00 UTC: 504.499 tokens RH,
 zero candidatos no corte 21:00 UTC, execução 691 ms, 144.651 shared hits e zero
@@ -256,25 +274,30 @@ ou query params. Lê bloqueios do usuário com timeout 1 s e limite 5.001 para
 detectar excesso; a união com descartes não pode superar 5.000 exclusões.
 Ranking e hidratação calculam até 20; o limite solicitado só recorta a resposta.
 
-O servidor compartilha cálculo/cache por minuto e conjunto normalizado de
+O servidor compartilha cálculo/cache por revisão de preço/reorg e conjunto normalizado de
 exclusões, nunca filtra um top global já truncado para obter o top do usuário.
 Por processo: um cálculo ativo, até 32 pedidos aguardando esse mesmo cálculo,
-sem fila para outros conjuntos, intervalo mínimo de 5 s entre inícios, cache
+sem fila para outros conjuntos, intervalo mínimo de 500 ms entre inícios, cache
 de 5 s após conclusão com até 32 entradas e backoff de 10 s após falha de fonte.
 Saturação retorna 503 `GAINERS_BUSY` com `Retry-After`, sem consultas adicionais
 de ranking. Bloqueios do usuário são relidos a cada pedido; bloqueios globais
 participam do SQL; o cache acrescenta até 5 s à latência dessas mudanças. A resposta
-traz `asOf`, `generatedAt`, `cacheAgeMs`, contagens e coverage dos campos.
+traz `asOf`, `volumeAsOf` quando hidratada, `generatedAt`, `cacheAgeMs`, contagens e coverage dos campos.
 Falha não publica/cacheia lista vazia. Não há timer, RPC ou polling adicional.
 Esses limites são locais ao processo; múltiplas réplicas multiplicam a carga.
+A rota usa orçamento exclusivo por sessão/IP de 180 pedidos/min por padrão
+(`ROBINHOOD_RADAR_GAINERS_RATE_LIMIT_MAX_REQUESTS`, 1–3.600), preservando o
+orçamento geral da API. Pedidos compartilhados não multiplicam os cálculos.
 
 O painel mostra até 15 altas na ordem do servidor, ao lado de Top Wallets em
 desktop; em mobile os painéis são empilhados, acima da tabela única. Carrega na
 abertura e após mudança de sessão/disponibilidade/exclusões, com refresh manual.
 Filtros/página da tabela principal não refazem o top. Mudanças de contexto
 cancelam e descartam respostas antigas; dados anteriores deixam de aparecer.
-Respeita intervalo mínimo local de 5 s e `Retry-After`; mudanças durante o
+Respeita intervalo mínimo local de 500 ms e `Retry-After`; mudanças durante o
 cooldown ficam pendentes para o painel visível.
+Refresh de preço conserva as linhas e mostra atualização em andamento; mudança
+de contexto/reorg descarta a página anterior. Erro continua visível com o snapshot.
 Volume/LP parciais levam `~`; ausência usa `-`, holders zero são preservados.
 Usa cópia de contrato, explorer e terminais RH existentes; não pede sparklines.
 
@@ -282,7 +305,10 @@ O live reutiliza `prices`/`reorg` do `wallet-ranking:invalidate`, publicados ap�
 commit dos buckets/agregados e recuperação canônica. Não depende de assinatura
 dos tokens da página. Watermarks por fonte ignoram duplicatas/replay antigo;
 eventos exclusivos de wallets não recalculam altas. Rajadas de preços mantêm
-uma consulta pendente, na próxima virada de minuto do cutoff. Reorg limpa e
+uma consulta pendente que reage dentro do mesmo minuto sob cooldown. Revisões
+de preço avançam a geração do cache após commit. Preço que chega durante uma
+consulta deixa um refresh pendente, sem impedir a publicação do `asOf` original.
+Reorg limpa e
 cancela a geração anterior imediatamente; cache e cálculo da API usam a revisão
 de reorg observada pelo listener, inclusive na reconciliação de sua conexão.
 Uma geração que atravessa essa revisão retorna busy, sem publicação/cache.
@@ -297,8 +323,9 @@ relativas ao cutoff; sem eventos, o snapshot pode envelhecer. Mudanças isoladas
 de catálogo, LP ou holders entram no próximo refresh de preço/manual/recuperação;
 não há evento global próprio para todas essas fontes neste fluxo.
 
-Faltam deploy/validação da criação canônica, ativação e custo após seu preenchimento.
-Fixtures locais não comprovam ativação ou custo em produção.
+Faltam publicar backend e assets frontend deste corte e reiniciar o web na VPS1;
+nenhum worker precisa reiniciar para essa correção. Validar HTTP/live, custo e
+lag sob fluxo contínuo. Fixtures locais não comprovam custo em produção.
 
 - Apenas tokens RH com idade conhecida de até 24h.
 - Colunas compactas: imagem/ticker, volume 24h com variação abaixo, holders, LP
@@ -437,7 +464,7 @@ completa dos dados. A sequência original é preservada para localizar as entreg
 | 0 | Parcial | Semântica temporal e preço-base das altas definidos; corte de contrapartes ainda é proposta e cobertura real exige auditoria |
 | 1A / 1B | Implementada | Consulta `bucket: 'all'` e `POST /api/dashboard/radar-bootstrap`, autenticado e restrito à RH |
 | 2A / 2B | Implementada | Tabela única Old/Recent, filtros, favoritos, preferências, paginação global e cores por idade |
-| 3 | Parcial | Ranking/métricas, API com custo compartilhado, tabela 50/50 e live implementados, índice validado; falta publicar a correção de idade canônica e validar cobertura/custo/ativação em produção |
+| 3 | Parcial | Ranking/métricas, API e tabela 50/50 ativos, idade canônica e seleção em lote publicadas; realtime dentro do minuto preparado localmente, faltam deploy e validação HTTP/live/custo sob carga |
 | 4 / R1–R3 | Implementada com limites | Scorers, frontier, fontes, provas de eventos e composição global; universo limitado a 1.000 posições |
 | R4 | Implementada | API autenticada Top Wallets, perfis RH opcionais, cobertura e cursores |
 | 5 / R5 | Implementada | Painel 24h/7d/30d/ALL, identidade, paginação e link para wallet |

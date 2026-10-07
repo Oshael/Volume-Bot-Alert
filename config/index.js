@@ -1344,6 +1344,10 @@ module.exports = {
 
   robinhoodRadarGainers: {
     enabled: parseBoolean(process.env.ROBINHOOD_RADAR_GAINERS_ENABLED, false),
+    rateLimit: {
+      windowMs: 60000,
+      max: parseIntegerInRange(process.env.ROBINHOOD_RADAR_GAINERS_RATE_LIMIT_MAX_REQUESTS, 180, 1, 3600),
+    },
   },
 
   robinhoodTokenViews: {
